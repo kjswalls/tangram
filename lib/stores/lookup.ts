@@ -15,11 +15,26 @@
 import { create } from 'zustand';
 
 import type { SearchGroup, SearchResult, SearchSection } from '@/lib/dict/search';
-import type { CardContext, Entry, LookupRequest } from '@/lib/types';
+import type { CardContext, Entry, EntryId, LookupRequest } from '@/lib/types';
+
+/**
+ * `LookupRequest` (frozen, `lib/types.ts`) is a query plus its provenance. A
+ * reader tap knows more than that: segmentation already resolved the token to
+ * its readings, and re-deriving them from the string would ask the search
+ * router to guess at what the DAG already decided — 了 is `le` here because of
+ * the words around it, and a bare search cannot know that. So P5 adds one
+ * optional field rather than changing the frozen shape (HANDOFF-p5.md).
+ */
+export interface LookupOpenRequest extends LookupRequest {
+  /** Entry ids the caller already resolved, best first. */
+  entryIds?: EntryId[];
+}
 
 export interface LookupState {
   query: string;
   context?: CardContext;
+  /** Set when the caller resolved the entries itself (a reader tap). */
+  entryIds?: EntryId[];
   open: boolean;
   loading: boolean;
   results: Entry[];
@@ -43,7 +58,7 @@ export interface LookupState {
   /** `SearchGroup.key` of the headword the panel is showing. */
   selectedKey?: string;
   /** Open the panel on a query, carrying where the query came from. */
-  openLookup: (request: LookupRequest) => void;
+  openLookup: (request: LookupOpenRequest) => void;
   setQuery: (query: string) => void;
   setResults: (results: Entry[]) => void;
   setLoading: (loading: boolean) => void;
@@ -60,6 +75,7 @@ export interface LookupState {
 }
 
 const EMPTY = {
+  entryIds: undefined as EntryId[] | undefined,
   results: [] as Entry[],
   groups: [] as SearchGroup[],
   sections: [] as SearchSection[],
@@ -82,12 +98,15 @@ export const useLookupStore = create<LookupState>((set) => ({
   error: undefined,
   ...EMPTY,
   dictVersion: undefined,
-  openLookup: ({ query, context }) =>
-    set({ query, context, open: true, error: undefined, ...EMPTY }),
+  openLookup: ({ query, context, entryIds }) =>
+    set({ query, context, open: true, error: undefined, ...EMPTY, entryIds }),
   setQuery: (query) =>
     // A new query invalidates the selection: the panel must never show a headword
-    // that is no longer in the list under it.
-    set((state) => (state.query === query ? state : { query, selectedKey: undefined })),
+    // that is no longer in the list under it. It invalidates a caller's resolved
+    // `entryIds` for the same reason — they answered the *previous* query.
+    set((state) =>
+      state.query === query ? state : { query, selectedKey: undefined, entryIds: undefined },
+    ),
   setResults: (results) => set({ results, loading: false }),
   setLoading: (loading) => set({ loading }),
   setError: (error) => set({ error, loading: false }),
@@ -127,10 +146,10 @@ export const useLookupStore = create<LookupState>((set) => ({
     }),
   select: (key) => set({ selectedKey: key, open: true }),
   clearSearch: () => set({ loading: false, error: undefined, ...EMPTY }),
-  closeLookup: () => set({ open: false, context: undefined }),
+  closeLookup: () => set({ open: false, context: undefined, entryIds: undefined }),
 }));
 
 /** Imperative entry point for non-React callers (reader taps, keyboard handlers). */
-export function openLookup(request: LookupRequest): void {
+export function openLookup(request: LookupOpenRequest): void {
   useLookupStore.getState().openLookup(request);
 }

@@ -5,6 +5,7 @@ import { PageHeader } from '@/components/shell/page-header';
 import { Card } from '@/components/ui/card';
 import { dataDir } from '@/lib/dict/load';
 import { Attribution } from './attribution';
+import { SettingsForm } from './settings-form';
 
 // `data/ATTRIBUTION.md` is committed, not generated, but it is read per request
 // rather than baked into the build because `data/` can be relocated with
@@ -25,12 +26,12 @@ export default async function SettingsPage() {
   return (
     <>
       <PageHeader title="Settings">
-        New cards per day, the spine band, what counts as known. Controls come in Phase 3.
+        New cards per day, the spine band, what counts as known.
       </PageHeader>
 
       <div className="flex flex-col gap-4">
         <Card title="Study">
-          <p className="text-sm text-muted">Settings controls come in Phase 3.</p>
+          <SettingsForm />
         </Card>
 
         <Card title="Licenses">

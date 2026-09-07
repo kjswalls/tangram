@@ -1302,3 +1302,135 @@ mounts the screen, unmounts it and asserts all three are gone.
 
 No server is left running; port 3000 is free. `/home/user/v0-anchor` was not
 touched.
+
+---
+
+## Phase 6 — TTS and the PWA shell (stretch, items 1–2 of 4)
+
+Worked in order on `main`. Items 1 and 2 landed; items 3 (i+1 example sentences)
+and 4 (free-recall grading) were **not started** — the session ran out of wall
+clock at the item-2 boundary, which is where it was told to stop rather than
+leave a half-written provider method behind.
+
+### 1. TTS — `03bc8da`
+
+`lib/tts/provider.ts` is the seam (`available(): Promise<boolean>`,
+`speak(text, opts?)`); `lib/tts/speech-synthesis.ts` implements it over the Web
+Speech API; `components/tts/speak-button.tsx` is the button, on the **review card
+back** (next to the pinyin) and in the **lookup entry detail** header.
+
+Three things are load-bearing and are not obvious from the code shape:
+
+- `available()` calls `getVoices()` once and, only when that list is empty,
+  waits for `voiceschanged` with a **500 ms** timeout. Chrome fills the list
+  late; headless Chromium never fills it at all, so the second case has to
+  resolve `false` on the timer rather than hang a button in "pending" forever.
+- The match is `zh*` (and `cmn*`), not `zh-CN`. Matching the exact tag reports
+  "no voice" on a machine that has three.
+- `speak()` calls `synth.cancel()` before it enqueues. The utterance queue is
+  global and additive, so without the cancel a double tap plays the word twice
+  back to back.
+
+The tooltip sits on a wrapping `<span>`, because `Button` sets
+`disabled:pointer-events-none` and a disabled button never receives the hover
+that shows a `title`.
+
+**Unverifiable here: audio.** Headless Chromium ships no speech-synthesis voices,
+so `tests/e2e/p6/tts.spec.ts` asserts exactly what can be observed — the button
+is present on both surfaces, disabled, `data-tts-status="unavailable"`, and says
+"No Chinese voice available in this browser". Nobody has heard this app speak.
+First thing to check on a real machine: that the picked voice reads the *card's*
+script (a `zh-TW` voice reading simplified is fine; the reverse is not).
+
+### 2. PWA shell — `eee44cb`
+
+`public/manifest.webmanifest` (name Tangram, `start_url`/`scope` `/`,
+standalone, the app's SVG icon copied to `public/icons/tangram.svg`, one entry
+`purpose: maskable`), a hand-written `public/sw.js`, and
+`components/pwa/register-sw.tsx` mounted in the root layout. No PWA dependency —
+`package.json` and the lockfile are untouched.
+
+`app/layout.tsx` gained `metadata.manifest`, `appleWebApp`, `viewport.themeColor`
+and the registration component; `next.config.ts` gained a `headers()` block.
+Both are frozen files and both edits are inside the mandate given for this phase.
+
+The worker's rules are ordered and the order matters:
+
+1. **`/api/**` returns before `respondWith`** — never cached. The cache that
+   belongs in front of the ask route is `ask_cache` in IndexedDB, which stores
+   ids rather than gloss text (CLAUDE.md); a second, dumber HTTP cache there
+   would serve one profile's grounded answer to another.
+2. **`/_next/static/**` is cache-first with no revalidation** — the paths are
+   content-hashed, so a hit is always correct and a miss is a new build.
+3. **Navigations are cache-first with a background refresh**, falling back to
+   the network and then to the cached `/`. This is the offline review session.
+
+The cache name is versioned (`tangram-v1`) and `activate` deletes every cache
+that is not the current one — that is also how a stale shell pointing at chunk
+hashes that no longer exist gets collected. **Bump `VERSION` whenever the shell
+or `sw.js` changes.** Only `response.ok && response.type === 'basic'` is ever
+stored, so an opaque cross-origin or partial response cannot poison the shell.
+
+Registration is **production-only** on purpose: a service worker under `next dev`
+caches chunks Turbopack is still rewriting, and the symptom is a dev server
+serving yesterday's page with no visible reason. `pnpm build && pnpm start` —
+what the e2e `webServer` runs — is where it registers.
+
+**Unverifiable here: install and offline.** There is no way to trigger an install
+prompt, no Lighthouse, and the e2e never goes offline.
+`tests/e2e/p6/pwa.spec.ts` asserts the manifest is served as
+`application/manifest+json`, parses, is linked from the document, and that its
+icon 200s; and that `sw.js` is served as no-store javascript, registers, and
+reaches `state === 'activated'`. Whether iOS accepts the SVG-only icon set is
+untested — if it does not, generate PNGs at 192/512 into `public/icons` and add
+them to the manifest; nothing else changes.
+
+### Gates
+
+| Gate | Result |
+|---|---|
+| `pnpm lint` | pass |
+| `pnpm test` | pass — **438** in 45 files (431 before; +11 TTS, +7 PWA, minus none) |
+| `pnpm build` | pass (Turbopack), run as the e2e `webServer` |
+| `PORT=3000 pnpm e2e` | **77 passed, 1 failed** of 78 (74 before; +2 TTS, +2 PWA) |
+
+### The one red spec — read this first next session
+
+`tests/e2e/p3/today.spec.ts:49` ("marking HSK 1–3 known moves the day's new words
+to band 4") fails on the **"Mark all known"** button being disabled for 30 s of
+click retries. It:
+
+- **passes** when `tests/e2e/p3/today.spec.ts` runs on its own (verified twice);
+- **fails** when the whole `tests/e2e/p3` directory runs in sequence (verified
+  against a standing `pnpm start`, with no p6 spec in the run at all);
+- **also failed** on the TTS commit alone, before `sw.js` or any layout change
+  existed — and TTS touches no code that `/lists` or `/` renders.
+
+So it is ordering/timing dependent, not caused by the speaker button or the
+worker, but it was reported green at 74/74 in the Phases 4–5 handoff, so
+something about this run is slower or dirtier than that one. `disabled` on that
+button is `busy[list.id] || allKnown` (`components/lists/list-card.tsx:66`), and
+`busy` is per-list, so the suspect is a `markAllKnown` for an earlier band still
+in flight — thousands of member rows — while the loop has moved on to the next
+card. Reproduce with `PORT=3000 pnpm exec playwright test tests/e2e/p3`, and fix
+it before reading anything into a Phase 6 e2e number.
+
+### Not started
+
+- **Item 3, i+1 example sentences.** Plan of record if someone picks it up:
+  `exampleSentences(entry, profile)` on `LLMProvider` returning
+  `{sentences: [{tokens: [{entryId}|{text}], en}]}`; a `POST /api/examples` that
+  runs the *same* grounding as `/api/ask` and then **filters** — every token must
+  cite an entry in the learner's known set or the target entry itself, or the
+  sentence is dropped whole. The prompt asks; the filter enforces. Cache in
+  `ask_cache` under its own `promptVersion` prefix so an i+1 miss cannot be
+  served an ask hit.
+- **Item 4, free-recall grading.** Optional "What does it mean?" field on the card
+  front behind a `/settings` toggle (default off); on flip,
+  `gradeRecall(entry, senseIndex?, answer) → {suggested, why}` highlights a button
+  and shows the reason, and **nothing is submitted** until the user presses a key
+  or a button. The no-auto-submit rule is the whole feature — a grade the app
+  chose for you is not a self-assessment.
+
+No server is left running; port 3000 is free. `/home/user/v0-anchor` was not
+touched; `package.json` and `pnpm-lock.yaml` are unchanged.

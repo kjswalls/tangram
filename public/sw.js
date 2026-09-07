@@ -14,21 +14,32 @@
  *   /_next/static/**   cache-first, no revalidation. The paths are content
  *                      hashed, so a hit is always correct and a miss is a new
  *                      build.
- *   navigations        cache-first with a background refresh, falling back to
- *                      the network and then to whatever shell route is cached.
- *                      This is what makes a review session work on a train.
+ *   navigations        **network-first**, with the cache as the offline
+ *                      fallback and `/offline.html` behind that. This is what
+ *                      makes a review session work on a train.
+ *
+ * Navigations are network-first and that is the load-bearing choice. Cache-first
+ * looks cheaper and is wrong: a document cached before a deploy references
+ * `/_next/static/chunks/<old-hash>.js` that the new deployment no longer serves,
+ * so the first visit to every route after every deploy renders a page that never
+ * hydrates. The cache name's VERSION is hand-bumped, so a routine `next build`
+ * does not purge anything — nothing rescues that stale document except the user
+ * reloading. Answering from the network whenever there *is* a network removes
+ * the whole class, and costs nothing offline, where the cached copy is still
+ * what gets served.
  *
  * The cache name carries a version. `activate` deletes every cache that is not
- * the current one, which is also how a stale shell (pointing at chunk hashes
- * that no longer exist) gets collected. Bump VERSION whenever the shell or this
- * file changes.
+ * the current one. Bump VERSION whenever the shell or this file changes.
  */
 
-const VERSION = 'v1';
+const VERSION = 'v2';
 const CACHE = `tangram-${VERSION}`;
 
+/** Served for a navigation we have never cached while the network is down. */
+const OFFLINE_URL = '/offline.html';
+
 /** The routes the app shell is made of (PLAN.md §4: the six nav destinations). */
-const SHELL = ['/', '/lookup', '/review', '/read', '/lists', '/settings'];
+const SHELL = ['/', '/lookup', '/review', '/read', '/lists', '/settings', OFFLINE_URL];
 
 /** Best-effort: one 404 must not fail the whole install. */
 async function precache() {
@@ -55,36 +66,42 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+/** Only a complete, same-origin response is ever worth storing. */
+function storable(response) {
+  return Boolean(response) && response.ok && response.type === 'basic';
+}
+
 /** Cache-first, and never store a partial or opaque response. */
-async function cacheFirst(request) {
+async function cacheFirst(event) {
+  const request = event.request;
   const cache = await caches.open(CACHE);
   const hit = await cache.match(request);
   if (hit) return hit;
   const response = await fetch(request);
-  if (response.ok && response.type === 'basic') await cache.put(request, response.clone());
+  // Hold the worker open for the write, but do not make the page wait on it.
+  if (storable(response)) event.waitUntil(cache.put(request, response.clone()));
   return response;
 }
 
-/** The shell: answer from cache now, refresh in the background for next time. */
-async function shell(request) {
+/**
+ * The shell: the network decides, the cache catches. Offline (or on a network
+ * error) the last good copy of this exact route is served, then the offline
+ * page — never another route's HTML under this route's URL.
+ */
+async function shell(event) {
+  const request = event.request;
   const cache = await caches.open(CACHE);
-  const hit = await cache.match(request, { ignoreSearch: true });
-  const network = fetch(request)
-    .then(async (response) => {
-      if (response.ok && response.type === 'basic') await cache.put(request, response.clone());
-      return response;
-    })
-    .catch(() => null);
-
-  if (hit) {
-    // Do not let the tab close before the refresh lands, but do not wait on it.
-    return hit;
+  try {
+    const response = await fetch(request);
+    if (storable(response)) event.waitUntil(cache.put(request, response.clone()));
+    return response;
+  } catch {
+    const hit = await cache.match(request, { ignoreSearch: true });
+    if (hit) return hit;
+    const offline = await cache.match(OFFLINE_URL);
+    if (offline) return offline;
+    return new Response('Offline', { status: 503, headers: { 'content-type': 'text/plain' } });
   }
-  const fresh = await network;
-  if (fresh) return fresh;
-  const fallback = await cache.match('/');
-  if (fallback) return fallback;
-  return new Response('Offline', { status: 503, headers: { 'content-type': 'text/plain' } });
 }
 
 self.addEventListener('fetch', (event) => {
@@ -99,11 +116,11 @@ self.addEventListener('fetch', (event) => {
   if (url.pathname === '/sw.js') return;
 
   if (url.pathname.startsWith('/_next/static/')) {
-    event.respondWith(cacheFirst(request));
+    event.respondWith(cacheFirst(event));
     return;
   }
 
   if (request.mode === 'navigate') {
-    event.respondWith(shell(request));
+    event.respondWith(shell(event));
   }
 });

@@ -6,11 +6,13 @@
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "orientation": "portrait-primary",
   "background_color": "#fbfaf7",
   "theme_color": "#0f766e",
   "lang": "en",
-  "categories": ["education", "productivity"],
+  "categories": [
+    "education",
+    "productivity"
+  ],
   "icons": [
     {
       "src": "/icons/tangram.svg",
@@ -19,9 +21,27 @@
       "purpose": "any"
     },
     {
+      "src": "/icons/tangram-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/tangram-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
       "src": "/icons/tangram.svg",
       "sizes": "any",
       "type": "image/svg+xml",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icons/tangram-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
       "purpose": "maskable"
     }
   ]

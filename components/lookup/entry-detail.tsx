@@ -194,15 +194,23 @@ export function EntryDetail({
             </>
           )}
         </p>
-        <div className="flex items-center gap-1">
-          <SpeakButton text={group.simp} label={group.simp} />
-          <Badge>{group.source} match</Badge>
-        </div>
+        <Badge>{group.source} match</Badge>
       </div>
 
-      <h3 className="mt-3 text-xs font-semibold tracking-wide text-muted uppercase">
-        {choosable ? `Readings — choose one to add (${group.entries.length})` : 'Reading'}
-      </h3>
+      {/*
+        The speaker belongs to the word, so it sits at the head of the reading
+        block — the same place the review card puts it (next to the pinyin), not
+        out on the badge row two rows away from anything it speaks. It reads the
+        simplified form because speech is a reading, not a script: a Mandarin
+        voice says 學習 and 学习 identically, so the script preference the review
+        card honours has nothing to change here.
+      */}
+      <div className="mt-3 flex items-center justify-between gap-2">
+        <h3 className="text-xs font-semibold tracking-wide text-muted uppercase">
+          {choosable ? `Readings — choose one to add (${group.entries.length})` : 'Reading'}
+        </h3>
+        <SpeakButton text={group.simp} label={group.simp} />
+      </div>
       <ul className="mt-2 flex flex-col gap-2" data-testid="reading-choice">
         {group.entries.map((candidate) => (
           <Reading

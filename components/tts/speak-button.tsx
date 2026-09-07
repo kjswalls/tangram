@@ -3,16 +3,20 @@
 /**
  * The speaker button (PLAN.md §3.6).
  *
- * It asks the provider once, on mount, whether this browser has a Chinese
- * voice, and renders one of three states: pending (disabled, no claim), ready
- * (a live button), unavailable (disabled with a tooltip that says why). The
+ * It asks the provider once, on mount, whether this browser has a Mandarin
+ * voice, and renders one of three states: pending (invisible but holding its
+ * space, so the pinyin line does not jump when the answer lands), ready (a live
+ * button), unavailable (disabled, with the reason **visible** beside it). The
  * third is not an edge case — headless Chromium has no voices, so it is the
  * only state this repository's e2e can actually observe, and it is the state
  * that has to look deliberate rather than broken.
  *
- * The tooltip lives on the wrapping span because a disabled button has
- * `pointer-events: none` and would never receive the hover that shows a
- * `title`.
+ * The reason is visible text and not only a `title`, because a touch screen
+ * never shows a `title`: on a phone the tooltip-only version was a dead grey
+ * glyph with no way to find out why. The `title` stays for pointer devices and
+ * the `aria-label` for readers, and the tooltip lives on the wrapping span
+ * because a disabled button has `pointer-events: none` and would never receive
+ * the hover that shows one.
  */
 
 import { Volume2 } from 'lucide-react';
@@ -23,7 +27,10 @@ import { cn } from '@/lib/cn';
 import type { TTSProvider } from '@/lib/tts/provider';
 import { getTTSProvider } from '@/lib/tts/speech-synthesis';
 
-export const NO_VOICE_TOOLTIP = 'No Chinese voice available in this browser';
+export const NO_VOICE_TOOLTIP = 'No Mandarin voice available in this browser';
+
+/** The same thing, short enough to sit next to the glyph on a 390px card. */
+export const NO_VOICE_LABEL = 'No voice';
 
 export interface SpeakButtonProps {
   /** The hanzi to read aloud. */
@@ -60,7 +67,15 @@ export function SpeakButton({ text, provider, className, label }: SpeakButtonPro
   const tooltip = status === 'unavailable' ? NO_VOICE_TOOLTIP : `Play ${label ?? text}`;
 
   return (
-    <span title={tooltip} data-testid="speak-button-wrap" className="inline-flex">
+    <span
+      title={tooltip}
+      data-testid="speak-button-wrap"
+      className={cn(
+        'inline-flex items-center gap-1',
+        // Reserve the space while the answer is in flight; do not claim anything.
+        status === 'pending' && 'invisible',
+      )}
+    >
       <Button
         data-testid="speak-button"
         data-tts-status={status}
@@ -77,6 +92,11 @@ export function SpeakButton({ text, provider, className, label }: SpeakButtonPro
       >
         <Volume2 aria-hidden className="size-4" />
       </Button>
+      {status === 'unavailable' ? (
+        <span aria-hidden className="text-xs text-muted">
+          {NO_VOICE_LABEL}
+        </span>
+      ) : null}
     </span>
   );
 }

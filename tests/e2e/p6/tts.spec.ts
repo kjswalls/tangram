@@ -10,7 +10,7 @@ import { expect, test } from '@playwright/test';
 
 import { DASUAN, openReview, seed } from '../p2/fixtures';
 
-const NO_VOICE = 'No Chinese voice available in this browser';
+const NO_VOICE = 'No Mandarin voice available in this browser';
 
 test.describe('speaker button', () => {
   test('is on the review card back, disabled, with the reason', async ({ page }) => {

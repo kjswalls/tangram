@@ -8,6 +8,13 @@
  * serves yesterday's page and no obvious reason why. `pnpm build && pnpm start`
  * — which is exactly what the e2e webServer runs — is where it registers.
  *
+ * Not registering is not enough, though: registrations are **per origin** and
+ * outlive the server that installed them, and `pnpm start -p 3000` (the e2e
+ * webServer) and `next dev` (port 3000) are the same origin. A worker installed
+ * by a production run keeps answering under `next dev`, which is the exact
+ * symptom the gate exists to prevent. So the dev branch actively tears down any
+ * worker and cache it finds instead of returning quietly.
+ *
  * Registration failure is swallowed: an unsupported browser, a private window,
  * or a blocked worker is a missing enhancement, not an error the user can act
  * on.
@@ -19,8 +26,20 @@ export const SW_URL = '/sw.js';
 
 export function RegisterServiceWorker() {
   useEffect(() => {
-    if (process.env.NODE_ENV !== 'production') return;
     if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+
+    if (process.env.NODE_ENV !== 'production') {
+      // Undo a production worker that is still controlling this origin.
+      void navigator.serviceWorker
+        .getRegistrations()
+        .then((registrations) => Promise.all(registrations.map((r) => r.unregister())))
+        .catch(() => {});
+      void globalThis.caches
+        ?.keys()
+        .then((keys) => Promise.all(keys.map((key) => caches.delete(key))))
+        .catch(() => {});
+      return;
+    }
 
     let cancelled = false;
     const register = () => {

@@ -9,7 +9,12 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { SpeechSynthesisProvider, isChineseVoice, pickChineseVoice } from '@/lib/tts/speech-synthesis';
+import {
+  SpeechSynthesisProvider,
+  isCantoneseVoice,
+  isChineseVoice,
+  pickChineseVoice,
+} from '@/lib/tts/speech-synthesis';
 
 type Voice = SpeechSynthesisVoice;
 
@@ -68,7 +73,7 @@ function make(synth: FakeSynth, timeoutMs = 500) {
 
 describe('voice matching', () => {
   it('accepts every tag that reads hanzi and rejects the rest', () => {
-    for (const lang of ['zh', 'zh-CN', 'zh-TW', 'ZH-HK', 'zh_CN', 'cmn-Hans-CN']) {
+    for (const lang of ['zh', 'zh-CN', 'zh-TW', 'ZH-HK', 'zh_CN', 'cmn-Hans-CN', 'yue-Hant-HK']) {
       expect(isChineseVoice({ lang }), lang).toBe(true);
     }
     for (const lang of ['en-US', 'ja-JP', '', 'zhu-XX']) {
@@ -76,9 +81,39 @@ describe('voice matching', () => {
     }
   });
 
-  it('prefers the voice the browser marks default', () => {
-    const picked = pickChineseVoice([voice('en-US'), voice('zh-TW'), voice('zh-CN', 'Ting', true)]);
+  it('knows which of those are Cantonese', () => {
+    for (const lang of ['zh-HK', 'ZH-MO', 'yue', 'yue-Hant-HK', 'zh-yue']) {
+      expect(isCantoneseVoice({ lang }), lang).toBe(true);
+    }
+    for (const lang of ['zh', 'zh-CN', 'zh-TW', 'cmn-Hans-CN', 'zh-SG']) {
+      expect(isCantoneseVoice({ lang }), lang).toBe(false);
+    }
+  });
+
+  it('prefers the voice the browser marks default, within its tier', () => {
+    const picked = pickChineseVoice([voice('en-US'), voice('zh-CN'), voice('zh-CN', 'Ting', true)]);
     expect(picked?.name).toBe('Ting');
+  });
+
+  it('picks zh-CN over an earlier zh-HK (Sin-ji sorts first on macOS)', () => {
+    const picked = pickChineseVoice([voice('zh-HK', 'Sinji'), voice('zh-CN', 'Tingting')]);
+    expect(picked?.name).toBe('Tingting');
+  });
+
+  it('ranks Mandarin regions above a bare zh, and default does not jump a tier', () => {
+    const picked = pickChineseVoice([
+      voice('zh', 'Generic', true),
+      voice('zh-TW', 'Meijia'),
+      voice('zh-CN', 'Tingting'),
+    ]);
+    expect(picked?.name).toBe('Tingting');
+    expect(pickChineseVoice([voice('zh', 'Generic', true), voice('zh-TW', 'Meijia')])?.name).toBe(
+      'Meijia',
+    );
+  });
+
+  it('refuses a Cantonese-only browser rather than reading pinyin in Cantonese', () => {
+    expect(pickChineseVoice([voice('zh-HK', 'Sinji', true), voice('yue-Hant-HK')])).toBeNull();
   });
 
   it('is null when nothing Chinese is installed', () => {
@@ -118,6 +153,26 @@ describe('available()', () => {
   it('is false when the browser has no speechSynthesis at all', async () => {
     const provider = new SpeechSynthesisProvider({ synth: undefined, utteranceCtor: undefined });
     await expect(provider.available()).resolves.toBe(false);
+  });
+
+  it('pays the timeout once, not once per caller (a SpeakButton per card)', async () => {
+    const synth = new FakeSynth();
+    const provider = make(synth, 60);
+    const started = Date.now();
+    await expect(provider.available()).resolves.toBe(false);
+    const afterFirst = Date.now() - started;
+    const second = Date.now();
+    await expect(provider.available()).resolves.toBe(false);
+    expect(Date.now() - second).toBeLessThan(afterFirst);
+    expect(synth.listenerCount).toBe(0);
+  });
+
+  it('drops the memo as soon as the browser does have voices', async () => {
+    const synth = new FakeSynth();
+    const provider = make(synth, 20);
+    await expect(provider.available()).resolves.toBe(false);
+    synth.voices = [voice('zh-CN')];
+    await expect(provider.available()).resolves.toBe(true);
   });
 });
 

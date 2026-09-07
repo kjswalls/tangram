@@ -367,6 +367,14 @@ new → /review shows 打算 → grade 3 → a `reviews` row exists → nav reac
 Neither P4 nor P5 edits `package.json`, `lib/db/**`, or the frozen panel shell.
 
 ### Phase 6 — stretch, in order; each stops at the cut line
+
+> **Orchestrator note, build night.** The builder was briefed to run this phase as TTS, then
+> PWA, then i+1, then free recall — the reverse of the order below — because the first two are
+> cheap plumbing and the last two cannot be judged without a live provider. That reorder was
+> the orchestrator's, not the builder's, and it was not written here at the time; the review
+> caught the mismatch. TTS and the PWA shell shipped; i+1 and free recall did not start. The
+> next session begins at item 1.
+
 1. **i+1 sentences** on the card back: generate, then *filter* every token against the known
    set (the prompt asks, the filter enforces). 2. **Free-recall grading**: type the meaning;
    the provider suggests a 1–4 grade the user can override; never auto-submits. 3. **TTS**

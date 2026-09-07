@@ -1315,8 +1315,9 @@ the PWA shell — committed as "Phase 6 (1/4)" (`03bc8da`) and "Phase 6 (2/4)"
 if the plan had been followed. It was not. The phase was worked **out of the
 plan's order**, the two features that change what the learner sees on a card
 (i+1 sentences, free-recall grading) are the ones that were dropped at the cut
-line, and nothing in PLAN.md authorises the swap. The commit titles cannot be
-rewritten now; this paragraph is the correction.
+line. The swap was ordered by the orchestrator in the builder brief and has since been
+recorded in PLAN.md §4 Phase 6; the builder followed its brief. The commit titles cannot
+be rewritten now; this paragraph is the correction.
 
 **Nothing of plan items 1 and 2 exists**: `grep -rniE 'i\+1|free.?recall|suggestGrade'
 lib app components` is empty, the review card back carries no example-sentence

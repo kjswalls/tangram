@@ -28,6 +28,9 @@ test.describe('?seed=demo', () => {
         known: (await repo.knownEntryIds()).length,
         texts: (await repo.texts()).length,
         askCache: await db.table('ask_cache').count(),
+        dictVersions: [
+          ...new Set((await repo.allCards()).map((card) => card.snapshot.dictVersion)),
+        ],
       };
     });
 
@@ -38,6 +41,10 @@ test.describe('?seed=demo', () => {
       expect(state.sources).toContain(source);
     }
     expect(state.known).toBeGreaterThan(1000);
+    // Every seeded card names the snapshot it was cut from, as the lookup path
+    // already did — the seed is the state the demo runs on.
+    for (const version of state.dictVersions) expect(version).toMatch(/\d/);
+    expect(state.dictVersions).not.toContain('unknown');
     expect(state.texts).toBe(1);
     expect(state.askCache).toBe(2);
   });

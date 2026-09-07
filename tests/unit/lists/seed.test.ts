@@ -14,6 +14,7 @@ import {
   sentenceAround,
 } from '@/lib/dev/seed';
 import { sha1Hex } from '@/lib/dev/sha1';
+import { todayKey } from '@/lib/srs/day';
 import { wordState } from '@/lib/srs/states';
 import { requireDictData } from '../dict/data-required';
 import { dictEntrySource, freshRepository } from './helpers';
@@ -94,6 +95,38 @@ describe('loadDemo', () => {
       const response = row?.response as { matches: { entryId: string }[]; interpretation: string };
       expect(response.interpretation).not.toMatch(/[一-鿿]/);
       for (const match of response.matches) expect(match.entryId).toContain('|');
+    }
+  });
+
+  it('records the real dictionary snapshot and charges the day for its list cards', async () => {
+    const repo = setup();
+    const summary = await loadDemo({ repo, now: NOW, source: dictEntrySource() });
+
+    // Every card names the snapshot it was cut from: the source has fetched the
+    // bands and the entries by the time the cards are written, so 'unknown' is a
+    // dropped argument, not a fact about the data.
+    for (const card of summary.cards) {
+      expect(card.snapshot.dictVersion).toMatch(/\d/);
+      expect(card.snapshot.dictVersion).not.toBe('unknown');
+      const word = card.entryId ? await repo.wordByEntryId(card.entryId) : undefined;
+      expect(word?.snapshot.dictVersion).toMatch(/\d/);
+    }
+
+    // The seed's `list`/`seed` cards are introductions like any other and spend
+    // today's allowance, so grading them cannot hand the slots back.
+    const nonExplicit = summary.cards.filter(
+      (card) => !['lookup', 'ask', 'reader'].includes(card.context?.source ?? ''),
+    );
+    expect(nonExplicit.length).toBeGreaterThan(0);
+    expect(summary.settings.introduced[todayKey(NOW, summary.settings.dayRollover)]).toBe(
+      nonExplicit.length,
+    );
+
+    // A card cannot have been reviewed before it was added.
+    const reviewed = summary.cards.filter((card) => card.fsrs.reps > 0);
+    expect(reviewed.length).toBeGreaterThan(0);
+    for (const card of reviewed) {
+      expect(card.fsrs.last_review).toBeGreaterThan(card.context?.addedAt ?? 0);
     }
   });
 

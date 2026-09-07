@@ -10,16 +10,22 @@
  *    queue; `newPerDay` caps the spine auto-draw only.
  *
  * The daily cap counts **introductions**, not offers: `settings.introduced[day]`
- * goes up when a spine card is *created* (`lib/lists/introduce.ts`). A card that
- * was introduced and not yet graded stays in today's queue and is not charged
- * again — instead it lowers how many more may be drawn, so a learner who never
- * grades still never accumulates more than `newPerDay` untouched cards a day.
- * That is what "grade 10 new, reload → no further spine cards today" means.
+ * goes up when a non-explicit card is *created* — the spine draw, a list's "Add
+ * to queue" and the demo seed all go through `lib/lists/introduce.ts`. A card
+ * that was introduced today therefore costs its slot once and keeps it whether
+ * or not it has been graded, which is what "grade 10 new, reload → no further
+ * spine cards today" means. Charging at creation is not optional for a new
+ * caller: `chargedToday` below also counts non-explicit cards created today, so
+ * a path that forgets still cannot hand the allowance back by grading.
+ *
+ * Cards introduced on an *earlier* day and never graded are subtracted on top,
+ * so a learner who never grades never accumulates more than `newPerDay`
+ * untouched cards a day.
  */
 
 import { DEFAULT_SETTINGS, type CardRow, type SettingsRow } from '@/lib/db/schema';
 import type { DrawCandidate } from '@/lib/lists/draw';
-import { todayKey } from '@/lib/srs/day';
+import { startOfDay, todayKey } from '@/lib/srs/day';
 
 export interface QueueInput {
   now: number;
@@ -55,8 +61,15 @@ export interface Queue {
   newPerDay: number;
   /** How many more new cards today's cap allows, before existing new cards. */
   newRemaining: number;
-  /** How many candidates may still be turned into cards: the cap less the
-   *  cards already introduced and not yet graded. */
+  /**
+   * Non-explicit cards this study day has already paid for: the persisted
+   * counter, or the cards created today if some path failed to charge it.
+   */
+  chargedToday: number;
+  /** Non-explicit cards introduced on an earlier day and still ungraded. */
+  backlog: number;
+  /** How many candidates may still be turned into cards: the cap less what
+   *  today has spent and the untouched backlog from earlier days. */
   drawLimit: number;
   /** New cards on offer once `draws` have been created. */
   newAvailable: number;
@@ -96,8 +109,17 @@ export function buildQueue(input: QueueInput): Queue {
   const introduced = fresh.filter((card) => !isExplicitAdd(card));
   const newCards = [...explicit, ...introduced];
 
-  // Cards already introduced but never graded spend today's allowance.
-  const drawLimit = Math.max(0, newRemaining - introduced.length);
+  // A card created today has already been charged to the counter (see the
+  // header). Counting them again here would subtract them twice; not counting
+  // them at all is how a seeded or hand-queued card used to hand its slot back
+  // the moment it was graded, so take whichever number is larger.
+  const dayStart = startOfDay(input.now, rollover);
+  const createdToday = all.filter(
+    (card) => !isExplicitAdd(card) && card.createdAt >= dayStart,
+  ).length;
+  const chargedToday = Math.max(introducedToday, createdToday);
+  const backlog = introduced.filter((card) => card.createdAt < dayStart).length;
+  const drawLimit = Math.max(0, newPerDay - chargedToday - backlog);
   const draws = [...(input.newCandidates ?? [])].slice(0, drawLimit);
 
   return {
@@ -108,6 +130,8 @@ export function buildQueue(input: QueueInput): Queue {
     introducedToday,
     newPerDay,
     newRemaining,
+    chargedToday,
+    backlog,
     drawLimit,
     newAvailable: newCards.length + draws.length,
   };

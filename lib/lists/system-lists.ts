@@ -3,9 +3,14 @@
  *
  * Seven HSK bands plus "Looked up", created **lazily on first visit** — a fresh
  * database has no rows until something asks for them. Only the `lists` rows are
- * created here: membership (`list_members`) is materialised per list in
- * `lib/lists/members.ts`, and a `words` row appears only when a card does, so
- * nothing ever inserts the dictionary's 11k HSK rows up front.
+ * created here; membership (`list_members`) is materialised per list in
+ * `lib/lists/members.ts`, and a `words` row appears only when a card does.
+ *
+ * What is lazy and what is not: no `words` row is ever inserted for a word the
+ * learner has not met, but `list_members` is not lazy in practice — the first
+ * visit to `/lists` calls `fillMembers()`, which materialises all seven bands
+ * (11,028 `entryId` rows) so the counts on the index are real. Opening one list
+ * would fill only that band.
  */
 
 import type { ListRow } from '@/lib/db/schema';

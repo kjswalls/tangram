@@ -32,6 +32,22 @@ describe('wordState', () => {
     expect(wordState({ hskBand: 2, knownBand: 2 })).toBe('known');
     expect(wordState({ hskBand: 3, knownBand: 2 })).toBe('new');
   });
+
+  it('lets an existing card outrank the band assumption', () => {
+    // The band is a guess about words never touched. A word added from lookup a
+    // minute ago and sitting in today's queue is not "known" because HSK says
+    // it is easy — Lists used to say known while /review was teaching it.
+    expect(wordState({ card: { state: 0, stability: 0 }, hskBand: 2, knownBand: 2 })).toBe(
+      'learning',
+    );
+    expect(wordState({ card: review(1), hskBand: 1, knownBand: 2 })).toBe('learning');
+    // …but a declared known word stays known, which is what "Mark known" writes.
+    expect(wordState({ card: { state: 0, stability: 0 }, known: true, hskBand: 2, knownBand: 2 })).toBe(
+      'known',
+    );
+    // And a consolidated card is known whatever its band.
+    expect(wordState({ card: review(400), hskBand: 6, knownBand: 2 })).toBe('known');
+  });
 });
 
 describe('knownCardState', () => {

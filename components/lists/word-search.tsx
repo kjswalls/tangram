@@ -10,9 +10,9 @@ import type { Entry } from '@/lib/types';
 /**
  * Add a word to a list by looking it up.
  *
- * TODO(merge): `EntrySource.search` calls `/api/dict/search` when P1's route is
- * there and otherwise walks the HSK bands. The fallback covers every word a
- * hand-made list plausibly holds; the route covers the rest of the dictionary.
+ * `EntrySource.search` goes through `/api/dict/search`, so this box and the
+ * lookup box rank a query identically; walking the HSK bands is the offline
+ * fallback for a 503 (HANDOFF.md, "Phases 1–3 (merged)").
  */
 export function WordSearch({
   onAdd,

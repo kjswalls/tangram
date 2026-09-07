@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useMemo } from 'react';
 
 import { GradeBar } from '@/components/review/grade-bar';
@@ -27,6 +28,8 @@ export function ReviewSession() {
   const grading = useReviewStore((state) => state.grading);
   const now = useReviewStore((state) => state.now);
   const nextDue = useReviewStore((state) => state.nextDue);
+  const waiting = useReviewStore((state) => state.waiting);
+  const drawError = useReviewStore((state) => state.drawError);
   const settings = useReviewStore((state) => state.settings);
   const error = useReviewStore((state) => state.error);
   const load = useReviewStore((state) => state.load);
@@ -112,7 +115,21 @@ export function ReviewSession() {
         aside={graded > 0 ? <span className="text-sm text-muted">{graded} graded</span> : null}
       >
         <p data-testid="review-empty" className="text-base">
-          {emptyStateMessage(nextDue, now)}
+          {emptyStateMessage(nextDue, now, waiting)}
+        </p>
+        {drawError ? (
+          <p className="mt-2 text-sm text-warning">No new words could be drawn: {drawError}</p>
+        ) : null}
+        {/* Never a dead end: the one place that says what there is to do today. */}
+        <p className="mt-3 text-sm text-muted">
+          <Link href="/" className="text-accent underline underline-offset-2">
+            Back to Today
+          </Link>{' '}
+          for what is left, or{' '}
+          <Link href="/lookup" className="text-accent underline underline-offset-2">
+            look a word up
+          </Link>
+          .
         </p>
       </Card>
     );

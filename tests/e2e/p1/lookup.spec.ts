@@ -159,7 +159,7 @@ test.describe('the panel', () => {
     await page.locator('input[data-testid="reading-option"][value="了|了[liao3]"]').check();
     await expect(page.getByTestId('add-card')).toHaveText('Add liǎo');
     await page.getByTestId('add-card').click();
-    await expect(page.getByTestId('add-card')).toHaveText('Added');
+    await expect(page.getByTestId('add-card')).toHaveText('In your cards');
 
     const saved = await cards(page);
     expect(saved).toHaveLength(1);

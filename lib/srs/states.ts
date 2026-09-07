@@ -27,13 +27,23 @@ export interface WordStateInput {
   knownBand: HskBand;
 }
 
+/**
+ * Order matters, and it is the order PLAN.md §3.3 lists: a declared known word,
+ * then the card, then the band assumption. The band is a *guess* about words the
+ * learner has never touched — "HSK 1–2 are behind you" — so a card must outrank
+ * it. Asking the band first is how a word added from lookup a minute ago and
+ * sitting in today's queue could show as `known` in Lists while `/review` was
+ * teaching it.
+ */
 export function wordState({ card, known, hskBand, knownBand }: WordStateInput): WordState {
   if (known) return 'known';
+  if (card) {
+    // States 0/1/3 are New, Learning and Relearning; 2 is Review.
+    if (card.state !== 2) return 'learning';
+    return card.stability >= KNOWN_STABILITY_DAYS ? 'known' : 'learning';
+  }
   if (hskBand !== undefined && hskBand <= knownBand) return 'known';
-  if (!card) return 'new';
-  // States 0/1/3 are New, Learning and Relearning; 2 is Review.
-  if (card.state !== 2) return 'learning';
-  return card.stability >= KNOWN_STABILITY_DAYS ? 'known' : 'learning';
+  return 'new';
 }
 
 /**

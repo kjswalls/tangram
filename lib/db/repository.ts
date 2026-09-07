@@ -53,6 +53,11 @@ export interface Repository {
   /**
    * Add (or find) the word card for a dictionary entry. Idempotent per
    * (entryId, senseIndex): tapping Add twice does not make two cards.
+   *
+   * A second Add still delivers its `context`: fields the stored card is
+   * missing (a reader's sentence, an ask's question, a lookup's query) are
+   * merged onto it, and a card the spine drew is promoted to the explicit
+   * source that asked for it. Nothing already recorded is overwritten.
    */
   addCardFromEntry(
     entry: Entry,
@@ -89,6 +94,13 @@ export interface Repository {
 
   /** Every card, tombstones excluded. */
   allCards(): Promise<CardRow[]>;
+
+  /**
+   * The word card for an entry, if there is one — what `addCardFromEntry` would
+   * find. The UI asks before adding, so it can say "already in your cards"
+   * instead of claiming an Add that only found the existing row.
+   */
+  cardForEntry(entryId: string, senseIndex?: number): Promise<CardRow | undefined>;
 
   /** The word row for an entry, if the learner has met it. */
   wordByEntryId(entryId: string): Promise<WordRow | undefined>;

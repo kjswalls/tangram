@@ -162,7 +162,11 @@ export interface ListMemberRow {
   id: string;
   listId: string;
   entryId: string;
-  /** Set once the entry has a `words` row. */
+  /**
+   * Always `null` in v1: membership joins on `entryId`, which is also the
+   * compound index (`[listId+entryId]`), and nothing reads this column. A
+   * backfill would need a repository member of its own — see HANDOFF.md.
+   */
   wordId: string | null;
   order: number;
   createdAt: number;

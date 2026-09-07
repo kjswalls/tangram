@@ -67,11 +67,23 @@ export interface SeedCard {
   rating?: StoredRating;
 }
 
-/** Open /review with an empty database and the test hook ready. */
-export async function openReview(page: Page): Promise<void> {
+/**
+ * Open /review with an empty database and the test hook ready.
+ *
+ * `newPerDay: 0` by default: since the merge fixes, loading `/review` runs
+ * `loadToday`, so the route introduces the day's new words exactly as Today
+ * does. These specs are about the session mechanics, so the spine draw is
+ * switched off and every card on screen is one the spec seeded. Pass a cap to
+ * exercise the draw itself.
+ */
+export async function openReview(page: Page, settings: { newPerDay?: number } = {}): Promise<void> {
   await page.goto('/review');
   await page.waitForFunction(() => Boolean((window as TangramWindow).__tangram));
-  await page.evaluate(() => (window as TangramWindow).__tangram!.repo.resetAll());
+  await page.evaluate(async (patch) => {
+    const repo = (window as TangramWindow).__tangram!.repo;
+    await repo.resetAll();
+    await repo.setSettings({ newPerDay: patch.newPerDay ?? 0 });
+  }, settings);
 }
 
 /**

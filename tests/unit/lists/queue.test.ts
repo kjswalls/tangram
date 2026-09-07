@@ -13,6 +13,7 @@ import { todayKey } from '@/lib/srs/day';
 import type { ContextSource } from '@/lib/types';
 
 const NOW = new Date(2026, 8, 7, 12).getTime();
+const DAY = 86_400_000;
 
 function card(id: string, overrides: Partial<CardRow> = {}): CardRow {
   const fsrs = newCard(NOW);
@@ -97,9 +98,10 @@ describe('buildQueue', () => {
     expect(queue.draws.map((row) => row.entryId)).toEqual(['s1']);
   });
 
-  it('offers cards it introduced earlier and draws that many fewer', () => {
+  it('offers cards it introduced today and charges them exactly once', () => {
     // Introduced today, never graded: they are already paid for, so they stay on
-    // offer — and they are why the draw stops at one more.
+    // offer and the counter — not a second subtraction — is what stops the draw
+    // at the one slot that is left.
     const key = todayKey(NOW, settings.dayRollover);
     const capped: SettingsRow = { ...settings, newPerDay: 3, introduced: { [key]: 2 } };
     const queue = buildQueue({
@@ -109,9 +111,61 @@ describe('buildQueue', () => {
       newCandidates: [draw('s1'), draw('s2')],
     });
     expect(queue.newCards.map((row) => row.id)).toEqual(['i1', 'i2']);
+    expect(queue.chargedToday).toBe(2);
+    expect(queue.drawLimit).toBe(1);
+    expect(queue.draws.map((row) => row.entryId)).toEqual(['s1']);
+    expect(queue.newAvailable).toBe(3);
+  });
+
+  it('holds the line once today’s cards are graded, however they were created', () => {
+    // The acceptance line, and the shape that used to break it: a hand-queued or
+    // seeded card charges the counter at creation, so grading it cannot hand the
+    // slot back. Three of today's three, all graded, and the draw is over.
+    const key = todayKey(NOW, settings.dayRollover);
+    const spent: SettingsRow = { ...settings, newPerDay: 3, introduced: { [key]: 3 } };
+    const graded = (id: string): CardRow =>
+      card(id, { context: { source: 'list', addedAt: NOW }, fsrs: { ...newCard(NOW), state: 2 }, due: NOW + DAY });
+    const queue = buildQueue({
+      now: NOW,
+      settings: spent,
+      cards: [graded('g1'), graded('g2'), graded('g3')],
+      newCandidates: [draw('s1')],
+    });
+    expect(queue.newCards).toEqual([]);
     expect(queue.drawLimit).toBe(0);
     expect(queue.draws).toEqual([]);
-    expect(queue.newAvailable).toBe(2);
+  });
+
+  it('charges cards created today even when nothing wrote the counter', () => {
+    // A creator that forgets `settings.introduced` must not be able to widen the
+    // cap: the cards it made today are counted directly.
+    const uncounted: SettingsRow = { ...settings, newPerDay: 3, introduced: {} };
+    const queue = buildQueue({
+      now: NOW,
+      settings: uncounted,
+      cards: [
+        card('seeded', { context: { source: 'seed', addedAt: NOW }, fsrs: { ...newCard(NOW), state: 2 }, due: NOW + DAY }),
+        card('queued', { context: { source: 'list', addedAt: NOW } }),
+      ],
+      newCandidates: [draw('s1'), draw('s2'), draw('s3')],
+    });
+    expect(queue.chargedToday).toBe(2);
+    expect(queue.drawLimit).toBe(1);
+  });
+
+  it('subtracts yesterday’s untouched cards on top of today’s allowance', () => {
+    // A learner who never grades never accumulates more than newPerDay untouched
+    // cards: two from yesterday, so today draws one.
+    const yesterday = NOW - DAY;
+    const queue = buildQueue({
+      now: NOW,
+      settings: { ...settings, newPerDay: 3 },
+      cards: [card('y1', { createdAt: yesterday }), card('y2', { createdAt: yesterday })],
+      newCandidates: [draw('s1'), draw('s2'), draw('s3')],
+    });
+    expect(queue.backlog).toBe(2);
+    expect(queue.drawLimit).toBe(1);
+    expect(queue.draws.map((row) => row.entryId)).toEqual(['s1']);
   });
 
   it('always offers an explicitly added card, even with the cap used up', () => {

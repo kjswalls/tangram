@@ -246,11 +246,31 @@ export function glossTier(entry: DictEntry, queryWords: readonly string[]): numb
   return best;
 }
 
-/** True when the raw query is itself a gloss token — the `sun`/`can`/`women` rule. */
+/**
+ * True when the raw query is itself an English **word** — the `sun`/`can`/`women`
+ * rule.
+ *
+ * "Appears somewhere in a gloss" is not that test. `shi` appears as a token in
+ * 39 glosses ("jiang shi" for 殭屍, "lüshi form" for 排律) because CC-CEDICT
+ * romanises inside its English, and taking that as an English word buried 是,
+ * 事, 十 — every HSK 1–2 reading of the syllable — under the reserved 16 rows of
+ * a section that had nothing a learner typing `shi` wanted. So the query has to
+ * be a whole *sense* of some entry (tier 0 or 1 of `glossTier`), which is what
+ * "the English word" means: 太阳 is "sun", 女人 is "woman", and no entry is "shi".
+ */
 function isGlossToken(index: DictIndex, query: string): boolean {
   const token = query.trim().toLowerCase();
   if (!/^[a-z']{3,}$/.test(token)) return false;
-  return index.byGloss.has(stemToken(token)) || index.byGloss.has(lemma(token));
+  const queryWords = lemmas(token);
+  if (queryWords.length === 0) return false;
+  const forms = new Set([stemToken(token), lemma(token)]);
+  for (const form of forms) {
+    for (const id of (index.byGloss.get(form) ?? []).slice(0, MAX_GLOSS_CANDIDATES)) {
+      const entry = index.entries.get(id);
+      if (entry && glossTier(entry, queryWords) <= 1) return true;
+    }
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------

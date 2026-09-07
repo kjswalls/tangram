@@ -11,12 +11,21 @@
  * the card comes back, so re-reading it is the only way the session and the
  * database cannot disagree. With `enable_short_term: false` nothing returns
  * inside a session, so the queue always shortens and the session terminates.
+ *
+ * The re-read goes through `loadToday` — the same call Today makes — so the two
+ * routes introduce and offer the same rows whichever one is opened first.
+ * Reading `listDue`/`newCandidates` here instead made `/review` a dead end on a
+ * fresh database ("no cards are scheduled yet") while `/` was holding ten new
+ * words for the same learner, and made the demo show seven cards or fourteen
+ * depending on the order the two pages were visited. Introducing on `/review`
+ * spends the day's allowance exactly as opening Today does (§3.3).
  */
 
 import { create } from 'zustand';
 
 import type { CardRow, SettingsRow, StoredRating } from '@/lib/db/schema';
-import { buildReviewQueue, nextDueAt, NEW_CANDIDATE_LIMIT } from '@/lib/srs/session';
+import { loadToday } from '@/lib/lists/today';
+import { nextDueAt } from '@/lib/srs/session';
 
 export interface ReviewState {
   queue: CardRow[];
@@ -35,6 +44,14 @@ export interface ReviewState {
   now: number;
   /** When the next card comes back, for the empty state. */
   nextDue: number | null;
+  /**
+   * New words today's cap still allows that could not be created — a dictionary
+   * outage, since the load introduces them otherwise. The empty state says so
+   * rather than claiming nothing is waiting.
+   */
+  waiting: number;
+  /** The draw could not reach the dictionary; the due cards are still true. */
+  drawError?: string;
   settings?: SettingsRow;
   error?: string;
   current: () => CardRow | undefined;
@@ -57,6 +74,8 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
   grading: false,
   now: 0,
   nextDue: null,
+  waiting: 0,
+  drawError: undefined,
   settings: undefined,
   error: undefined,
 
@@ -67,16 +86,14 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
     try {
       const { getRepository } = await import('@/lib/db/get-db');
       const repo = getRepository();
-      const [settings, due, candidates, all] = await Promise.all([
-        repo.getSettings(),
-        repo.listDue(now),
-        repo.newCandidates(NEW_CANDIDATE_LIMIT),
-        repo.allCards(),
-      ]);
+      const summary = await loadToday({ repo, now });
+      const all = await repo.allCards();
       set({
-        queue: buildReviewQueue({ now, settings, due, candidates }),
-        settings,
+        queue: summary.queue.cards,
+        settings: summary.settings,
         nextDue: nextDueAt(all, now),
+        waiting: summary.queue.draws.length,
+        ...(summary.drawError === undefined ? {} : { drawError: summary.drawError }),
         now,
         index: 0,
         revealed: false,
@@ -126,6 +143,8 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
       graded: 0,
       grading: false,
       nextDue: null,
+      waiting: 0,
+      drawError: undefined,
       error: undefined,
     }),
 }));

@@ -34,6 +34,24 @@ export function SettingsForm() {
       .catch((error: unknown) => setStatus(error instanceof Error ? error.message : String(error)));
   }, []);
 
+  /**
+   * A number field commits what the learner can actually have: the field's own
+   * min/max. Typing 300 into a field that says max 200 used to store 300, and
+   * clearing the field used to store 0 and report "Saved" — an empty box is a
+   * half-typed number, not a decision to stop drawing new cards.
+   */
+  const commitNumber = (
+    raw: string,
+    min: number,
+    max: number,
+    apply: (value: number) => Partial<Omit<SettingsRow, 'id' | 'createdAt'>>,
+  ) => {
+    if (raw.trim() === '') return;
+    const value = Number(raw);
+    if (!Number.isFinite(value)) return;
+    void patch(apply(Math.min(max, Math.max(min, Math.trunc(value)))));
+  };
+
   const patch = async (values: Partial<Omit<SettingsRow, 'id' | 'createdAt'>>) => {
     const next = await getRepository().setSettings(values);
     setSettings(next);
@@ -76,10 +94,9 @@ export function SettingsForm() {
             max={200}
             data-testid="settings-new-per-day"
             value={settings.newPerDay}
-            onChange={(event) => {
-              const value = Number(event.target.value);
-              if (Number.isInteger(value) && value >= 0) void patch({ newPerDay: value });
-            }}
+            onChange={(event) =>
+              commitNumber(event.target.value, 0, 200, (newPerDay) => ({ newPerDay }))
+            }
           />
           <span className="text-xs text-muted">Caps the spine draw. Words you add yourself are extra.</span>
         </label>
@@ -126,10 +143,9 @@ export function SettingsForm() {
             max={23}
             data-testid="settings-day-rollover"
             value={settings.dayRollover}
-            onChange={(event) => {
-              const value = Number(event.target.value);
-              if (Number.isInteger(value) && value >= 0 && value <= 23) void patch({ dayRollover: value });
-            }}
+            onChange={(event) =>
+              commitNumber(event.target.value, 0, 23, (dayRollover) => ({ dayRollover }))
+            }
           />
           <span className="text-xs text-muted">Local hour. 4 means 01:30 still counts as yesterday.</span>
         </label>

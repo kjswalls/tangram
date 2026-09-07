@@ -79,6 +79,47 @@ export class TangramDb extends Dexie {
 
 const alive = <T extends { deletedAt: number | null }>(row: T): boolean => row.deletedAt === null;
 
+/** The three sources that mean "the learner chose this word" (§3.3). */
+const EXPLICIT_SOURCES = new Set<CardContext['source']>(['lookup', 'ask', 'reader']);
+
+/** The provenance fields a later Add can fill in; `source`/`addedAt` are handled apart. */
+const CONTEXT_FIELDS = ['sentence', 'question', 'query', 'offset', 'length'] as const;
+
+/**
+ * What a second Add contributes to a card that already exists.
+ *
+ * The spine draws 了 with `{source:'list'}` before the learner ever reads it;
+ * when they then add it from the reader with a sentence, the card is the same
+ * row but the provenance is new, and dropping it made the UI's "it carries
+ * '…'" a lie and left P5's card back with nothing to highlight. Only *absent*
+ * fields are filled: a richer context is never overwritten by a poorer one, and
+ * `source` is promoted only from a non-explicit source to an explicit one, so a
+ * reader card that is later looked up keeps saying `reader`.
+ *
+ * Returns `undefined` when the incoming context adds nothing, so the caller can
+ * skip the write.
+ */
+export function mergeCardContext(
+  existing: CardContext | undefined,
+  incoming: CardContext | undefined,
+): CardContext | undefined {
+  if (!incoming) return undefined;
+  if (!existing) return incoming;
+  const next: CardContext = { ...existing };
+  let changed = false;
+  const fill = <K extends (typeof CONTEXT_FIELDS)[number]>(field: K): void => {
+    if (next[field] !== undefined || incoming[field] === undefined) return;
+    next[field] = incoming[field];
+    changed = true;
+  };
+  for (const field of CONTEXT_FIELDS) fill(field);
+  if (!EXPLICIT_SOURCES.has(existing.source) && EXPLICIT_SOURCES.has(incoming.source)) {
+    next.source = incoming.source;
+    changed = true;
+  }
+  return changed ? next : undefined;
+}
+
 export function toEntrySnapshot(entry: Entry, dictVersion: string): EntrySnapshot {
   return {
     simp: entry.simp,
@@ -143,7 +184,15 @@ export function createDexieRepository(db: TangramDb): Repository {
         const existing = (await db.cards.where('entryId').equals(entry.id).toArray())
           .filter(alive)
           .find((card) => card.kind === 'word' && card.senseIndex === senseIndex);
-        if (existing) return existing;
+        if (existing) {
+          // Idempotent per (entryId, senseIndex) — but not silent: an Add that
+          // brings provenance the stored card has not got writes it on.
+          const merged = mergeCardContext(existing.context, context);
+          if (!merged) return existing;
+          const updated: CardRow = { ...existing, context: merged, updatedAt: now };
+          await db.cards.put(updated);
+          return updated;
+        }
 
         const word = await ensureWord(entry, dictVersion, now);
         const fsrs = newCard(now);
@@ -280,6 +329,12 @@ export function createDexieRepository(db: TangramDb): Repository {
 
     async allCards() {
       return (await db.cards.toArray()).filter(alive);
+    },
+
+    async cardForEntry(entryId, senseIndex) {
+      return (await db.cards.where('entryId').equals(entryId).toArray())
+        .filter(alive)
+        .find((card) => card.kind === 'word' && card.senseIndex === senseIndex);
     },
 
     async wordByEntryId(entryId) {

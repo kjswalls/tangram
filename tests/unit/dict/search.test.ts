@@ -51,6 +51,20 @@ describe('search routing', () => {
     // under the readings of `he`.
     expect(search('he').sections[0].source).toBe('pinyin');
   });
+
+  it('does not read a romanised syllable inside a gloss as an English word', () => {
+    // CC-CEDICT romanises inside its English ("jiang shi" for 殭屍, "lüshi form"
+    // for 排律), so `shi` is a *token* of 39 glosses without being a word anyone
+    // typing it wants. English-first is for a query that is a whole sense of
+    // something — 太阳 is "sun" — and this is not.
+    expect(search('shi').sections[0].source).toBe('pinyin');
+    expect(search('ta').sections[0].source).toBe('pinyin');
+    const shi = search('shi').groups.slice(0, 4).map((group) => group.simp);
+    expect(shi).toContain('是');
+    // …and the words that are English words still lead with English.
+    expect(search('sun').sections[0].source).toBe('english');
+    expect(search('women').sections[0].source).toBe('english');
+  });
 });
 
 describe('hanzi search', () => {

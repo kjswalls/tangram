@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { DEFAULT_SETTINGS, isPhraseSnapshot } from '@/lib/db/schema';
+import { isExplicitAdd } from '@/lib/lists/queue';
 import { context, DASUAN, freshRepository, KANKAN } from './fixtures';
 
 const DAY = 86_400_000;
@@ -69,6 +70,48 @@ describe('cards', () => {
     expect(again.id).toBe(first.id);
     expect(otherSense.id).not.toBe(first.id);
     expect((await repo.allCards()).length).toBe(2);
+  });
+
+  it('gives an existing card the provenance a later Add carries', async () => {
+    const repo = setup();
+    // The spine drew it this morning, so the card exists and knows nothing about
+    // where the learner met it.
+    const drawn = await repo.addCardFromEntry(DASUAN, { source: 'list', addedAt: 1 });
+    expect(drawn.context?.sentence).toBeUndefined();
+
+    // Now they read it in a sentence and press Add. Same card, new provenance:
+    // without this the reader's Add is a silent no-op and the review back has
+    // nothing to highlight.
+    const added = await repo.addCardFromEntry(DASUAN, context({ addedAt: 2 }));
+    expect(added.id).toBe(drawn.id);
+    expect(added.context?.sentence).toBe('我打算明天去北京。');
+    expect(added.context?.offset).toBe(1);
+    // Promoted out of the spine: an explicit add is always in today's queue.
+    expect(added.context?.source).toBe('reader');
+    expect(isExplicitAdd(added)).toBe(true);
+    expect(added.updatedAt).toBeGreaterThanOrEqual(drawn.updatedAt);
+    expect((await repo.allCards()).length).toBe(1);
+    expect((await repo.cardForEntry(DASUAN.id))?.context?.sentence).toBe('我打算明天去北京。');
+
+    // A poorer context never overwrites a richer one, and the source it was
+    // promoted to stays put.
+    const third = await repo.addCardFromEntry(DASUAN, {
+      source: 'lookup',
+      query: 'dasuan',
+      addedAt: 3,
+    });
+    expect(third.context?.source).toBe('reader');
+    expect(third.context?.sentence).toBe('我打算明天去北京。');
+    expect(third.context?.query).toBe('dasuan');
+  });
+
+  it('finds the card for an entry, or nothing when there is none', async () => {
+    const repo = setup();
+    expect(await repo.cardForEntry(DASUAN.id)).toBeUndefined();
+    const card = await repo.addCardFromEntry(DASUAN, context(), 1);
+    // Sense-specific, exactly as `addCardFromEntry` is.
+    expect(await repo.cardForEntry(DASUAN.id)).toBeUndefined();
+    expect((await repo.cardForEntry(DASUAN.id, 1))?.id).toBe(card.id);
   });
 
   it('survives a double tap: two concurrent adds make one card', async () => {

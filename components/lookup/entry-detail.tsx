@@ -13,6 +13,7 @@
  * Decomposition comes from its own route because it comes from its own file under
  * its own licence (CLAUDE.md); it is displayed and never written onto the card.
  */
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
@@ -22,10 +23,17 @@ import { getRepository } from '@/lib/db/get-db';
 import { fetchDecomp } from '@/lib/dict/client';
 import type { SearchGroup } from '@/lib/dict/search';
 import type { DecompResponse } from '@/lib/dict/decomp';
-import { addCardTracked } from '@/lib/lists/looked-up';
+import { addCardChecked } from '@/lib/lists/looked-up';
 import { hskBandLabel, type CardContext, type Entry } from '@/lib/types';
 
-type AddState = 'idle' | 'saving' | 'added' | 'error';
+/**
+ * `idle` → `saving` → one of the three outcomes. They are three because the Add
+ * has three outcomes: a new card, a card that was already there (the spine may
+ * have drawn this word this morning), and a card that was already there but has
+ * now been given the provenance this Add carried. Saying "Added" for all three
+ * is how the panel came to claim a card it never wrote.
+ */
+type AddState = 'idle' | 'saving' | 'added' | 'enriched' | 'existing' | 'error';
 
 function contextFor(query: string, context?: CardContext): CardContext {
   // A query that arrived from the reader or the ask panel already carries its own
@@ -97,7 +105,12 @@ export function EntryDetail({
   dictVersion?: string;
 }) {
   const [selectedId, setSelectedId] = useState(group.entries[0].id);
-  const [state, setState] = useState<AddState>('idle');
+  // Both of these belong to one reading, so they carry the id they were made
+  // for: switching readings must not leave the previous one's "In your cards"
+  // (or its answer to "is this already a card?") on screen, and keying them is
+  // how that reset happens during render rather than in an effect.
+  const [outcome, setOutcome] = useState<{ id: string; state: AddState }>();
+  const [probe, setProbe] = useState<{ id: string; carded: boolean }>();
   const [decomp, setDecomp] = useState<DecompResponse['characters']>([]);
 
   useEffect(() => {
@@ -119,25 +132,54 @@ export function EntryDetail({
 
   const entry = group.entries.find((candidate) => candidate.id === selectedId) ?? group.entries[0];
   const choosable = group.entries.length > 1;
+  const state: AddState = outcome?.id === entry.id ? outcome.state : 'idle';
+  const carded = probe?.id === entry.id ? probe.carded : undefined;
+  const setState = (next: AddState) => setOutcome({ id: entry.id, state: next });
+
+  // What the button should say before it is pressed: a word the spine drew this
+  // morning is already a card, and offering a bare "Add card" hides that.
+  useEffect(() => {
+    let cancelled = false;
+    getRepository()
+      .cardForEntry(entry.id)
+      .then((card) => {
+        if (!cancelled) setProbe({ id: entry.id, carded: card !== undefined });
+      })
+      .catch(() => {
+        if (!cancelled) setProbe({ id: entry.id, carded: false });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [entry.id]);
 
   const add = async () => {
     setState('saving');
     try {
-      // `addCardTracked`, not the repository directly: an explicit Add also joins
+      // `addCardChecked`, not the repository directly: an explicit Add also joins
       // the "Looked up" system list (P3, `lib/lists/looked-up.ts`), which is the
-      // only record of where a card came from once the query is forgotten.
-      await addCardTracked(
+      // only record of where a card came from once the query is forgotten — and
+      // it reports whether a card was actually written, so the line below can be
+      // true rather than optimistic.
+      const result = await addCardChecked(
         getRepository(),
         entry,
         contextFor(query, context),
         undefined,
         dictVersion,
       );
-      setState('added');
+      setProbe({ id: entry.id, carded: true });
+      setOutcome({
+        id: entry.id,
+        state: result.created ? 'added' : result.contextApplied ? 'enriched' : 'existing',
+      });
     } catch {
       setState('error');
     }
   };
+
+  const settled = state === 'added' || state === 'enriched' || state === 'existing';
+  const carries = contextFor(query, context).query;
 
   return (
     <div data-testid="entry-detail" data-entry-id={entry.id}>
@@ -194,28 +236,52 @@ export function EntryDetail({
         </div>
       ) : null}
 
-      <div className="mt-4 flex items-center gap-3">
+      <div className="mt-4 flex flex-wrap items-center gap-3">
         <Button
           data-testid="add-card"
+          data-carded={carded === true ? 'true' : 'false'}
           onClick={add}
-          disabled={state === 'saving' || state === 'added'}
+          disabled={state === 'saving' || settled}
         >
-          {state === 'added'
-            ? 'Added'
+          {settled
+            ? 'In your cards'
             : state === 'saving'
               ? 'Adding…'
-              : choosable
-                ? `Add ${entry.pinyinMarked || group.simp}`
-                : 'Add card'}
+              : carded
+                ? 'Already a card'
+                : choosable
+                  ? `Add ${entry.pinyinMarked || group.simp}`
+                  : 'Add card'}
         </Button>
         {state === 'added' ? (
           <span className="text-sm text-accent" data-testid="add-state">
-            Added to your cards — it carries “{contextFor(query, context).query}”.
+            Added to your cards — it carries “{carries}”.
+          </span>
+        ) : null}
+        {state === 'enriched' ? (
+          <span className="text-sm text-accent" data-testid="add-state">
+            Already in your cards — it now carries “{carries}”.
+          </span>
+        ) : null}
+        {state === 'existing' ? (
+          <span className="text-sm text-muted" data-testid="add-state">
+            Already in your cards.
           </span>
         ) : null}
         {state === 'error' ? (
           <span className="text-sm text-warning" data-testid="add-state">
             Could not save that card.
+          </span>
+        ) : null}
+        {settled ? (
+          <span className="text-sm text-muted">
+            <Link href="/review" className="text-accent underline underline-offset-2">
+              Review now
+            </Link>{' '}
+            ·{' '}
+            <Link href="/" className="text-accent underline underline-offset-2">
+              see it on Today
+            </Link>
           </span>
         ) : null}
       </div>

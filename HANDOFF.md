@@ -658,3 +658,154 @@ exist, and the failures look like flaky timeouts anywhere React does the work. `
 not installed, and the process renames itself, so `pkill -f "next start"` misses it. Check
 with `ps -eo args | grep next-server` and `curl -s -o /dev/null -w '%{http_code}'
 http://localhost:3000/` before a run.
+
+---
+
+## Phases 1–3 review fixes
+
+Written by the fix agent between the merge and Phase 4, from the adversarial review of
+the merged Phases 1–3. Eight confirmed blocking/major findings and ten minors; every one
+below was reproduced first and re-verified against the reviewer's own evidence after the
+change. Two frozen files were edited (see "Frozen files" at the end).
+
+### The three bugs that mattered
+
+**1. An Add on a word that already had a card was a silent no-op.**
+`addCardFromEntry` returned the existing row and dropped the incoming `context`, so a
+word the spine drew this morning could not be given the sentence a reader tapped it in,
+the question an ask answered, or the query a lookup typed — while the panel said "Added
+to your cards — it carries '…'". Now the repository *merges*: fields the stored context
+is missing are filled in, and a non-explicit `source` is promoted to the explicit one
+that asked (`mergeCardContext`, `lib/db/dexie.ts`). Nothing already recorded is
+overwritten, so a reader card that is later looked up keeps saying `reader` and keeps its
+sentence. Verified end to end: the spine draws 了 `{source:'list'}`; adding 了 liǎo from
+`/lookup` leaves one card whose context is now
+`{source:'lookup', query:'了', addedAt:…}`, and the panel says "Already in your cards —
+it now carries '了'." — not "Added". This is the seam P4 and P5 depend on: an Add from
+the ask panel or the reader now reaches the card even when the queue got there first.
+
+**2. `newPerDay` was not a cap.** `settings.introduced` was charged only by
+`introduceCards`, and `buildQueue` subtracted *ungraded* non-explicit cards, so any card
+created another way (the demo seed, a list's "Add to queue") was free until it was graded
+and then handed its slot back: the demo drew 7 next to 3 seeded cards, and grading all ten
+produced three more — 13 new on a 10/day setting. Two halves to the fix:
+
+- every non-explicit creation now charges the counter — `queueFromList` routes through
+  `introduceCards`, and `loadDemo` charges its own `list`/`seed` cards through the new
+  `chargeIntroduced` (both in `lib/lists/introduce.ts`);
+- `buildQueue` counts `max(introducedToday, non-explicit cards created today)` and
+  subtracts, on top of it, only the *earlier days'* ungraded introductions. The `max` is
+  deliberate belt-and-braces: a future creator that forgets the counter still cannot widen
+  today's cap by grading.
+
+Verified: demo → `/` shows 10 new (3 seeded + 7 drawn) with `introduced` at 10 → grade all
+ten → reload → 0 new, nothing created, 15 cards total (was 18). The backlog rule that PLAN
+§3.3 asks for is unchanged and still tested: two untouched cards from yesterday mean two
+fewer draws today.
+
+**3. `/review` and Today disagreed about what today is.** Only `loadToday` introduced
+cards, so a fresh `/review` said "Nothing due — no cards are scheduled yet." while `/` was
+holding ten new words for the same learner, and the demo showed "Card 1 of 7" or "Card 1
+of 14" depending on which page was opened first. `useReviewStore.load()` now goes through
+`loadToday` and takes `summary.queue.cards`, so whichever route is opened first introduces
+and the other agrees. Opening `/review` therefore spends the day's allowance exactly as
+opening Today does (§3.3's documented consequence). The empty state gained a way onward —
+links to Today and Lookup — and says so when the draw itself failed (`waiting`,
+`drawError`). Verified: fresh database, `newPerDay: 3`, straight to `/review` → "Card 1 of
+3"; grade all three → empty, and `/` then shows 0 new and 3 of 3 introduced.
+
+### The rest of the confirmed findings
+
+- **The lookup panel now tells the truth about the card.** `EntryDetail` asks
+  `cardForEntry` on mount, so the button reads "Already a card" for a reading that is one
+  (per reading — 了 le and 了 liǎo answer differently), and after an Add it distinguishes
+  *added* / *already there, now enriched* / *already there* instead of claiming "Added"
+  for all three (`addCardChecked` in `lib/lists/looked-up.ts` reports `created` and
+  `contextApplied`). The settled state also offers "Review now" and "see it on Today",
+  which is the loop's next step and was previously a dead end.
+- **`wordState` asks the card before the band** (`lib/srs/states.ts`). The band is a guess
+  about words never touched, so a word with a card is `learning`, not `known` because HSK
+  says it is easy. A `known_words` row still wins over both — that is what "Mark known"
+  writes, and it is why a demo learner who declares HSK 1–2 known and then adds 打算 by
+  hand still sees `known` there: the row says so. Pinned by a unit case.
+- **The lists index counts the way the detail page badges.** `readViews`
+  (`lib/stores/lists.ts`) runs `wordState` over the same three inputs (a `known_words`
+  row, the card, the list's band) instead of counting `known_words` alone. Verified after
+  the demo plus a lookup Add: index "6 words · 2 known", detail shows exactly two `known`
+  badges. A custom list holding banded words is the one case that can still differ — the
+  detail page knows each entry's real band and the index only knows the list's.
+- **The demo seed records the real dictionary snapshot.** `loadDemo` passes
+  `source.dictVersion?.()`, so its cards and their `words` rows carry `1.3.20251213`
+  rather than `'unknown'`; asserted in `tests/unit/lists/seed.test.ts` and in
+  `tests/e2e/p3/seed.spec.ts`.
+- **A seeded card is no longer reviewed before it was added.** `demoContext` dates
+  `addedAt` behind the oldest replayed review. `cards.createdAt` is still the seed instant
+  because the repository seam owns that stamp — the seed header now says so, and
+  consumers must not read `createdAt` as a learning start date.
+- **`shi` no longer buries 是.** The "English first when the query is a gloss token" rule
+  fired on any token appearing anywhere in a gloss, and CC-CEDICT romanises inside its
+  English ("jiang shi", "lüshi form"), so 39 entries made `shi` an "English word" and the
+  pinyin section — 是 事 十 试 市 使, all HSK 1–3 — was squeezed into its reserved 16 rows.
+  `isGlossToken` now requires the query to be a whole *sense* of some entry (`glossTier`
+  ≤ 1). `sun`, `can`, `women`, `plan` are unchanged; `shi` and `ta` lead with pinyin and
+  are pinned by a test.
+
+### Minors folded in
+
+Settings number fields clamp to their own min/max and ignore an empty box (clearing
+"New cards per day" used to store 0 and report "Saved"; 300 used to store 300 under
+`max={200}`). Today and the list rows preview three senses joined with "; " as the search
+rows do, because CC-CEDICT's first gloss for a single-character spine word is usually the
+wrong sense ("被 — quilt", "时 — o'clock"). On a phone the lookup panel appears only once a
+result is picked, so the first hit is at the top of the results rather than ~200px down
+(desktop's two-column sticky layout is untouched). The stale `TODO(merge)` in
+`word-search.tsx` and the two pointers to the deleted `HANDOFF-p3.md` are gone.
+`schema.ts`'s `list_members.wordId` comment now says what is true — always `null` in v1,
+membership joins on `entryId` — and `system-lists.ts` says what is actually lazy (the
+`lists` rows and `words`; `list_members` is filled for all seven bands by the first visit
+to `/lists`).
+
+### Not fixed, and why
+
+- **`readViews` still reads every membership row on each `load()`** (8 × `toArray()`,
+  11,028 rows after the first `/lists` visit). The repository seam has no `count`, and
+  `knownCount` now needs the entry ids anyway. Left as it is, documented rather than
+  half-changed.
+- **`list_members.wordId` is still never written.** Every join in the app is on `entryId`
+  and the compound index is `[listId+entryId]`; the comment now matches the code. P4/P5:
+  do not read `wordId`.
+- **Two open tabs can still double-introduce**, and now `/review` is a second door to the
+  same draw. Unchanged from "Still open" #2 — the fix needs a schema change.
+
+### For P4 and P5
+
+- Add through `addCardTracked` / `addCardChecked` (`lib/lists/looked-up.ts`), never
+  `repository.addCardFromEntry` directly. A repeat Add on an existing card now *delivers*
+  its sentence or question, and `addCardChecked` tells you whether a card was created so
+  your copy can be true.
+- Any card you create that is **not** an explicit add (`lookup`/`ask`/`reader`) must charge
+  the day: go through `introduceCards`, or call `chargeIntroduced`. `buildQueue` will
+  charge you anyway for cards created today, so the only thing skipping it buys is a
+  wrong-looking counter.
+- `/review` introduces. If you write a spec that seeds its own cards, switch the spine off
+  (`setSettings({ newPerDay: 0 })`) as `tests/e2e/p2/fixtures.ts` now does, or your queue
+  is ten words longer than you think.
+
+### Frozen files changed
+
+- `lib/db/repository.ts` — one member added, `cardForEntry(entryId, senseIndex?)`, plus a
+  paragraph on `addCardFromEntry` documenting the context merge. No signature changed.
+- `lib/db/schema.ts` — comment only, on `list_members.wordId`. No shape changed, no
+  migration.
+
+### Checks after the fixes
+
+| Check | Result |
+|---|---|
+| `npx tsc --noEmit` | pass |
+| `pnpm lint` | pass |
+| `pnpm test` | pass — 28 files, 283 tests (was 273: 10 added) |
+| `pnpm build` | pass (Turbopack) |
+| `PORT=3000 pnpm e2e` | pass — 55/55 (was 54: 1 added) |
+
+No server is left running; port 3000 is free. `/home/user/v0-anchor` was not touched.

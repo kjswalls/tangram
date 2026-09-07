@@ -7,6 +7,7 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import { createDexieRepository, TangramDb } from '@/lib/db/dexie';
 import type { Repository } from '@/lib/db/repository';
+import { queueFromList } from '@/lib/lists/introduce';
 import { addCardTracked } from '@/lib/lists/looked-up';
 import { markListKnown } from '@/lib/lists/members';
 import { ensureSystemLists, findHskList } from '@/lib/lists/system-lists';
@@ -80,6 +81,43 @@ describe('loadToday', () => {
     // They are scheduled, not gone: FSRS put them a day or more out.
     expect(after.dueCount).toBe(0);
     expect((await repo.allCards()).length).toBe(10);
+  });
+
+  it('counts a hand-queued word against the day, graded or not', async () => {
+    // The acceptance line PLAN §3.3 states, in the shape that used to break it:
+    // a card created outside the spine draw ("Add to queue" on a list, and the
+    // demo seed the same way) charges `settings.introduced` at creation, so
+    // grading it cannot reopen the slot.
+    const { repo, reopen } = setup();
+    const source = dictEntrySource();
+    await repo.setSettings({ newPerDay: 3 });
+    const [byHand] = await source.band(4);
+    await queueFromList(repo, byHand, { now: NOW });
+    expect((await repo.getSettings()).introduced[todayKey(NOW, 4)]).toBe(1);
+
+    const first = await loadToday({ repo, now: NOW, source });
+    expect(first.created).toHaveLength(2);
+    expect(first.newCount).toBe(3);
+    expect(first.introducedToday).toBe(3);
+
+    // Grade every one of them and reload: no fourth card today.
+    for (const card of first.newCards) await repo.grade(card.id, 3, NOW);
+    const after = await loadToday({ repo: reopen(), now: NOW + 60_000, source });
+    expect(after.created).toEqual([]);
+    expect(after.newCards).toEqual([]);
+    expect(after.newCount).toBe(0);
+    expect(after.queue.drawLimit).toBe(0);
+    expect((await repo.allCards()).length).toBe(3);
+  });
+
+  it('queues a word by hand only once, however often the button is pressed', async () => {
+    const { repo } = setup();
+    const source = dictEntrySource();
+    const [word] = await source.band(4);
+    const first = await queueFromList(repo, word, { now: NOW });
+    const again = await queueFromList(repo, word, { now: NOW });
+    expect(again.id).toBe(first.id);
+    expect((await repo.getSettings()).introduced[todayKey(NOW, 4)]).toBe(1);
   });
 
   it('starts again after the study day rolls over', async () => {

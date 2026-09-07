@@ -18,6 +18,7 @@ import { EntryDetail } from '@/components/lookup/entry-detail';
 import { SearchResults } from '@/components/lookup/search-results';
 import { LookupPanel } from '@/components/lookup/lookup-panel';
 import { Input } from '@/components/ui/input';
+import { cn } from '@/lib/cn';
 import { DictRequestError, fetchSearch } from '@/lib/dict/client';
 import { useLookupStore } from '@/lib/stores/lookup';
 
@@ -146,7 +147,14 @@ export function LookupView({ askSlot }: { askSlot?: ReactNode }) {
             hasMore={Boolean(nextCursor)}
           />
         </div>
-        <div className="order-1 md:order-2">
+        {/*
+          Below md the panel is above the results (`order-1`), which is right the
+          moment there is something in it and wrong before: an empty card that
+          echoes the query pushed the first hit ~200px down the screen. So on a
+          phone it appears when a result is picked, and the two-column sticky
+          desktop layout is unchanged.
+        */}
+        <div className={cn('order-1 md:order-2', selected ? '' : 'hidden md:block')}>
           <div ref={panelRef} className="md:sticky md:top-4">
             <LookupPanel
               query={selected ? selected.simp : query}

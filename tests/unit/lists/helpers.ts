@@ -5,7 +5,7 @@
  */
 import { createDexieRepository, TangramDb } from '@/lib/db/dexie';
 import type { Repository } from '@/lib/db/repository';
-import { getEntries, hskBand } from '@/lib/dict/index';
+import { getDictIndex, getEntries, hskBand } from '@/lib/dict/index';
 import type { EntrySource } from '@/lib/lists/entry-source';
 import { scoreEntry } from '@/lib/lists/entry-source';
 import type { Entry, EntryId, HskBand } from '@/lib/types';
@@ -28,6 +28,10 @@ export function dictEntrySource(): EntrySource & { bandCalls: HskBand[] } {
     },
     async entries(ids) {
       return getEntries(ids);
+    },
+    /** The routes report `meta.version`, so the seed and the draw can record it. */
+    dictVersion() {
+      return getDictIndex().meta.version;
     },
     async search(query, limit = 20) {
       const scored: { entry: Entry; score: number }[] = [];

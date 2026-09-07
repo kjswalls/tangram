@@ -6,6 +6,12 @@
  * Today, sees ten new words and closes the tab has spent the day's ten. The
  * counter is persisted, so a reload cannot hand out another ten.
  *
+ * Every non-explicit creation goes through here for that reason: the spine
+ * draw, a list's "Add to queue" (`queueFromList`) and the demo seed
+ * (`chargeIntroduced`). A card created any other way would be free until it was
+ * graded and would then hand its slot back — which is exactly the bug that made
+ * "grade 10 new, reload → no further spine cards today" false.
+ *
  * The `words` row is created here too, by the repository, which is what "words
  * are materialised on demand" means: the HSK spine is 11k dictionary rows and
  * none of them exist locally until they are actually being learned.
@@ -92,16 +98,52 @@ export async function introduceCards(
   return { created, cards, settings: next };
 }
 
+export interface QueueFromListOptions {
+  now?: number;
+  dictVersion?: string;
+  /** The list the word was queued from, for the draw's own bookkeeping. */
+  listId?: string;
+}
+
 /**
  * Queue one word by hand from a list view. Provenance says `list`, so it is not
- * an explicit lookup and does not bypass the cap — it lowers how many more the
- * spine draws today (see `buildQueue`).
+ * an explicit lookup and does not bypass the cap — it *spends* one of the day's
+ * introductions, exactly as a spine draw does, which is why it goes through
+ * `introduceCards` rather than writing the card itself.
  */
 export async function queueFromList(
   repo: Repository,
   entry: Entry,
-  now: number = Date.now(),
-  dictVersion?: string,
+  options: QueueFromListOptions = {},
 ): Promise<CardRow> {
-  return repo.addCardFromEntry(entry, { source: 'list', addedAt: now }, undefined, dictVersion);
+  const now = options.now ?? Date.now();
+  const outcome = await introduceCards(
+    repo,
+    [{ entryId: entry.id, from: 'list', listId: options.listId ?? '', entry }],
+    {
+      now,
+      ...(options.dictVersion === undefined ? {} : { dictVersion: options.dictVersion }),
+    },
+  );
+  // `introduceCards` skips an id the dictionary no longer has; here the entry is
+  // in hand, so there is always exactly one card.
+  return outcome.cards[0];
+}
+
+/**
+ * Charge the day's counter for cards a caller created outside `introduceCards`
+ * — the demo seed, which needs its own provenance on each row. Same rule, one
+ * write: `settings.introduced[dayKey] += count`.
+ */
+export async function chargeIntroduced(
+  repo: Repository,
+  count: number,
+  now: number = Date.now(),
+): Promise<SettingsRow> {
+  const fresh = await repo.getSettings();
+  if (count <= 0) return fresh;
+  const key = todayKey(now, fresh.dayRollover);
+  return repo.setSettings({
+    introduced: { ...fresh.introduced, [key]: (fresh.introduced[key] ?? 0) + count },
+  });
 }

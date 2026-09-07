@@ -7,12 +7,19 @@
  * Everything comes from the real dictionary through an `EntrySource`, so the
  * seed is a description of a learner, not a fixture of invented Chinese. It
  * wipes first: a demo that lands on top of half a database is not a demo.
+ *
+ * One caveat for anything reading provenance: `cards.createdAt` is stamped by
+ * the repository at the instant the seed runs, so a seeded card's replayed
+ * review history is *older* than its own row. `context.addedAt` is the field
+ * the seed controls and it is dated behind the oldest review; `createdAt` is
+ * not a learning start date here.
  */
 
 import type { CardRow, Repository, SettingsRow } from '@/lib/db';
 import { sha1Hex } from '@/lib/dev/sha1';
 import { getEntrySource, type EntrySource } from '@/lib/lists/entry-source';
-import { addCardTracked } from '@/lib/lists/looked-up';
+import { chargeIntroduced } from '@/lib/lists/introduce';
+import { addCardTracked, isExplicitSource } from '@/lib/lists/looked-up';
 import { ensureSystemLists } from '@/lib/lists/system-lists';
 import { wordState } from '@/lib/srs/states';
 import type { CardContext, ContextSource, Entry, EntryId, HskBand } from '@/lib/types';
@@ -104,7 +111,8 @@ export const DEMO_PROMPT_VERSION = 'v1';
 /**
  * The plan's key is `sha1(promptVersion, provider, query, context, estimatedBand)`
  * (§3.4). Phase 4 owns the real derivation — when it lands, this should be
- * replaced by an import of it rather than kept in step by hand (HANDOFF-p3.md).
+ * replaced by an import of it rather than kept in step by hand (HANDOFF.md,
+ * "Phases 1–3 (merged)").
  */
 export function demoAskCacheKey(input: {
   query: string;
@@ -227,13 +235,23 @@ export async function loadDemo(options: DemoOptions = {}): Promise<DemoSummary> 
     (entry) => !found.has(entry.id) && entry.simp.length >= 2 && !entry.isVariant && !entry.properNoun,
   );
 
+  // Both fetches above have run, so the source can say which snapshot these rows
+  // were cut from; without it every demo card records 'unknown' and can never be
+  // re-checked against a rebuilt dictionary.
+  const dictVersion = source.dictVersion?.();
+
   const cards: CardRow[] = [];
+  let introduced = 0;
   for (const spec of DEMO_CARDS) {
     const entry = found.get(spec.entryId) ?? spares.shift();
     if (!entry) continue;
     const context = demoContext(spec, entry, now);
-    const card = await addCardTracked(repo, entry, context, undefined, undefined);
+    const card = await addCardTracked(repo, entry, context, undefined, dictVersion);
     cards.push(card);
+    // A seeded `list`/`seed` card is a spine introduction like any other and
+    // spends one of today's slots (`lib/lists/introduce.ts`); the explicit ones
+    // (lookup, ask, reader) never do.
+    if (!isExplicitSource(context.source)) introduced += 1;
 
     // 3. Backdated grades, replayed through the repository so the review rows
     //    are real history rather than a hand-written FSRS state.
@@ -242,6 +260,8 @@ export async function loadDemo(options: DemoOptions = {}): Promise<DemoSummary> 
       cards[cards.length - 1] = outcome.card;
     }
   }
+
+  await chargeIntroduced(repo, introduced, now);
 
   // 4. Something to read.
   const text = await repo.saveText({ title: DEMO_TEXT_TITLE, body: DEMO_PARAGRAPH });
@@ -290,7 +310,14 @@ function cardBand(card: CardRow): HskBand | undefined {
 }
 
 function demoContext(spec: DemoCardSpec, entry: Entry, now: number): CardContext {
-  const base = { source: spec.source, addedAt: now } satisfies CardContext;
+  // A card cannot have been reviewed before it was added. `createdAt` belongs to
+  // the repository seam and is the seed instant whatever we do here, so consumers
+  // must not read it as the learning start — but `addedAt` is ours, and it is
+  // dated behind the oldest replayed review so the provenance is at least
+  // self-consistent.
+  const oldest = Math.max(0, ...(spec.reviews ?? []).map((review) => review.daysAgo));
+  const addedAt = oldest > 0 ? now - (oldest + 1) * DAY_MS : now;
+  const base = { source: spec.source, addedAt } satisfies CardContext;
   if (spec.source === 'reader') {
     const found = sentenceAround(DEMO_PARAGRAPH, entry.simp);
     if (found && found.offset >= 0) {

@@ -35,8 +35,12 @@ export interface ReviewQueueInput {
  * The cards to study now: everything due, then the New cards today's queue
  * allows. Delegates to `lib/lists/queue.ts` rather than re-deriving the rules,
  * so "an explicit add is always in today's queue, `newPerDay` caps the spine
- * draw only" has exactly one implementation (P3 owns that file and fills in the
- * auto-draw ordering; this call site keeps working when it does).
+ * draw only" has exactly one implementation.
+ *
+ * The session store no longer calls this — it goes through `loadToday`, which
+ * *introduces* as well as reads, so `/review` and Today cannot offer different
+ * rows. This stays as the pure form of the same rule for callers holding the
+ * two narrower repository reads.
  */
 export function buildReviewQueue(input: ReviewQueueInput): CardRow[] {
   return buildQueue(input).cards;
@@ -124,8 +128,16 @@ export function isRevealKey(key: string): boolean {
  * The empty state (§4, P2): when nothing is due, say when something will be.
  * Hours up to two days out, days beyond that — "next card in 36 hours" is more
  * use than "in 2 days" when you are deciding whether to wait.
+ *
+ * `waiting` is new words today's cap still allows but that could not be created
+ * (the dictionary was unreachable — the load introduces them otherwise). Saying
+ * "next card in 3 days" while the app is holding new words for the same learner
+ * is the contradiction this argument exists to prevent.
  */
-export function emptyStateMessage(next: number | null, now: number): string {
+export function emptyStateMessage(next: number | null, now: number, waiting = 0): string {
+  if (waiting > 0) {
+    return `Nothing due — ${waiting} new ${waiting === 1 ? 'word is' : 'words are'} waiting, once the dictionary is back.`;
+  }
   if (next === null) return 'Nothing due — no cards are scheduled yet.';
   const diff = Math.max(0, next - now);
   const hours = Math.max(1, Math.ceil(diff / HOUR_MS));

@@ -19,7 +19,14 @@ function front(card: CardRow): { simp: string; pinyin: string; gloss: string } {
   if (isPhraseSnapshot(snapshot)) {
     return { simp: snapshot.simp, pinyin: snapshot.pinyinMarked, gloss: snapshot.en };
   }
-  return { simp: snapshot.simp, pinyin: snapshot.pinyinMarked, gloss: snapshot.glosses[0] ?? '' };
+  // Three senses, joined, exactly as the search rows show them: CC-CEDICT's
+  // first gloss for a single-character spine word is often the wrong sense
+  // ("被 — quilt", "时 — o'clock"), and one word of context fixes it.
+  return {
+    simp: snapshot.simp,
+    pinyin: snapshot.pinyinMarked,
+    gloss: snapshot.glosses.slice(0, 3).join('; '),
+  };
 }
 
 /**

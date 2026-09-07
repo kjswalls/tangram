@@ -184,7 +184,9 @@ export function ListDetail({ listId }: { listId: string }) {
                 <span className="min-w-0">
                   <span className="hanzi text-lg">{member.entry?.simp ?? member.entryId}</span>{' '}
                   <span className="text-sm text-muted">{member.entry?.pinyinMarked}</span>
-                  <span className="block truncate text-sm text-muted">{member.entry?.glosses[0]}</span>
+                  <span className="block truncate text-sm text-muted">
+                    {member.entry?.glosses.slice(0, 3).join('; ')}
+                  </span>
                 </span>
                 <span className="flex shrink-0 items-center gap-2">
                   <WordStateBadge state={member.state} />
@@ -211,14 +213,12 @@ export function ListDetail({ listId }: { listId: string }) {
                     onClick={() => {
                       const entry = member.entry;
                       if (!entry) return;
-                      void queueFromList(
-                        getRepository(),
-                        entry,
-                        Date.now(),
-                        getEntrySource().dictVersion?.(),
-                      ).then(() =>
-                        setReload((value) => value + 1),
-                      );
+                      const dictVersion = getEntrySource().dictVersion?.();
+                      void queueFromList(getRepository(), entry, {
+                        now: Date.now(),
+                        listId: list?.id ?? '',
+                        ...(dictVersion === undefined ? {} : { dictVersion }),
+                      }).then(() => setReload((value) => value + 1));
                     }}
                   >
                     {member.hasCard ? 'Queued' : 'Add to queue'}

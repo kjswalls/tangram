@@ -156,6 +156,39 @@ test.describe('/review', () => {
     );
   });
 
+  test('/review introduces the day’s new words itself, and Today agrees', async ({ page }) => {
+    // The two routes run one queue: opening /review first used to be a dead end
+    // ("no cards are scheduled yet") while / was holding the same learner's new
+    // words, and the demo showed 7 cards or 14 depending on which was opened
+    // first. Whichever is opened first now introduces, and the other agrees.
+    await openReview(page, { newPerDay: 3 });
+    await page.reload();
+
+    await expect(page.getByTestId('review-progress')).toHaveText('Card 1 of 3', {
+      timeout: 60_000,
+    });
+    const introduced = await page.evaluate(() => window.__tangram.repo.allCards());
+    expect(introduced).toHaveLength(3);
+    expect(introduced.every((card) => card.context?.source === 'list')).toBe(true);
+
+    // Click rather than type: each grade re-reads the queue, so the buttons come
+    // and go and Playwright's actionability wait is the synchronisation.
+    for (let i = 0; i < 3; i += 1) {
+      await page.getByTestId('reveal').click();
+      await page.getByTestId('grade-3').click();
+    }
+    await expect(page.getByTestId('review-empty')).toBeVisible({ timeout: 30_000 });
+
+    // Reloading /review offers nothing further, and Today says the same thing:
+    // the day's three are spent, and no fourth card was created anywhere.
+    await page.reload();
+    await expect(page.getByTestId('review-empty')).toBeVisible({ timeout: 60_000 });
+    await page.goto('/');
+    await expect(page.getByTestId('today-new-count')).toHaveText('0', { timeout: 60_000 });
+    await expect(page.getByText('3 of 3 new words introduced today')).toBeVisible();
+    expect(await page.evaluate(() => window.__tangram.repo.allCards())).toHaveLength(3);
+  });
+
   test('an explicitly added New card is in today’s queue', async ({ page }) => {
     // §3.3: an Add from lookup/ask/reader is always offered, cap or no cap.
     await openReview(page);

@@ -14,11 +14,12 @@
 
 import { create } from 'zustand';
 
-import type { ListRow, SettingsRow } from '@/lib/db/schema';
+import type { CardRow, ListRow, SettingsRow } from '@/lib/db/schema';
 import type { Repository } from '@/lib/db/repository';
 import { getEntrySource } from '@/lib/lists/entry-source';
 import { ensureMembers, markListKnown } from '@/lib/lists/members';
 import { ensureSystemLists } from '@/lib/lists/system-lists';
+import { wordState } from '@/lib/srs/states';
 import type { EntryId } from '@/lib/types';
 
 export interface ListView {
@@ -57,16 +58,45 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * The counts on the index, read the way the detail page reads its badges: the
+ * same `wordState` over the same three inputs (a `known_words` row, the card,
+ * the band). Counting `known_words` alone made "7 words · 1 known" sit next to
+ * a detail page showing three "known" badges — the number and the badges have
+ * to come from one rule or one of them is wrong.
+ *
+ * An HSK list's members are all of that list's band, which is where `hskBand`
+ * comes from without a dictionary round trip. A custom or "Looked up" list has
+ * no single band, so its rows fall back to the card and `known_words` alone —
+ * the detail page can see each entry's real band and this cannot, so a custom
+ * list holding HSK-1 words is the one case where the two still differ.
+ */
 async function readViews(repo: Repository): Promise<{ lists: ListRow[]; views: ListView[] }> {
   const lists = await ensureSystemLists(repo);
-  const known = new Set(await repo.knownEntryIds());
+  const [known, settings, cards] = await Promise.all([
+    repo.knownEntryIds(),
+    repo.getSettings(),
+    repo.allCards(),
+  ]);
+  const knownIds = new Set(known);
+  const cardByEntry = new Map<string, CardRow>();
+  for (const card of cards) if (card.entryId) cardByEntry.set(card.entryId, card);
+
   const views: ListView[] = [];
   for (const list of lists) {
     const members = await repo.listMembers(list.id);
     views.push({
       list,
       count: members.length,
-      knownCount: members.filter((row) => known.has(row.entryId)).length,
+      knownCount: members.filter(
+        (row) =>
+          wordState({
+            card: cardByEntry.get(row.entryId)?.fsrs ?? null,
+            known: knownIds.has(row.entryId),
+            ...(list.band === undefined ? {} : { hskBand: list.band }),
+            knownBand: settings.knownBand,
+          }) === 'known',
+      ).length,
     });
   }
   return { lists, views };

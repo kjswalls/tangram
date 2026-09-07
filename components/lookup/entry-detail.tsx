@@ -16,6 +16,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 
+import { SpeakButton } from '@/components/tts/speak-button';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/cn';
@@ -193,7 +194,10 @@ export function EntryDetail({
             </>
           )}
         </p>
-        <Badge>{group.source} match</Badge>
+        <div className="flex items-center gap-1">
+          <SpeakButton text={group.simp} label={group.simp} />
+          <Badge>{group.source} match</Badge>
+        </div>
       </div>
 
       <h3 className="mt-3 text-xs font-semibold tracking-wide text-muted uppercase">

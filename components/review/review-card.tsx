@@ -1,4 +1,5 @@
 import { ContextLine } from '@/components/review/context-line';
+import { SpeakButton } from '@/components/tts/speak-button';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/cn';
@@ -102,6 +103,7 @@ export function ReviewCard({ card, script, revealed, peeked, onPeek, onReveal }:
             <p data-testid="card-pinyin" className="text-xl font-medium text-accent">
               {back.pinyinMarked}
             </p>
+            <SpeakButton text={face.primary} label={face.primary} />
             {face.secondary ? (
               <p className="hanzi text-sm text-muted">
                 {face.secondaryLabel} {face.secondary}

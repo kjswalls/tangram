@@ -345,6 +345,42 @@ export function createDexieRepository(db: TangramDb): Repository {
       return updated;
     },
 
+    async renameList(id, name) {
+      const trimmed = name.trim();
+      const row = await db.lists.get(id);
+      if (!row || !alive(row) || trimmed === '') return undefined;
+      const updated: ListRow = { ...row, name: trimmed, updatedAt: Date.now() };
+      await db.lists.put(updated);
+      return updated;
+    },
+
+    async deleteList(id) {
+      const now = Date.now();
+      // The list and its membership go together: a live member row pointing at a
+      // tombstoned list is a row nothing can ever read or clean up.
+      await db.transaction('rw', db.lists, db.list_members, async () => {
+        const row = await db.lists.get(id);
+        if (row && alive(row)) await db.lists.put({ ...row, deletedAt: now, updatedAt: now });
+        const members = (await db.list_members.where('listId').equals(id).toArray()).filter(alive);
+        if (members.length > 0) {
+          await db.list_members.bulkPut(members.map((member) => ({ ...member, deletedAt: now })));
+        }
+      });
+    },
+
+    async removeListMembers(listId, entryIds) {
+      if (entryIds.length === 0) return 0;
+      const wanted = new Set(entryIds);
+      const now = Date.now();
+      const rows = (await db.list_members.where('listId').equals(listId).toArray())
+        .filter(alive)
+        .filter((row) => wanted.has(row.entryId));
+      if (rows.length > 0) {
+        await db.list_members.bulkPut(rows.map((row) => ({ ...row, deletedAt: now })));
+      }
+      return rows.length;
+    },
+
     async saveText(input: SaveTextInput) {
       const now = Date.now();
       if (input.id) {

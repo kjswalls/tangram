@@ -457,3 +457,204 @@ the paragraphs themselves are untouched, so the append-only rule holds.
 `test-results/` was cleared by the e2e run, so the review panel's screenshots and
 `shoot-normal.json` are gone; the measurements above were re-taken against a fresh
 production server on port 3100, which is stopped. No server is left running.
+
+---
+
+## Phases 1–3 (merged) — decisions, needs, TODOs
+
+Written by the merge/integration agent. `p1`, `p2` and `p3` are merged into `main`
+with `--no-ff` in that order, and `HANDOFF-p1.md` / `HANDOFF-p2.md` /
+`HANDOFF-p3.md` are folded into this section and deleted — one document again.
+
+**No merge conflict occurred.** The three branches touched disjoint file sets; the
+worktree path discipline held and no frozen file was edited by any builder. The one
+real collision was semantic, not textual, and is recorded under "The queue" below.
+
+### P1 — dictionary search, segmentation, `/lookup`
+
+- **Routing** (`lib/dict/search.ts`): CJK → hanzi exact then prefix over both scripts;
+  a query that fully parses as pinyin → *both* the pinyin and gloss indexes as labelled
+  sections; otherwise English. Section order: typed tones → pinyin first; else an exact
+  gloss token of ≥3 letters → English first (`sun`, `women`); else pinyin first.
+- **The 50-cap is split between sections**, each trailing section reserved 16, and the
+  cursor is per-section (`"34.16"`). A flat cap made `he → 他` and `sun → 孙` impossible:
+  the leading section ate the whole page.
+- **A headword both indexes match is assigned to whichever ranked it higher** (孫 is `sun`
+  the reading, not the "Sun" in "surname Sun"). Claiming while ranking made 孙 vanish;
+  deduping per page made page 2 repeat page 1.
+- **Glosses are split into senses** on `;` with parentheticals stripped, so `he`
+  whole-matches 他 (HSK 1) instead of ranking 怹 above it. **Irregular plurals**
+  (`women → woman`) are lemmatised at query time only — the Phase 0 gloss index is
+  untouched.
+- **Segmentation** (`lib/dict/segment.ts`): jieba's max-probability DP over the headword
+  DAG scored by `log(freq/total)`, no HMM, unknown single chars at the floor weight,
+  script inferred per call. Tokens carry every reading, freq-ordered; offsets are UTF-16
+  and survive surrogate pairs. A `text` run (punctuation, Latin) is `via: 'fallback'`
+  with no entry ids — `Token.via` has no third value.
+- `group.hskBand` is the *lowest* band of any reading (the badge shows the headword's
+  easiest way in) while ranking uses the band of the *matched* reading.
+- **Seams:** `LookupView` takes `askSlot?: ReactNode` straight into `slots.ask`, so P4 is
+  a one-line change in `app/lookup/page.tsx`; `openLookup({query, context})` is unchanged,
+  so a reader context (P5) flows into the panel and onto the card.
+- **Cost:** the first hanzi search in a process sorts the 120k headword keys into a prefix
+  index (~0.2 s, memoised on the `DictIndex` via a `WeakMap`); the first `segment()` sums
+  frequencies over both headword maps. Once per process; `resetDictCache()` drops both.
+- The container's Chromium has no glyphs for the IDS characters (⿰⿱…), so the
+  decomposition line screenshots as tofu here. Font gap in this image, not a bug — the
+  strings are correct in the DOM and asserted in the e2e spec.
+
+### P2 — cards and the review session
+
+- **The review queue is `lib/lists/queue.ts`'s queue, not a second one.**
+  `buildReviewQueue` (`lib/srs/session.ts`) delegates to `buildQueue`, so "what is in
+  today's queue" has one implementation and `/review` inherited P3's auto-draw ordering
+  the moment it landed.
+- **A grade re-queries the database rather than advancing an index.** The schedule the
+  grade just wrote decides whether the card returns; with `enable_short_term: false`
+  nothing can come back inside a session, so the queue only shortens.
+- **Grade keys are gated on the flip.** 1–4 are inert until the card is revealed — you
+  cannot rate a recall you have not attempted. Space/Enter flip; every other key, and any
+  key typed into an input, is ignored.
+- **"Peek context" masks by character and is hidden when it cannot mask.** With no offsets
+  *and* no occurrence of the headword in the sentence, the peek button is not rendered at
+  all: a peek that silently shows the answer is worse than none.
+- **`nextDueAt` ignores New cards** (their `due` is their creation instant), so the empty
+  state says "no cards are scheduled yet" when only capped-out New cards remain.
+- **Intervals are computed against the instant the queue was built**, not `Date.now()` at
+  render (`react-hooks/purity`, and a label that drifts on screen is a lie).
+- **Phase 0's `grade()` was verified, not changed** (`tests/unit/srs/grade.test.ts`): the
+  new FSRS state, the mirrored `due` column, exactly one review row carrying the pre-grade
+  state in both `before` and `log`, epoch-ms log dates, never under a day, and a
+  `fsrs(FSRS_PARAMETERS).reschedule(...)` replay straight from ts-fsrs that reproduces the
+  stored card.
+
+### P3 — lists, the queue, Today, settings, the demo seed
+
+- **The daily cap counts introductions, not offers.** `settings.introduced[dayKey]` goes
+  up when a card is *created* (`lib/lists/introduce.ts`, the only writer), and
+  `drawLimit = newPerDay − introducedToday − ungraded spine cards`.
+- **Opening `/` is what introduces the day's new words**, so Today's count and the cards
+  `/review` offers are the same rows. `loadToday({introduce: false})` reports without
+  creating. Consequence: visiting Today spends the day's allowance even if you never study.
+- **HSK membership is `entryId` rows, materialised per band.** PLAN §3.3's "a `words` row
+  for every spine word" was *not* followed: that is 11,028 snapshots of a dictionary the
+  app already ships. A `words` row appears only when a card does.
+- **The auto-draw skips bands at or below `settings.knownBand`** as well as bands below
+  `spineStartBand` — a queue that argues with the reader's colours is a bug. User-list
+  members are filtered only by "already met".
+- **Settings write through on change**; no Save button, and the queue reads the row, not
+  the form. `script` is persisted and read by nothing yet (deliberate, §6.8).
+- **The demo seed is deterministic and wipes first**: HSK 1–2 known, eight cards across
+  every provenance, backdated grades replayed through `repo.grade`, one paragraph in
+  `texts`, two warm `ask_cache` rows.
+
+### The queue: the one place two phases disagreed
+
+P3 rewrote `buildQueue` into a superset (still accepts `{now, settings, due, candidates}`;
+now also `cards`, `newCandidates`, `newPerDay`, `introducedToday`) and **changed its
+semantics**: existing New cards are no longer capped — they are all offered and instead
+lower `drawLimit`. P2's `tests/unit/srs/session.test.ts` still asserted the Phase 0 stub's
+rule ("a spine card is held back when the cap is spent") and was the only test that failed
+on the merge. Resolved in P3's favour, because P3 owns the file and the new rule is what
+makes §3.3's "grade 10 new, reload → no further spine cards today" true without lying to a
+learner who never grades. The spec was rewritten to the surviving guarantee — **an explicit
+add is never behind a spine card** — plus a new case pinning that the cap governs `draws`,
+not cards that already exist.
+
+### What the merge wired
+
+1. **`/api/dict/search` now answers the lists layer's word search.**
+   `EntrySource.search` (`lib/lists/entry-source.ts`) calls P1's route through
+   `fetchSearch` and flattens its *groups* — one per headword, readings and all — in P1's
+   own order, so "add a word to this list" and the lookup box rank a query identically.
+   The HSK-band scan stays as the offline fallback for a 503 or a network failure; an
+   empty answer from the route is an answer, not a reason to pull 11k rows over the wire.
+   P1's response body is `{groups, sections, …}` — neither of the two shapes P3 guessed —
+   so without this the fallback ran forever and silently.
+2. **Every Add joins "Looked up".** `components/lookup/entry-detail.tsx` adds through
+   `addCardTracked` (`lib/lists/looked-up.ts`) instead of calling
+   `repository.addCardFromEntry` directly. P4 and P5 must do the same.
+3. **`meta.version` on the entry-bearing dict routes** (HANDOFF-p3 Needs 1).
+   `/api/dict/entries` and `/api/dict/hsk` now answer `{meta:{version}, …}`;
+   `EntrySource` records it and exposes `dictVersion()`, and `today.ts` /
+   `queueFromList` pass it into `addCardFromEntry`. Cards the lists layer creates record
+   the real CC-CEDICT snapshot instead of `'unknown'`. `SearchResult.dictVersion` already
+   carried it, so the lookup path was already correct.
+4. **`deleteList` / `removeListMembers` / `renameList` on the repository**
+   (HANDOFF-p3 Needs 2). Added to the **frozen** `lib/db/repository.ts` and implemented in
+   `lib/db/dexie.ts`; all three are soft deletes, and `deleteList` tombstones the list and
+   its membership in one transaction so no member row is orphaned under a dead list. A
+   custom list can now lose a word and be deleted from `/lists/[id]` (two clicks, no
+   `confirm()`); `renameList` has no UI yet. Deleting a *system* list is a reset, not a
+   removal — `ensureSystemLists` recreates it on the next visit.
+
+### Frozen files changed by the merge
+
+`lib/db/repository.ts` only, for item 4 above (three added members, no signature changed).
+`lib/db/schema.ts`, `lib/types.ts`, `app/layout.tsx`, `components/ui/**`,
+`components/lookup/lookup-panel.tsx`, `app/globals.css`, `package.json`,
+`pnpm-lock.yaml`, `next.config.ts` and the configs are untouched; no dependency was added.
+
+### Two e2e specs were repaired, both racing rather than wrong
+
+- `p3/lists.spec.ts` "the active toggle persists" reloaded on the strength of the
+  *optimistic* checkbox, racing Dexie's write against the navigation that kills the page
+  performing it. It now polls the stored row before reloading, which is what "persists"
+  means.
+- `p3/lists.spec.ts` "a custom list … filled by search" matched `Add 跑步` loosely; with
+  the search now coming from `/api/dict/search`, 跑步机 and 跑步者 are on screen too and
+  the locator was ambiguous. Fixed with `exact: true` — the extra results are the
+  improvement, not the defect.
+
+### `tests/e2e/integration.spec.ts` — the post-merge spec
+
+PLAN §4's integration walk, with no fixture: reset from `/settings` with `newPerDay: 0`
+(so the spine draw is off and "1 new" is exactly the word looked up, which is also §3.3's
+rule that an explicit Add ignores the cap) → look up `dasuan` on `/lookup` → Add → the card
+carries `context.query`, `source: 'lookup'` and a real `dictVersion`, and the entry is in
+"Looked up" → `/` shows 1 new and names 打算 → Start review → `/review` shows 打算 → Space,
+then `3` → exactly one `reviews` row for that card with `before.state === 0`, and the card
+is rescheduled into the future. A second test walks the nav through all six routes.
+
+### Still open after the merge
+
+1. **The ask-cache key in the seed is a placeholder.** `demoAskCacheKey` in
+   `lib/dev/seed.ts` implements §3.4's *description* of the key. **Phase 4 owns the real
+   derivation**: import it there and delete the placeholder, or the demo's two warm rows
+   are orphans rather than cache hits. `lib/dev/sha1.ts` is a dependency-free SHA-1 if P4
+   wants it.
+2. **Two open tabs could double-introduce.** `ensureSystemLists` and `loadToday` guard
+   within one page (an in-flight promise per repository), but two tabs are two JS contexts
+   over one IndexedDB: they could create the system lists twice and each charge the
+   counter. Single-user, single-tab is v1's premise; the fix is a `BroadcastChannel` or a
+   `[kind+band]` unique index, which needs a schema change.
+3. **`renameList` has no caller.** The repository can do it; no UI asks.
+4. **`/review` still does not write `settings.introduced`** — nothing but
+   `introduceCards` does, which is correct (the counter counts creations), but it means the
+   empty state cannot say "N new tomorrow" without reading that counter.
+5. **P4's ask slot and P5's reader are unmounted seams**, both one line away
+   (`app/lookup/page.tsx`, `openLookup`).
+6. `data/decomp.json` now has a consumer (`/api/dict/decomp`), closing open question 2 of
+   the Phase 0 section.
+
+### Checks on the merge commit
+
+| Check | Result |
+|---|---|
+| `pnpm install --frozen-lockfile` | pass, no-op |
+| `pnpm data:ensure` | pass — `data/dict.json` present |
+| `npx tsc --noEmit` | pass |
+| `pnpm lint` | pass |
+| `pnpm test` | pass — 28 files, 273 tests |
+| `pnpm build` | pass (Turbopack) |
+| `PORT=3000 pnpm e2e` | pass — 54/54, including the 2 integration specs |
+
+No server is left running; port 3000 is free. `/home/user/v0-anchor` was not touched.
+
+**Running the suite in this container:** `playwright.config.ts` sets
+`reuseExistingServer: true` and a leftover `next start` on the port is reused *silently* —
+if it predates your last build it serves HTML pointing at chunk hashes that no longer
+exist, and the failures look like flaky timeouts anywhere React does the work. `lsof` is
+not installed, and the process renames itself, so `pkill -f "next start"` misses it. Check
+with `ps -eo args | grep next-server` and `curl -s -o /dev/null -w '%{http_code}'
+http://localhost:3000/` before a run.

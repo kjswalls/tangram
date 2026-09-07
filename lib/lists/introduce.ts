@@ -101,6 +101,7 @@ export async function queueFromList(
   repo: Repository,
   entry: Entry,
   now: number = Date.now(),
+  dictVersion?: string,
 ): Promise<CardRow> {
-  return repo.addCardFromEntry(entry, { source: 'list', addedAt: now });
+  return repo.addCardFromEntry(entry, { source: 'list', addedAt: now }, undefined, dictVersion);
 }

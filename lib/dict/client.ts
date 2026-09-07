@@ -50,16 +50,35 @@ async function getJson<T>(path: string, options: DictFetchOptions = {}): Promise
   return (await res.json()) as T;
 }
 
+/**
+ * Entries by id, with the snapshot version they came from. Unknown ids are
+ * simply absent. Use this when the rows are on their way into a card; the
+ * `fetchEntries` wrapper below is for callers that only want the rows.
+ */
+export async function fetchEntriesResponse(
+  ids: readonly EntryId[],
+  options?: DictFetchOptions,
+): Promise<EntriesResponse> {
+  if (ids.length === 0) return { meta: { version: '' }, entries: [] };
+  // Repeated params, not a comma list: ids contain commas inside their pinyin.
+  const query = ids.map((id) => `ids=${encodeURIComponent(id)}`).join('&');
+  return getJson<EntriesResponse>(`/api/dict/entries?${query}`, options);
+}
+
 /** Entries by id, in the order asked for. Unknown ids are simply absent. */
 export async function fetchEntries(
   ids: readonly EntryId[],
   options?: DictFetchOptions,
 ): Promise<DictEntry[]> {
-  if (ids.length === 0) return [];
-  // Repeated params, not a comma list: ids contain commas inside their pinyin.
-  const query = ids.map((id) => `ids=${encodeURIComponent(id)}`).join('&');
-  const body = await getJson<EntriesResponse>(`/api/dict/entries?${query}`, options);
-  return body.entries;
+  return (await fetchEntriesResponse(ids, options)).entries;
+}
+
+/** One HSK band with its snapshot version. Band 7 is the list labelled "7–9". */
+export async function fetchHskResponse(
+  band: HskBand,
+  options?: DictFetchOptions,
+): Promise<HskResponse> {
+  return getJson<HskResponse>(`/api/dict/hsk?band=${band}`, options);
 }
 
 /** One HSK band, ordered by frequency. Band 7 is the list labelled "7–9". */
@@ -67,8 +86,7 @@ export async function fetchHskBand(
   band: HskBand,
   options?: DictFetchOptions,
 ): Promise<DictEntry[]> {
-  const body = await getJson<HskResponse>(`/api/dict/hsk?band=${band}`, options);
-  return body.entries;
+  return (await fetchHskResponse(band, options)).entries;
 }
 
 // --- Phase 1: search, segmentation and decomposition -----------------------

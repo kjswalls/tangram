@@ -7,7 +7,7 @@
  * handful of entries instead of a 35 MB file.
  */
 
-import { fetchEntries, fetchHskBand } from '@/lib/dict/client';
+import { fetchEntriesResponse, fetchHskResponse, fetchSearch } from '@/lib/dict/client';
 import { normalizePinyin } from '@/lib/dict/pinyin';
 import type { Entry, EntryId, HskBand } from '@/lib/types';
 
@@ -18,6 +18,13 @@ export interface EntrySource {
   entries(ids: readonly EntryId[]): Promise<Entry[]>;
   /** Headword search for "add a word to this list". */
   search(query: string, limit?: number): Promise<Entry[]>;
+  /**
+   * `meta.version` of the snapshot the rows above came from, once anything has
+   * been fetched — what a card records as its `dictVersion`. Optional so a test
+   * fake need not implement it; a card made from a source that cannot say falls
+   * back to the repository's `'unknown'`.
+   */
+  dictVersion?(): string | undefined;
 }
 
 /** `/api/dict/entries` refuses more than 200 ids in one request. */
@@ -75,15 +82,23 @@ export interface HttpEntrySourceOptions {
  */
 export function createHttpEntrySource(options: HttpEntrySourceOptions = {}): EntrySource {
   const bands = new Map<HskBand, Promise<Entry[]>>();
+  // Every entry-bearing route reports it and they all read the same file, so the
+  // last answer is the current one.
+  let version: string | undefined;
 
   const band: EntrySource['band'] = (value) => {
     const cached = bands.get(value);
     if (cached) return cached;
-    const pending = fetchHskBand(value, options).catch((error: unknown) => {
-      // A failed fetch must not poison the cache: the next visit should retry.
-      bands.delete(value);
-      throw error;
-    });
+    const pending = fetchHskResponse(value, options)
+      .then((body) => {
+        version = body.meta.version || version;
+        return body.entries;
+      })
+      .catch((error: unknown) => {
+        // A failed fetch must not poison the cache: the next visit should retry.
+        bands.delete(value);
+        throw error;
+      });
     bands.set(value, pending);
     return pending;
   };
@@ -91,22 +106,29 @@ export function createHttpEntrySource(options: HttpEntrySourceOptions = {}): Ent
   return {
     band,
 
+    dictVersion: () => version,
+
     async entries(ids) {
       const out: Entry[] = [];
       for (let i = 0; i < ids.length; i += ID_CHUNK) {
-        out.push(...(await fetchEntries(ids.slice(i, i + ID_CHUNK), options)));
+        const body = await fetchEntriesResponse(ids.slice(i, i + ID_CHUNK), options);
+        version = body.meta.version || version;
+        out.push(...body.entries);
       }
       return out;
     },
 
     /**
-     * P1 owns `/api/dict/search`; until it lands this walks the HSK bands, which
-     * is every word a list is plausibly built from and nothing like the whole
-     * dictionary. TODO(merge): call `/api/dict/search?q=` once P1 has landed and
-     * keep this as the offline fallback.
+     * `/api/dict/search` is P1's router and ranker — the same one `/lookup` uses —
+     * so "add a word to this list" and the lookup box agree on what a query means.
+     * The HSK-band scan below stays as the fallback for the case the route cannot
+     * answer (no `data/` build, a 503): 11k words is every word a list is
+     * plausibly built from, and it is better than an empty box.
      */
     async search(query, limit = SEARCH_LIMIT) {
-      const viaRoute = await searchRoute(query, limit, options);
+      const viaRoute = await searchRoute(query, limit, options, (seen) => {
+        version = seen || version;
+      });
       if (viaRoute) return viaRoute;
 
       const scored: { entry: Entry; score: number }[] = [];
@@ -128,38 +150,30 @@ export function createHttpEntrySource(options: HttpEntrySourceOptions = {}): Ent
   };
 }
 
-/** `null` when the route is not there yet (P1), so the caller can fall back. */
+/**
+ * `null` when the route could not answer (a 503 with no `data/` build, a network
+ * failure), so the caller falls back to scanning the bands.
+ *
+ * The route answers in *groups* — one per headword, carrying every reading — and
+ * a list holds entries, so the groups are flattened in display order. Each
+ * group already lists the readings that matched first, so the flattening keeps
+ * P1's ranking rather than inventing one.
+ */
 async function searchRoute(
   query: string,
   limit: number,
   options: HttpEntrySourceOptions,
+  noteVersion: (version: string) => void,
 ): Promise<Entry[] | null> {
   try {
-    const response = await fetch(
-      `${options.baseUrl ?? ''}/api/dict/search?q=${encodeURIComponent(query)}&limit=${limit}`,
-      { headers: { accept: 'application/json' } },
-    );
-    if (!response.ok) return null;
-    const body: unknown = await response.json();
-    const entries = readEntries(body);
-    return entries ? entries.slice(0, limit) : null;
+    const result = await fetchSearch(query, { baseUrl: options.baseUrl, limit });
+    if (result.dictVersion) noteVersion(result.dictVersion);
+    // An empty answer is still an answer: the router looked and there is nothing
+    // there, so do not pull 11k rows over the wire to confirm a typo.
+    return result.groups.flatMap((group) => group.entries).slice(0, limit);
   } catch {
     return null;
   }
-}
-
-/**
- * P1's response body is not written yet, so accept the two shapes it can
- * reasonably have and treat anything else as "route not ready".
- */
-function readEntries(body: unknown): Entry[] | null {
-  if (Array.isArray(body)) return body as Entry[];
-  if (body && typeof body === 'object') {
-    const record = body as { entries?: unknown; results?: unknown };
-    if (Array.isArray(record.entries)) return record.entries as Entry[];
-    if (Array.isArray(record.results)) return record.results as Entry[];
-  }
-  return null;
 }
 
 let shared: EntrySource | undefined;

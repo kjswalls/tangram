@@ -98,6 +98,20 @@ export interface Repository {
   listMembers(listId: string): Promise<ListMemberRow[]>;
   addListMembers(listId: string, entryIds: string[]): Promise<ListMemberRow[]>;
   setListActive(id: string, active: boolean): Promise<ListRow | undefined>;
+  /**
+   * Rename a list. The system lists are named by `lib/lists/system-lists.ts`,
+   * which finds an HSK band by its `band` column, so renaming one is allowed and
+   * does not orphan it.
+   */
+  renameList(id: string, name: string): Promise<ListRow | undefined>;
+  /**
+   * Soft-delete a list and its membership. A tombstoned list is gone from
+   * `lists()`, so `ensureSystemLists` will recreate a deleted *system* list on
+   * the next visit — deleting one is a reset, not a removal.
+   */
+  deleteList(id: string): Promise<void>;
+  /** Soft-delete membership rows. The cards those words made are untouched. */
+  removeListMembers(listId: string, entryIds: string[]): Promise<number>;
 
   saveText(input: SaveTextInput): Promise<TextRow>;
   texts(): Promise<TextRow[]>;

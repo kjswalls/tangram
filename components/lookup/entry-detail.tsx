@@ -22,6 +22,7 @@ import { getRepository } from '@/lib/db/get-db';
 import { fetchDecomp } from '@/lib/dict/client';
 import type { SearchGroup } from '@/lib/dict/search';
 import type { DecompResponse } from '@/lib/dict/decomp';
+import { addCardTracked } from '@/lib/lists/looked-up';
 import { hskBandLabel, type CardContext, type Entry } from '@/lib/types';
 
 type AddState = 'idle' | 'saving' | 'added' | 'error';
@@ -122,7 +123,11 @@ export function EntryDetail({
   const add = async () => {
     setState('saving');
     try {
-      await getRepository().addCardFromEntry(
+      // `addCardTracked`, not the repository directly: an explicit Add also joins
+      // the "Looked up" system list (P3, `lib/lists/looked-up.ts`), which is the
+      // only record of where a card came from once the query is forgotten.
+      await addCardTracked(
+        getRepository(),
         entry,
         contextFor(query, context),
         undefined,

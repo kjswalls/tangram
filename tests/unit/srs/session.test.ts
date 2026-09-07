@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { DEFAULT_SETTINGS, type CardRow, type SettingsRow } from '@/lib/db/schema';
+import type { DrawCandidate } from '@/lib/lists/draw';
+import { buildQueue } from '@/lib/lists/queue';
 import { newCard } from '@/lib/srs/card';
 import {
   buildReviewQueue,
@@ -67,8 +69,12 @@ describe('buildReviewQueue', () => {
     expect(queue.map((row) => row.id)).toEqual([older.id, newer.id]);
   });
 
-  it('always offers an explicitly added New card, even with the day’s cap spent', () => {
-    // §3.3: the newPerDay cap governs the spine auto-draw only.
+  it('always offers an explicitly added New card first, even with the day’s cap spent', () => {
+    // §3.3: the newPerDay cap governs the spine auto-*draw* only. After the P3
+    // merge the cap is charged when a spine card is **created**, so a card that
+    // already exists is offered whatever the counter says — it lowers how many
+    // more may be drawn instead (`buildQueue().drawLimit`). What survives here
+    // is the ordering guarantee: an explicit add is never behind a spine card.
     const added = card({ context: explicit('lookup'), createdAt: NOW - 10 });
     const fromSpine = card({ createdAt: NOW });
     const queue = buildReviewQueue({
@@ -77,7 +83,20 @@ describe('buildReviewQueue', () => {
       due: [],
       candidates: [fromSpine, added],
     });
-    expect(queue.map((row) => row.id)).toEqual([added.id]);
+    expect(queue.map((row) => row.id)).toEqual([added.id, fromSpine.id]);
+  });
+
+  it('spends the cap on the draw, not on the cards already made', () => {
+    const fromSpine = card({ createdAt: NOW });
+    const queue = buildQueue({
+      now: NOW,
+      settings: settings({ newPerDay: 1 }),
+      candidates: [fromSpine],
+      newCandidates: [{ entryId: 'e', from: 'spine', listId: 'hsk-3', band: 3 } satisfies DrawCandidate],
+    });
+    expect(queue.cards.map((row) => row.id)).toEqual([fromSpine.id]);
+    expect(queue.drawLimit).toBe(0);
+    expect(queue.draws).toEqual([]);
   });
 
   it('puts due cards ahead of new ones', () => {

@@ -220,6 +220,52 @@ describe('lists', () => {
     expect(off?.active).toBe(false);
     expect(await repo.setListActive('missing', true)).toBeUndefined();
   });
+
+  it('renames a list, refusing an empty name and an id that is not there', async () => {
+    const repo = setup();
+    const custom = await repo.createList({ name: 'Menu words', kind: 'custom' });
+
+    const renamed = await repo.renameList(custom.id, '  Restaurant  ');
+    expect(renamed?.name).toBe('Restaurant');
+    expect((await repo.lists())[0].name).toBe('Restaurant');
+    expect(await repo.renameList(custom.id, '   ')).toBeUndefined();
+    expect((await repo.lists())[0].name).toBe('Restaurant');
+    expect(await repo.renameList('missing', 'Nope')).toBeUndefined();
+  });
+
+  it('removes members without touching the cards they made', async () => {
+    const repo = setup();
+    const custom = await repo.createList({ name: 'Menu words', kind: 'custom' });
+    await repo.addListMembers(custom.id, [DASUAN.id, KANKAN.id]);
+    await repo.addCardFromEntry(DASUAN);
+
+    expect(await repo.removeListMembers(custom.id, [DASUAN.id])).toBe(1);
+    expect((await repo.listMembers(custom.id)).map((row) => row.entryId)).toEqual([KANKAN.id]);
+    // A word taken out of a list is not a word un-learned.
+    expect(await repo.allCards()).toHaveLength(1);
+    // Idempotent: a second removal has nothing left to tombstone.
+    expect(await repo.removeListMembers(custom.id, [DASUAN.id])).toBe(0);
+    expect(await repo.removeListMembers(custom.id, [])).toBe(0);
+  });
+
+  it('deletes a list and its membership together', async () => {
+    const repo = setup();
+    const custom = await repo.createList({ name: 'Menu words', kind: 'custom' });
+    const other = await repo.createList({ name: 'Keep me', kind: 'custom' });
+    await repo.addListMembers(custom.id, [DASUAN.id]);
+    await repo.addListMembers(other.id, [KANKAN.id]);
+
+    await repo.deleteList(custom.id);
+    expect((await repo.lists()).map((row) => row.name)).toEqual(['Keep me']);
+    // No orphaned membership: a live member row under a tombstoned list could
+    // never be read or cleaned up again.
+    expect(await repo.listMembers(custom.id)).toEqual([]);
+    expect(await repo.listMembers(other.id)).toHaveLength(1);
+    // Deleting twice, or deleting nothing, is not an error.
+    await repo.deleteList(custom.id);
+    await repo.deleteList('missing');
+    expect(await repo.lists()).toHaveLength(1);
+  });
 });
 
 describe('texts, ask cache and reset', () => {

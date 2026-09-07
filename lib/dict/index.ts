@@ -143,6 +143,11 @@ export function getDictIndex(): DictIndex {
   return cache.index as DictIndex;
 }
 
+/** `meta.version` of the loaded snapshot — what a card records as its `dictVersion`. */
+export function dictVersion(): string {
+  return getDictIndex().meta.version;
+}
+
 export function getEntry(id: EntryId): DictEntry | undefined {
   return getDictIndex().entries.get(id);
 }

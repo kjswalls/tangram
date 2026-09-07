@@ -77,6 +77,9 @@ async function run(input: TodayInput): Promise<TodaySummary> {
         source,
       });
       if (candidates.length > 0) {
+        // Read after the draw, not before: the source only knows the snapshot
+        // once it has fetched something from it.
+        const dictVersion = source.dictVersion?.();
         const outcome = await introduceCards(repo, candidates, {
           now,
           source,
@@ -84,6 +87,10 @@ async function run(input: TodayInput): Promise<TodaySummary> {
           // The card set is already in hand: pass it so the counter cannot be
           // charged twice for a word that was drawn and created a moment ago.
           carded: new Set(cards.flatMap((card) => (card.entryId ? [card.entryId] : []))),
+          // The draw has just read the dictionary, so the source knows which
+          // snapshot these rows came from; without it the card records
+          // 'unknown' and can never be re-checked against a rebuilt dictionary.
+          ...(dictVersion === undefined ? {} : { dictVersion }),
         });
         created = outcome.created;
         after = outcome.settings;

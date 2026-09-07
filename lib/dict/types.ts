@@ -27,11 +27,24 @@ export interface DictDataMissingBody {
   hint: string;
 }
 
+/**
+ * What every entry-bearing response says about the data behind it. The version
+ * is `meta.version` from `data/dict.json` — the CC-CEDICT snapshot the rows were
+ * cut from — and it is on the wire because `addCardFromEntry` stamps it onto the
+ * card snapshot: a card that cannot name its dictionary cannot be re-checked
+ * later. `SearchResult.dictVersion` is the same string.
+ */
+export interface DictResponseMeta {
+  version: string;
+}
+
 export interface EntriesResponse {
+  meta: DictResponseMeta;
   entries: Entry[];
 }
 
 export interface HskResponse {
+  meta: DictResponseMeta;
   band: HskBand;
   entries: Entry[];
 }

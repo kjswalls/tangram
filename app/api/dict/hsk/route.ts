@@ -3,7 +3,7 @@
  * frequency. Band 7 is the list labelled "7–9"; there is no band 8 or 9.
  */
 import { dictErrorResponse } from '@/lib/dict/load';
-import { hskBand } from '@/lib/dict/index';
+import { dictVersion, hskBand } from '@/lib/dict/index';
 import type { HskBand, HskResponse } from '@/lib/dict/types';
 
 // The dictionary is read from disk per process; never prerender this at build time.
@@ -20,7 +20,11 @@ export function GET(request: Request): Response {
   }
 
   try {
-    const body: HskResponse = { band: band as HskBand, entries: hskBand(band as HskBand) };
+    const body: HskResponse = {
+      meta: { version: dictVersion() },
+      band: band as HskBand,
+      entries: hskBand(band as HskBand),
+    };
     return Response.json(body);
   } catch (error) {
     const missing = dictErrorResponse(error);

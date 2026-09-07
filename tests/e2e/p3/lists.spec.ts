@@ -43,6 +43,18 @@ test.describe('lists', () => {
     await band6.getByRole('checkbox').uncheck();
     await expect(band6).toHaveAttribute('data-active', 'false');
 
+    // The checkbox is optimistic (`lib/stores/lists.ts`), so the attribute flips
+    // before Dexie has the write. Reloading on the strength of it races the
+    // write against the navigation that kills the page running it — wait for the
+    // row itself, which is what "persists" actually means.
+    await expect
+      .poll(async () =>
+        page.evaluate(async () =>
+          (await window.__tangram.repo.lists()).find((list) => list.name === 'HSK 6')?.active,
+        ),
+      )
+      .toBe(false);
+
     await page.reload();
     await expect(page.locator('[data-list-name="HSK 6"]')).toHaveAttribute('data-active', 'false');
     const stored = await page.evaluate(() => window.__tangram.repo.lists());
@@ -76,7 +88,9 @@ test.describe('lists', () => {
     await page.getByLabel('Find a word').fill('跑步');
     await page.getByRole('button', { name: 'Find' }).click();
     await expect(page.getByTestId('word-search-results')).toBeVisible({ timeout: 60_000 });
-    await page.getByRole('button', { name: 'Add 跑步' }).click();
+    // `exact`: the search now goes through P1's /api/dict/search, which also
+    // returns 跑步机 and 跑步者 — a substring match would be ambiguous.
+    await page.getByRole('button', { name: 'Add 跑步', exact: true }).click();
 
     const member = page.getByTestId('list-member').first();
     await expect(member).toBeVisible();
@@ -91,5 +105,32 @@ test.describe('lists', () => {
     expect(cards).toHaveLength(1);
     expect(cards[0].context?.source).toBe('list');
     expect(cards[0].snapshot).toMatchObject({ simp: '跑步' });
+  });
+
+  test('a custom list can lose a word and then be deleted', async ({ page }) => {
+    // `deleteList` / `removeListMembers` are the repository additions the merge
+    // applied for HANDOFF-p3 "Needs 2": a custom list used to be permanent.
+    await resetApp(page);
+    await page.goto('/lists');
+    await page.getByLabel('New list name').fill('Kitchen Chinese');
+    await page.getByRole('button', { name: 'Create list' }).click();
+    await page.locator('[data-list-name="Kitchen Chinese"]').getByRole('link', { name: 'Open' }).click();
+
+    await page.getByLabel('Find a word').fill('跑步');
+    await page.getByRole('button', { name: 'Find' }).click();
+    await expect(page.getByTestId('word-search-results')).toBeVisible({ timeout: 60_000 });
+    await page.getByRole('button', { name: 'Add 跑步', exact: true }).click();
+    await expect(page.getByTestId('list-member')).toHaveCount(1);
+
+    await page.getByRole('button', { name: 'Remove from list: 跑步' }).click();
+    await expect(page.getByTestId('list-member')).toHaveCount(0);
+
+    // Deleting is two clicks, and it lands back on /lists without the list.
+    await page.getByTestId('delete-list').click();
+    await page.getByTestId('confirm-delete-list').click();
+    await expect(page).toHaveURL(/\/lists$/);
+    await expect(page.locator('[data-list-name="Kitchen Chinese"]')).toHaveCount(0);
+    await page.reload();
+    await expect(page.locator('[data-list-name="Kitchen Chinese"]')).toHaveCount(0);
   });
 });

@@ -6,7 +6,7 @@
  * a stale card snapshot degrades to "not found" instead of failing the whole batch.
  */
 import { dictErrorResponse } from '@/lib/dict/load';
-import { getEntries, parseIdList } from '@/lib/dict/index';
+import { dictVersion, getEntries, parseIdList } from '@/lib/dict/index';
 import type { EntriesResponse } from '@/lib/dict/types';
 
 // The dictionary is read from disk per process; never prerender this at build time.
@@ -32,7 +32,7 @@ export function GET(request: Request): Response {
   }
 
   try {
-    const body: EntriesResponse = { entries: getEntries(ids) };
+    const body: EntriesResponse = { meta: { version: dictVersion() }, entries: getEntries(ids) };
     return Response.json(body);
   } catch (error) {
     const missing = dictErrorResponse(error);

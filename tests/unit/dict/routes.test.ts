@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { GET as entriesGet } from '@/app/api/dict/entries/route';
 import { GET as hskGet } from '@/app/api/dict/hsk/route';
-import { parseIdList } from '@/lib/dict/index';
+import { dictVersion, parseIdList } from '@/lib/dict/index';
 import { resetDictCache } from '@/lib/dict/load';
 import type { DictEntry } from '@/lib/dict/types';
 import { requireDictData } from './data-required';
@@ -48,6 +48,15 @@ describe('GET /api/dict/entries', () => {
     expect(body.entries[1].pinyinMarked).toBe('dǎsuàn');
   });
 
+  it('names the snapshot the entries came from', async () => {
+    // A card stamps this onto its snapshot; without it every card the lists
+    // layer creates records `dictVersion: 'unknown'` (HANDOFF-p3 Needs 1).
+    const res = entriesGet(entriesRequest(`?ids=${encodeURIComponent(DASUAN)}`));
+    const body = (await res.json()) as { meta: { version: string } };
+    expect(body.meta.version).toBe(dictVersion());
+    expect(body.meta.version).not.toBe('');
+  });
+
   it('accepts a comma-separated list and drops unknown ids', async () => {
     const res = entriesGet(entriesRequest(`?ids=${encodeURIComponent(`${DASUAN},nope|nope[x1]`)}`));
     const body = (await res.json()) as { entries: DictEntry[] };
@@ -70,10 +79,16 @@ describe('GET /api/dict/hsk', () => {
   it('returns a band ordered by frequency', async () => {
     const res = hskGet(hskRequest('?band=1'));
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { band: number; entries: DictEntry[] };
+    const body = (await res.json()) as {
+      band: number;
+      entries: DictEntry[];
+      meta: { version: string };
+    };
     expect(body.band).toBe(1);
     expect(body.entries.length).toBeGreaterThan(0);
     expect(body.entries.every((e) => e.hskBand === 1)).toBe(true);
+    // Same contract as /api/dict/entries: the rows say which snapshot they are.
+    expect(body.meta.version).toBe(dictVersion());
   });
 
   it('serves band 7 (the list labelled 7-9)', async () => {

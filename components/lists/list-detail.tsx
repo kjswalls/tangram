@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
 import { WordSearch } from '@/components/lists/word-search';
@@ -88,6 +89,10 @@ export function ListDetail({ listId }: { listId: string }) {
   const [shown, setShown] = useState(PAGE);
   const [reload, setReload] = useState(0);
   const [error, setError] = useState<string>();
+  // Deleting a list is two clicks, not a `confirm()`: it is the one destructive
+  // control on the page and there is no undo behind it.
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const router = useRouter();
 
   useEffect(() => {
     let cancelled = false;
@@ -183,6 +188,21 @@ export function ListDetail({ listId }: { listId: string }) {
                 </span>
                 <span className="flex shrink-0 items-center gap-2">
                   <WordStateBadge state={member.state} />
+                  {list?.kind === 'custom' ? (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      data-testid="remove-member"
+                      aria-label={`Remove from list: ${member.entry?.simp ?? member.entryId}`}
+                      onClick={() => {
+                        void getRepository()
+                          .removeListMembers(list.id, [member.entryId])
+                          .then(() => setReload((value) => value + 1));
+                      }}
+                    >
+                      Remove
+                    </Button>
+                  ) : null}
                   <Button
                     size="sm"
                     variant="secondary"
@@ -191,7 +211,12 @@ export function ListDetail({ listId }: { listId: string }) {
                     onClick={() => {
                       const entry = member.entry;
                       if (!entry) return;
-                      void queueFromList(getRepository(), entry).then(() =>
+                      void queueFromList(
+                        getRepository(),
+                        entry,
+                        Date.now(),
+                        getEntrySource().dictVersion?.(),
+                      ).then(() =>
                         setReload((value) => value + 1),
                       );
                     }}
@@ -212,6 +237,39 @@ export function ListDetail({ listId }: { listId: string }) {
           </div>
         ) : null}
       </Card>
+
+      {list?.kind === 'custom' ? (
+        <div className="flex flex-wrap items-center gap-2 text-sm text-muted">
+          {confirmingDelete ? (
+            <>
+              <span>Delete “{list.name}” and its words? The cards you made stay.</span>
+              <Button
+                size="sm"
+                data-testid="confirm-delete-list"
+                onClick={() => {
+                  void getRepository()
+                    .deleteList(list.id)
+                    .then(() => router.push('/lists'));
+                }}
+              >
+                Delete list
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setConfirmingDelete(false)}>
+                Keep it
+              </Button>
+            </>
+          ) : (
+            <Button
+              size="sm"
+              variant="ghost"
+              data-testid="delete-list"
+              onClick={() => setConfirmingDelete(true)}
+            >
+              Delete this list
+            </Button>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }

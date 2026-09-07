@@ -10,6 +10,12 @@ import {
 } from '@/lib/stores/reader';
 import type { Token } from '@/lib/types';
 
+/** The repository the store reaches for through `@/lib/db/get-db`. */
+const saveText = vi.fn();
+vi.mock('@/lib/db/get-db', () => ({
+  getRepository: () => ({ saveText, texts: async () => [] }),
+}));
+
 /**
  * PLAN.md §3.5. The store is what makes the pasted text survive a navigation, so
  * the cases that matter are the ones where state could go stale: tokens that no
@@ -277,5 +283,36 @@ describe('defaultTitle', () => {
 
   it('never comes back empty', () => {
     expect(defaultTitle('   \n  ')).toBe('Untitled text');
+  });
+});
+
+describe('save', () => {
+  it('reports the failure instead of letting the read swallow it', async () => {
+    // "Save and read" runs both; `read()` clears `error` and unmounts the only
+    // box that shows it, so a save that failed looked exactly like one that
+    // worked until the refresh that lost the paragraph.
+    saveText.mockRejectedValueOnce(new Error('QuotaExceededError'));
+    useReaderStore.setState({ body: BODY, title: 'x' });
+
+    expect(await useReaderStore.getState().save()).toBe(false);
+    expect(useReaderStore.getState().error).toBe('QuotaExceededError');
+    expect(useReaderStore.getState().textId).toBeUndefined();
+  });
+
+  it('reports success, and remembers the row', async () => {
+    const row: TextRow = {
+      id: 'text-1',
+      title: 'x',
+      body: BODY,
+      createdAt: 1,
+      updatedAt: 1,
+      deletedAt: null,
+    };
+    saveText.mockResolvedValueOnce(row);
+    useReaderStore.setState({ body: BODY, title: 'x' });
+
+    expect(await useReaderStore.getState().save()).toBe(true);
+    expect(useReaderStore.getState().textId).toBe('text-1');
+    expect(useReaderStore.getState().error).toBeUndefined();
   });
 });

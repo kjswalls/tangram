@@ -274,12 +274,20 @@ function citeFrom(retrieved: readonly Entry[]): Cite {
  * The echo: the dictionary answering in its own voice. It is not a pretend
  * model answer and does not read like one — the panel's offline badge says as
  * much, and this prose agrees with it.
+ *
+ * It **names** the top entry rather than quoting it. The panel already renders
+ * every match from the dictionary rows the route returns, so repeating the
+ * glosses here would add nothing on screen — and this string is the one the
+ * client writes into `ask_cache`, which §3.4 and §5 say holds ids and indexes,
+ * never dictionary text. An echo that recited its glosses made every non-demo
+ * query a cache row full of CC-CEDICT.
  */
-export function retrievalEcho(retrieved: readonly Entry[], query: string): ParsedAskResponse {
+export function retrievalEcho(retrieved: readonly Entry[]): ParsedAskResponse {
   const top = retrieved.slice(0, ECHO_MATCHES);
   if (top.length === 0) {
     return {
-      interpretation: `Nothing in the dictionary matched “${query}”. Try fewer words, the hanzi itself, or the pinyin — tones optional.`,
+      interpretation:
+        'Nothing in the dictionary matched that. Try fewer words, the hanzi itself, or the pinyin — tones optional.',
       matches: [],
       sayIt: [],
       notes: [
@@ -288,11 +296,9 @@ export function retrievalEcho(retrieved: readonly Entry[], query: string): Parse
     };
   }
 
-  const first = top[0];
-  const senses = first.glosses.slice(0, 3).join('; ');
-  const reading = first.pinyinMarked || 'no listed reading';
   return {
-    interpretation: `Offline: the closest dictionary entry reads ${reading}${senses ? ` — ${senses}` : ''}. With a key set, this is where an answer about your sentence would go.`,
+    interpretation:
+      'Offline: the closest dictionary entries are listed below, best first. With a key set, this is where an answer about your own sentence would go.',
     matches: top.map((entry) => ({ entryId: entry.id, senseIndex: 0, whyThisOne: 'dictionary match' })),
     sayIt: [],
     notes: [
@@ -321,6 +327,6 @@ export class FakeProvider implements LLMProvider {
   ): Promise<ParsedAskResponse> {
     const demo = findDemo(query, context);
     const canned = demo?.answer.build(citeFrom(retrieved));
-    return canned ?? retrievalEcho(retrieved, query);
+    return canned ?? retrievalEcho(retrieved);
   }
 }

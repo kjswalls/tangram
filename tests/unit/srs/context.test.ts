@@ -121,4 +121,14 @@ describe('resolveContext', () => {
     expect(resolveContext(undefined, ['打算'])).toBeNull();
     expect(resolveContext({ source: 'seed', addedAt: NOW }, ['打算'])).toBeNull();
   });
+
+  it('is null when the “context” is only the headword again', () => {
+    // A lookup for a bare hanzi used to write `{query: '看'}` (and an ask for
+    // one wrote `{question: '看'}`), which offered "Peek context" on the front
+    // and revealed ＿ — and a back line that highlighted the whole of itself.
+    expect(resolveContext({ query: '大概', source: 'lookup', addedAt: NOW }, ['大概'])).toBeNull();
+    expect(resolveContext({ question: '看', source: 'ask', addedAt: NOW }, ['看', '看'])).toBeNull();
+    // A real sentence that merely contains the word is untouched.
+    expect(resolveContext({ sentence: '我看了一下', source: 'reader', addedAt: NOW }, ['看'])).not.toBeNull();
+  });
 });

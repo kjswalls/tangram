@@ -37,7 +37,7 @@ import { cn } from '@/lib/cn';
 import type { PhraseToken } from '@/lib/db/schema';
 import { getRepository } from '@/lib/db/get-db';
 import { fetchEntriesResponse } from '@/lib/dict/client';
-import { addCardChecked } from '@/lib/lists/looked-up';
+import { addCardChecked, addPhraseCardChecked, phraseCardFor } from '@/lib/lists/looked-up';
 import { getLearnerProfile } from '@/lib/srs/profile';
 import { orderGlosses } from '@/lib/srs/presentation';
 import { hskBandLabel, type CardContext, type Entry } from '@/lib/types';
@@ -47,10 +47,32 @@ const DEBOUNCE_MS = 500;
 
 const OFFLINE_BADGE = 'Offline dictionary mode — set ANTHROPIC_API_KEY for AI answers';
 
+/**
+ * Longer than the route's own answer deadline (30 s), so a slow provider
+ * normally comes back as the route's 502 with a reason. This one is the
+ * backstop for the network itself: nothing else on the page would ever take
+ * "Thinking about …" off the screen.
+ */
+const ASK_TIMEOUT_MS = 35_000;
+
 type AskState =
   | { status: 'idle' }
   | { status: 'loading' }
-  | { status: 'ready'; response: GroundedAskResponse; entries: Entry[]; dictVersion?: string; cached: boolean }
+  | {
+      status: 'ready';
+      response: GroundedAskResponse;
+      entries: Entry[];
+      dictVersion?: string;
+      cached: boolean;
+      /**
+       * What this answer answers. The panel keeps rendering the previous
+       * answer for the debounce after the question changes, so without this the
+       * learner reads one word's answer under another word's heading — and an
+       * Add pressed in that window writes a card whose provenance names a word
+       * that is not on it.
+       */
+      answered: { query: string; contextJson: string };
+    }
   | { status: 'error'; message: string };
 
 /**
@@ -62,15 +84,33 @@ let infoRequest: Promise<AskRouteInfo> | undefined;
 
 const FALLBACK_INFO: AskRouteInfo = { provider: 'fake', promptVersion: 'v1' };
 
+/**
+ * A *failed* handshake is never memoised. Guessing "fake" once and keeping the
+ * guess for the life of the page keys every later cache row under the wrong
+ * provider, writes live answers into fake-shaped rows, and paints the offline
+ * badge over an answer a model wrote. One transient error must not do that.
+ */
 function askInfo(): Promise<AskRouteInfo> {
   infoRequest ??= fetch('/api/ask', { headers: { accept: 'application/json' } })
-    .then((res) => (res.ok ? (res.json() as Promise<AskRouteInfo>) : FALLBACK_INFO))
-    .catch(() => FALLBACK_INFO);
+    .then((res) => {
+      if (res.ok) return res.json() as Promise<AskRouteInfo>;
+      infoRequest = undefined;
+      return FALLBACK_INFO;
+    })
+    .catch(() => {
+      infoRequest = undefined;
+      return FALLBACK_INFO;
+    });
   return infoRequest;
 }
 
 function isAbort(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'AbortError';
+}
+
+/** Our own deadline, not the learner navigating away: this one is worth saying. */
+function isTimeout(error: unknown): boolean {
+  return error instanceof DOMException && error.name === 'TimeoutError';
 }
 
 function citedIds(response: GroundedAskResponse): string[] {
@@ -111,8 +151,14 @@ function askContextFor(
     length !== undefined &&
     targets.some((target) => target.length > 0 && sentence.slice(offset, offset + length) === target);
 
+  // "From the question: 看" is not a question — it is the word itself, and a
+  // card back that quotes its own headword as provenance says nothing while
+  // offering a "Peek context" that reveals ＿. A bare-headword ask carries no
+  // question; `resolveContext` then finds nothing to show, which is honest.
+  const isHeadword = targets.some((target) => target.length > 0 && target === query.trim());
+
   return {
-    question: query,
+    ...(isHeadword ? {} : { question: query }),
     ...(sentence ? { sentence } : {}),
     ...(spanReads ? { offset, length } : {}),
     source: 'ask',
@@ -215,18 +261,68 @@ function MatchCard({
   );
 }
 
+/** What an "add the words individually" run actually did, for the line under it. */
+export interface WordsAdded {
+  added: number;
+  existing: number;
+  /** Words the learner already knows, which a review card would only get in the way of. */
+  known: string[];
+}
+
+function wordsMessage(result: WordsAdded): string {
+  const parts: string[] = [];
+  if (result.added > 0) parts.push(`${result.added} added`);
+  if (result.existing > 0) parts.push(`${result.existing} already in your cards`);
+  if (result.known.length > 0) parts.push(`${result.known.join(' · ')} already known`);
+  return parts.length > 0 ? parts.join(' · ') : 'Nothing to add.';
+}
+
 function PhraseCard({
   phrase,
   onAddPhrase,
   onAddWords,
+  onProbe,
 }: {
   phrase: RenderedPhrase;
   onAddPhrase: (phrase: RenderedPhrase) => Promise<'added' | 'existing'>;
-  onAddWords: (phrase: RenderedPhrase) => Promise<'added' | 'existing'>;
+  onAddWords: (phrase: RenderedPhrase) => Promise<WordsAdded>;
+  onProbe: (phrase: RenderedPhrase) => Promise<boolean>;
 }) {
   const [state, setState] = useState<AddState>('idle');
   const [wordsState, setWordsState] = useState<AddState>('idle');
+  const [wordsResult, setWordsResult] = useState<WordsAdded>();
   const words = phrase.tokens.filter((token) => token.entryId && !token.missing);
+
+  /**
+   * A phrase card the learner already has. `addPhraseCardChecked` is idempotent,
+   * but the button has to say so *before* it is pressed — otherwise the same
+   * question asked twice reads as two different phrases worth adding.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    onProbe(phrase).then(
+      (existing) => {
+        if (!cancelled && existing) setState('existing');
+      },
+      () => undefined,
+    );
+    return () => {
+      cancelled = true;
+    };
+    // The probe is about the phrase this card draws; `onProbe` is a new closure
+    // every render, so keying on it would re-probe forever.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phrase.zh]);
+
+  /**
+   * A phrase is only addable when every character on its front came from the
+   * dictionary. A `{text}` token puts the model's own hanzi on a 6xl card face
+   * with no flag on it (the review card renders `snapshot.simp`, not the
+   * tokens) and its pinyin line silently skips the syllable — a learner
+   * memorising an invented word with a reading that does not match it is the
+   * exact failure §1 commitment 3 exists to prevent.
+   */
+  const blocked = phrase.unverified;
 
   return (
     <li
@@ -275,7 +371,10 @@ function PhraseCard({
       {phrase.unverified ? (
         <p data-testid="ask-sayit-warning" className="mt-1 text-xs text-warning">
           Marked tokens are not verified against the dictionary — treat them as a suggestion, not a
-          reading.
+          reading.{' '}
+          {words.length > 0
+            ? `This phrase cannot become a card, because its front would show characters no dictionary row stands behind; the ${words.length} cited ${words.length === 1 ? 'word' : 'words'} can.`
+            : 'This phrase cannot become a card.'}
         </p>
       ) : null}
 
@@ -284,27 +383,45 @@ function PhraseCard({
           data-testid="ask-sayit-add"
           size="sm"
           variant="secondary"
-          disabled={state === 'saving' || state === 'added'}
+          disabled={blocked || state === 'saving' || state === 'added' || state === 'existing'}
+          title={
+            blocked
+              ? 'This phrase contains characters the dictionary could not verify.'
+              : undefined
+          }
           onClick={() => {
             setState('saving');
             onAddPhrase(phrase).then(setState, () => setState('error'));
           }}
         >
-          {addLabel(state, 'Phrase added', 'Add as a phrase card')}
+          {blocked
+            ? 'Not verified — cannot add'
+            : addLabel(state, state === 'existing' ? 'Already in your cards' : 'Phrase added', 'Add as a phrase card')}
         </Button>
         {words.length > 0 ? (
           <Button
             data-testid="ask-sayit-add-words"
             size="sm"
             variant="ghost"
-            disabled={wordsState === 'saving' || wordsState === 'added' || wordsState === 'existing'}
+            disabled={wordsState === 'saving' || wordsState === 'added'}
             onClick={() => {
               setWordsState('saving');
-              onAddWords(phrase).then(setWordsState, () => setWordsState('error'));
+              onAddWords(phrase).then(
+                (result) => {
+                  setWordsResult(result);
+                  setWordsState('added');
+                },
+                () => setWordsState('error'),
+              );
             }}
           >
             {addLabel(wordsState, 'Words added', `add ${words.length} words individually`)}
           </Button>
+        ) : null}
+        {wordsState === 'added' && wordsResult ? (
+          <span data-testid="ask-sayit-words-state" className="text-xs text-muted">
+            {wordsMessage(wordsResult)}
+          </span>
         ) : null}
         {state === 'error' || wordsState === 'error' ? (
           <span data-testid="ask-sayit-state" className="text-xs text-warning">
@@ -349,6 +466,12 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
   useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
+    // Nothing else ever ends the wait: the panel's own abort fires on unmount
+    // and on a new question, and the provider call has no deadline of its own
+    // that the browser can see.
+    const deadline = setTimeout(() => controller.abort(new DOMException('timeout', 'TimeoutError')), ASK_TIMEOUT_MS);
+
+    const answered = { query: trimmed, contextJson };
 
     const run = async (): Promise<void> => {
       setState({ status: 'loading' });
@@ -384,6 +507,7 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
             entries: resolved.entries,
             ...(resolved.meta.version ? { dictVersion: resolved.meta.version } : {}),
             cached: true,
+            answered,
           });
           return;
         }
@@ -408,7 +532,14 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
           return;
         }
         const body = (await res.json()) as AskRouteResponse;
-        await repo.askCache.set(key, body.response).catch(() => undefined);
+        // Three things must all hold before a row is written: the route says
+        // this answer is worth keeping (`cacheable: false` is the stand-in it
+        // builds when the provider's answer did not survive grounding), the
+        // handshake was real rather than the offline guess, and the provider
+        // that answered is the one the key was derived for.
+        const trustworthy =
+          body.cacheable !== false && info !== FALLBACK_INFO && body.provider === info.provider;
+        if (trustworthy) await repo.askCache.set(key, body.response).catch(() => undefined);
         if (cancelled) return;
         setProvider(body.provider);
         setState({
@@ -417,10 +548,16 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
           entries: body.entries,
           ...(body.dictVersion ? { dictVersion: body.dictVersion } : {}),
           cached: false,
+          answered,
         });
       } catch (error) {
         if (cancelled || isAbort(error)) return;
-        setState({ status: 'error', message: 'The ask panel could not answer that one.' });
+        setState({
+          status: 'error',
+          message: isTimeout(error)
+            ? 'The ask took too long and was given up on.'
+            : 'The ask panel could not answer that one.',
+        });
       }
     };
 
@@ -439,29 +576,48 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
       cancelled = true;
       controller.abort();
       clearTimeout(timer);
+      clearTimeout(deadline);
     };
   }, [trimmed, contextJson]);
 
-  const ready = state.status === 'ready' ? state : undefined;
+  // The answer on screen answers the *previous* question for as long as the
+  // debounce runs. Deriving staleness in render (rather than resetting the
+  // state in an effect) keeps this a pure read of what is already known.
+  const answer = state.status === 'ready' ? state : undefined;
+  const stale =
+    answer !== undefined &&
+    (answer.answered.query !== trimmed || answer.answered.contextJson !== contextJson);
+  const ready = stale ? undefined : answer;
+  const thinking = state.status === 'loading' || stale;
+
   const lookup = useMemo(() => entryLookup(ready?.entries ?? []), [ready?.entries]);
   const phrases = useMemo(
     () => (ready ? ready.response.sayIt.map((phrase) => renderPhrase(phrase, lookup)) : []),
     [ready, lookup],
   );
+  const empty =
+    ready !== undefined &&
+    ready.response.interpretation.length === 0 &&
+    ready.response.matches.length === 0 &&
+    phrases.length === 0;
 
   const addMatch = async (entry: Entry, senseIndex: number): Promise<'added' | 'existing'> => {
+    // Snapshot the provenance the moment the button is pressed: an answer that
+    // lands mid-click must not pair this entry with the next question's words.
+    const provenance = askContextFor(trimmed, context, headwordForms(entry));
     const result = await addCardChecked(
       getRepository(),
       entry,
-      askContextFor(trimmed, context, headwordForms(entry)),
+      provenance,
       senseIndex,
       ready?.dictVersion,
     );
     return result.created ? 'added' : 'existing';
   };
 
-  const addPhrase = async (phrase: RenderedPhrase): Promise<'added' | 'existing'> => {
-    const tokens: PhraseToken[] = phrase.tokens
+  /** Tokens of a phrase as the card layer stores them. */
+  const phraseTokens = (phrase: RenderedPhrase): PhraseToken[] =>
+    phrase.tokens
       .filter((token) => token.text.length > 0)
       .map((token) => ({
         text: token.text,
@@ -469,34 +625,64 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
         ...(token.pinyin ? { pinyinMarked: token.pinyin } : {}),
         ...(token.unverified || token.aiGenerated ? { unverified: true } : {}),
       }));
+
+  const probePhrase = async (phrase: RenderedPhrase): Promise<boolean> =>
+    (await phraseCardFor(getRepository(), phraseTokens(phrase))) !== undefined;
+
+  const addPhrase = async (phrase: RenderedPhrase): Promise<'added' | 'existing'> => {
+    const tokens = phraseTokens(phrase);
     if (tokens.length === 0) return 'existing';
     // A phrase is never the tapped token, so it never inherits the tap's span.
-    await getRepository().addPhraseCard(tokens, phrase.en, askContextFor(trimmed, context));
-    return 'added';
+    const result = await addPhraseCardChecked(
+      getRepository(),
+      tokens,
+      phrase.en,
+      askContextFor(trimmed, context),
+    );
+    return result.created ? 'added' : 'existing';
   };
 
-  const addWords = async (phrase: RenderedPhrase): Promise<'added' | 'existing'> => {
-    let created = false;
+  /**
+   * The cited words, one card each — minus the ones the learner already knows.
+   * "Add 3 words" that queues 我 for review today, over a word `known_words`
+   * says is known and the reader paints as known, is the app arguing with a
+   * decision the learner already made.
+   */
+  const addWords = async (phrase: RenderedPhrase): Promise<WordsAdded> => {
+    const repo = getRepository();
+    const [known, settings] = await Promise.all([repo.knownEntryIds(), repo.getSettings()]);
+    const knownIds = new Set(known);
+    const result: WordsAdded = { added: 0, existing: 0, known: [] };
+
     for (const token of phrase.tokens) {
       if (!token.entryId) continue;
       const entry = lookup(token.entryId);
       if (!entry) continue;
-      const result = await addCardChecked(
-        getRepository(),
+      if (knownIds.has(entry.id) || (entry.hskBand !== undefined && entry.hskBand <= settings.knownBand)) {
+        result.known.push(entry.simp);
+        continue;
+      }
+      // A word that is also one of the answer's matches is added at *that*
+      // sense: cards are keyed on (entryId, senseIndex), so a sense-less add
+      // beside a sense-specific one is the same word twice.
+      const match = ready?.response.matches.find((candidate) => candidate.entryId === entry.id);
+      const added = await addCardChecked(
+        repo,
         entry,
         askContextFor(trimmed, context, headwordForms(entry)),
-        undefined,
+        match?.senseIndex,
         ready?.dictVersion,
       );
-      created = created || result.created;
+      if (added.created) result.added += 1;
+      else result.existing += 1;
     }
-    return created ? 'added' : 'existing';
+    return result;
   };
 
   return (
     <section
       data-testid="ask-panel"
-      data-status={state.status}
+      data-status={stale ? 'loading' : state.status}
       data-provider={provider ?? 'unknown'}
       data-cached={ready?.cached ? 'true' : 'false'}
       className={cn('flex flex-col gap-3', className)}
@@ -518,7 +704,7 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
           answers which sense the sentence wants.
         </p>
       ) : null}
-      {state.status === 'loading' ? (
+      {thinking ? (
         <p data-testid="ask-status" className="text-sm text-muted">
           Thinking about “{trimmed}”…
         </p>
@@ -531,9 +717,16 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
 
       {ready ? (
         <>
-          <p data-testid="ask-interpretation" className="text-sm">
-            {ready.response.interpretation}
-          </p>
+          {empty ? (
+            <p data-testid="ask-empty" className="text-sm text-warning">
+              Nothing in that answer could be checked against the dictionary, so there is nothing to
+              show. The dictionary result above still stands.
+            </p>
+          ) : (
+            <p data-testid="ask-interpretation" className="text-sm">
+              {ready.response.interpretation}
+            </p>
+          )}
 
           {ready.response.matches.length > 0 ? (
             <ul className="flex flex-col gap-2" data-testid="ask-matches">
@@ -563,6 +756,7 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
                     phrase={phrase}
                     onAddPhrase={addPhrase}
                     onAddWords={addWords}
+                    onProbe={probePhrase}
                   />
                 ))}
               </ul>
@@ -571,8 +765,8 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
 
           {ready.response.notes.length > 0 ? (
             <ul className="list-inside list-disc text-sm text-muted">
-              {ready.response.notes.map((note) => (
-                <li key={note} data-testid="ask-note">
+              {ready.response.notes.map((note, index) => (
+                <li key={`${index}-${note}`} data-testid="ask-note">
                   {note}
                 </li>
               ))}

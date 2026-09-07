@@ -115,23 +115,30 @@ describe('the retrieval echo', () => {
     expect(answer.matches.every((match) => match.whyThisOne === 'dictionary match')).toBe(true);
     expect(answer.matches[0].entryId).toBe(retrieved[0].id);
     expect(answer.sayIt).toEqual([]);
-    expect(answer.interpretation).toContain(retrieved[0].pinyinMarked);
+    // It names the entries; it does not quote them. `response` is the only
+    // thing the client caches, and §3.4/§5 say a cache row holds ids, never
+    // dictionary text.
+    expect(answer.interpretation).not.toContain(retrieved[0].pinyinMarked);
+    for (const gloss of retrieved.flatMap((entry) => entry.glosses)) {
+      expect(answer.interpretation).not.toContain(gloss);
+    }
   });
 
   it('says something even when nothing was retrieved', () => {
-    const answer = retrievalEcho([], 'qqqq');
+    const answer = retrievalEcho([]);
     expect(answer.interpretation).not.toBe('');
     expect(answer.notes.length).toBeGreaterThan(0);
     expect(askResponseSchema.safeParse(answer).success).toBe(true);
   });
 
-  it('writes prose that survives the CJK strip', async () => {
+  it('writes prose that grounding leaves exactly as it is', async () => {
     const retrieved = entriesFor('打算');
     const answer = await fake.answer(retrieved, PROFILE, 'unscripted');
     const grounded = ground(answer, groundContext(retrieved));
-    // The echo names the reading, not the headword, so grounding leaves the
-    // sentence intact instead of punching a hole in it.
-    expect(grounded.interpretation).toContain('dǎsuàn');
+    // No hanzi and no pinyin, so the scrubbers have nothing to take out: the
+    // echo reads as written rather than arriving with a hole in it.
     expect(grounded.interpretation).toBe(answer.interpretation);
+    expect(grounded.interpretation).not.toContain('dǎsuàn');
+    expect(grounded.notes).toEqual(answer.notes);
   });
 });

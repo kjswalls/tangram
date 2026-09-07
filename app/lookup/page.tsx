@@ -7,8 +7,9 @@ export default function LookupPage() {
       <PageHeader title="Lookup">
         Hanzi, pinyin or English — one box, no mode picker.
       </PageHeader>
-      {/* Phase 4 passes its ask panel as `askSlot`; the dictionary body never waits
-          on it (PLAN.md §3.4). */}
+      {/* No `askSlot`: the ask panel is `LookupPanel`'s default ask content, and
+          the slot is the override hook for a caller that wants something else
+          there. Either way the dictionary body never waits on it (§3.4). */}
       <LookupView />
     </>
   );

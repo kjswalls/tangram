@@ -60,8 +60,13 @@ export interface ReaderState {
   setError: (error?: string) => void;
   /** Segment the current body and switch to the reading view. */
   read: () => Promise<void>;
-  /** Persist the current text and remember its row id. */
-  save: () => Promise<void>;
+  /**
+   * Persist the current text and remember its row id. Returns whether it was
+   * saved: "Save and read" must not read past a failure, because switching to
+   * the reading view unmounts the only place `error` is shown and the next
+   * refresh loses the paragraph.
+   */
+  save: () => Promise<boolean>;
   /** Load the saved texts for the "reopen" list. */
   loadSaved: () => Promise<void>;
   /** Reopen a saved text: it becomes the current one and is segmented. */
@@ -179,7 +184,7 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
 
   save: async () => {
     const { title, body, textId } = get();
-    if (!body.trim()) return;
+    if (!body.trim()) return false;
     set({ saving: true, error: undefined });
     try {
       const repo = await repository();
@@ -189,8 +194,10 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
         body,
       });
       set({ textId: row.id, title: row.title, saving: false, saved: await repo.texts() });
+      return true;
     } catch (error) {
       set({ saving: false, error: message(error) });
+      return false;
     }
   },
 

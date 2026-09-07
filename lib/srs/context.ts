@@ -113,6 +113,12 @@ export function resolveContext(
   const text = contextText(context);
   if (text === null) return null;
 
+  // Provenance that is only the headword is not provenance. A card whose
+  // context reads 大概 offered "Peek context" and revealed ＿＿, then showed a
+  // back line that highlighted the whole of itself. Nothing to show is better
+  // than a box that says the word again.
+  if (targets.some((target) => target.length > 0 && target === text.trim())) return null;
+
   let parts = splitContext(text, context.offset, context.length, targets[0]);
   for (const target of targets.slice(1)) {
     if (parts) break;

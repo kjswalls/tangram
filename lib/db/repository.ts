@@ -89,6 +89,18 @@ export interface Repository {
   /** Declare entries known; existing cards are pushed out of the queue. */
   markKnown(entryIds: string[]): Promise<KnownWordRow[]>;
 
+  /**
+   * Undeclare entries: the `known_words` rows go, the cards they evicted stay
+   * where they are. Returns how many rows were removed.
+   *
+   * Added by the Phases 4–5 review (HANDOFF.md): "known" and "has a card due
+   * today" are contradictory states, and nothing could leave the first one.
+   * Adding a card for a word is the learner saying they want to study it, so
+   * `addCardTracked` calls this — otherwise the reader painted the word known,
+   * the queue served it, and the Looked-up list read "known · Queued".
+   */
+  unmarkKnown(entryIds: string[]): Promise<number>;
+
   /** Every entry in `known_words`. */
   knownEntryIds(): Promise<string[]>;
 

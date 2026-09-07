@@ -3,6 +3,10 @@
  * 随看随买 and 绝绝子 come back with unverified tokens, 我随便看看 does not, an
  * injected `'bogus'` id is dropped, and a response carrying a wrong pinyin
  * cannot change what is displayed.
+ *
+ * `attacks.test.ts` beside this file is the other half: the hostile responses
+ * the Phases 4–5 review found reaching the screen, including the everyday
+ * phrases (太贵了, 我爱你, 我很累) that must *not* be flagged.
  */
 import { beforeAll, describe, expect, it } from 'vitest';
 

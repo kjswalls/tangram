@@ -23,7 +23,8 @@
 import { ground, type GroundedAskResponse } from '@/lib/ai/ground';
 import { ASK_PROMPT_VERSION } from '@/lib/ai/cache-key';
 import { selectProvider, askResponseSchema, ProviderError, type AskContext, type ProviderName } from '@/lib/ai/provider';
-import { getDictIndex, getEntry } from '@/lib/dict/index';
+import { retrievalEcho } from '@/lib/ai/fake';
+import { getDictIndex, getEntry, readingCount } from '@/lib/dict/index';
 import { dictErrorResponse } from '@/lib/dict/load';
 import { search, hasCjk } from '@/lib/dict/search';
 import { segment } from '@/lib/dict/segment';
@@ -43,9 +44,48 @@ export const RETRIEVED_CAP = 40;
  * particular and none of them are the three words it wants to say.
  */
 export const SEARCH_HEAD = 16;
+/**
+ * How long a provider may take. A cron is not waiting on this — a person is,
+ * with "Thinking about …" on screen and no way out but retyping, so a hung
+ * upstream has to become an answer rather than a spinner. The proposal step
+ * gets the short one: it is retrieval help (§3.4), and the dictionary search
+ * already stands without it.
+ */
+export const PROPOSE_TIMEOUT_MS = 8_000;
+export const ANSWER_TIMEOUT_MS = 30_000;
+
+/**
+ * Both are overridable by env, which is what lets a test prove the deadline
+ * exists without waiting 30 s for it — and what lets a deployment behind a
+ * slower upstream move them without a rebuild.
+ */
+function timeoutMs(name: string, fallback: number): number {
+  const raw = Number(process.env[name]);
+  return Number.isFinite(raw) && raw > 0 ? raw : fallback;
+}
 const MAX_QUERY_CHARS = 400;
 const MAX_SENTENCE_CHARS = 400;
 const MAX_KNOWN_SAMPLE = 200;
+
+/**
+ * Reject when `promise` has not settled in time. The provider interface takes
+ * no `AbortSignal` (the SDK's own timeout is 45 s across two sequential calls),
+ * so this is a race: the call may still be in flight, but nobody is waiting on
+ * it any more.
+ */
+async function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`${what} took longer than ${ms} ms`)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
 
 interface AskRequestBody {
   query: string;
@@ -70,6 +110,13 @@ export interface AskRouteResponse extends AskRouteInfo {
   entries: Entry[];
   /** How many entries were retrieved for the model. Diagnostic only. */
   retrieved: number;
+  /**
+   * False when the answer is a stand-in the route built because the provider's
+   * own answer did not survive grounding. The client must not cache it: the
+   * next ask should reach the provider again rather than repeat the fallback
+   * for as long as the row lives.
+   */
+  cacheable: boolean;
 }
 
 function badRequest(hint: string): Response {
@@ -240,7 +287,13 @@ export async function POST(request: Request): Promise<Response> {
     let candidates: string[] = [];
     if (needsProposals(query)) {
       try {
-        candidates = (await provider.proposePhrases(query, context)).candidates;
+        candidates = (
+          await withTimeout(
+            provider.proposePhrases(query, context),
+            timeoutMs('TANGRAM_ASK_PROPOSE_TIMEOUT_MS', PROPOSE_TIMEOUT_MS),
+            'proposePhrases',
+          )
+        ).candidates;
       } catch (error) {
         // Retrieval help is optional; the dictionary search still stands.
         candidates = [];
@@ -256,7 +309,11 @@ export async function POST(request: Request): Promise<Response> {
 
   let raw: unknown;
   try {
-    raw = await provider.answer(retrieved, profile, query, context);
+    raw = await withTimeout(
+      provider.answer(retrieved, profile, query, context),
+      timeoutMs('TANGRAM_ASK_ANSWER_TIMEOUT_MS', ANSWER_TIMEOUT_MS),
+      'the answer',
+    );
   } catch (error) {
     const message =
       error instanceof ProviderError
@@ -282,12 +339,29 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
-  const grounded = ground(parsed.data, {
+  const groundContext = {
     retrieved,
-    segment: (text) => segment(text).tokens,
-    entry: (id) => getEntry(id),
-    readings: (simp) => (index.bySimp.get(simp) ?? []).length,
-  });
+    segment: (text: string) => segment(text).tokens,
+    entry: (id: EntryId) => getEntry(id),
+    readings: readingCount,
+  };
+  let grounded = ground(parsed.data, groundContext);
+  let cacheable = true;
+
+  // A schema-valid answer can ground to nothing at all: writing the Chinese
+  // into `interpretation` (the commonest thing a live model does) and citing an
+  // id it was never given leaves `{interpretation:'', matches:[], sayIt:[]}` —
+  // which the panel would render as a heading over an empty section, and then
+  // cache. §3.4's "no query ever renders an empty panel" is a promise about
+  // what is on screen, so the dictionary answers instead, in its own voice.
+  if (
+    grounded.interpretation.length === 0 &&
+    grounded.matches.length === 0 &&
+    grounded.sayIt.length === 0
+  ) {
+    grounded = ground(retrievalEcho(retrieved), groundContext);
+    cacheable = false;
+  }
 
   // Only the entries the answer actually cites travel back: the client renders
   // hanzi and pinyin from these rows, and the other 30-odd are the model's
@@ -309,6 +383,7 @@ export async function POST(request: Request): Promise<Response> {
     response: grounded,
     entries: [...cited].map((id) => getEntry(id)).filter((entry): entry is Entry => entry !== undefined),
     retrieved: retrieved.length,
+    cacheable,
   };
   return Response.json(body);
 }

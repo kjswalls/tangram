@@ -21,6 +21,7 @@
  * answers to "is this already a card?".
  */
 
+import { useLiveQuery } from 'dexie-react-hooks';
 import { useEffect, useState } from 'react';
 
 import { EntryDetail } from '@/components/lookup/entry-detail';
@@ -31,7 +32,7 @@ import { getRepository } from '@/lib/db/get-db';
 import { fetchEntriesResponse, fetchSearch } from '@/lib/dict/client';
 import type { SearchGroup } from '@/lib/dict/search';
 import { useLookupStore } from '@/lib/stores/lookup';
-import type { Entry, EntryId, HskBand } from '@/lib/types';
+import type { Entry, HskBand } from '@/lib/types';
 
 /** One headword's readings, in the shape `EntryDetail` renders. */
 export function groupFromEntries(entries: readonly Entry[]): SearchGroup | undefined {
@@ -71,8 +72,16 @@ export function ReaderLookup({ onExtend, extendLabel, onClose }: ReaderLookupPro
   const entryIds = useLookupStore((state) => state.entryIds);
 
   const [resolved, setResolved] = useState<Resolved>();
-  const [marked, setMarked] = useState<{ id: EntryId; label: string }>();
   const [markError, setMarkError] = useState(false);
+
+  /**
+   * Read live, not remembered locally. Local `marked` state answered "did *this
+   * mount* press the button", which said "Mark known" over a word that already
+   * was, and kept saying "Marked known" after an Add had un-known it. The three
+   * writers here — this button, an Add through `EntryDetail`, and the demo seed
+   * — all move the same `known_words` rows, so the button reads the rows.
+   */
+  const known = useLiveQuery(async () => new Set(await getRepository().knownEntryIds()), []);
 
   useEffect(() => {
     // Nothing to resolve, and nothing to clear: `showing` below is gated on the
@@ -115,14 +124,13 @@ export function ReaderLookup({ onExtend, extendLabel, onClose }: ReaderLookupPro
   // The reading segmentation ranked first — the same one `EntryDetail`
   // preselects, and `entryIds` is frequency-ordered (§3.2).
   const primary = group?.entries[0];
-  const alreadyMarked = marked?.id === primary?.id;
+  const alreadyMarked = primary !== undefined && (known?.has(primary.id) ?? false);
 
   const markKnown = async () => {
     if (!primary) return;
     setMarkError(false);
     try {
       await getRepository().markKnown([primary.id]);
-      setMarked({ id: primary.id, label: primary.simp });
     } catch {
       setMarkError(true);
     }
@@ -177,7 +185,7 @@ export function ReaderLookup({ onExtend, extendLabel, onClose }: ReaderLookupPro
           </Button>
           {alreadyMarked ? (
             <Badge tone="accent">
-              <span className="hanzi">{marked?.label}</span>
+              <span className="hanzi">{primary?.simp}</span>
               <span className="ml-1">is known</span>
             </Badge>
           ) : null}

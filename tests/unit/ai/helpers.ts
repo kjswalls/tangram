@@ -3,7 +3,7 @@
  * dictionary. The grounding rules are claims about Chinese words, so they are
  * tested against the words, not against a fixture that could agree with a bug.
  */
-import { getDictIndex, getEntry } from '@/lib/dict/index';
+import { getDictIndex, getEntry, readingCount } from '@/lib/dict/index';
 import { segment } from '@/lib/dict/segment';
 import type { GroundContext } from '@/lib/ai/ground';
 import type { Entry } from '@/lib/types';
@@ -36,11 +36,14 @@ export function readingOf(word: string, pinyinNum: string): Entry {
 }
 
 export function groundContext(retrieved: Entry[]): GroundContext {
-  const index = getDictIndex();
+  // `readingCount`, exactly as the route wires it: counting *rows* under a
+  // simplified form makes 后, 里 and 面 polyphones because CC-CEDICT keeps a row
+  // per traditional variant, and a test that counted them the old way would
+  // agree with the bug.
   return {
     retrieved,
     segment: (text) => segment(text).tokens,
     entry: (id) => getEntry(id),
-    readings: (simp) => (index.bySimp.get(simp) ?? []).length,
+    readings: readingCount,
   };
 }

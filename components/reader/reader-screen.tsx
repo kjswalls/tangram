@@ -48,7 +48,20 @@ export function ReaderScreen() {
   // The panel belongs to the token on screen. Leaving the reader — or dropping
   // the text — must not leave a reader context armed for the next route to add
   // a card with.
-  useEffect(() => closeLookup, [closeLookup]);
+  //
+  // The selection goes with it. `closeLookup` clears the query, the sentence and
+  // the resolved entry ids, but `selected` lives in the reader store and used to
+  // survive a trip to /review or the Edit view; on the way back `open` was still
+  // true, so the panel reopened on the last tapped token with no sentence and no
+  // ids — it re-searched the bare string and any Add carried no provenance at
+  // all. The two are one piece of state; they die together.
+  useEffect(
+    () => () => {
+      select(undefined);
+      closeLookup();
+    },
+    [select, closeLookup],
+  );
 
   const counts = useMemo(() => {
     const tally: Record<WordState, number> = { known: 0, learning: 0, new: 0 };

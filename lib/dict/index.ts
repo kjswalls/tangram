@@ -152,6 +152,26 @@ export function getEntry(id: EntryId): DictEntry | undefined {
   return getDictIndex().entries.get(id);
 }
 
+/**
+ * How many *readings* a simplified headword has — not how many rows.
+ *
+ * CC-CEDICT keeps a row per traditional variant and per capitalised proper
+ * noun, so 后 (后/後/Hòu), 里, 面, 出 and 云 all have several entries and one
+ * reading each. `polyphone` (PLAN.md §3.4) is a claim about pronunciation: it
+ * warns the learner to check *which reading* before adding, so counting rows
+ * puts the warning on almost every common character and teaches them to ignore
+ * it. 看 (kān/kàn) and 发 (fā/fà) are the real thing.
+ */
+export function readingCount(simp: string): number {
+  const index = getDictIndex();
+  const readings = new Set<string>();
+  for (const id of index.bySimp.get(simp) ?? []) {
+    const entry = index.entries.get(id);
+    if (entry) readings.add(entry.pinyinNum.toLowerCase().replace(/\s+/g, ''));
+  }
+  return readings.size;
+}
+
 /** Entries for `ids`, in the order asked for; unknown ids are dropped. */
 export function getEntries(ids: readonly EntryId[]): DictEntry[] {
   const index = getDictIndex();

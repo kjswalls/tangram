@@ -8,9 +8,10 @@
  * thing they typed. What it does show is *which* index answered, per result, so a
  * surprising hit is explainable rather than mysterious.
  *
- * The ask panel (Phase 4) mounts through `askSlot` into the panel's `ask` slot,
- * which stays empty until then: the dictionary body must render and stay usable
- * whatever the provider is doing (§3.4).
+ * The ask panel is `LookupPanel`'s own default content for its ask region (P4's
+ * one sanctioned edit to that file); `askSlot` stays here as the override hook
+ * for a caller that wants something else there. Either way the dictionary body
+ * renders and stays usable whatever the provider is doing (§3.4).
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
@@ -128,7 +129,7 @@ export function LookupView({ askSlot }: { askSlot?: ReactNode }) {
               : !query.trim()
                 ? 'Tones are optional — dasuan, da3suan4 and dǎsuàn all find 打算.'
                 : total === 0
-                  ? 'Nothing matched. Try fewer letters, the other script, or the English word.'
+                  ? 'No headword matched that — the Ask panel takes the whole question. For a single word, try fewer letters, the other script, or the English word.'
                   : ''}
         </p>
       </div>
@@ -148,16 +149,31 @@ export function LookupView({ askSlot }: { askSlot?: ReactNode }) {
           />
         </div>
         {/*
-          Below md the panel is above the results (`order-1`), which is right the
-          moment there is something in it and wrong before: an empty card that
-          echoes the query pushed the first hit ~200px down the screen. So on a
-          phone it appears when a result is picked, and the two-column sticky
-          desktop layout is unchanged.
+          Below md the panel leads (`order-1`) once a result is picked, which is
+          right the moment there is something in it and wrong before: an empty
+          card that echoes the query pushed the first hit ~200px down the screen.
+
+          What it must never be is *hidden*. An English sentence has no headword
+          to pick, so gating the whole column on a selection left a phone with
+          "No matches" and nothing else — the §1 front door, the phrase card and
+          "Add this sense" were all unreachable at 390px. So: hidden only when
+          the box is empty, and second in the order until a result is picked.
         */}
-        <div className={cn('order-1 md:order-2', selected ? '' : 'hidden md:block')}>
+        <div
+          className={cn(
+            'md:order-2',
+            selected ? 'order-1' : 'order-2',
+            selected || query.trim() ? '' : 'hidden md:block',
+          )}
+        >
           <div ref={panelRef} className="md:sticky md:top-4">
             <LookupPanel
               query={selected ? selected.simp : query}
+              // The ask stays keyed to what the learner typed. Picking 打算 out
+              // of a `dasuan` search used to re-ask about the headword, which
+              // is a second provider call *and* throws away the answer being
+              // read — on a phone the demo's Say-it line was never on screen.
+              askQuery={query}
               context={context}
               slots={{ ask: askSlot }}
             >

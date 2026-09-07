@@ -7,7 +7,8 @@
  * calling the repository directly; see HANDOFF.md, "Phases 1–3 (merged)".
  */
 
-import type { CardRow } from '@/lib/db/schema';
+import type { CardRow, PhraseToken } from '@/lib/db/schema';
+import { isPhraseSnapshot } from '@/lib/db/schema';
 import type { Repository } from '@/lib/db/repository';
 import { ensureSystemLists, findLookedUpList } from '@/lib/lists/system-lists';
 import type { CardContext, ContextSource, Entry, EntryId } from '@/lib/types';
@@ -40,7 +41,14 @@ export async function addCardTracked(
   dictVersion?: string,
 ): Promise<CardRow> {
   const card = await repo.addCardFromEntry(entry, context, senseIndex, dictVersion);
-  if (isExplicitSource(context?.source)) await joinLookedUp(repo, [entry.id]);
+  if (isExplicitSource(context?.source)) {
+    await joinLookedUp(repo, [entry.id]);
+    // "Known" and "due today" cannot both be true. An explicit Add is the
+    // learner asking to study this word, so it wins over an earlier "Mark
+    // known" — otherwise the reader paints the word known while the queue
+    // serves it and the Looked-up list reads "known · Queued".
+    await repo.unmarkKnown([entry.id]);
+  }
   return card;
 }
 
@@ -84,4 +92,56 @@ function contextMatches(stored: CardContext | undefined, wanted: CardContext | u
   if (!stored) return false;
   const fields = ['sentence', 'question', 'query', 'offset', 'length'] as const;
   return fields.every((field) => wanted[field] === undefined || stored[field] === wanted[field]);
+}
+
+// ---------------------------------------------------------------------------
+// Phrases
+// ---------------------------------------------------------------------------
+
+/** The identity of a phrase card: the characters on its front. */
+export function phraseKey(tokens: readonly PhraseToken[]): string {
+  return tokens.map((token) => token.text).join('');
+}
+
+/**
+ * The phrase card for these tokens, if the learner already has one.
+ *
+ * `addPhraseCard` is the one Add in the app that is not idempotent — the frozen
+ * repository interface has no `phraseCardFor` to ask first, and the panel's
+ * disabled state is per-mount, so asking the same question after a reload and
+ * pressing Add again wrote a second identical card and the review session
+ * offered both. The check lives here rather than in the repository for the same
+ * reason the "Looked up" join does: the seam below is frozen.
+ */
+export async function phraseCardFor(
+  repo: Repository,
+  tokens: readonly PhraseToken[],
+): Promise<CardRow | undefined> {
+  const key = phraseKey(tokens);
+  if (!key) return undefined;
+  const cards = await repo.allCards();
+  return cards.find(
+    (card) => card.kind === 'phrase' && isPhraseSnapshot(card.snapshot) && card.snapshot.simp === key,
+  );
+}
+
+export interface PhraseAdd {
+  card: CardRow;
+  /** False when the card was already there — the UI must not claim an Add. */
+  created: boolean;
+}
+
+/**
+ * `addPhraseCard`, made idempotent the way word adds already are. Two identical
+ * phrase cards are not two things to learn.
+ */
+export async function addPhraseCardChecked(
+  repo: Repository,
+  tokens: PhraseToken[],
+  en: string,
+  context: CardContext,
+): Promise<PhraseAdd> {
+  const existing = await phraseCardFor(repo, tokens);
+  if (existing) return { card: existing, created: false };
+  return { card: await repo.addPhraseCard(tokens, en, context), created: true };
 }

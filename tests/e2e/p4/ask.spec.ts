@@ -132,7 +132,9 @@ test.describe('the ask panel', () => {
     expect(saved).toHaveLength(1);
     expect(saved[0]).toMatchObject({ kind: 'word', entryId: KAN4, senseIndex: KAN4_SENSE });
     expect(saved[0].context?.source).toBe('ask');
-    expect(saved[0].context?.question).toBe('看');
+    // The "question" was the headword itself, so none is recorded: a card back
+    // that quotes its own front is not provenance (the review's minor fix).
+    expect(saved[0].context?.question).toBeUndefined();
 
     await page.goto('/review');
     await expect(page.getByTestId('review-card')).toBeVisible();
@@ -163,11 +165,116 @@ test.describe('the ask panel', () => {
     await expect(phrase.getByTestId('ask-sayit-add-words')).toContainText('Words added');
 
     const afterWords = await cards(page);
-    // One phrase card plus one word card per cited entry in the phrase.
-    expect(afterWords.filter((card) => card.kind === 'word')).toHaveLength(3);
-    expect(afterWords.map((card) => card.simp)).toEqual(
-      expect.arrayContaining(['我随便看看', '我', '随便', '看看']),
+    // One card for the one word the learner does not already know. 我 (HSK 1)
+    // and 随便 (HSK 2) are inside `knownBand`, and queueing a word the app
+    // itself paints as known — and lists as "known · Queued" — is the app
+    // arguing with the learner.
+    expect(afterWords.filter((card) => card.kind === 'word').map((card) => card.simp)).toEqual([
+      '看看',
+    ]);
+    await expect(phrase.getByTestId('ask-sayit-words-state')).toContainText('1 added');
+    await expect(phrase.getByTestId('ask-sayit-words-state')).toContainText('already known');
+  });
+
+  test('the same phrase added twice is one card, and says so before it is pressed', async ({
+    page,
+  }) => {
+    await ask(page, BROWSING);
+    const phrase = page.getByTestId('ask-sayit').first();
+    await phrase.getByTestId('ask-sayit-add').click();
+    await expect(phrase.getByTestId('ask-sayit-add')).toContainText('Phrase added');
+
+    // A reload is what made this a duplicate: the button's disabled state is
+    // per-mount, and `addPhraseCard` itself had no idempotency at all.
+    await ask(page, BROWSING);
+    const again = page.getByTestId('ask-sayit').first();
+    await expect(again.getByTestId('ask-sayit-add')).toContainText('Already in your cards');
+    await expect(again.getByTestId('ask-sayit-add')).toBeDisabled();
+    expect((await cards(page)).filter((card) => card.kind === 'phrase')).toHaveLength(1);
+  });
+
+  test('a phrase carrying the model’s own characters cannot become a card', async ({ page }) => {
+    // A `{text}` token is the model's invention. The review card renders
+    // `snapshot.simp` — the joined tokens, with no flag on them — at 6xl, and
+    // its pinyin line is built from the *dictionary* tokens only, so the back
+    // would read a syllable short. Nothing on the review path knows about
+    // `unverified`, so the Add is the place to stop it.
+    const key = await cacheKey(page, 'zzz unverified');
+    await page.evaluate(async (id) => {
+      await window.__tangram.repo.askCache.set(id, {
+        interpretation: 'A made-up compound, for the flag.',
+        matches: [],
+        sayIt: [
+          {
+            tokens: [{ entryId: '我|我[wo3]' }, { text: '隨便' }, { entryId: '看看|看看[kan4 kan5]' }],
+            en: 'I am just looking',
+            register: 'invented',
+          },
+        ],
+        notes: [],
+      });
+    }, key);
+
+    await ask(page, 'zzz unverified');
+    const phrase = page.getByTestId('ask-sayit').first();
+    await expect(phrase).toHaveAttribute('data-unverified', 'true');
+    await expect(phrase.getByTestId('ask-sayit-add')).toBeDisabled();
+    await expect(phrase.getByTestId('ask-sayit-add')).toContainText('cannot add');
+    await expect(phrase.getByTestId('ask-sayit-warning')).toContainText('cannot become a card');
+
+    // The cited words are still one tap away — that is the offer instead.
+    await phrase.getByTestId('ask-sayit-add-words').click();
+    await expect(phrase.getByTestId('ask-sayit-words-state')).toBeVisible();
+    expect((await cards(page)).filter((card) => card.kind === 'phrase')).toHaveLength(0);
+  });
+
+  test('the answer is on screen on a phone, and it answers what was typed', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await ask(page, BROWSING);
+
+    // An English sentence has no headword to pick, so a panel gated on a
+    // selection left a phone with "No matches" and nothing else — the front
+    // door of §1 unreachable at 390px.
+    await expect(page.getByTestId('ask-panel')).toBeVisible();
+    await expect(page.getByTestId('ask-sayit').first()).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+      true,
     );
+  });
+
+  test('picking a result keeps the answer to what was typed', async ({ page }) => {
+    await ask(page, 'dasuan');
+    const before = await page.getByTestId('ask-interpretation').textContent();
+    expect(await page.getByTestId('ask-sayit').count()).toBeGreaterThanOrEqual(1);
+
+    await page.getByTestId('search-result').first().click();
+    await expect(page.getByTestId('entry-detail')).toBeVisible();
+    // The panel header follows the pick; the ask does not. Re-asking with the
+    // headword is a second provider call *and* throws away the answer being
+    // read — under the fake it fell straight through to the offline echo.
+    await expect(page.getByTestId('lookup-panel').locator('h2').first()).toContainText('打算');
+    await page.waitForTimeout(1_500);
+    await expect(page.getByTestId('ask-panel')).toHaveAttribute('data-status', 'ready');
+    expect(await page.getByTestId('ask-interpretation').textContent()).toBe(before);
+    expect(await page.getByTestId('ask-sayit').count()).toBeGreaterThanOrEqual(1);
+  });
+
+  test('an answer to the previous word is never shown under the new one', async ({ page }) => {
+    await ask(page, BROWSING);
+    await expect(page.getByTestId('ask-sayit-add').first()).toBeVisible();
+
+    // Inside the debounce the panel used to keep the previous answer — its
+    // matches, its phrases and its Add buttons — under the new heading. An Add
+    // pressed there wrote a card whose provenance named a different word.
+    await page.getByTestId('lookup-input').fill('每天');
+    await expect(page.getByTestId('ask-panel')).toHaveAttribute('data-status', 'loading');
+    await expect(page.getByTestId('ask-status')).toContainText('每天');
+    expect(await page.getByTestId('ask-sayit-add').count()).toBe(0);
+    expect(await page.getByTestId('ask-match-add').count()).toBe(0);
+
+    await expect(page.getByTestId('ask-panel')).toHaveAttribute('data-status', 'ready', {
+      timeout: 20_000,
+    });
   });
 
   test('a repeat question with the same context hits the cache; a different context does not', async ({

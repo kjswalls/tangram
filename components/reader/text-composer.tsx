@@ -73,8 +73,11 @@ export function TextComposer() {
               data-testid="read-text"
               disabled={body.trim().length < MIN_CHARS || busy}
               onClick={async () => {
-                await save();
-                await read();
+                // Only read on a save that worked. `read()` clears `error` and
+                // switches view, which threw away the message and unmounted the
+                // only box that shows it — a failed save looked like a
+                // successful one until the refresh that lost the text.
+                if (await save()) await read();
               }}
             >
               {busy ? 'Reading…' : 'Save and read'}

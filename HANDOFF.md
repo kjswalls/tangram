@@ -852,6 +852,9 @@ evaluates a `provider.ts` binding at import time — which is why the tool schem
 `const TOOL = zodToJsonSchema(askResponseSchema)` there is a temporal-dead-zone crash on
 first import, not a type error. Keep the derivation lazy.
 
+> **Superseded in part.** Rule 3 below flagged 太贵了, 我爱你 and 我很累 — see
+> "Phases 4–5 review fixes", *The unverified flag stopped crying wolf*.
+
 **The unverified rule is wider than §3.4's wording, on purpose.** The plan says "a run of ≥2
 consecutive *fallback* single-chars". Taken literally that flags nothing in the two cases the
 same paragraph demands be flagged: 随, 看, 绝 and 子 are all real CC-CEDICT headwords, so
@@ -999,7 +1002,8 @@ so the walk is about the two cards the spec mined, not the ten the spine would d
    server; a count route or a field on the ask response would improve it — and would change
    the cache key, so it wants an `ASK_PROMPT_VERSION` bump when it lands (and the demo seed's
    warm rows re-derive for free now, which is the point of seam 3).
-4. **Picking a result on `/lookup` re-asks.** `LookupPanel`'s `query` is the typed query until
+4. **Picking a result on `/lookup` re-asks.** *(Fixed in the review below: the
+   ask stays keyed to what was typed, via `LookupPanel`'s new `askQuery`.)* `LookupPanel`'s `query` is the typed query until
    a result is picked and the headword after that, which is the intended reading of "ask about
    what the panel is showing" but costs a second call. If it is wrong the fix is in
    `lookup-view.tsx`, not in the panel.
@@ -1036,3 +1040,265 @@ so the walk is about the two cards the spec mined, not the ten the spine would d
 | `PORT=3000 pnpm e2e` | pass — **67/67**, run twice clean (55 before P4/P5) |
 
 No server is left running; port 3000 is free. `/home/user/v0-anchor` was not touched.
+
+---
+
+## Phases 4–5 review fixes
+
+Written after the three-lens adversarial review of the merged phases. Fifteen
+findings were verified and fixed — seven blocking/major on the ask pipeline,
+six on the two UIs, and eight minors that were cheap enough to take. Every
+grounding attack the review demonstrated is now a permanent test
+(`tests/unit/ai/attacks.test.ts`, `tests/unit/ai/route-provider.test.ts`).
+Nothing here was disputed: all fifteen reproduced.
+
+### The dictionary is ground truth — the holes in that claim
+
+**Blocking — a phrase's own prose was never scrubbed.** `ground()` passed
+`sayIt[].en` and `.register` through untouched while every other prose field went
+through `stripCjk`, so a model could answer with
+`en: '我隨便看看 (wǒ suíbiān kànkan)'` and the panel printed the hanzi *and* the
+reading as plain text with no flag — and `addPhraseCard` then wrote the same
+string onto the card's back. Both now go through the prose scrubber, and a
+phrase whose `en` was nothing but hanzi is dropped rather than shown with an
+empty gloss. `renderPhrase` scrubs them a second time on the way to the screen,
+because a cache row written before this existed is re-rendered through it.
+
+**Major — prose could still carry a reading.** `stripCjk` removes ideographs;
+pinyin is the other half of the same claim, and "pronounced sui1 bian1" or
+"read it as suíbiān" reached the panel intact. A learner cannot detect a wrong
+tone — that is the whole reason they are asking (§1) — so `stripPinyin` now
+takes tone-marked and tone-numbered pinyin out of `interpretation`, `notes`,
+`whyThisOne`, `en` and `register`. Two decisions inside it:
+
+- **The trigger is the tone, never bare letters.** Half of English is a legal
+  toneless syllable (`men`, `hen`, `long`, `song`), so only a word carrying a
+  tone mark or a trailing 1–5 fires the rule. `scrubProse('The men can hang on
+  to a long song')` is unchanged; `'It is pronounced hěn hǎo.'` becomes
+  `'It is pronounced.'`
+- **A toned syllable takes its untoned neighbours with it**, within one run
+  (whitespace, apostrophe or hyphen only — a comma ends the run). `kán kan`
+  goes whole instead of leaving `kan` behind. A note with nothing left to say
+  after that is dropped.
+
+The syllable inventory is CC-CEDICT's own, extracted once from `data/dict.json`
+and frozen into `lib/ai/ground.ts` as a string constant: the module is imported
+by a client component and may not touch the dictionary.
+
+**Minor, same family — `stripCjk` missed the lookalikes.** Kangxi radicals
+(⼀ is U+2F00 and renders identically to 一), the CJK Radicals Supplement,
+Bopomofo (a plausible thing to reach for when a learner mentions Taiwan),
+enclosed CJK, and Extensions G/H are all in `CJK_RUN` now, with a case each.
+
+**Blocking — an AI `{text}` token could become a review card.** "Add as a phrase
+card" was not gated on the flag. `snapshot.simp` is the joined token text and
+`cardFace` returns it as `face.primary`, which `review-card.tsx` renders at 6xl
+with no flag anywhere on the review path (`grep -rn unverified components lib`
+found nothing there) — while `pinyinMarked` was built from the *dictionary*
+tokens only, so the back read a syllable short. 我 + `{text:'隨便'}` + 看看
+became a card whose front said 我隨便看看 and whose back said `wǒ kàn kan`.
+
+The fix is at the Add, not on the review card: a phrase with any unverified,
+AI-generated or missing token cannot be added at all — the button reads
+"Not verified — cannot add" and the warning offers the cited words instead.
+Underneath it, `addPhraseCard` now writes `?` for a token with no reading rather
+than dropping it, so no card can ever have a back shorter than its front.
+
+**Major — the flag fired on ordinary sentences.** Rule 3 ("a run of ≥2 single
+characters unless all are in the ~100 most frequent") flagged 12 of 30 everyday
+phrases — 太贵了, 我爱你, 我很累, 我饿了, 我先走了 — because frequency cannot
+separate 随 (904) from 贵 (1957). A warning that fires on 我 and 了 teaches the
+learner to ignore warnings, which is expensive on the day it is right. The rule
+now splits by *citation*:
+
+- a run of **uncited** singles (a `{text}` token the segmenter split, a
+  `via:'fallback'` character) keeps the old frequency rule;
+- a run of **cited** singles is flagged only on the shape that says "compound":
+  a character repeated within two positions (随…随, 绝绝), minus the two
+  reduplications Chinese actually forms that way (AA 看看/走走, A一A 看一看).
+
+Verified over the real dictionary: 太贵了 · 我爱你 · 请给我水 · 我很累 · 我饿了 ·
+我很忙 · 我先走了 · 我错了 · 我很冷 · 我懂了 · 太热了 · 别动 · 看一看 · 说说 ·
+走走 · 我随便看看 all come back clean, while 随看随买 and 绝绝子 — the two cases
+§3.4 names — are still flagged, and 我 + `{text:'超爱'}` + 我 flags only the
+model's own token. `unverifiedSpans` takes a third argument (the cited spans)
+and `ground()` computes it from the rendered tokens.
+
+**Major — `polyphone` counted rows, not readings.** CC-CEDICT keeps a row per
+traditional variant and per capitalised proper noun, so 后 (后/後/Hòu), 里, 面,
+出, 于, 云, 周, 布, 范 and 仿 all have several entries and *one* reading — and
+every sayIt containing one of them rendered " · polyphone" with a tooltip
+telling the learner to check which reading. `lib/dict/index.ts` gained
+`readingCount(simp)` (distinct normalised `pinyinNum`), the route and the test
+helper both call it, and a test pins 后/里/面/出 as not polyphone and 看/发 as
+polyphone.
+
+**Major — a schema-valid answer could ground to nothing.** Writing the Chinese
+into `interpretation` and citing an id it was never given is the commonest thing
+a live model does, and it produced `{interpretation:'', matches:[], sayIt:[]}` →
+HTTP 200 → a heading over an empty section → cached, so the query stayed empty
+for ever. The route now falls back to `ground(retrievalEcho(retrieved), …)` when
+all three are empty and marks the response `cacheable: false`; the panel skips
+`askCache.set` for it and renders an explicit line (`ask-empty`) if an answer
+still comes back with nothing in it. §3.4's "no query ever renders an empty
+panel" is a promise about the screen, so the dictionary answers instead.
+
+**Major — the cache stored gloss text.** `retrievalEcho` built its
+interpretation out of the top entry's reading and its first three glosses
+("Offline: the closest dictionary entry reads suíbiàn — as one wishes; as one
+pleases; at random"), and `response` is exactly what the client writes into
+`ask_cache`. §3.4 ("cached responses hold ids and indexes only"), §5 ("caches
+hold ids, not gloss text") and the seed's own comment all say otherwise, and
+*every* non-demo query under the fake — the only provider that has ever run —
+broke it. The echo now names the entries without quoting them; the panel renders
+the glosses from the entries it fetched, which is where they were already coming
+from. `tests/unit/ai/fake.test.ts` asserts no gloss and no reading appears in
+the echo's prose.
+
+**Major — nothing had a deadline.** A provider that never resolved left the
+route pending for ever and the panel on "Thinking about …" with no way out but
+retyping; `proposePhrases` was awaited inside the retrieval `try`, so "retrieval
+help is optional" covered a rejection but not a hang. Both calls are now raced
+against a timeout (`PROPOSE_TIMEOUT_MS` 8 s → `candidates: []`,
+`ANSWER_TIMEOUT_MS` 30 s → the existing 502 shape), both overridable by env
+(`TANGRAM_ASK_PROPOSE_TIMEOUT_MS`, `TANGRAM_ASK_ANSWER_TIMEOUT_MS`) — which is
+what lets a test prove the deadline exists in 40 ms instead of 30 s. The panel
+carries its own 35 s backstop for the network itself and says "The ask took too
+long" rather than failing silently.
+
+### The two UIs
+
+**Blocking — on a phone the answer was hidden until a result was picked.**
+`lookup-view.tsx` wrapped the whole panel column in `selected ? '' : 'hidden
+md:block'`. An English sentence has no headword to pick, so at 390px the learner
+got "Nothing matched" / "No matches" and nothing else: the §1 front door, the
+phrase card and "Add this sense" were all unreachable, and the panel was in the
+DOM the whole time with `display:none`. The column is now hidden only when the
+box is empty, and sits *after* the results until something is selected (so the
+old reason for the `order-1` swap — an empty card pushing the first hit down the
+screen — still holds). An e2e case at 390px asserts the ask panel and its sayIt
+are visible for the sentence query.
+
+**Major — picking a result wiped the answer you were reading.** `LookupPanel`'s
+`query` fed both the header and the ask, so selecting 打算 out of a `dasuan`
+search re-asked with the headword: a second provider call, and under the fake it
+fell through to the offline echo, so the demo's Say-it line vanished ~600 ms
+after the click (and on a phone was never on screen at all). `LookupPanel` now
+takes an optional `askQuery` — **the second sanctioned edit to that frozen
+file** — and `/lookup` passes the typed query. The header still follows the
+pick.
+
+**Major — the panel showed the previous word's answer under the new word's
+heading.** `setState({status:'loading'})` ran inside the debounced `run()`, so
+for 500 ms after a query change the old answer, its matches and its Add buttons
+were all still live: pressing one wrote a 附近 card whose "From the sentence"
+line was about 每天, and the learner never even saw "Added" because the card
+unmounted when the real answer landed. The ready state now records what it
+answers (`answered: {query, contextJson}`) and staleness is *derived in render*
+(no setState in an effect): a stale answer shows "Thinking about …" and no Add
+buttons, and `data-status` reads `loading`. `addMatch` also snapshots its
+provenance at click time.
+
+**Major — "Add as a phrase card" was not idempotent.** `addPhraseCard` does a
+bare `db.cards.add` and the button's disabled state is per-mount, so asking the
+same question after a reload and pressing Add again made a second identical card
+and the review session offered both. The frozen repository has no
+`phraseCardFor` to ask, so the check lives one layer out, beside the "Looked up"
+join it resembles: `phraseCardFor` / `addPhraseCardChecked` in
+`lib/lists/looked-up.ts`, keyed on the phrase's own characters. The panel probes
+on mount and says "Already in your cards" before it is pressed.
+
+**Major — "add N words individually" queued words the app calls known.** It
+added every cited token with no `senseIndex` and never looked at `known_words`
+or `knownBand`, so the demo's three words became 我 (HSK 1, known under the
+demo's own band 2) plus a second 随便 card beside the sense-specific one from
+"Add this sense" — `undefined` and `0` are different cards by design. Now: a
+token already known, or inside `settings.knownBand`, is skipped and reported
+("1 added · 我 · 随便 already known"), and a token that is *also* one of the
+answer's matches is added at that match's sense, so the two paths land on one
+card. A single "Add this sense" is untouched — that is the learner choosing.
+
+**Major — "Mark known" and "Add card" could both be true.** The reader's
+`marked` was local state, so it said "Mark known" over a word that already was
+one, and after marking, `Add card` was still offered: pressing it queued the
+word for today while the `known_words` row stayed, so the reader painted it
+known, the queue served it, and the Looked-up list read "known · Queued".
+Two changes: `ReaderLookup` reads the known set live (`useLiveQuery`), like the
+colouring does; and an *explicit* Add now calls a new
+`Repository.unmarkKnown(entryIds)` — **a frozen-file addition**
+(`lib/db/repository.ts` + `lib/db/dexie.ts`), because the two states are
+contradictory and nothing could leave the first one. Adding is the learner
+saying they want to study the word, so it wins. A spine draw (`source:'list'`)
+leaves the known set alone.
+
+**Major — the reader panel reopened on a stale selection.** `ReaderScreen`
+cleared the lookup store on unmount but not `useReaderStore.selected`, so after
+a trip to `/review` (or the Edit view) the panel reopened on the last tapped
+token with no sentence and no `entryIds`: it re-searched the bare string and an
+Add from it carried no provenance at all. The selection and the context are one
+piece of state now and die together. `tests/unit/reader/screen-selection.test.tsx`
+mounts the screen, unmounts it and asserts all three are gone.
+
+### Minors taken
+
+- **The cache key ignored half the context the prompt sees.** `askContextKey`
+  collapsed to `sentence ?? question ?? query`, so two asks that differed only
+  in `question` shared a row. It is the whole tuple now; a bare string (the
+  seed's shape) still means the sentence, pinned by the existing test.
+- **Grounding is bounded**: matches deduped on (entryId, senseIndex) — the
+  panel's React key — notes capped at 8, tokens per phrase at 32, prose
+  truncated at 2,000 characters, and notes keyed by index rather than by text.
+- **A failed `GET /api/ask` is no longer memoised.** One transient error used to
+  pin `provider: 'fake'` for the life of the page, which keyed every later cache
+  row wrongly and painted the offline badge over a live answer. The panel also
+  refuses to cache when the handshake was the fallback or when the answering
+  provider is not the one the key was derived for.
+- **"Nothing matched" no longer contradicts the answer beside it.** The status
+  line for a query with no headword hit now says the Ask panel takes the whole
+  question.
+- **A "context" that is only the headword is not context.** `resolveContext`
+  returns null when the provenance line equals a headword form, so a card no
+  longer offers "Peek context" that reveals ＿＿; and `askContextFor` omits
+  `question` when the query *is* the headword being added (which is why the P4
+  spec now asserts `context.question` is undefined for the 看 ask).
+- **A failed save is no longer swallowed.** `save()` returns a boolean and
+  "Save and read" only reads when it worked — `read()` cleared `error` and
+  unmounted the only box that shows it.
+- **The stale `askSlot` comments** in `app/lookup/page.tsx` and
+  `lookup-view.tsx` now say what is true: the ask panel is `LookupPanel`'s
+  default ask content and the slot is an override hook.
+
+### Frozen files changed here
+
+- `components/lookup/lookup-panel.tsx` — the optional `askQuery` prop (its
+  second sanctioned edit; the first was P4's default ask content).
+- `lib/db/repository.ts` — `unmarkKnown(entryIds)`, with the reason in the
+  docstring.
+- `lib/db/dexie.ts` is not frozen, but it implements both of those and the
+  phrase-snapshot `?` placeholder.
+
+### Not done, and why
+
+- **`addPhraseCard` still stamps `dictVersion: 'unknown'`** (open item 1 of the
+  merge). It needs a fourth argument on the frozen signature and no rendering
+  depends on it — a phrase snapshot is never re-resolved.
+- **The review card still renders `snapshot.simp` rather than per-token
+  markup.** The reviewer offered either that or refusing the Add; refusing is
+  the one that cannot be got round by a card written before the rule existed.
+  A phrase card in a database from before this fix can still show an unflagged
+  invented character.
+- **`retrievalEcho`'s `matches` are still "dictionary match"** for every entry,
+  which is honest for a dictionary ranking but is not an explanation.
+
+### Checks after the fixes
+
+| Check | Result |
+|---|---|
+| `npx tsc --noEmit` | pass |
+| `pnpm lint` | pass, no warnings |
+| `pnpm test` | pass — 43 files, **420** tests (392 before) |
+| `pnpm build` | pass (Turbopack); `/api/ask` still `ƒ` |
+| `PORT=3000 pnpm e2e` | pass — **74/74** (67 before) |
+
+No server is left running; port 3000 is free. `/home/user/v0-anchor` was not
+touched.

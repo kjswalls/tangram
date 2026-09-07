@@ -52,10 +52,25 @@ describe('askCacheKey', () => {
     });
     const second = await askCacheKey({
       query: '看',
-      context: { sentence: '我看了一下', offset: 9, length: 1, query: '看' },
+      context: { sentence: '我看了一下', offset: 9, length: 1 },
       estimatedBand: 2,
     });
     expect(first).toBe(second);
+  });
+
+  it('keys over every field the prompt is given, not just the first one set', async () => {
+    // `contextBlock` sends the sentence, the question *and* the query, so two
+    // asks that differ in any of them are two questions — collapsing to the
+    // first non-empty field served one answer for both.
+    const keys = await Promise.all(
+      [
+        { sentence: '你看着孩子' },
+        { question: '你看着孩子' },
+        { sentence: '你看着孩子', question: 'which reading is this?' },
+        { sentence: '你看着孩子', query: '看' },
+      ].map((context) => askCacheKey({ query: '看', context, estimatedBand: 2 })),
+    );
+    expect(new Set(keys).size).toBe(keys.length);
   });
 
   it('changes with the band, the provider and the prompt version', async () => {
@@ -65,12 +80,14 @@ describe('askCacheKey', () => {
     expect(await askCacheKey({ ...BASE, promptVersion: 'v2' })).not.toBe(base);
   });
 
-  it('reads a context down to the field that carries the question', () => {
+  it('reads a context as the tuple the prompt sees', () => {
     expect(askContextKey(undefined)).toBe('');
-    expect(askContextKey('已经是字符串')).toBe('已经是字符串');
-    expect(askContextKey({ sentence: 'a', question: 'b' })).toBe('a');
-    expect(askContextKey({ question: 'b' })).toBe('b');
-    expect(askContextKey({ query: 'c' })).toBe('c');
+    expect(askContextKey({})).toBe('');
+    // A bare string is the seed's shape and means the sentence.
+    expect(askContextKey('已经是字符串')).toBe(askContextKey({ sentence: '已经是字符串' }));
+    expect(askContextKey({ sentence: 'a', question: 'b' })).not.toBe(askContextKey({ sentence: 'a' }));
+    expect(askContextKey({ question: 'b' })).not.toBe(askContextKey({ sentence: 'b' }));
+    expect(askContextKey({ query: 'c' })).not.toBe(askContextKey({ question: 'c' }));
   });
 });
 

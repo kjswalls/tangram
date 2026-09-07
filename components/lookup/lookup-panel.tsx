@@ -23,9 +23,22 @@ import type { CardContext } from '@/lib/types';
  * caller that wants something else in the slot still wins. The two regions have
  * different testids on purpose: `lookup-ask-slot` still means "somebody injected
  * a slot", which is what the Phase 0/1 specs assert about.
+ *
+ * **The review's one further edit** (HANDOFF.md, "Phases 4–5 review fixes"):
+ * `askQuery` splits "what the panel is showing" from "what the ask is about".
+ * `/lookup` shows the picked headword and keeps asking about the sentence the
+ * learner typed; without it, picking a result re-asked with the headword and
+ * wiped the answer that was being read.
  */
 export interface LookupPanelProps {
   query: string;
+  /**
+   * What the ask panel asks about, when that is not the same as the headword
+   * the panel is showing (the review fix in HANDOFF.md, "Phases 4–5 review
+   * fixes"). Picking a dictionary result must not silently re-ask about the
+   * headword and throw away the answer to the sentence the learner typed.
+   */
+  askQuery?: string;
   /** Where the query came from: the sentence, the question, the reader offset. */
   context?: CardContext;
   slots?: { ask?: ReactNode };
@@ -34,8 +47,16 @@ export interface LookupPanelProps {
   className?: string;
 }
 
-export function LookupPanel({ query, context, slots, children, className }: LookupPanelProps) {
+export function LookupPanel({
+  query,
+  askQuery,
+  context,
+  slots,
+  children,
+  className,
+}: LookupPanelProps) {
   const provenance = context?.sentence ?? context?.question;
+  const asked = askQuery ?? query;
 
   return (
     <section
@@ -66,9 +87,9 @@ export function LookupPanel({ query, context, slots, children, className }: Look
         <div data-testid="lookup-ask-slot" className="border-t border-border px-4 py-4">
           {slots.ask}
         </div>
-      ) : query.trim() ? (
+      ) : asked.trim() ? (
         <div data-testid="lookup-ask" className="border-t border-border px-4 py-4">
-          <AskPanel query={query} context={context} />
+          <AskPanel query={asked} context={context} />
         </div>
       ) : null}
     </section>

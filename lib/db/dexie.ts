@@ -221,10 +221,12 @@ export function createDexieRepository(db: TangramDb): Repository {
       const snapshot: PhraseSnapshot = {
         tokens,
         simp: tokens.map((token) => token.text).join(''),
-        pinyinMarked: tokens
-          .map((token) => token.pinyinMarked ?? '')
-          .filter(Boolean)
-          .join(' '),
+        // A token with no reading leaves a `?`, never a gap. Dropping it made
+        // the back of the card a *shorter* phrase than its front — 我随便看看
+        // read back as "wǒ kàn kan" — which is a reading the learner would then
+        // rehearse. The ask panel refuses to add a phrase with an unverified
+        // token at all; this is the layer below saying the same thing.
+        pinyinMarked: tokens.map((token) => token.pinyinMarked ?? '?').join(' '),
         en,
         dictVersion: UNKNOWN_DICT_VERSION,
       };
@@ -321,6 +323,15 @@ export function createDexieRepository(db: TangramDb): Repository {
         );
       }
       return rows;
+    },
+
+    async unmarkKnown(entryIds) {
+      const unique = [...new Set(entryIds)];
+      if (unique.length === 0) return 0;
+      // The cards `markKnown` pushed a year out are deliberately left alone:
+      // the caller of this is an Add, which either just made a fresh card or
+      // found one, and re-dating somebody else's card is not its business.
+      return db.known_words.where('entryId').anyOf(unique).delete();
     },
 
     async knownEntryIds() {

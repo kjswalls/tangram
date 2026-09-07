@@ -43,14 +43,28 @@ export interface AskCacheKeyInput {
 }
 
 /**
- * The part of a context that changes the answer. The sentence a word was met in
- * does; the offset of the tap inside it does not, so two taps on the same word
- * in the same sentence share one cache row.
+ * The part of a context that changes the answer.
+ *
+ * Every field the prompt sees is in the key, and nothing else. `contextBlock`
+ * (`lib/ai/prompts.ts`) sends the sentence, the question and the query, so a
+ * key that collapsed to the first non-empty one of them would serve the answer
+ * to `{sentence}` for an ask that also carried a different `question`. The
+ * offset stays out: two taps on the same word in the same sentence are one
+ * question, and the prompt's "target at offset N" only points at the word the
+ * key already names.
+ *
+ * A bare string is the shape `lib/dev/seed.ts` stores its warm rows with, and
+ * it means the sentence — which is what the seeded row is (a reader tap on
+ * 开始). A test pins the two forms to the same digest.
  */
 export function askContextKey(context: AskContext | string | undefined): string {
   if (context === undefined) return '';
-  if (typeof context === 'string') return context;
-  return context.sentence ?? context.question ?? context.query ?? '';
+  const parts =
+    typeof context === 'string'
+      ? [context, undefined, undefined]
+      : [context.sentence, context.question, context.query];
+  if (parts.every((part) => part === undefined || part === '')) return '';
+  return JSON.stringify(parts.map((part) => part ?? null));
 }
 
 /** The exact string the digest is taken over. Exported so tests can pin it. */

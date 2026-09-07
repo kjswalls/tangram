@@ -149,6 +149,44 @@ test.describe('/read', () => {
     );
   });
 
+  test('an Add after "Mark known" leaves one answer standing, not two', async ({ page }) => {
+    await resetApp(page, { knownBand: 2, newPerDay: 0 });
+    await readText(page, DEMO_PARAGRAPH);
+
+    const target = token(page, NEW_WORD);
+    await target.click();
+    await page.getByTestId('mark-known').click();
+    await expect(target).toHaveAttribute('data-state', 'known');
+
+    // "Known" and "due today" cannot both be true. Adding is the learner asking
+    // to study the word, so it wins: the `known_words` row goes and the token
+    // stops being painted known while the queue serves it.
+    await page.getByTestId('add-card').click();
+    await expect(page.getByTestId('add-state')).toContainText('Added to your cards');
+
+    const known = await page.evaluate(() => window.__tangram.repo.knownEntryIds());
+    expect(known.some((id) => id.includes(`|${NEW_WORD}[`))).toBe(false);
+    await expect(target).not.toHaveAttribute('data-state', 'known');
+    await expect(page.getByTestId('mark-known')).toHaveText('Mark known');
+  });
+
+  test('a word that is already known says so before the button is pressed', async ({ page }) => {
+    await resetApp(page, { knownBand: 2, newPerDay: 0 });
+    await readText(page, DEMO_PARAGRAPH);
+
+    await token(page, NEW_WORD).click();
+    await page.getByTestId('mark-known').click();
+    await expect(page.getByTestId('mark-known')).toHaveText('Marked known');
+
+    // Look at something else and come back: the button reads `known_words`, not
+    // what this mount happened to press.
+    await token(page, KNOWN_WORD).click();
+    await expect(page.getByTestId('mark-known')).toHaveText('Mark known');
+    await token(page, NEW_WORD).click();
+    await expect(page.getByTestId('mark-known')).toHaveText('Marked known');
+    await expect(page.getByTestId('mark-known')).toBeDisabled();
+  });
+
   test('the text survives navigation, and a reload finds it in the saved texts', async ({
     page,
   }) => {

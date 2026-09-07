@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Tangram">
+  <rect width="32" height="32" rx="7" fill="#0f766e"/>
+  <path d="M6 6h20L16 16z" fill="#fbfaf7"/>
+  <path d="M6 6v20l10-10z" fill="#fbfaf7" opacity=".55"/>
+  <path d="M26 10v16H10z" fill="#fbfaf7" opacity=".85"/>
+</svg>

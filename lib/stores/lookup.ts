@@ -23,7 +23,7 @@ import type { CardContext, Entry, EntryId, LookupRequest } from '@/lib/types';
  * its readings, and re-deriving them from the string would ask the search
  * router to guess at what the DAG already decided — 了 is `le` here because of
  * the words around it, and a bare search cannot know that. So P5 adds one
- * optional field rather than changing the frozen shape (HANDOFF-p5.md).
+ * optional field rather than changing the frozen shape (HANDOFF.md, "Phases 4–5").
  */
 export interface LookupOpenRequest extends LookupRequest {
   /** Entry ids the caller already resolved, best first. */

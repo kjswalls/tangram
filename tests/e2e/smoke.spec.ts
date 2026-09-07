@@ -48,8 +48,10 @@ test.describe('app shell', () => {
     await page.goto('/lookup');
     await expect(page.getByTestId('lookup-panel')).toBeVisible();
     await expect(page.getByTestId('lookup-body')).toBeVisible();
-    // Nothing fills the ask slot until Phase 4.
+    // Nothing injects the slot, and with no query there is nothing to ask
+    // about either: both ask regions are absent on a bare /lookup.
     await expect(page.getByTestId('lookup-ask-slot')).toHaveCount(0);
+    await expect(page.getByTestId('lookup-ask')).toHaveCount(0);
   });
 
   test('a 503 from the dictionary raises the "run pnpm data" banner', async ({ page }) => {

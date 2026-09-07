@@ -809,3 +809,230 @@ to `/lists`).
 | `PORT=3000 pnpm e2e` | pass — 55/55 (was 54: 1 added) |
 
 No server is left running; port 3000 is free. `/home/user/v0-anchor` was not touched.
+
+## Phases 4–5 (merged) — decisions, needs, TODOs
+
+`p4` (grounded ask) and `p5` (reader) merged into `main` with `--no-ff`, in that order.
+**No conflicts, in either merge.** The two worktrees touched exactly one file in common —
+neither of them: P4's one sanctioned edit was `components/lookup/lookup-panel.tsx`, P5's
+was `lib/stores/lookup.ts`, and no other path appears in both diffs. `HANDOFF-p4.md` and
+`HANDOFF-p5.md` are folded in below and deleted.
+
+### What P4 built (grounded ask, §3.4)
+
+```
+POST /api/ask ──► search(query)                    ── the dictionary answers first
+                  proposePhrases(query, context)   ── only for English / sentence input
+                  segment(candidate) → token entries
+                  mergeRetrieved(...)  ≤ 40        ── SEARCH_HEAD=16 reserved head
+                  provider.answer(retrieved, profile, query, context)
+                  askResponseSchema.safeParse      ── shape
+                  ground(...)                      ── truth
+              ──► { provider, promptVersion, dictVersion, response, entries, retrieved }
+
+GET  /api/ask ──► { provider, promptVersion, model? }
+```
+
+`response` is the only thing the client caches: ids, indexes, flags and the model's prose,
+never dictionary text. On a cache hit the panel refetches the cited entries from
+`/api/dict/entries` and re-renders — §3.4's "re-resolved against the dictionary at render",
+and it is an e2e spec rather than a claim.
+
+**Module split, and why it matters.** `provider.ts` / `fake.ts` / `anthropic.ts` /
+`prompts.ts` are **server-only** (the Anthropic SDK refuses to construct in a browser-like
+environment). `ground.ts` and `cache-key.ts` are **pure** — no dictionary, no SDK, no
+`process.env` — and are the only two `ask-panel.tsx` imports. Import `@/lib/ai` from the
+server; import those two by path from a client component. An `export *` of the barrel into a
+client component would drag the 35 MB dictionary loader and the SDK into the browser bundle.
+
+`provider.ts` ↔ `anthropic.ts`/`fake.ts` is a deliberate module cycle (the implementations
+need the schemas and `ProviderError`). It is safe **only** because nothing in those files
+evaluates a `provider.ts` binding at import time — which is why the tool schema in
+`prompts.ts` is derived inside `answerTool()` rather than sitting in a top-level constant. A
+`const TOOL = zodToJsonSchema(askResponseSchema)` there is a temporal-dead-zone crash on
+first import, not a type error. Keep the derivation lazy.
+
+**The unverified rule is wider than §3.4's wording, on purpose.** The plan says "a run of ≥2
+consecutive *fallback* single-chars". Taken literally that flags nothing in the two cases the
+same paragraph demands be flagged: 随, 看, 绝 and 子 are all real CC-CEDICT headwords, so
+随看随买 and 绝绝子 segment into `via: 'entry'` tokens and no fallback occurs. `unverifiedSpans`
+(`lib/ai/ground.ts`) implements instead: (1) any `via: 'fallback'` word token — the plan's
+case, kept; (2) a single-char token whose only gloss is "used in …" / "variant of …" /
+"see …" — the plan's other case, kept; (3) **a run of ≥2 consecutive single-character tokens,
+unless every character in the run is among the ~100 most frequent words**
+(`COMMON_SINGLE_RANK`, on jieba's `freqRank`). Rule 3 catches the invented compounds; the
+frequency escape hatch keeps it off ordinary sentences (我看了一下 is 我 rank 8 · 看 81 ·
+了 1 · 一下, not flagged; 随 is 904 and 绝 is 1834, flagged). Unit-tested both ways; if a
+reviewer prefers the literal reading it is one exported constant and one function.
+
+Other P4 calls the plan did not make: **a phrase citing an unretrieved id is dropped whole**,
+not rendered with a hole (matches are dropped individually, as the plan says; a sentence with
+a missing word teaches nothing); **`{text}` tokens are `unverified` as well as `aiGenerated`**
+(the same claim from two directions, and the UI needs the second to warn at phrase level);
+**the two demo contexts for 看 answer with different entries** (kān vs kàn) *and* a different
+sense index, which is the confusion a learner actually has; **`proposePhrases` failing is not
+an ask failing** — it is retrieval help, so the route logs and carries on, and only `answer()`
+failing is a 502; **retrieval widened for English sentences**, because P1's gloss index ANDs
+its tokens and `search("how do I say I'm just browsing")` returns exactly nothing —
+`mergedSearch` falls back to the individual words and the 40-cap reserves a 16-entry head so
+a broad query cannot crowd out the proposed phrases. **Model:** `DEFAULT_MODEL =
+'claude-opus-5'`, recorded in `.env.example`; structured output is a forced tool call and the
+input schema is derived from the zod schema by a narrow zod-3 walker that throws rather than
+emit a lie to the model. **It has never made a live call from this container.**
+
+### What P5 built (the reader, §3.5)
+
+`lib/reader/sentence.ts` (the sentence span), `lib/reader/states.ts` (the colouring pass),
+a rewritten `lib/stores/reader.ts`, and `components/reader/**`. Decisions the plan left open:
+
+- **A token's colour is the strongest state of its readings.** Segmentation never truncates
+  `entryIds` (§3.2), so 了 arrives carrying both `le` and `liǎo`; a card for `le` means the
+  learner has met the word. `known` beats `learning` beats `new`.
+- **A `word` token with no entry (`via: 'fallback'`) is `new`, not uncoloured** — a name or a
+  rare character is a word the learner demonstrably has not met. Only `text` tokens have no
+  state, and they are rendered plain and are not buttons.
+- **Only bands ≤ `settings.knownBand` are fetched.** `wordState` cannot act on a higher band,
+  so pulling 3–7 would change no answer and cost 9,000 rows. `ReaderIndex.bands` is therefore
+  **not** "this word's band".
+- **"Mark known" takes the token's most frequent reading, not all of them.** `markKnown`
+  evicts any existing card for a year, so marking every reading of 了 would evict a `liǎo`
+  card the learner is studying. The token still recolours, by the strongest-reading rule.
+- **The colouring inputs are a `useLiveQuery` over `cards`/`known_words`/`settings`**
+  (`dexie-react-hooks` was already a dependency with no consumer). Add and "Mark known"
+  recolour in place with no invalidation, no polling and no re-segmentation — one read per
+  change, not one per token.
+- **Segmentation lives in the store, not the view**, so a trip to `/review` and back does not
+  re-post the paragraph; `read()` is a no-op when `tokenizedBody === body`, and a response
+  that lands after the body changed is dropped (tokens index a string by offset).
+- **Saving is not optional** — "Save and read" is one button, so no state exists in which a
+  pasted page is lost to a refresh. Editing the body clears `textId`, so an edit saves as a
+  new row rather than overwriting the one on the reopen list.
+- **The sentence keeps its terminator and drops the leading one**; `，`, `、` and `：` do not
+  bound it, because a Chinese sentence commonly runs three clauses on commas and cutting
+  there throws away the context the card exists to carry. The ≤200 cap **windows around the
+  target** rather than truncating from the left, and `offset`/`length` are re-derived after
+  every trim, so `sentence.slice(offset, offset + length)` is always the word.
+- **Extend is a button (`Extend to 东西`), not a second tap** — a second tap is ambiguous with
+  "look up that other word", the far commoner intent. The lookup itself is what §3.5 asks
+  for: `/api/dict/search` on the concatenation, exact headword first. An extended span has no
+  `entryIds`, so it is looked up by search; if the dictionary has no headword the panel says
+  so rather than showing a near miss.
+
+### The seams the merge wired
+
+1. **The ask panel is inside the reader, and it knows the sentence.** P4's one sanctioned edit
+   made `<AskPanel>` the *default* content of `LookupPanel`'s ask region when no `ask` slot is
+   injected (its own testid, `lookup-ask`; an injected slot still wins and still reads
+   `lookup-ask-slot`). P5's `ReaderLookup` renders `<LookupPanel query context>` with no slot.
+   So a reader tap gets the ask panel asking about that token **with the tap's sentence as
+   context**, and neither builder edited the other's file. Nothing was needed here but the
+   proof: the full-loop spec asserts it.
+2. **A card added from the ask panel inside the reader carries both sentence and question.**
+   `askContextFor` already merged the incoming `sentence` with the `question`. What it also
+   carried was the tap's `offset`/`length` — **and that was wrong.** The span points at the
+   token that was tapped, and `lib/srs/context.ts` highlights `sentence.slice(offset, offset +
+   length)` *in preference to* searching for the headword. An ask answers with words the tap
+   did not name (a second sense, a whole phrase), so the card back would have underlined the
+   wrong characters with total confidence. The span now travels only when the sentence
+   actually reads as the word being added at that position (`headwordForms`, simplified and
+   traditional); otherwise it is dropped and `resolveContext` locates the headword itself,
+   which is right or visibly absent, never quietly wrong. A phrase card never inherits a span.
+3. **The demo seed's warm `ask_cache` rows use the real key.** `demoAskCacheKey` and
+   `DEMO_PROMPT_VERSION` are **deleted** from `lib/dev/seed.ts`; `loadDemo` now awaits
+   `askCacheKey` from `@/lib/ai/cache-key` — the same function the panel runs in the browser,
+   not a second copy of the formula that a test had to keep honest. `cache-key.ts` imports
+   only a *type* from `provider.ts`, so nothing server-side follows it into the seed's bundle.
+   `tests/unit/lists/seed.test.ts` now pins the strong form of the invariant: the key
+   `loadDemo` actually wrote is the key the panel derives for the same question at the band
+   the demo leaves the learner on (`knownBand` 2, which is `DEFAULT_SETTINGS`), so a drift
+   makes the demo call the provider instead of quietly orphaning a row.
+
+### The full-loop spec
+
+`tests/e2e/integration.spec.ts` gained a second test spanning all five phases: `/settings`
+Load demo → `/lookup` "how do I say I'm just browsing" → the ask panel answers **from the
+seeded cache** (`data-cached="true"` — this is seam 3's assertion) → Add the sayIt as a phrase
+card → `/read` the demo paragraph → tap 附近 → the reader panel carries the sentence *and*
+shows the ask panel (seam 1) → Add → `/review` walks the session, offering both new cards, the
+mined one with its sentence in `context-back` and 附近 in `context-target` → `reviews` rows
+exist for both → Today reads 0 due / 0 new with Start review dead. The P1–P3 loop test above
+it is unchanged.
+
+The session is walked rather than asserted on the first card: the demo's own due cards come
+first, and `buildQueue` orders `[...due, ...newCards]`. `newPerDay: 0` is set after the demo
+so the walk is about the two cards the spec mined, not the ten the spine would draw.
+
+### Frozen files changed
+
+- `components/lookup/lookup-panel.tsx` — P4's one sanctioned edit, carried through the merge
+  unchanged. Nothing else frozen was touched by either builder or by the merge.
+- `lib/stores/lookup.ts` is not frozen, but it is shared: it gained one optional field,
+  `entryIds` (`LookupOpenRequest extends LookupRequest`), cleared by `setQuery`/`clearSearch`/
+  `closeLookup`. A reader tap knows more than a query — the DAG already resolved the token to
+  its readings *in context*, and asking the search router to re-derive them from the bare
+  string would let it guess differently (了 is `le` here because of the words around it).
+  `/lookup` ignores the field.
+
+### Fixed on the way through
+
+- **Two stale assertions retired.** `tests/e2e/p1/lookup.spec.ts` and `tests/e2e/smoke.spec.ts`
+  asserted `lookup-ask-slot` count 0 "until Phase 4 fills it". Both still passed and both were
+  stale in intent — nobody injects the slot. They now say what is true: on `/lookup` with a
+  query the `lookup-ask` region and the `ask-panel` are visible; on a bare `/lookup` neither
+  region exists, because there is nothing to ask about.
+- **A real race in `tests/e2e/p2/review.spec.ts:121`** ("the chosen sense leads"), which both
+  the P5 builder and this merge saw fail once and pass on a re-run. `seed()` reloads the page,
+  so the session is still loading when it returns; that test pressed Space immediately, and a
+  keystroke into a page with no card never reveals anything. It now waits for the front. This
+  is the *only* test in the file that pressed a key without first asserting something visible.
+
+### Needs, still open
+
+1. **`addPhraseCard` cannot record a `dictVersion`.** The frozen repository signature takes
+   none and `lib/db/dexie.ts` stamps `'unknown'`. Word cards from the ask panel do carry the
+   real snapshot version. Fixing it is a frozen-file change (a fourth argument, exactly as
+   `addCardFromEntry` got one in Phase 0) and was not worth spending on this merge.
+2. **Phrase cards do not join the "Looked up" list.** Membership joins on `entryId` and a
+   phrase has none. The panel's "add N words individually" does join them.
+3. **`getLearnerProfile` runs without `bandSizes`** in the panel, so `estimatedBand` is
+   `settings.knownBand` rather than a measured band. Band sizes live in the dictionary on the
+   server; a count route or a field on the ask response would improve it — and would change
+   the cache key, so it wants an `ASK_PROMPT_VERSION` bump when it lands (and the demo seed's
+   warm rows re-derive for free now, which is the point of seam 3).
+4. **Picking a result on `/lookup` re-asks.** `LookupPanel`'s `query` is the typed query until
+   a result is picked and the headword after that, which is the intended reading of "ask about
+   what the panel is showing" but costs a second call. If it is wrong the fix is in
+   `lookup-view.tsx`, not in the panel.
+5. **Two texts cannot be open at once, and a saved text cannot be deleted** — the repository
+   has no `deleteText` and nothing in v1 asked for one. **No virtualisation** either: ~1,300
+   tokens render and recolour without a visible pause, but a book would want windowing.
+6. **A polyphone whose readings differ in traditional form** (了 → 了/瞭) shows the first
+   reading's traditional headword in the reader panel's "traditional" line. The readings
+   themselves are all listed and correct; only that one line picks a representative.
+
+### For Phase 6
+
+- The reader adds through `addCardChecked` (`lib/lists/looked-up.ts`), never the repository
+  directly, and a reader Add is an explicit source, so it never charges `settings.introduced`.
+- `ReaderScreen` calls `closeLookup()` on unmount. The lookup store is a module singleton and
+  a stranded reader context would otherwise attach someone else's sentence to the next
+  `/lookup` Add. Any new screen that calls `openLookup` owes the same.
+- The e2e specs copy the demo paragraph into `tests/e2e/p5/paragraph.ts` (Playwright would
+  drag Dexie into Node otherwise); `tests/unit/reader/paragraph.test.ts` fails if the copy
+  drifts from `lib/dev/seed.ts`. The full-loop spec imports that copy too.
+- `tests/unit/ai/{anthropic,provider,prompts,route}.test.ts` carry `// @vitest-environment
+  node`: the SDK refuses to construct under jsdom, and the route handlers are server code.
+
+### Checks on the merge commit
+
+| Check | Result |
+|---|---|
+| `pnpm install --frozen-lockfile` | no-op, lockfile up to date |
+| `pnpm data:ensure` | `data/dict.json` present |
+| `npx tsc --noEmit` | pass |
+| `pnpm lint` | pass |
+| `pnpm test` | pass — 39 files, **392** tests (283 before P4/P5) |
+| `pnpm build` | pass (Turbopack); `/api/ask` is `ƒ`, as the dictionary routes are |
+| `PORT=3000 pnpm e2e` | pass — **67/67**, run twice clean (55 before P4/P5) |
+
+No server is left running; port 3000 is free. `/home/user/v0-anchor` was not touched.

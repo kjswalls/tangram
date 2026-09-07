@@ -129,6 +129,10 @@ test.describe('/review', () => {
       },
     ]);
 
+    // `seed` reloads, so the session is still loading for a beat after it
+    // returns; a Space that lands before the card renders is a keystroke into
+    // an empty page, and the reveal never happens.
+    await expect(page.getByTestId('card-front')).toContainText('打算');
     await page.keyboard.press('Space');
     await expect(page.getByTestId('card-glosses')).toHaveText('to intend');
     const others = page.getByTestId('other-senses');

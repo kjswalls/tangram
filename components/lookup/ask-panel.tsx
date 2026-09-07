@@ -82,16 +82,47 @@ function citedIds(response: GroundedAskResponse): string[] {
   return [...ids];
 }
 
-/** The provenance an Add from this panel writes onto the card (§3.4). */
-function askContextFor(query: string, context: CardContext | undefined): CardContext {
+/**
+ * The provenance an Add from this panel writes onto the card (§3.4).
+ *
+ * Both halves travel: the question the learner asked, and — when the ask came
+ * from a reader tap — the sentence it was asked about. That pairing is the
+ * whole point of the ask panel living inside the reader.
+ *
+ * The `offset`/`length` span is the one thing that does **not** travel by
+ * default. It points at the token that was tapped, and the card back highlights
+ * `sentence.slice(offset, offset + length)` in preference to searching for the
+ * headword (`lib/srs/context.ts`). An ask answers with words the tap did not
+ * name — a second sense, a whole phrase — so carrying the tap's span onto them
+ * would underline the wrong characters with total confidence. The span is kept
+ * only when the sentence actually reads as the word being added at that
+ * position; otherwise it is dropped and `resolveContext` locates the headword
+ * itself, which is right or visibly absent, never quietly wrong.
+ */
+function askContextFor(
+  query: string,
+  context: CardContext | undefined,
+  targets: readonly string[] = [],
+): CardContext {
+  const { sentence, offset, length } = context ?? {};
+  const spanReads =
+    sentence !== undefined &&
+    offset !== undefined &&
+    length !== undefined &&
+    targets.some((target) => target.length > 0 && sentence.slice(offset, offset + length) === target);
+
   return {
     question: query,
-    ...(context?.sentence ? { sentence: context.sentence } : {}),
-    ...(context?.offset === undefined ? {} : { offset: context.offset }),
-    ...(context?.length === undefined ? {} : { length: context.length }),
+    ...(sentence ? { sentence } : {}),
+    ...(spanReads ? { offset, length } : {}),
     source: 'ask',
     addedAt: Date.now(),
   };
+}
+
+/** The forms a card's headword can appear in inside a mined sentence. */
+function headwordForms(entry: Entry): string[] {
+  return entry.simp === entry.trad ? [entry.simp] : [entry.simp, entry.trad];
 }
 
 type AddState = 'idle' | 'saving' | 'added' | 'existing' | 'error';
@@ -422,7 +453,7 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
     const result = await addCardChecked(
       getRepository(),
       entry,
-      askContextFor(trimmed, context),
+      askContextFor(trimmed, context, headwordForms(entry)),
       senseIndex,
       ready?.dictVersion,
     );
@@ -439,6 +470,7 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
         ...(token.unverified || token.aiGenerated ? { unverified: true } : {}),
       }));
     if (tokens.length === 0) return 'existing';
+    // A phrase is never the tapped token, so it never inherits the tap's span.
     await getRepository().addPhraseCard(tokens, phrase.en, askContextFor(trimmed, context));
     return 'added';
   };
@@ -452,7 +484,7 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
       const result = await addCardChecked(
         getRepository(),
         entry,
-        askContextFor(trimmed, context),
+        askContextFor(trimmed, context, headwordForms(entry)),
         undefined,
         ready?.dictVersion,
       );

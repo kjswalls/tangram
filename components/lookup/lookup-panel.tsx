@@ -16,7 +16,7 @@ import type { CardContext } from '@/lib/types';
  * The dictionary body and the ask slot are independent by construction: a slow
  * or failing provider leaves the body untouched (§3.4).
  *
- * **Phase 4's one edit to this file** (sanctioned; see HANDOFF-p4.md): when no
+ * **Phase 4's one edit to this file** (sanctioned; see HANDOFF.md, "Phases 4–5"): when no
  * `ask` slot is passed, the ask panel is the default content of the ask region.
  * Every caller of `LookupPanel` — the lookup page today, the reader tomorrow —
  * therefore gets the ask panel without either of them being edited, and a

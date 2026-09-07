@@ -15,8 +15,8 @@
  * not a learning start date here.
  */
 
+import { askCacheKey } from '@/lib/ai/cache-key';
 import type { CardRow, Repository, SettingsRow } from '@/lib/db';
-import { sha1Hex } from '@/lib/dev/sha1';
 import { getEntrySource, type EntrySource } from '@/lib/lists/entry-source';
 import { chargeIntroduced } from '@/lib/lists/introduce';
 import { addCardTracked, isExplicitSource } from '@/lib/lists/looked-up';
@@ -104,32 +104,6 @@ export function sentenceAround(text: string, word: string): { sentence: string; 
   }
   const sentence = text.slice(start, end).trim();
   return { sentence, offset: sentence.indexOf(word) };
-}
-
-export const DEMO_PROMPT_VERSION = 'v1';
-
-/**
- * The plan's key is `sha1(promptVersion, provider, query, context, estimatedBand)`
- * (§3.4). Phase 4 owns the real derivation — when it lands, this should be
- * replaced by an import of it rather than kept in step by hand (HANDOFF.md,
- * "Phases 1–3 (merged)").
- */
-export function demoAskCacheKey(input: {
-  query: string;
-  context?: string;
-  estimatedBand: number;
-  provider?: string;
-  promptVersion?: string;
-}): string {
-  return sha1Hex(
-    JSON.stringify([
-      input.promptVersion ?? DEMO_PROMPT_VERSION,
-      input.provider ?? 'fake',
-      input.query,
-      input.context ?? '',
-      input.estimatedBand,
-    ]),
-  );
 }
 
 interface DemoAskEntry {
@@ -266,10 +240,14 @@ export async function loadDemo(options: DemoOptions = {}): Promise<DemoSummary> 
   // 4. Something to read.
   const text = await repo.saveText({ title: DEMO_TEXT_TITLE, body: DEMO_PARAGRAPH });
 
-  // 5. Two warm ask-cache rows.
+  // 5. Two warm ask-cache rows, under the key the ask panel derives in the
+  //    browser (`lib/ai/cache-key.ts`) — the same function, not a copy of the
+  //    formula, so these rows can never become orphans no ask looks for.
+  //    `estimatedBand` is the last band the demo learner is through, which is
+  //    what `getLearnerProfile` will report for the settings the seed leaves.
   const askCacheKeys: string[] = [];
   for (const entry of DEMO_ASK) {
-    const key = demoAskCacheKey({
+    const key = await askCacheKey({
       query: entry.query,
       ...(entry.context === undefined ? {} : { context: entry.context }),
       estimatedBand: DEMO_KNOWN_BANDS[DEMO_KNOWN_BANDS.length - 1],

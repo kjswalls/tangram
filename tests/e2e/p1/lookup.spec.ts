@@ -121,8 +121,11 @@ test.describe('the panel', () => {
     await expect(detail).toContainText('个');
     await expect(detail.getByTestId('decomposition')).toContainText('⿰扌丁');
     await expect(detail.getByTestId('decomposition')).toContainText('⺮');
-    // The ask slot stays empty until Phase 4 fills it.
+    // Nobody injects a slot on this route — Phase 4 made the ask panel the
+    // panel's own default content instead, so the region is `lookup-ask`.
     await expect(page.getByTestId('lookup-ask-slot')).toHaveCount(0);
+    await expect(page.getByTestId('lookup-ask')).toBeVisible();
+    await expect(page.getByTestId('ask-panel')).toBeVisible();
   });
 
   test('Add writes a card that carries the query it came from', async ({ page }) => {

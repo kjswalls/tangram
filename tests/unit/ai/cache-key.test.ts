@@ -1,14 +1,15 @@
 /**
  * The ask cache key (PLAN.md §3.4).
  *
- * The load-bearing assertion is the last one: this derivation and
- * `demoAskCacheKey` in `lib/dev/seed.ts` must produce the same string, or the
- * demo seed's two pre-warmed rows are orphans that no ask will ever find.
+ * The load-bearing assertion is the last one. The demo seed writes its warm
+ * rows through *this* function now (the second derivation it used to carry is
+ * gone), but it passes its context as a bare string while the ask panel arrives
+ * with a `CardContext`. Both have to land on the same row, or the seed's warm
+ * rows are orphans no ask will ever find.
  */
 import { describe, expect, it } from 'vitest';
 
 import { ASK_PROMPT_VERSION, askCacheKey, askCachePayload, askContextKey } from '@/lib/ai/cache-key';
-import { DEMO_PROMPT_VERSION, demoAskCacheKey } from '@/lib/dev/seed';
 import { sha1Hex } from '@/lib/dev/sha1';
 
 const BASE = { query: 'how do I say I am just browsing', estimatedBand: 2 };
@@ -74,26 +75,36 @@ describe('askCacheKey', () => {
 });
 
 describe('the demo seed’s warm rows', () => {
-  it('is keyed exactly as `demoAskCacheKey` keys them', async () => {
-    expect(ASK_PROMPT_VERSION).toBe(DEMO_PROMPT_VERSION);
-
+  it('key the same whether the context is a bare string or a CardContext', async () => {
+    // The two rows `loadDemo` pre-warms, with the context in the shape the seed
+    // stores it and in the shape a panel would arrive with.
     const cases = [
       { query: "how do I say I'm just browsing", context: undefined, estimatedBand: 2 },
       { query: '开始', context: '我们开始吧', estimatedBand: 2 },
     ] as const;
 
     for (const input of cases) {
-      const seeded = demoAskCacheKey({
+      const seeded = await askCacheKey({
         query: input.query,
         ...(input.context === undefined ? {} : { context: input.context }),
         estimatedBand: input.estimatedBand,
       });
-      const derived = await askCacheKey({
+      const fromPanel = await askCacheKey({
         query: input.query,
-        ...(input.context === undefined ? {} : { context: { sentence: input.context } }),
+        ...(input.context === undefined
+          ? {}
+          : { context: { sentence: input.context } }),
         estimatedBand: input.estimatedBand,
       });
-      expect(derived).toBe(seeded);
+      expect(fromPanel).toBe(seeded);
+      expect(seeded).toMatch(/^[0-9a-f]{40}$/);
     }
+  });
+
+  it('are written under the current prompt version, so a bump retires them', () => {
+    expect(ASK_PROMPT_VERSION).toBe('v1');
+    expect(askCachePayload({ query: 'q', estimatedBand: 2 })).toBe(
+      JSON.stringify([ASK_PROMPT_VERSION, 'fake', 'q', '', 2]),
+    );
   });
 });

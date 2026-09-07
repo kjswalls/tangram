@@ -261,7 +261,7 @@ export interface RawAskResponse {
  * literally that catches nothing here, because 随, 看, 绝 and 子 are all real
  * headwords and segment as `via: 'entry'`. The rule is widened to consecutive
  * *single-character* tokens with the frequency escape hatch above; the plan's
- * fallback case is a subset of it. See HANDOFF-p4.md.
+ * fallback case is a subset of it. See HANDOFF.md, "Phases 4–5".
  */
 export const COMMON_SINGLE_RANK = 100;
 

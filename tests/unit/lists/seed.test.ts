@@ -8,12 +8,11 @@ import { isPhraseSnapshot } from '@/lib/db/schema';
 import {
   DEMO_PARAGRAPH,
   DEMO_TEXT_TITLE,
-  demoAskCacheKey,
   loadDemo,
   resetAll,
   sentenceAround,
 } from '@/lib/dev/seed';
-import { sha1Hex } from '@/lib/dev/sha1';
+import { askCacheKey } from '@/lib/ai/cache-key';
 import { todayKey } from '@/lib/srs/day';
 import { wordState } from '@/lib/srs/states';
 import { requireDictData } from '../dict/data-required';
@@ -88,6 +87,13 @@ describe('loadDemo', () => {
     expect(texts[0].body.length).toBeLessThan(200);
 
     expect(summary.askCacheKeys).toHaveLength(2);
+    // The warm rows are findable: the key the seed wrote is the key the ask
+    // panel derives in the browser for the same question, at the band the demo
+    // learner is left at. A drift here makes the demo call the provider.
+    expect(summary.askCacheKeys[0]).toBe(
+      await askCacheKey({ query: "how do I say I'm just browsing", estimatedBand: 2 }),
+    );
+    expect(summary.settings.knownBand).toBe(2);
     for (const key of summary.askCacheKeys) {
       expect(key).toMatch(/^[0-9a-f]{40}$/);
       const row = await repo.askCache.get(key);
@@ -191,12 +197,10 @@ describe('loadDemo', () => {
 });
 
 describe('the ask cache key', () => {
-  it('is a sha1 over prompt version, provider, query, context and band', () => {
-    const key = demoAskCacheKey({ query: 'hello', context: 'a', estimatedBand: 3 });
-    expect(key).toBe(sha1Hex(JSON.stringify(['v1', 'fake', 'hello', 'a', 3])));
-    // Context is part of the key: the same question about a different sentence
-    // is a different question (§3.4).
-    expect(demoAskCacheKey({ query: 'hello', context: 'b', estimatedBand: 3 })).not.toBe(key);
+  it('keys context in, so the same question about another sentence is another row', async () => {
+    const key = await askCacheKey({ query: 'hello', context: 'a', estimatedBand: 3 });
+    expect(key).toMatch(/^[0-9a-f]{40}$/);
+    expect(await askCacheKey({ query: 'hello', context: 'b', estimatedBand: 3 })).not.toBe(key);
   });
 });
 

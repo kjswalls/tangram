@@ -10,12 +10,13 @@
  *    exists; `lib/dev/sha1.ts` (dependency-free, synchronous) is the fallback
  *    for the environments that do not expose `subtle` — jsdom under Vitest, and
  *    any page served over plain HTTP, where `crypto.subtle` is undefined.
- *  - **It stays byte-compatible with `demoAskCacheKey`** in `lib/dev/seed.ts`,
- *    which implemented this description before Phase 4 existed. The demo seed
- *    pre-warms two `ask_cache` rows; if the two derivations disagree those rows
- *    are orphans instead of hits. `tests/unit/ai/cache-key.test.ts` pins the
- *    agreement, and HANDOFF-p4.md asks the merge to delete the placeholder in
- *    favour of `askCacheKey`.
+ *  - **The demo seed calls it too.** `loadDemo` pre-warms two `ask_cache` rows
+ *    and keys them through this function, so a warm row cannot become an orphan
+ *    the panel never looks for. It used to carry its own copy of the formula
+ *    (`demoAskCacheKey`), kept honest by a test; the merge of Phases 4–5 deleted
+ *    the copy. The one thing the two still differ on is the *shape* of the
+ *    context — the seed passes a bare string, the panel a `CardContext` — which
+ *    `askContextKey` below flattens to the same value, pinned by a test.
  *
  * Nothing here imports the dictionary or a provider: the module has to stay
  * safe for a `'use client'` component to pull in.

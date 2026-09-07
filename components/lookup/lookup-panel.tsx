@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 
+import { AskPanel } from '@/components/lookup/ask-panel';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/cn';
 import type { CardContext } from '@/lib/types';
@@ -14,6 +15,14 @@ import type { CardContext } from '@/lib/types';
  *
  * The dictionary body and the ask slot are independent by construction: a slow
  * or failing provider leaves the body untouched (§3.4).
+ *
+ * **Phase 4's one edit to this file** (sanctioned; see HANDOFF-p4.md): when no
+ * `ask` slot is passed, the ask panel is the default content of the ask region.
+ * Every caller of `LookupPanel` — the lookup page today, the reader tomorrow —
+ * therefore gets the ask panel without either of them being edited, and a
+ * caller that wants something else in the slot still wins. The two regions have
+ * different testids on purpose: `lookup-ask-slot` still means "somebody injected
+ * a slot", which is what the Phase 0/1 specs assert about.
  */
 export interface LookupPanelProps {
   query: string;
@@ -56,6 +65,10 @@ export function LookupPanel({ query, context, slots, children, className }: Look
       {slots?.ask ? (
         <div data-testid="lookup-ask-slot" className="border-t border-border px-4 py-4">
           {slots.ask}
+        </div>
+      ) : query.trim() ? (
+        <div data-testid="lookup-ask" className="border-t border-border px-4 py-4">
+          <AskPanel query={query} context={context} />
         </div>
       ) : null}
     </section>

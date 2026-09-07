@@ -92,7 +92,7 @@ Sources — exact, verified reachable tonight:
 |---|---|---|
 | CC-CEDICT | npm `cedict-json@1.3.20251213` → `node_modules/cedict-json/cedict.json`, array of 124,188 `{traditional, simplified, pinyin:"da3 suan4", english[]}` | CC BY-SA 4.0 |
 | HSK 3.0 | `https://raw.githubusercontent.com/ivankra/hsk30/master/hsk30-expanded.csv` — header `ID,Simplified,Traditional,Pinyin,POS,Level,WebNo,WebPinyin,OCR,CEDICT,Example`; `Level` ∈ {1,2,3,4,5,6,"7-9"}; skip rows with a non-empty `Example`; join via `CEDICT` column (`trad|simp[pinyin]`), fall back to `Simplified` picking the most frequent reading and logging it | MIT (Krasilnikov, Shawky, Pleco Inc. — carry the notice) |
-| Frequency + POS | `https://raw.githubusercontent.com/fxsjy/jieba/master/jieba/dict.txt` — lines `word freq pos`; keep CJK-only rows | MIT |
+| Frequency | `https://raw.githubusercontent.com/fxsjy/jieba/master/jieba/dict.txt` — lines `word freq pos`; keep CJK-only rows. Frequency only: `pos` comes from the HSK list, whose tag vocabulary (`V/N`, `Adj`, `M`) is not jieba's (`n`, `v`, `nr`), and mixing them would leave one field meaning two things | MIT |
 | Decomposition | `https://raw.githubusercontent.com/skishore/makemeahanzi/master/dictionary.txt` — JSONL `{character, definition?, pinyin[], decomposition, radical, etymology?}`; also fetch `.../master/COPYING` | LGPL-3.0-or-later (dictionary.txt); graphics/SVG are Arphic PL and are **not** used |
 
 `scripts/build-data.ts` (run with `tsx`) caches raw downloads under `TANGRAM_DATA_DIR/raw`
@@ -107,8 +107,12 @@ Outputs:
   - `id` = `trad|simp[pinyinNum]` (CC-CEDICT's natural key, identical to ivankra's `CEDICT`
     column). Unique across all entries; stable across snapshots.
   - `pinyinMarked` is mechanically derived (`lib/dict/pinyin.ts`: `u:`→`ü`, tone number →
-    mark on the correct vowel, `r5`/erhua, capitalization preserved).
-  - `glosses[]` has `CL:` lines stripped into `classifiers[]` (`['个']` for 打算);
+    mark on the correct vowel, `r5`/erhua, capitalization preserved). A capital mid-reading
+    is a word boundary in CC-CEDICT's convention, so it becomes a space (`Shao4 lin2 Si4` →
+    `Shàolín Sì`); `xx5`, its marker for "no known reading", renders as the empty string.
+  - `glosses[]` has `CL:` references stripped into `classifiers[]` (`['个']` for 打算) —
+    both the standalone `CL:` line and the `(CL:…)` suffix CC-CEDICT appends to a sense
+    (`山` → `['座']`);
     `isVariant` when every gloss is `variant of …`/`old variant of …`; `properNoun` when the
     pinyin is capitalized; `surname` when a gloss starts with `surname `.
   - `hskBand` is an integer 1–7; 7 is labelled "7–9". Within 7 the order is jieba frequency.
@@ -126,7 +130,10 @@ and the shell shows one banner. `next.config.ts` sets
 
 Indexes built once: `bySimp: Map<string, id[]>`, `byTrad`, `byPinyinToneless` and
 `byPinyinToned` (sorted arrays with binary-search prefix lookup; `'`, `v`, `ü`, `u:` are
-equivalent; spaces removed), and an inverted index over gloss tokens (lowercased, trivial
+equivalent; spaces removed; the neutral tone contributes no digit to the toned key —
+`wo3 men5` keys as `wo3men` — because no tone mark can write it, so a learner typing
+`wǒmen` would otherwise miss every neutral-tone word; headwords whose reading is `xx5` are
+left out of both pinyin indexes), and an inverted index over gloss tokens (lowercased, trivial
 `-ing/-s/-ed` strip at build and query time; only real-word entries, not variants).
 
 Routes (Phase 0 unless noted): `GET /api/dict/entries?ids=` · `GET /api/dict/hsk?band=n`
@@ -162,7 +169,7 @@ in a `'use client'` module (`getDb()` memoised on `globalThis`), never at import
 
 ```
 words        { id, entryId, snapshot: EntrySnapshot, createdAt, updatedAt, deletedAt }
-             // EntrySnapshot = { simp, trad, pinyinMarked, pinyinNum, glosses[], classifiers[], hskBand?, dictVersion }
+             // EntrySnapshot = { simp, trad, pinyinMarked, pinyinNum, glosses[], classifiers[], hskBand?, freqRank?, dictVersion }
 cards        { id, wordId, entryId, kind:'word'|'phrase', direction:'recognition',
                snapshot: EntrySnapshot | PhraseSnapshot, senseIndex?, note?,
                context?: { sentence?, question?, query?, offset?, length?, source:'lookup'|'ask'|'reader'|'list'|'seed', addedAt },
@@ -200,7 +207,10 @@ introduced or explicitly added. Explicit Add (lookup, ask, reader) creates a car
 New and is *always* in today's queue; the `newPerDay` cap applies only to spine auto-draw.
 Auto-draw order: (1) unstarted explicit adds, (2) unstarted words in active user lists in
 list order, (3) active spine bands from `settings.spineStartBand` upward, freq order within
-band, skipping `isVariant`/`properNoun`. `introducedToday` = `settings.introduced[todayKey]`,
+band, skipping `isVariant`/`properNoun` **only among entries with no `hskBand`**
+(`lib/lists/spine.ts`). A banded word is on the syllabus: 中国, 汉语, 北京 are `properNoun`
+and 一点儿, 一块儿, 小孩儿 are `isVariant` ("erhua variant of …"), and skipping the 113
+such words would take six of band 1 out of the spine. `introducedToday` = `settings.introduced[todayKey]`,
 persisted. FSRS never sees lists; the queue builder does. After grading 10 new cards and
 reloading, no further spine cards are offered today; an explicitly added word still appears.
 
@@ -210,7 +220,8 @@ card in New/Learning/Relearning, or Review with `stability < 21` → `learning`;
 "Mark known" (token panel, list action) writes `known_words` and, if a card exists, sets it
 to Review with high stability and not due. `getLearnerProfile()` in `lib/srs/profile.ts`
 returns `{ estimatedBand: knownBand or the highest band with ≥80% known/learning,
-knownSample: string[] (≤200 simp, freq-ordered) }`; it feeds the ask request and the band badge.
+knownSample: string[] (≤200 simp, freq-ordered — from the snapshot's `freqRank`, because
+the client truncates to 200 before any server sees the list) }`; it feeds the ask request and the band badge.
 
 ### 3.4 Grounded ask (P4)
 

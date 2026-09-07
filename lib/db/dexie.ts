@@ -1,0 +1,391 @@
+/**
+ * The Dexie implementation of the repository seam (PLAN.md §3.3).
+ *
+ * No `'use client'` here and no `server-only` anywhere under `lib/db`: importing
+ * this module must not open a database or throw under Node. The instance is
+ * built lazily by `lib/db/get-db.ts`.
+ */
+
+import Dexie, { type Table } from 'dexie';
+
+import {
+  DB_NAME,
+  DB_VERSION,
+  DEFAULT_SETTINGS,
+  SETTINGS_ID,
+  STORES_V1,
+  type AskCacheRow,
+  type CardRow,
+  type EntrySnapshot,
+  type KnownWordRow,
+  type ListMemberRow,
+  type ListRow,
+  type PhraseSnapshot,
+  type PhraseToken,
+  type ReviewRow,
+  type SettingsRow,
+  type StoredRating,
+  type TextRow,
+  type WordRow,
+} from '@/lib/db/schema';
+import type {
+  AskCache,
+  CreateListInput,
+  GradeOutcome,
+  Repository,
+  SaveTextInput,
+} from '@/lib/db/repository';
+import { gradeCard, newCard } from '@/lib/srs/card';
+import { KNOWN_STABILITY_DAYS, knownCardState } from '@/lib/srs/states';
+import type { CardContext, Entry } from '@/lib/types';
+
+/**
+ * Client-generated ids, per §3.3. jsdom does not always ship
+ * `crypto.randomUUID`, so fall back to formatting random bytes ourselves.
+ */
+export function newId(): string {
+  const cryptoObj = globalThis.crypto;
+  if (cryptoObj?.randomUUID) return cryptoObj.randomUUID();
+  const bytes = new Uint8Array(16);
+  cryptoObj.getRandomValues(bytes);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+const UNKNOWN_DICT_VERSION = 'unknown';
+
+/**
+ * Table properties are named exactly like the stores (`known_words`, not
+ * `knownWords`) so the same identifiers survive into SQL later.
+ */
+export class TangramDb extends Dexie {
+  declare words: Table<WordRow, string>;
+  declare cards: Table<CardRow, string>;
+  declare reviews: Table<ReviewRow, string>;
+  declare lists: Table<ListRow, string>;
+  declare list_members: Table<ListMemberRow, string>;
+  declare known_words: Table<KnownWordRow, string>;
+  declare texts: Table<TextRow, string>;
+  declare ask_cache: Table<AskCacheRow, string>;
+  declare settings: Table<SettingsRow, string>;
+
+  constructor(name: string = DB_NAME) {
+    super(name);
+    this.version(DB_VERSION).stores(STORES_V1);
+  }
+}
+
+const alive = <T extends { deletedAt: number | null }>(row: T): boolean => row.deletedAt === null;
+
+export function toEntrySnapshot(entry: Entry, dictVersion: string): EntrySnapshot {
+  return {
+    simp: entry.simp,
+    trad: entry.trad,
+    pinyinMarked: entry.pinyinMarked,
+    pinyinNum: entry.pinyinNum,
+    glosses: entry.glosses,
+    classifiers: entry.classifiers,
+    ...(entry.hskBand === undefined ? {} : { hskBand: entry.hskBand }),
+    // Carried so the learner profile can order its sample by frequency without
+    // the dictionary in hand (§3.3); the client truncates the sample to 200
+    // before the server ever sees it, so a later re-sort would come too late.
+    ...(entry.freqRank === undefined ? {} : { freqRank: entry.freqRank }),
+    dictVersion,
+  };
+}
+
+export function createDexieRepository(db: TangramDb): Repository {
+  async function ensureWord(entry: Entry, dictVersion: string, now: number): Promise<WordRow> {
+    const existing = (await db.words.where('entryId').equals(entry.id).toArray()).find(alive);
+    if (existing) return existing;
+    const word: WordRow = {
+      id: newId(),
+      entryId: entry.id,
+      snapshot: toEntrySnapshot(entry, dictVersion),
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: null,
+    };
+    await db.words.add(word);
+    return word;
+  }
+
+  async function getSettings(): Promise<SettingsRow> {
+    const existing = await db.settings.get(SETTINGS_ID);
+    if (existing) return existing;
+    const now = Date.now();
+    const row: SettingsRow = { ...DEFAULT_SETTINGS, createdAt: now, updatedAt: now };
+    await db.settings.put(row);
+    return row;
+  }
+
+  const askCache: AskCache = {
+    async get(key) {
+      return db.ask_cache.get(key);
+    },
+    async set(key, response) {
+      const row: AskCacheRow = { id: key, response, createdAt: Date.now() };
+      await db.ask_cache.put(row);
+      return row;
+    },
+  };
+
+  return {
+    async addCardFromEntry(entry, context, senseIndex, dictVersion = UNKNOWN_DICT_VERSION) {
+      const now = Date.now();
+      // The whole read-check-write runs in one transaction, because the promise
+      // this returns is what a double-tapped Add awaits twice. IndexedDB
+      // serialises overlapping readwrite scopes, so the second call sees the
+      // first card instead of racing it into a duplicate card and word row.
+      return db.transaction('rw', db.words, db.cards, async () => {
+        const existing = (await db.cards.where('entryId').equals(entry.id).toArray())
+          .filter(alive)
+          .find((card) => card.kind === 'word' && card.senseIndex === senseIndex);
+        if (existing) return existing;
+
+        const word = await ensureWord(entry, dictVersion, now);
+        const fsrs = newCard(now);
+        const card: CardRow = {
+          id: newId(),
+          wordId: word.id,
+          entryId: entry.id,
+          kind: 'word',
+          direction: 'recognition',
+          snapshot: toEntrySnapshot(entry, dictVersion),
+          ...(senseIndex === undefined ? {} : { senseIndex }),
+          ...(context === undefined ? {} : { context }),
+          fsrs,
+          due: fsrs.due,
+          createdAt: now,
+          updatedAt: now,
+          deletedAt: null,
+        };
+        await db.cards.add(card);
+        return card;
+      });
+    },
+
+    async addPhraseCard(tokens: PhraseToken[], en: string, context: CardContext) {
+      const now = Date.now();
+      const snapshot: PhraseSnapshot = {
+        tokens,
+        simp: tokens.map((token) => token.text).join(''),
+        pinyinMarked: tokens
+          .map((token) => token.pinyinMarked ?? '')
+          .filter(Boolean)
+          .join(' '),
+        en,
+        dictVersion: UNKNOWN_DICT_VERSION,
+      };
+      const fsrs = newCard(now);
+      const card: CardRow = {
+        id: newId(),
+        wordId: null,
+        entryId: null,
+        kind: 'phrase',
+        direction: 'recognition',
+        snapshot,
+        context,
+        fsrs,
+        due: fsrs.due,
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null,
+      };
+      await db.cards.add(card);
+      return card;
+    },
+
+    async listDue(now) {
+      const rows = await db.cards.where('due').belowOrEqual(now).toArray();
+      return rows
+        .filter(alive)
+        .filter((card) => card.fsrs.state !== 0)
+        .sort((a, b) => a.due - b.due);
+    },
+
+    async listLearningSoon(now, horizonMs) {
+      const rows = await db.cards.where('due').between(now, now + horizonMs, false, true).toArray();
+      return rows
+        .filter(alive)
+        .filter((card) => {
+          // With enable_short_term:false the Learning and Relearning states never
+          // occur — every grade lands in Review. So "learning" here is the reader's
+          // definition (§3.3): reviewed, but not yet consolidated.
+          if (card.fsrs.state === 0) return false;
+          return card.fsrs.state !== 2 || card.fsrs.stability < KNOWN_STABILITY_DAYS;
+        })
+        .sort((a, b) => a.due - b.due);
+    },
+
+    async grade(cardId: string, rating: StoredRating, now: number = Date.now()): Promise<GradeOutcome> {
+      return db.transaction('rw', db.cards, db.reviews, async () => {
+        const card = await db.cards.get(cardId);
+        if (!card || !alive(card)) throw new Error(`grade: no card ${cardId}`);
+
+        const before = card.fsrs;
+        const { next, log } = gradeCard(before, rating, now);
+        const updated: CardRow = { ...card, fsrs: next, due: next.due, updatedAt: now };
+        const review: ReviewRow = {
+          id: newId(),
+          cardId,
+          rating,
+          reviewedAt: now,
+          before,
+          log,
+          createdAt: now,
+        };
+        await db.cards.put(updated);
+        await db.reviews.add(review);
+        return { card: updated, review };
+      });
+    },
+
+    async newCandidates(limit) {
+      const rows = await db.cards.orderBy('createdAt').toArray();
+      return rows
+        .filter(alive)
+        .filter((card) => card.fsrs.state === 0)
+        .slice(0, limit);
+    },
+
+    async markKnown(entryIds) {
+      const now = Date.now();
+      const unique = [...new Set(entryIds)];
+      const existing = new Set(
+        (await db.known_words.where('entryId').anyOf(unique).toArray()).map((row) => row.entryId),
+      );
+      const rows: KnownWordRow[] = unique
+        .filter((entryId) => !existing.has(entryId))
+        .map((entryId) => ({ id: newId(), entryId, createdAt: now }));
+      if (rows.length > 0) await db.known_words.bulkAdd(rows);
+
+      const cards = (await db.cards.where('entryId').anyOf(unique).toArray()).filter(alive);
+      if (cards.length > 0) {
+        await db.cards.bulkPut(
+          cards.map((card) => {
+            const fsrs = knownCardState(card.fsrs, now);
+            return { ...card, fsrs, due: fsrs.due, updatedAt: now };
+          }),
+        );
+      }
+      return rows;
+    },
+
+    async knownEntryIds() {
+      return (await db.known_words.toArray()).map((row) => row.entryId);
+    },
+
+    async allCards() {
+      return (await db.cards.toArray()).filter(alive);
+    },
+
+    async wordByEntryId(entryId) {
+      return (await db.words.where('entryId').equals(entryId).toArray()).find(alive);
+    },
+
+    async lists() {
+      return (await db.lists.toArray()).filter(alive).sort((a, b) => a.order - b.order);
+    },
+
+    async createList(input: CreateListInput) {
+      const now = Date.now();
+      const row: ListRow = {
+        id: newId(),
+        name: input.name,
+        owner: input.owner ?? 'user',
+        kind: input.kind,
+        ...(input.band === undefined ? {} : { band: input.band }),
+        active: input.active ?? true,
+        order: input.order ?? (await db.lists.count()),
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null,
+      };
+      await db.lists.add(row);
+      return row;
+    },
+
+    async listMembers(listId) {
+      return (await db.list_members.where('listId').equals(listId).toArray())
+        .filter(alive)
+        .sort((a, b) => a.order - b.order);
+    },
+
+    async addListMembers(listId, entryIds) {
+      const now = Date.now();
+      const current = await db.list_members.where('listId').equals(listId).toArray();
+      const seen = new Set(current.filter(alive).map((row) => row.entryId));
+      let order = current.length;
+      const rows: ListMemberRow[] = [];
+      for (const entryId of entryIds) {
+        if (seen.has(entryId)) continue;
+        seen.add(entryId);
+        rows.push({
+          id: newId(),
+          listId,
+          entryId,
+          wordId: null,
+          order: order++,
+          createdAt: now,
+          deletedAt: null,
+        });
+      }
+      if (rows.length > 0) await db.list_members.bulkAdd(rows);
+      return rows;
+    },
+
+    async setListActive(id, active) {
+      const row = await db.lists.get(id);
+      if (!row || !alive(row)) return undefined;
+      const updated: ListRow = { ...row, active, updatedAt: Date.now() };
+      await db.lists.put(updated);
+      return updated;
+    },
+
+    async saveText(input: SaveTextInput) {
+      const now = Date.now();
+      if (input.id) {
+        const existing = await db.texts.get(input.id);
+        if (existing) {
+          const updated: TextRow = { ...existing, title: input.title, body: input.body, updatedAt: now };
+          await db.texts.put(updated);
+          return updated;
+        }
+      }
+      const row: TextRow = {
+        id: input.id ?? newId(),
+        title: input.title,
+        body: input.body,
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null,
+      };
+      await db.texts.add(row);
+      return row;
+    },
+
+    async texts() {
+      return (await db.texts.toArray()).filter(alive).sort((a, b) => b.updatedAt - a.updatedAt);
+    },
+
+    getSettings,
+
+    async setSettings(patch) {
+      const current = await getSettings();
+      const updated: SettingsRow = { ...current, ...patch, id: SETTINGS_ID, updatedAt: Date.now() };
+      await db.settings.put(updated);
+      return updated;
+    },
+
+    askCache,
+
+    async resetAll() {
+      await db.transaction('rw', db.tables, async () => {
+        await Promise.all(db.tables.map((table) => table.clear()));
+      });
+    },
+  };
+}

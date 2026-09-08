@@ -42,7 +42,9 @@ test.describe('/review', () => {
     await expect(page.getByTestId('card-pinyin')).toHaveText('dǎsuàn');
     await expect(page.getByTestId('card-back')).toContainText('HSK 2');
 
-    // Each button says what it would schedule, and nothing is under a day.
+    // Each button says what it would schedule. `10m` is a legal answer since
+    // Phase 8 — the FSRS learning steps are on by default — so the assertion is
+    // the shape of a label, not a floor of one day.
     for (const [rating, label] of [
       [1, 'Again'],
       [2, 'Hard'],
@@ -52,7 +54,7 @@ test.describe('/review', () => {
       const button = page.getByTestId(`grade-${rating}`);
       await expect(button).toContainText(label);
       const interval = await button.getAttribute('data-interval');
-      expect(interval).toMatch(/^\d+(\.\d)?(d|mo|y)$/);
+      expect(interval).toMatch(/^\d+(\.\d)?(m|h|d|mo|y)$/);
     }
 
     await page.keyboard.press('3');
@@ -64,11 +66,20 @@ test.describe('/review', () => {
     expect(rows).toHaveLength(2);
     const latest = rows[rows.length - 1];
     expect(latest.rating).toBe(3);
-    expect(latest.before.state).toBe(2);
+    // The row carries the state the card was in *before* this grade — which is
+    // whatever the seed's own backdated grade left it in. With the FSRS
+    // learning steps on (Phase 8's default) a single Good on a new card lands
+    // in Learning rather than Review, so the assertion is that the two rows
+    // chain, not that the state is a particular number.
+    expect(latest.before.state).not.toBe(0);
+    expect(latest.before.reps).toBe(1);
     expect(latest.log.review).toBe(latest.reviewedAt);
 
     const stored = await storedCard(page, first);
-    expect(stored?.due).toBeGreaterThanOrEqual(latest.reviewedAt + DAY_MS);
+    // Rescheduled forward from this instant. How far is the scheduler's answer
+    // and the settings row's: a learning step is minutes, a graduated card is
+    // days, and both are a move.
+    expect(stored?.due).toBeGreaterThan(latest.reviewedAt);
     expect(stored?.fsrs.reps).toBe(2);
   });
 
@@ -205,9 +216,13 @@ test.describe('/review', () => {
 
     const rows = await reviewRows(page);
     expect(rows).toHaveLength(1);
-    // Even "Again" is a day out, so the session ends rather than looping.
     expect(rows[0].before.state).toBe(0);
     const stored = await storedCard(page, rows[0].cardId);
-    expect(stored?.due).toBeGreaterThanOrEqual(rows[0].reviewedAt + DAY_MS);
+    // "Again" is a learning step now (Phase 8: `shortTermSteps` defaults on),
+    // so the card is minutes away rather than a day — far enough that this
+    // session ends rather than looping, and close enough that the queue has to
+    // expect it back (HANDOFF-prep8.md, builder A).
+    expect(stored?.due).toBeGreaterThan(rows[0].reviewedAt);
+    expect(stored?.due).toBeLessThan(rows[0].reviewedAt + DAY_MS);
   });
 });

@@ -203,11 +203,22 @@ describe('queues', () => {
     const now = Date.now();
     const card = await repo.addCardFromEntry(DASUAN);
     await repo.grade(card.id, 1, now);
-    // enable_short_term:false means Again still schedules at least a day out,
-    // and lands in Review with a low stability rather than a Learning state.
+    // With `shortTermSteps` on (the default since Phase 8) Again puts the card
+    // in Learning, one step out — so it is inside a three-day horizon *and*
+    // inside a one-minute one. Both are the same claim: not yet consolidated.
     const soon = await repo.listLearningSoon(now, 3 * DAY);
     expect(soon.map((row) => row.id)).toEqual([card.id]);
-    expect(await repo.listLearningSoon(now, 60 * 1000)).toEqual([]);
+    expect((await repo.listLearningSoon(now, 60 * 1000)).map((row) => row.id)).toEqual([card.id]);
+
+    // Turn the steps off and the same grade lands a day out, which is v1's
+    // behaviour and is still one settings column away.
+    await repo.setSettings({ shortTermSteps: false });
+    const other = await repo.addCardFromEntry(KANKAN);
+    await repo.grade(other.id, 1, now);
+    // Inside the minute there is still only the card that was failed *before*
+    // the change: the second one is a day out.
+    expect((await repo.listLearningSoon(now, 60 * 1000)).map((row) => row.id)).toEqual([card.id]);
+    expect((await repo.listLearningSoon(now, 3 * DAY)).map((row) => row.id)).toContain(other.id);
   });
 });
 
@@ -223,8 +234,10 @@ describe('grading', () => {
     expect(graded.fsrs.state).not.toBe(0);
     expect(graded.fsrs.reps).toBe(1);
     expect(graded.due).toBe(graded.fsrs.due);
-    // enable_short_term:false: every grade schedules at least a day.
-    expect(graded.due - now).toBeGreaterThanOrEqual(DAY - 1000);
+    // `shortTermSteps` defaults on (Phase 8), so Good on a *new* card is a
+    // learning step of minutes, not a day. It still moves, and it still
+    // mirrors onto the indexed column, which is what this test is about.
+    expect(graded.due).toBeGreaterThan(now);
     expect(graded.fsrs.last_review).toBe(now);
 
     expect(review.cardId).toBe(card.id);

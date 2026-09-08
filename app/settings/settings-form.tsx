@@ -8,9 +8,13 @@ import { Input } from '@/components/ui/input';
 import { getRepository } from '@/lib/db/get-db';
 import { DEFAULT_SETTINGS, type ScriptPreference, type SettingsRow } from '@/lib/db/schema';
 import { loadDemo, resetAll } from '@/lib/dev/seed';
+import { describeParameters, RETENTION_CHOICES } from '@/lib/srs/params';
 import { HSK_BANDS, hskBandLabel, type HskBand } from '@/lib/types';
 
 type Danger = 'demo' | 'reset';
+
+/** `0.9` → `90%`. Whole percents; every offered step is one. */
+const percent = (value: number): string => `${Math.round(value * 100)}%`;
 
 const SELECT =
   'h-11 w-full rounded-lg border border-border bg-surface px-3 text-base focus:border-accent focus:outline-none';
@@ -83,6 +87,15 @@ export function SettingsForm() {
   if (!settings) {
     return <p className="text-sm text-muted">{status ?? 'Loading settings…'}</p>;
   }
+
+  // A row written before Phase 8 has no retention of its own — `getSettings`
+  // fills the column in, and this is the belt to that's braces. A stored value
+  // that is not one of the offered steps (the optimizer could write one) is
+  // added to the list rather than left showing an empty select.
+  const retention = settings.requestRetention ?? DEFAULT_SETTINGS.requestRetention;
+  const retentionChoices = RETENTION_CHOICES.includes(retention)
+    ? RETENTION_CHOICES
+    : [...RETENTION_CHOICES, retention].sort((a, b) => a - b);
 
   return (
     <div className="flex flex-col gap-6">
@@ -162,6 +175,68 @@ export function SettingsForm() {
             <option value="simp">Simplified</option>
             <option value="trad">Traditional</option>
           </select>
+        </label>
+      </div>
+
+      <div className="flex flex-col gap-3 border-t border-border pt-4">
+        <p className="text-sm tracking-wide text-muted uppercase">Scheduling</p>
+
+        <label className="flex flex-col gap-1 text-sm sm:max-w-sm">
+          <span>Target retention</span>
+          <select
+            className={SELECT}
+            data-testid="settings-request-retention"
+            value={retention}
+            onChange={(event) => void patch({ requestRetention: Number(event.target.value) })}
+          >
+            {retentionChoices.map((value) => (
+              <option key={value} value={value}>
+                {percent(value)}
+                {value === DEFAULT_SETTINGS.requestRetention ? ' — FSRS default' : ''}
+              </option>
+            ))}
+          </select>
+          <span className="text-xs text-muted">
+            How much you aim to remember when a card comes back. Higher means more reviews and
+            better retention; lower means fewer reviews and more forgetting.
+          </span>
+          <span data-testid="settings-fsrs-source" className="text-xs text-muted">
+            {describeParameters(settings)}
+          </span>
+        </label>
+
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              className="size-4 accent-accent"
+              data-testid="settings-short-term-steps"
+              checked={settings.shortTermSteps ?? DEFAULT_SETTINGS.shortTermSteps}
+              onChange={(event) => void patch({ shortTermSteps: event.target.checked })}
+            />
+            Short steps for new and failed cards
+          </span>
+          <span className="text-xs text-muted">
+            A card you get wrong comes back in about ten minutes instead of tomorrow. Turn it off
+            to make every card wait at least a day.
+          </span>
+        </label>
+
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              className="size-4 accent-accent"
+              data-testid="settings-production-direction"
+              checked={settings.productionDirection ?? DEFAULT_SETTINGS.productionDirection}
+              onChange={(event) => void patch({ productionDirection: event.target.checked })}
+            />
+            Also practise the other direction
+          </span>
+          <span className="text-xs text-muted">
+            English on the front, the hanzi recalled. A second card per word, with its own
+            schedule — it roughly doubles how much there is to review.
+          </span>
         </label>
       </div>
 

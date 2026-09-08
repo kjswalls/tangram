@@ -32,6 +32,7 @@ Phase 0 lands:
 ```
 package.json          pnpm-lock.yaml        next.config.ts
 lib/db/schema.ts      lib/db/repository.ts  lib/types.ts
+lib/srs/params.ts
 app/layout.tsx        app/globals.css       components/ui/**
 components/lookup/lookup-panel.tsx
 configs: tsconfig.json, eslint.config.mjs, vitest.config.ts, playwright.config.ts,
@@ -90,7 +91,13 @@ swap a swap. The rules that keep it swappable:
   Vitest.
 - zod **3** (v4's API differs), vitest **4**, TypeScript **5.9**, ts-fsrs **5** — the pins
   in `docs/data-sources.md` are deliberate, not stale.
-- FSRS runs with `enable_short_term: false`: every grade schedules at least a day.
+- **FSRS parameters are built in exactly one place: `lib/srs/params.ts`.** Nothing else may
+  call `fsrs()` or `generatorParameters()`. It reads `settings.requestRetention`,
+  `settings.shortTermSteps` and `settings.fsrsWeights` (validated — a bad vector falls back
+  to the population defaults), and grading, the interval previews and replay all go through
+  it. Since Phase 8 `shortTermSteps` defaults **true**, which is ts-fsrs's own default: a
+  failed card comes back in minutes, so a grade can schedule inside the session. v1's
+  `enable_short_term: false` was the deviation, and it is now one settings column away.
 - The dictionary loader throws `DictDataMissingError` when `data/` is absent; routes map it
   to `503 {error:'dict-data-missing', hint:'run pnpm data'}`. Missing data is a banner, not
   a crash — keep it that way.

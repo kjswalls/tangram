@@ -19,13 +19,29 @@ import type { CardContext, HskBand } from '@/lib/types';
 export const DB_NAME = 'tangram';
 
 /**
- * Dexie version 2. A schema change stops the build (see CLAUDE.md); this one
- * was commissioned — the unique index that stops two open tabs creating the
- * eight system lists twice (`systemKey` below) cannot exist without a version.
- * Nothing else about v1 changed, and no data is rewritten beyond stamping the
- * new key onto the system lists a v1 database already holds.
+ * Dexie version 3. A schema change stops the build (see CLAUDE.md); both bumps
+ * so far were commissioned.
+ *
+ * - v2 added the unique `&systemKey` index that stops two open tabs creating
+ *   the eight system lists twice (`systemKey` below).
+ * - v3 (Phase 8 prep) adds `[entryId+direction]` on `cards`: a card is now
+ *   identified by its direction as well as its entry (`CardDirection`), so
+ *   "the production card for this entry" has to be a lookup, not a scan.
+ *
+ * **Neither rewrites a row and neither drops one.** An index is a declaration;
+ * IndexedDB rebuilds it from the rows already stored. Every `cards` row ever
+ * written carries `direction: 'recognition'` (both writers set it literally,
+ * since Phase 0), so the new index covers the existing data as it stands — and
+ * the v3 upgrade in `lib/db/dexie.ts` stamps the default onto any row that
+ * somehow lacks it rather than trusting that claim.
+ *
+ * The four new `settings` columns need **no** version of their own: Dexie
+ * declares indexes, not shapes, and `settings` is indexed on `id` alone. They
+ * are filled in on read instead (`getSettings` merges `DEFAULT_SETTINGS` under
+ * the stored row), which is a repository rule rather than a Dexie one and so
+ * survives the Supabase swap.
  */
-export const DB_VERSION = 2;
+export const DB_VERSION = 3;
 
 /** Columns every soft-deletable row carries. */
 export interface BaseRow {
@@ -127,12 +143,33 @@ export interface WordRow extends BaseRow {
   snapshot: EntrySnapshot;
 }
 
+/**
+ * Which way round a card is asked.
+ *
+ * `recognition` — hanzi on the front, meaning on the back. Every card written
+ * before Phase 8 is one of these, and it stays the default everywhere a
+ * direction is optional.
+ *
+ * `production` — the meaning on the front, the hanzi recalled. It is a
+ * *separate card* with its own FSRS state, not a mode the review session
+ * toggles: the two directions are learned at different rates, and one schedule
+ * cannot serve both. `settings.productionDirection` is the switch that decides
+ * whether they get made.
+ */
+export type CardDirection = 'recognition' | 'production';
+
+export const CARD_DIRECTIONS: readonly CardDirection[] = ['recognition', 'production'];
+
+/** What a card is, when nobody says otherwise — and what v1 wrote. */
+export const DEFAULT_CARD_DIRECTION: CardDirection = 'recognition';
+
 export interface CardRow extends BaseRow {
   /** Phrase cards have no single word behind them. */
   wordId: string | null;
   entryId: string | null;
   kind: 'word' | 'phrase';
-  direction: 'recognition';
+  /** Indexed with `entryId` as `[entryId+direction]` since Dexie v3. */
+  direction: CardDirection;
   snapshot: CardSnapshot;
   /** Which gloss the card is about, when a sense was chosen (§3.4). */
   senseIndex?: number;
@@ -231,6 +268,33 @@ export interface AskCacheRow {
 export type ScriptPreference = 'simp' | 'trad';
 export type ProviderPreference = 'fake' | 'anthropic';
 
+/**
+ * One fit of the FSRS weights to *this* learner's review history (Phase 8).
+ *
+ * `w` is the parameter vector `ts-fsrs` takes: 17, 19 or 21 numbers (FSRS 4, 5
+ * and 6 respectively — this build's `default_w` is 21). Nothing here is trusted
+ * blindly: `lib/srs/params.ts` validates the vector before it reaches the
+ * scheduler and falls back to the population defaults if it does not hold up.
+ *
+ * The other four fields are the fit's provenance, and they are stored because a
+ * number that cannot be judged is worse than no number. `reviewCount` and
+ * `fittedAt` say what it was fitted on and when; the two log-losses say whether
+ * the fit is actually better than the defaults **on data it was not fitted on**
+ * — `heldOutLogLoss < baselineLogLoss` is the only honest reason to keep it.
+ * The optimizer (builder A) decides that; this row records the evidence.
+ */
+export interface FsrsWeights {
+  w: number[];
+  /** When the fit was made (epoch ms). */
+  fittedAt: number;
+  /** How many reviews it was fitted on. */
+  reviewCount: number;
+  /** Log loss of the fitted weights on the held-out reviews. Lower is better. */
+  heldOutLogLoss: number;
+  /** Log loss of the population defaults on the same held-out reviews. */
+  baselineLogLoss: number;
+}
+
 export interface SettingsRow {
   id: 'singleton';
   newPerDay: number;
@@ -251,6 +315,47 @@ export interface SettingsRow {
   examplesOnBack?: boolean;
   /** Offer the "what does it mean?" box on the card front (Phase 6 item 2). */
   freeRecall?: boolean;
+
+  /**
+   * FSRS's target recall probability at review time — `request_retention`
+   * (Phase 8). 0.9 is FSRS's own default and the one v1 ran on. Higher means
+   * shorter intervals: more reviews, more of them remembered.
+   *
+   * Required rather than optional, unlike the two Phase 6 toggles above,
+   * because `getSettings` now merges `DEFAULT_SETTINGS` under whatever is
+   * stored — a row written before Phase 8 comes back carrying the default, so
+   * a reader never has to spell `?? 0.9` and never has to guess whether
+   * `undefined` meant "off" or "not decided".
+   */
+  requestRetention: number;
+
+  /**
+   * Run FSRS with its own learning steps — `enable_short_term: true` plus
+   * `learning_steps: ['1m','10m']` (Phase 8). **Default true**, which restores
+   * the ts-fsrs default that v1 deliberately deviated from.
+   *
+   * v1 set it false so that every grade scheduled at least a day and a session
+   * ended cleanly. The cost was that failing a brand-new card put it away for a
+   * day, which is exactly when it should have come back in ten minutes. Turning
+   * it on changes queue semantics — a card can now be due inside the session —
+   * and making the queue honour that is builder A's job, not this row's.
+   */
+  shortTermSteps: boolean;
+
+  /**
+   * Also make a production card (meaning → hanzi) for a word (Phase 8). Off by
+   * default: it roughly doubles the daily review load, so it is a choice the
+   * learner makes, not one made for them.
+   */
+  productionDirection: boolean;
+
+  /**
+   * Weights fitted to this learner's own reviews, or `null` for the population
+   * defaults. `lib/srs/params.ts` is the only reader; nothing else may pull `w`
+   * out of here and hand it to `ts-fsrs`.
+   */
+  fsrsWeights: FsrsWeights | null;
+
   /** dayKey → how many new cards were introduced that day. Persisted, per §3.3. */
   introduced: Record<string, number>;
   createdAt: number;
@@ -269,6 +374,14 @@ export const DEFAULT_SETTINGS: Omit<SettingsRow, 'createdAt' | 'updatedAt'> = {
   provider: 'fake',
   examplesOnBack: true,
   freeRecall: false,
+  // 0.9 is FSRS's own `default_request_retention`; the settings slider spans
+  // 0.70–0.97 (`lib/srs/params.ts` clamps to the same range).
+  requestRetention: 0.9,
+  // TRUE on purpose: it is the ts-fsrs default, and v1's `false` was the
+  // deviation. See the field's doc block, and HANDOFF-prep8.md.
+  shortTermSteps: true,
+  productionDirection: false,
+  fsrsWeights: null,
   introduced: {},
 };
 
@@ -303,7 +416,22 @@ export const STORES_V2 = {
   lists: 'id, kind, owner, order, &systemKey',
 } as const;
 
-/** The current definitions. `STORES_V1` is kept for the upgrade path. */
-export const STORES = STORES_V2;
+/**
+ * Version 3 — v2 plus one compound index, `[entryId+direction]` on `cards`.
+ *
+ * The plain `entryId` index stays exactly where it was, so every existing
+ * caller (`cardForEntry`, `markKnown`, `writeCard`) keeps the query it already
+ * had; the compound one is what makes "the production card for 打算" a lookup
+ * rather than a scan of every card the entry has. Nothing is removed, and a
+ * row whose `entryId` is null (a phrase card) is absent from both, which is
+ * IndexedDB's rule about null keys and not a decision made here.
+ */
+export const STORES_V3 = {
+  ...STORES_V2,
+  cards: 'id, wordId, entryId, kind, due, createdAt, updatedAt, [entryId+direction]',
+} as const;
+
+/** The current definitions. `STORES_V1`/`V2` are kept for the upgrade path. */
+export const STORES = STORES_V3;
 
 export type StoreName = keyof typeof STORES_V1;

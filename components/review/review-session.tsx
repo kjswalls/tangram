@@ -82,9 +82,14 @@ export function ReviewSession() {
   // The intervals are computed against the same instant the queue was built —
   // `store.now`, set by `load()` before `loaded` flips — so the four labels do
   // not drift while the card sits on screen, and render stays pure.
+  //
+  // `settings` goes in because the parameters are part of the answer (Phase 8):
+  // retention, the short-term learning steps and any fitted weights all change
+  // what a button would schedule, and a label from a different scheduler than
+  // the one that will run is a promise the app does not keep.
   const options = useMemo(
-    () => (card ? gradeOptions(card.fsrs, now) : []),
-    [card, now],
+    () => (card ? gradeOptions(card.fsrs, now, settings) : []),
+    [card, now, settings],
   );
 
   const onGrade = useCallback(

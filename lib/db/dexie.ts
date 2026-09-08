@@ -11,12 +11,15 @@ import Dexie, { type Table } from 'dexie';
 import {
   DB_NAME,
   DB_VERSION,
+  DEFAULT_CARD_DIRECTION,
   DEFAULT_SETTINGS,
   SETTINGS_ID,
   STORES_V1,
   STORES_V2,
+  STORES_V3,
   systemListKey,
   type AskCacheRow,
+  type CardDirection,
   type CardRow,
   type EntrySnapshot,
   type KnownWordRow,
@@ -32,11 +35,14 @@ import {
 } from '@/lib/db/schema';
 import type {
   AskCache,
+  CardStateCounts,
   CreateListInput,
   GradeOutcome,
   Repository,
   SaveTextInput,
+  StabilityBucket,
 } from '@/lib/db/repository';
+import { STABILITY_BUCKETS } from '@/lib/db/repository';
 import { gradeCard, newCard } from '@/lib/srs/card';
 import { KNOWN_STABILITY_DAYS, knownCardState } from '@/lib/srs/states';
 import type { CardContext, Entry } from '@/lib/types';
@@ -75,11 +81,12 @@ export class TangramDb extends Dexie {
 
   constructor(name: string = DB_NAME) {
     super(name);
-    // v1 is declared as it shipped so a database that stopped there upgrades
-    // rather than being rebuilt; v2 adds the `&systemKey` index and stamps the
-    // key onto the system lists the old database already has.
+    // Every version is declared as it shipped, so a database that stopped at
+    // any of them upgrades rather than being rebuilt: v2 adds the `&systemKey`
+    // index and stamps the key onto the system lists the old database already
+    // has, v3 adds `[entryId+direction]` on `cards` (below).
     this.version(1).stores(STORES_V1);
-    this.version(DB_VERSION)
+    this.version(2)
       .stores(STORES_V2)
       .upgrade(async (tx) => {
         const table = tx.table<ListRow, string>('lists');
@@ -99,6 +106,23 @@ export class TangramDb extends Dexie {
           }
           claimed.add(key);
           await table.put({ ...row, systemKey: key });
+        }
+      });
+    // v3 declares `[entryId+direction]` on `cards`. Declaring an index is all
+    // it takes — IndexedDB builds it from the rows already stored — and every
+    // card ever written carries `direction: 'recognition'`, so this upgrade is
+    // belt and braces: it stamps the default onto any row that somehow has no
+    // direction, so that a row cannot be invisible to a compound-index query.
+    // Nothing is deleted, and a row that already has one is not rewritten.
+    this.version(DB_VERSION)
+      .stores(STORES_V3)
+      .upgrade(async (tx) => {
+        const table = tx.table<CardRow, string>('cards');
+        const stale = (await table.toArray()).filter((row) => !row.direction);
+        if (stale.length > 0) {
+          await table.bulkPut(
+            stale.map((row) => ({ ...row, direction: DEFAULT_CARD_DIRECTION })),
+          );
         }
       });
   }
@@ -196,8 +220,14 @@ export function createDexieRepository(db: TangramDb): Repository {
     senseIndex: number | undefined,
     dictVersion: string,
     now: number,
+    direction: CardDirection = DEFAULT_CARD_DIRECTION,
   ): Promise<{ card: CardRow; created: boolean }> {
-    const existing = (await db.cards.where('entryId').equals(entry.id).toArray())
+    // Identity is (entryId, senseIndex, direction): the production card for a
+    // word is a different card from the recognition one, with its own
+    // schedule, so an Add for one must not find — or merge context onto — the
+    // other. Read through the compound index; the plain `entryId` one is still
+    // there for the callers that want every direction at once.
+    const existing = (await db.cards.where('[entryId+direction]').equals([entry.id, direction]).toArray())
       .filter(alive)
       .find((card) => card.kind === 'word' && card.senseIndex === senseIndex);
     if (existing) {
@@ -217,7 +247,7 @@ export function createDexieRepository(db: TangramDb): Repository {
       wordId: word.id,
       entryId: entry.id,
       kind: 'word',
-      direction: 'recognition',
+      direction,
       snapshot: toEntrySnapshot(entry, dictVersion),
       ...(senseIndex === undefined ? {} : { senseIndex }),
       ...(context === undefined ? {} : { context }),
@@ -250,13 +280,41 @@ export function createDexieRepository(db: TangramDb): Repository {
     return updated;
   }
 
+  /**
+   * The settings row, with every column the current build knows about.
+   *
+   * A row written by an older build is missing the columns that build did not
+   * have — there is real data on a phone, and Phase 8 added four. Rather than
+   * making every reader spell `?? DEFAULT`, the defaults are merged *under* the
+   * stored row on the way out, so a missing column reads as its default and a
+   * stored one always wins. The merged row is written back once, so the fill-in
+   * happens at most once per new column rather than on every read.
+   *
+   * The write is best-effort: `getSettings` is also called from inside
+   * transactions, and a caller that only holds a read lock must still get its
+   * settings rather than an exception. `id` is pinned last so a corrupt stored
+   * row cannot rename the singleton.
+   */
   async function getSettings(): Promise<SettingsRow> {
-    const existing = await db.settings.get(SETTINGS_ID);
-    if (existing) return existing;
     const now = Date.now();
-    const row: SettingsRow = { ...DEFAULT_SETTINGS, createdAt: now, updatedAt: now };
-    await db.settings.put(row);
-    return row;
+    const existing = await db.settings.get(SETTINGS_ID);
+    if (!existing) {
+      const row: SettingsRow = { ...DEFAULT_SETTINGS, createdAt: now, updatedAt: now };
+      await db.settings.put(row);
+      return row;
+    }
+    const missing = (Object.keys(DEFAULT_SETTINGS) as (keyof typeof DEFAULT_SETTINGS)[]).filter(
+      (key) => existing[key] === undefined,
+    );
+    if (missing.length === 0) return existing;
+    const filled: SettingsRow = { ...DEFAULT_SETTINGS, ...existing, id: SETTINGS_ID };
+    try {
+      await db.settings.put(filled);
+    } catch {
+      // A read-only transaction: the caller still gets the complete row, and
+      // the next writer persists it.
+    }
+    return filled;
   }
 
   const askCache: AskCache = {
@@ -271,7 +329,13 @@ export function createDexieRepository(db: TangramDb): Repository {
   };
 
   return {
-    async addCardFromEntry(entry, context, senseIndex, dictVersion = UNKNOWN_DICT_VERSION) {
+    async addCardFromEntry(
+      entry,
+      context,
+      senseIndex,
+      dictVersion = UNKNOWN_DICT_VERSION,
+      direction = DEFAULT_CARD_DIRECTION,
+    ) {
       const now = Date.now();
       // The whole read-check-write runs in one transaction, because the promise
       // this returns is what a double-tapped Add awaits twice. IndexedDB
@@ -281,7 +345,7 @@ export function createDexieRepository(db: TangramDb): Repository {
         'rw',
         db.words,
         db.cards,
-        async () => (await writeCard(entry, context, senseIndex, dictVersion, now)).card,
+        async () => (await writeCard(entry, context, senseIndex, dictVersion, now, direction)).card,
       );
     },
 
@@ -331,7 +395,7 @@ export function createDexieRepository(db: TangramDb): Repository {
         wordId: null,
         entryId: null,
         kind: 'phrase',
-        direction: 'recognition',
+        direction: DEFAULT_CARD_DIRECTION,
         snapshot,
         context,
         fsrs,
@@ -357,9 +421,12 @@ export function createDexieRepository(db: TangramDb): Repository {
       return rows
         .filter(alive)
         .filter((card) => {
-          // With enable_short_term:false the Learning and Relearning states never
-          // occur — every grade lands in Review. So "learning" here is the reader's
-          // definition (§3.3): reviewed, but not yet consolidated.
+          // "Learning" here is the reader's definition (§3.3) — reviewed, but
+          // not yet consolidated — and not the FSRS state, which is why the
+          // test is on stability rather than on `state === 1`. It was the only
+          // workable reading under v1's `enable_short_term: false`, where the
+          // Learning states never occurred at all; with the steps on it now
+          // catches both, which is the same claim either way.
           if (card.fsrs.state === 0) return false;
           return card.fsrs.state !== 2 || card.fsrs.stability < KNOWN_STABILITY_DAYS;
         })
@@ -367,12 +434,18 @@ export function createDexieRepository(db: TangramDb): Repository {
     },
 
     async grade(cardId: string, rating: StoredRating, now: number = Date.now()): Promise<GradeOutcome> {
-      return db.transaction('rw', db.cards, db.reviews, async () => {
+      // `settings` joins the transaction because the schedule this writes is a
+      // function of it (retention, short-term steps, the learner's own
+      // weights): reading the parameters outside the write would let a
+      // settings change land between the read and the grade, and the review
+      // row would then record a schedule no parameter set ever produced.
+      return db.transaction('rw', db.cards, db.reviews, db.settings, async () => {
         const card = await db.cards.get(cardId);
         if (!card || !alive(card)) throw new Error(`grade: no card ${cardId}`);
 
+        const settings = await getSettings();
         const before = card.fsrs;
-        const { next, log } = gradeCard(before, rating, now);
+        const { next, log } = gradeCard(before, rating, now, settings);
         const updated: CardRow = { ...card, fsrs: next, due: next.due, updatedAt: now };
         const review: ReviewRow = {
           id: newId(),
@@ -437,10 +510,63 @@ export function createDexieRepository(db: TangramDb): Repository {
       return (await db.cards.toArray()).filter(alive);
     },
 
-    async cardForEntry(entryId, senseIndex) {
-      return (await db.cards.where('entryId').equals(entryId).toArray())
+    async cardForEntry(entryId, senseIndex, direction = DEFAULT_CARD_DIRECTION) {
+      // The compound index answers this directly. `senseIndex` stays a filter
+      // rather than a third index column because it is optional, and IndexedDB
+      // does not index a row whose key path is missing — a card with no chosen
+      // sense would drop out of the index entirely.
+      return (await db.cards.where('[entryId+direction]').equals([entryId, direction]).toArray())
         .filter(alive)
         .find((card) => card.kind === 'word' && card.senseIndex === senseIndex);
+    },
+
+    async reviewsBetween(fromMs, toMs) {
+      if (!(toMs > fromMs)) return [];
+      // Half-open [from, to): consecutive windows tile, and the row on the
+      // boundary is counted by exactly one of them.
+      return db.reviews.where('reviewedAt').between(fromMs, toMs, true, false).sortBy('reviewedAt');
+    },
+
+    async allReviewsChronological() {
+      // `reviewedAt` is indexed, so this is an index scan rather than a sort of
+      // the whole table — the optimizer reads every row it can get.
+      return db.reviews.orderBy('reviewedAt').toArray();
+    },
+
+    async cardCountsByState() {
+      const counts: CardStateCounts = { new: 0, learning: 0, review: 0, relearning: 0, total: 0 };
+      const rows = (await db.cards.toArray()).filter(alive);
+      for (const row of rows) {
+        counts.total += 1;
+        // 0 New, 1 Learning, 2 Review, 3 Relearning (`FsrsStateValue`).
+        if (row.fsrs.state === 0) counts.new += 1;
+        else if (row.fsrs.state === 1) counts.learning += 1;
+        else if (row.fsrs.state === 2) counts.review += 1;
+        else counts.relearning += 1;
+      }
+      return counts;
+    },
+
+    async stabilityHistogram() {
+      const buckets: StabilityBucket[] = STABILITY_BUCKETS.map((bucket) => ({
+        ...bucket,
+        count: 0,
+      }));
+      const rows = (await db.cards.toArray()).filter(alive);
+      for (const row of rows) {
+        // A New card's stability is a placeholder, not a memory; counting it
+        // would put every unstudied word in the first bar.
+        if (row.fsrs.state === 0) continue;
+        const stability = Number.isFinite(row.fsrs.stability) ? row.fsrs.stability : 0;
+        const bucket =
+          buckets.find(
+            (candidate) =>
+              stability >= candidate.minDays &&
+              (candidate.maxDays === null || stability < candidate.maxDays),
+          ) ?? buckets[buckets.length - 1];
+        bucket.count += 1;
+      }
+      return buckets;
     },
 
     async wordByEntryId(entryId) {

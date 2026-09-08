@@ -204,7 +204,8 @@ describe('a database written before the index existed', () => {
     // The oldest row is the one the app has been using, so it is the survivor.
     expect(lists.map((list) => list.id)).toEqual(['older', 'hsk-1']);
     expect(lists.map((list) => list.systemKey)).toEqual(['looked-up', 'hsk:1']);
-    expect(db.verno).toBe(2);
+    // Opened at the current version — the v2 upgrade ran on the way past it.
+    expect(db.verno).toBe(3);
 
     // And the constraint is live from here on.
     await expect(

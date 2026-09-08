@@ -7,6 +7,7 @@ import { newCard } from '@/lib/srs/card';
 import {
   buildReviewQueue,
   emptyStateMessage,
+  formatDelay,
   formatInterval,
   gradeOptions,
   isRevealKey,
@@ -144,9 +145,30 @@ describe('formatInterval', () => {
     expect(formatInterval(730)).toBe('2.0y');
   });
 
-  it('never claims less than a day (enable_short_term: false)', () => {
+  it('rounds anything under a day up to a day — days are its smallest unit', () => {
     expect(formatInterval(0)).toBe('1d');
     expect(formatInterval(0.4)).toBe('1d');
+  });
+});
+
+/**
+ * `shortTermSteps` defaults on since Phase 8, so a button can schedule ten
+ * minutes. `formatInterval` still only knows days and up, which is why the
+ * sub-day case has a formatter of its own rather than a special case inside it.
+ */
+describe('formatDelay', () => {
+  it('says minutes, then hours, then hands over to formatInterval', () => {
+    expect(formatDelay(60_000)).toBe('1m');
+    expect(formatDelay(10 * 60_000)).toBe('10m');
+    expect(formatDelay(90 * 60_000)).toBe('2h');
+    expect(formatDelay(5 * HOUR)).toBe('5h');
+    expect(formatDelay(DAY)).toBe('1d');
+    expect(formatDelay(40 * DAY)).toBe('1mo');
+  });
+
+  it('never claims zero: a scheduled card is always some time away', () => {
+    expect(formatDelay(0)).toBe('1m');
+    expect(formatDelay(20_000)).toBe('1m');
   });
 });
 
@@ -156,15 +178,34 @@ describe('gradeOptions', () => {
     expect(options.map((option) => option.rating)).toEqual([1, 2, 3, 4]);
     expect(options.map((option) => option.label)).toEqual(['Again', 'Hard', 'Good', 'Easy']);
     for (const option of options) {
+      expect(option.due).toBeGreaterThan(NOW);
+      expect(option.ms).toBe(option.due - NOW);
+      expect(option.interval).toMatch(/^\d+(\.\d)?(m|h|d|mo|y)$/);
+    }
+  });
+
+  it('labels a learning step in minutes rather than rounding it up to a day', () => {
+    // The default settings run FSRS's own learning steps, so Again on a new
+    // card is one minute out. A button reading `1d` there would be describing
+    // a schedule the app is not going to follow.
+    const again = gradeOptions(newCard(NOW), NOW)[0];
+    expect(again.ms).toBeLessThan(DAY);
+    expect(again.days).toBe(0);
+    expect(again.interval).toMatch(/^\d+m$/);
+  });
+
+  it('runs the preview under the settings the grade will use', () => {
+    const off = gradeOptions(newCard(NOW), NOW, { shortTermSteps: false });
+    for (const option of off) {
       expect(option.days).toBeGreaterThanOrEqual(1);
+      expect(option.ms).toBeGreaterThanOrEqual(DAY);
       expect(option.interval).toMatch(/^\d+(\.\d)?(d|mo|y)$/);
-      expect(option.due - NOW).toBeGreaterThanOrEqual(86_400_000);
     }
   });
 
   it('orders the intervals Again ≤ Hard ≤ Good ≤ Easy', () => {
-    const days = gradeOptions(newCard(NOW), NOW).map((option) => option.days);
-    expect([...days].sort((a, b) => a - b)).toEqual(days);
+    const delays = gradeOptions(newCard(NOW), NOW).map((option) => option.ms);
+    expect([...delays].sort((a, b) => a - b)).toEqual(delays);
   });
 });
 

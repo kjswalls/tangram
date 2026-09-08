@@ -2204,3 +2204,33 @@ No frozen file was edited: `package.json`, `pnpm-lock.yaml`, `next.config.ts`,
 server is left running. `/home/user/v0-anchor` was not touched. **No live model
 call has been made from this container** — there is still no key here, and every
 new test injects a provider or stubs `fetch`.
+
+---
+
+## Phase 8 prep — the shared surface (see HANDOFF-prep8.md)
+
+Written on `main` before the four Phase 8 builders branch. It is seams only, no
+feature, and the details are in [HANDOFF-prep8.md](HANDOFF-prep8.md). The four
+things that change what any of the rest of this document says:
+
+1. **`lib/srs/params.ts` is now the only place FSRS parameters are built.**
+   `fsrs()` and `generatorParameters()` appear nowhere else in the app. It reads
+   `settings.requestRetention`, `settings.shortTermSteps` and
+   `settings.fsrsWeights` (validated — `ts-fsrs` silently clamps a `NaN` weight
+   to 0.001 and schedules with it), and grading, the four interval previews and
+   replay all go through it.
+2. **`settings.shortTermSteps` defaults TRUE**, which restores ts-fsrs's own
+   default and undoes v1's `enable_short_term: false`. Every claim in this file
+   of the form "nothing returns inside a session" or "every grade schedules at
+   least a day" is now a statement about v1, not about `main`. The FSRS Learning
+   and Relearning states occur from here on.
+3. **Dexie is at v3**: one added index, `[entryId+direction]` on `cards`, because
+   `CardRow.direction` widened to `'recognition' | 'production'`. No row is
+   rewritten and none is dropped; the migration test proves it against a v2
+   database. Four settings columns were added with no version of their own, and
+   `getSettings` now fills a stored row's missing columns from `DEFAULT_SETTINGS`
+   on read.
+4. **The repository gained five read-only queries** (`reviewsBetween`,
+   `allReviewsChronological`, `cardCountsByState`, `stabilityHistogram`, and
+   `cardForEntry` extended for direction) so the dashboard and the optimizer do
+   not each write their own Dexie access.

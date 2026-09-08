@@ -9,7 +9,6 @@ import { resetExamplesInfo } from '@/components/review/example-sentences';
 import type { Entry } from '@/lib/types';
 import { context, DASUAN, KANKAN } from '../db/fixtures';
 
-const DAY = 86_400_000;
 
 afterEach(async () => {
   vi.unstubAllGlobals();
@@ -56,7 +55,11 @@ describe('the review session', () => {
     expect(rows[0].cardId).toBe(card.id);
     expect(rows[0].rating).toBe(3);
     const stored = await getDb().cards.get(card.id);
-    expect(stored?.due).toBeGreaterThanOrEqual(rows[0].reviewedAt + DAY);
+    // The grade rescheduled the card. How far out is the scheduler's business
+    // and the settings row's: with `shortTermSteps` on (the default since
+    // Phase 8) Good on a new card is a learning step, not a day.
+    expect(stored?.due).toBeGreaterThan(rows[0].reviewedAt);
+    expect(stored?.fsrs.reps).toBe(1);
   });
 
   it('re-queries after a grade: the next card is shown and the graded one is not', async () => {
@@ -95,7 +98,9 @@ describe('the review session', () => {
       const button = screen.getByTestId(`grade-${option.rating}`);
       expect(button).toHaveTextContent(option.label);
       expect(button).toHaveAttribute('data-interval', option.interval);
-      expect(option.interval).toMatch(/^\d+(\.\d)?(d|mo|y)$/);
+      // `10m` and `2h` are labels now (Phase 8's learning steps), so the shape
+      // is a number and one of the five units — not days-or-longer only.
+      expect(option.interval).toMatch(/^\d+(\.\d)?(m|h|d|mo|y)$/);
     }
   });
 

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createEmptyCard, fsrs } from 'ts-fsrs';
 
-import { FSRS_PARAMETERS } from '@/lib/srs/card';
+import { buildParameters } from '@/lib/srs/params';
 import { DASUAN, freshRepository } from '../db/fixtures';
 
 const DAY = 86_400_000;
@@ -75,16 +75,33 @@ describe('repository.grade', () => {
     expect(review.before.last_review).toBeUndefined();
   });
 
-  it('never schedules less than a day, for any rating (enable_short_term: false)', async () => {
-    expect(FSRS_PARAMETERS.enable_short_term).toBe(false);
+  /**
+   * The parameters come off the settings row (Phase 8, `lib/srs/params.ts`), so
+   * this is the test that the repository actually reads them: the same grade,
+   * on the same card, lands a day out or ten minutes out depending on one
+   * column. `shortTermSteps` now defaults **true**, which is ts-fsrs's own
+   * default and undoes v1's deviation.
+   */
+  it('honours settings.shortTermSteps when it schedules', async () => {
     for (const rating of [1, 2, 3, 4] as const) {
       const { repo: repository } = repo();
+      await repository.setSettings({ shortTermSteps: false });
       const card = await repository.addCardFromEntry(DASUAN);
       const { card: graded } = await repository.grade(card.id, rating, START);
       expect(graded.due - START).toBeGreaterThanOrEqual(DAY);
       expect(graded.fsrs.scheduled_days).toBeGreaterThanOrEqual(1);
       close?.();
     }
+  });
+
+  it('brings a failed card back inside the day on the default settings', async () => {
+    const { repo: repository } = repo();
+    expect((await repository.getSettings()).shortTermSteps).toBe(true);
+    const card = await repository.addCardFromEntry(DASUAN);
+    const { card: graded } = await repository.grade(card.id, 1, START);
+    expect(graded.due - START).toBeLessThan(DAY);
+    expect(graded.due).toBeGreaterThan(START);
+    expect(graded.fsrs.state).toBe(1);
   });
 
   it('takes a graded card out of the due queue and puts it back when it matures', async () => {
@@ -122,7 +139,11 @@ describe('the reviews table is the source of truth', () => {
     const rows = await db.reviews.where('cardId').equals(card.id).sortBy('reviewedAt');
     const history = rows.map((row) => ({ rating: row.rating, review: new Date(row.reviewedAt) }));
 
-    const { collections } = fsrs(FSRS_PARAMETERS).reschedule(createEmptyCard(), history, {
+    // Replayed under the same parameters the grades were written under — the
+    // settings row is an input to the schedule, not a detail of how it is
+    // computed, so a replay under different ones is a replay of another app.
+    const settings = await repository.getSettings();
+    const { collections } = fsrs(buildParameters(settings)).reschedule(createEmptyCard(), history, {
       now: new Date(history[history.length - 1].review),
     });
     const replayed = collections[collections.length - 1].card;

@@ -146,9 +146,10 @@ interface Seen {
 
 /**
  * Walk the session to the end, grading every card, and report what each card
- * showed. `enable_short_term: false` means nothing returns inside a session, so
- * the queue always shortens; the bound is a guard against a regression that
- * makes it not, never a normal exit.
+ * showed. A graded card leaves the queue — with the learning steps on (Phase
+ * 8's default) it comes back minutes later, which is longer than this walk
+ * takes — so the queue always shortens; the bound is a guard against a
+ * regression that makes it not, never a normal exit.
  */
 async function walkSession(page: Page, rating: 1 | 2 | 3 | 4 = 3): Promise<Seen[]> {
   const seen: Seen[] = [];

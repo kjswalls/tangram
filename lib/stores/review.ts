@@ -9,8 +9,17 @@
  * The queue is re-queried from the database after every grade rather than
  * walked in memory: the schedule the grade just wrote is what decides whether
  * the card comes back, so re-reading it is the only way the session and the
- * database cannot disagree. With `enable_short_term: false` nothing returns
- * inside a session, so the queue always shortens and the session terminates.
+ * database cannot disagree.
+ *
+ * v1 could lean on that re-read always *shortening* the queue, because
+ * `enable_short_term: false` meant nothing was ever scheduled inside the
+ * session. Since Phase 8 `settings.shortTermSteps` defaults on, so a failed
+ * card is due again in a minute or ten: the re-read can legitimately hand back
+ * a card that was just graded, and the session ends when nothing is due at that
+ * instant rather than because the list can only get smaller. Making that a
+ * feature rather than an accident — a card that comes back mid-session, and an
+ * empty state that knows it is minutes away — is Phase 8's queue work
+ * (HANDOFF-prep8.md, builder A).
  *
  * The re-read goes through `loadToday` — the same call Today makes — so the two
  * routes introduce and offer the same rows whichever one is opened first.

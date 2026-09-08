@@ -10,7 +10,9 @@
 import type { CardRow, FsrsCardState, SettingsRow, StoredRating } from '@/lib/db/schema';
 import { buildQueue } from '@/lib/lists/queue';
 import { previewGrades, RATING_LABELS } from '@/lib/srs/card';
+import type { ParameterSettings } from '@/lib/srs/params';
 
+const MINUTE_MS = 60_000;
 const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
 
@@ -64,8 +66,10 @@ export function nextDueAt(cards: readonly CardRow[], now: number): number | null
 }
 
 /**
- * A scheduling interval as a button label. With `enable_short_term: false`
- * nothing is ever shorter than a day, so days are the smallest unit shown.
+ * A scheduling interval of a day or more, as a button label. Days are the
+ * smallest unit it knows: anything under one rounds *up* to `1d`, which was
+ * true of every schedule v1 could produce (`enable_short_term: false`) and is
+ * why sub-day delays now go through `formatDelay` instead.
  */
 export function formatInterval(days: number): string {
   const whole = Math.max(1, Math.round(days));
@@ -75,29 +79,63 @@ export function formatInterval(days: number): string {
   return `${years < 10 ? years.toFixed(1) : String(Math.round(years))}y`;
 }
 
+/**
+ * A delay shorter than a day, as a button label: `1m`, `10m`, `4h`.
+ *
+ * It exists because `settings.shortTermSteps` defaults on (Phase 8): Again on a
+ * new card schedules one minute, and a button that answered `1d` to that would
+ * be describing a schedule the app is not going to follow. A minute is the
+ * floor — the learning steps do not go below it — and anything from a day up is
+ * handed back to `formatInterval`, so there is still exactly one place each
+ * unit is spelled.
+ */
+export function formatDelay(ms: number): string {
+  if (ms >= DAY_MS) return formatInterval(ms / DAY_MS);
+  if (ms >= HOUR_MS) return `${Math.round(ms / HOUR_MS)}h`;
+  return `${Math.max(1, Math.round(ms / MINUTE_MS))}m`;
+}
+
 export interface GradeOption {
   rating: StoredRating;
   /** Again · Hard · Good · Easy. */
   label: string;
-  /** `1d`, `3d`, `8d` … — what this button would schedule. */
+  /** `10m`, `1d`, `3d`, `8d` … — what this button would schedule. */
   interval: string;
+  /** Whole days the scheduler booked, or 0 for a learning step inside the day. */
   days: number;
+  /** The delay itself, in ms. The honest number when `days` is 0. */
+  ms: number;
   due: number;
 }
 
-/** The four buttons, each carrying the interval `fsrs.repeat()` would give it. */
-export function gradeOptions(state: FsrsCardState, now: number = Date.now()): GradeOption[] {
-  return previewGrades(state, now).map((preview) => {
-    // `scheduled_days` is the scheduler's own answer; the due instant is the
-    // fallback for the (theoretical) case where it comes back as 0.
+/**
+ * The four buttons, each carrying the interval `fsrs.repeat()` would give it.
+ *
+ * `settings` is threaded through because the preview must run under the same
+ * parameters the grade will (retention, short-term steps, the learner's own
+ * weights): a button that promises an interval a different scheduler would
+ * produce is worse than no interval at all.
+ */
+export function gradeOptions(
+  state: FsrsCardState,
+  now: number = Date.now(),
+  settings?: ParameterSettings | null,
+): GradeOption[] {
+  return previewGrades(state, now, settings).map((preview) => {
+    const ms = Math.max(0, preview.due - now);
+    // `scheduled_days` is the scheduler's own answer, and it is 0 for a
+    // learning step — which is a real schedule, not a missing one.
     const days = preview.scheduledDays > 0
       ? preview.scheduledDays
-      : Math.max(1, Math.round((preview.due - now) / DAY_MS));
+      : ms >= DAY_MS
+        ? Math.max(1, Math.round(ms / DAY_MS))
+        : 0;
     return {
       rating: preview.rating,
       label: RATING_LABELS[preview.rating],
-      interval: formatInterval(days),
+      interval: days >= 1 ? formatInterval(days) : formatDelay(ms),
       days,
+      ms,
       due: preview.due,
     };
   });

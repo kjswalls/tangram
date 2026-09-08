@@ -10,6 +10,7 @@
 
 import type {
   AskCacheRow,
+  CardDirection,
   CardRow,
   KnownWordRow,
   ListMemberRow,
@@ -52,6 +53,47 @@ export interface IntroducedCard {
   settings: SettingsRow;
 }
 
+/**
+ * How many cards sit in each FSRS state (Phase 8, the retention dashboard).
+ * Keyed by name rather than by the stored 0–3, because a chart legend that
+ * says "2" is a chart nobody can read.
+ */
+export interface CardStateCounts {
+  new: number;
+  learning: number;
+  review: number;
+  relearning: number;
+  /** Every live card, including the New ones. */
+  total: number;
+}
+
+/**
+ * One bar of the stability histogram: cards whose FSRS stability (in days)
+ * falls in `[minDays, maxDays)`. The top bucket has no upper bound.
+ */
+export interface StabilityBucket {
+  label: string;
+  minDays: number;
+  maxDays: number | null;
+  count: number;
+}
+
+/**
+ * The buckets themselves, shared so the dashboard and the repository cannot
+ * disagree about what a bar means. The 21-day edge is deliberate: it is
+ * `KNOWN_STABILITY_DAYS`, the threshold the reader colours a word "known" at,
+ * so the histogram reads as "how much of this is actually consolidated".
+ */
+export const STABILITY_BUCKETS: readonly { label: string; minDays: number; maxDays: number | null }[] =
+  [
+    { label: '< 1d', minDays: 0, maxDays: 1 },
+    { label: '1–7d', minDays: 1, maxDays: 7 },
+    { label: '7–21d', minDays: 7, maxDays: 21 },
+    { label: '21–90d', minDays: 21, maxDays: 90 },
+    { label: '90–365d', minDays: 90, maxDays: 365 },
+    { label: '1y+', minDays: 365, maxDays: null },
+  ];
+
 export interface AskCache {
   get(key: string): Promise<AskCacheRow | undefined>;
   set(key: string, response: unknown): Promise<AskCacheRow>;
@@ -66,12 +108,18 @@ export interface Repository {
    * missing (a reader's sentence, an ask's question, a lookup's query) are
    * merged onto it, and a card the spine drew is promoted to the explicit
    * source that asked for it. Nothing already recorded is overwritten.
+   *
+   * `direction` defaults to `'recognition'`, which is every card v1 ever wrote,
+   * so an existing caller keeps the card it has always got. A production card
+   * for the same entry and sense is a *different* row with its own schedule
+   * (`CardDirection`), and asking for one never returns or disturbs the other.
    */
   addCardFromEntry(
     entry: Entry,
     context?: CardContext,
     senseIndex?: number,
     dictVersion?: string,
+    direction?: CardDirection,
   ): Promise<CardRow>;
 
   /**
@@ -126,9 +174,11 @@ export interface Repository {
 
   /**
    * Cards due within the horizon that are not yet consolidated: Review with
-   * stability below the known threshold, or any non-Review state. With
-   * `enable_short_term: false` the FSRS Learning and Relearning states never
-   * occur, so a state-based reading of "learning" would always return [].
+   * stability below the known threshold, or any non-Review state. "Learning" is
+   * the reader's word (§3.3), not the FSRS state — under v1's
+   * `enable_short_term: false` the Learning and Relearning states never
+   * occurred at all, so a state-based reading would always have returned [];
+   * with the steps on (the default since Phase 8) it now takes in both.
    */
   listLearningSoon(now: number, horizonMs: number): Promise<CardRow[]>;
 
@@ -163,8 +213,47 @@ export interface Repository {
    * The word card for an entry, if there is one — what `addCardFromEntry` would
    * find. The UI asks before adding, so it can say "already in your cards"
    * instead of claiming an Add that only found the existing row.
+   *
+   * `direction` defaults to `'recognition'`: an existing caller asks about the
+   * card it has always meant, and a production card added later cannot silently
+   * become the answer to a question about the recognition one.
    */
-  cardForEntry(entryId: string, senseIndex?: number): Promise<CardRow | undefined>;
+  cardForEntry(
+    entryId: string,
+    senseIndex?: number,
+    direction?: CardDirection,
+  ): Promise<CardRow | undefined>;
+
+  /**
+   * Review rows in the half-open window `[fromMs, toMs)`, oldest first.
+   *
+   * The dashboard's "reviews per day" and "how did I answer this week" both
+   * read this, and the optimizer uses it to hold out a period. Half-open so
+   * consecutive windows tile without double-counting the row on the boundary.
+   */
+  reviewsBetween(fromMs: number, toMs: number): Promise<ReviewRow[]>;
+
+  /**
+   * Every review ever written, ordered by `reviewedAt` — the optimizer's
+   * training input (§3.3: the reviews table is the source of truth, and the
+   * stored card is a cache of it).
+   *
+   * Ordered across *all* cards rather than grouped by card: FSRS is fitted on a
+   * chronology, and a caller that wants per-card histories can group by
+   * `cardId` from this without a second read. Reviews are append-only and carry
+   * no tombstone, so nothing is filtered out.
+   */
+  allReviewsChronological(): Promise<ReviewRow[]>;
+
+  /** How many live cards sit in each FSRS state. */
+  cardCountsByState(): Promise<CardStateCounts>;
+
+  /**
+   * Live cards bucketed by FSRS stability (`STABILITY_BUCKETS`). New cards are
+   * excluded — their stability is a placeholder, not a memory — so the bars sum
+   * to `cardCountsByState().total - .new`.
+   */
+  stabilityHistogram(): Promise<StabilityBucket[]>;
 
   /** The word row for an entry, if the learner has met it. */
   wordByEntryId(entryId: string): Promise<WordRow | undefined>;

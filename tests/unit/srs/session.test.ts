@@ -6,13 +6,19 @@ import { buildQueue } from '@/lib/lists/queue';
 import { newCard } from '@/lib/srs/card';
 import {
   buildReviewQueue,
+  deferredCardIds,
   emptyStateMessage,
   formatDelay,
   formatInterval,
   gradeOptions,
   isRevealKey,
+  MAX_SESSION_REPEATS,
   nextDueAt,
   ratingFromKey,
+  returningWithin,
+  sessionQueue,
+  sessionRefreshDelay,
+  SESSION_RETURN_HORIZON_MS,
 } from '@/lib/srs/session';
 import type { CardContext } from '@/lib/types';
 
@@ -229,18 +235,127 @@ describe('the keyboard', () => {
 });
 
 describe('emptyStateMessage', () => {
+  it('counts minutes inside the hour — the short steps made that reachable', () => {
+    // Until Phase 8 this floored at one hour, because with
+    // `enable_short_term: false` nothing could ever be nine minutes away. Now
+    // Again on a new card is one minute, and "next card in 1 hour" would send
+    // the learner away from a session that is not over.
+    expect(emptyStateMessage({ next: NOW + 9 * 60_000, now: NOW })).toBe(
+      'Nothing due — 1 card comes back in 9 minutes.',
+    );
+    expect(emptyStateMessage({ next: NOW + 30_000, now: NOW })).toBe(
+      'Nothing due — 1 card comes back in 1 minute.',
+    );
+    expect(emptyStateMessage({ next: NOW + 4 * 60_000, now: NOW, returning: 3 })).toBe(
+      'Nothing due — 3 cards come back in 4 minutes.',
+    );
+  });
+
   it('counts hours up to two days out', () => {
-    expect(emptyStateMessage(NOW + 5 * HOUR, NOW)).toBe('Nothing due — next card in 5 hours.');
-    expect(emptyStateMessage(NOW + 30 * 60_000, NOW)).toBe('Nothing due — next card in 1 hour.');
-    expect(emptyStateMessage(NOW + 47 * HOUR, NOW)).toBe('Nothing due — next card in 47 hours.');
+    expect(emptyStateMessage({ next: NOW + 5 * HOUR, now: NOW })).toBe(
+      'Nothing due — next card in 5 hours.',
+    );
+    expect(emptyStateMessage({ next: NOW + 90 * 60_000, now: NOW })).toBe(
+      'Nothing due — next card in 2 hours.',
+    );
+    expect(emptyStateMessage({ next: NOW + 47 * HOUR, now: NOW })).toBe(
+      'Nothing due — next card in 47 hours.',
+    );
   });
 
   it('counts days beyond that', () => {
-    expect(emptyStateMessage(NOW + 3 * DAY, NOW)).toBe('Nothing due — next card in 3 days.');
-    expect(emptyStateMessage(NOW + 60 * DAY, NOW)).toBe('Nothing due — next card in 60 days.');
+    expect(emptyStateMessage({ next: NOW + 3 * DAY, now: NOW })).toBe(
+      'Nothing due — next card in 3 days.',
+    );
+    expect(emptyStateMessage({ next: NOW + 60 * DAY, now: NOW })).toBe(
+      'Nothing due — next card in 60 days.',
+    );
   });
 
   it('says so when nothing is scheduled', () => {
-    expect(emptyStateMessage(null, NOW)).toBe('Nothing due — no cards are scheduled yet.');
+    expect(emptyStateMessage({ next: null, now: NOW })).toBe(
+      'Nothing due — no cards are scheduled yet.',
+    );
+  });
+
+  it('names the cards the session set aside rather than hiding them', () => {
+    expect(emptyStateMessage({ next: null, now: NOW, deferred: 1 })).toBe(
+      'Nothing more is due right now. 1 card you kept missing is set aside until next time.',
+    );
+    expect(emptyStateMessage({ next: NOW + 2 * DAY, now: NOW, deferred: 3 })).toBe(
+      'Nothing due — next card in 48 hours. 3 cards you kept missing are set aside until next time.',
+    );
+  });
+
+  it('still puts the dictionary outage first', () => {
+    expect(emptyStateMessage({ next: NOW + DAY, now: NOW, waiting: 2 })).toBe(
+      'Nothing due — 2 new words are waiting, once the dictionary is back.',
+    );
+  });
+});
+
+describe('the intra-session repeat cap', () => {
+  it('sets a card aside once it has been served MAX_SESSION_REPEATS times', () => {
+    const repeats = { a: MAX_SESSION_REPEATS, b: MAX_SESSION_REPEATS - 1, c: 0 };
+    expect([...deferredCardIds(repeats)]).toEqual(['a']);
+    expect(deferredCardIds(repeats, 2)).toEqual(new Set(['a', 'b']));
+  });
+
+  it('is what makes the session terminate', () => {
+    // Again on a card in a learning step schedules it a minute out, so without
+    // a cap a learner who keeps pressing 1 is served the same card forever.
+    const failing = card({ fsrs: { ...newCard(NOW), state: 1 }, due: NOW - 1 });
+    const other = card({ fsrs: { ...newCard(NOW), state: 2 }, due: NOW - DAY });
+    const queue = [failing, other];
+
+    let repeats: Record<string, number> = {};
+    for (let i = 0; i < MAX_SESSION_REPEATS; i += 1) {
+      expect(sessionQueue(queue, deferredCardIds(repeats))).toContain(failing);
+      repeats = { ...repeats, [failing.id]: (repeats[failing.id] ?? 0) + 1 };
+    }
+    const left = sessionQueue(queue, deferredCardIds(repeats));
+    expect(left).not.toContain(failing);
+    expect(left).toEqual([other]);
+  });
+
+  it('keeps a set-aside card out of every number the empty state quotes', () => {
+    const aside = card({ fsrs: { ...newCard(NOW), state: 1 }, due: NOW + 60_000 });
+    const later = card({ fsrs: { ...newCard(NOW), state: 2 }, due: NOW + 5 * DAY });
+    const deferred = deferredCardIds({ [aside.id]: MAX_SESSION_REPEATS });
+
+    expect(nextDueAt([aside, later], NOW)).toBe(aside.due);
+    expect(nextDueAt([aside, later], NOW, deferred)).toBe(later.due);
+    expect(returningWithin([aside, later], NOW)).toBe(1);
+    expect(returningWithin([aside, later], NOW, SESSION_RETURN_HORIZON_MS, deferred)).toBe(0);
+  });
+});
+
+describe('returningWithin', () => {
+  it('counts only future, non-New cards inside the horizon', () => {
+    const soon = card({ fsrs: { ...newCard(NOW), state: 1 }, due: NOW + 60_000 });
+    const alsoSoon = card({ fsrs: { ...newCard(NOW), state: 3 }, due: NOW + 9 * 60_000 });
+    const beyond = card({ fsrs: { ...newCard(NOW), state: 2 }, due: NOW + HOUR });
+    const past = card({ fsrs: { ...newCard(NOW), state: 2 }, due: NOW - 1 });
+    const fresh = card({ fsrs: { ...newCard(NOW), state: 0 }, due: NOW + 60_000 });
+    const dead = card({ fsrs: { ...newCard(NOW), state: 2 }, due: NOW + 60_000, deletedAt: NOW });
+    expect(returningWithin([soon, alsoSoon, beyond, past, fresh, dead], NOW)).toBe(2);
+  });
+});
+
+describe('sessionRefreshDelay', () => {
+  it('waits for a card inside the short-step horizon', () => {
+    expect(sessionRefreshDelay(NOW + 9 * 60_000, NOW)).toBe(9 * 60_000 + 500);
+    expect(sessionRefreshDelay(NOW + 60_000, NOW)).toBe(60_500);
+  });
+
+  it('does not wait for a card that is hours or days away — the session is over', () => {
+    expect(sessionRefreshDelay(NOW + HOUR, NOW)).toBeNull();
+    expect(sessionRefreshDelay(NOW + 3 * DAY, NOW)).toBeNull();
+    expect(sessionRefreshDelay(null, NOW)).toBeNull();
+  });
+
+  it('floors at a second so a due instant already past cannot spin the load', () => {
+    expect(sessionRefreshDelay(NOW - 10 * 60_000, NOW)).toBe(1_000);
+    expect(sessionRefreshDelay(NOW, NOW)).toBe(1_000);
   });
 });

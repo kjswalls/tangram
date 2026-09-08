@@ -11,7 +11,14 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import type { RecallSuggestion } from '@/lib/ai/recall';
 import { DEFAULT_SETTINGS, type StoredRating } from '@/lib/db/schema';
-import { emptyStateMessage, gradeOptions, isRevealKey, ratingFromKey } from '@/lib/srs/session';
+import {
+  emptyStateMessage,
+  gradeOptions,
+  isRevealKey,
+  MAX_SESSION_REPEATS,
+  ratingFromKey,
+  sessionRefreshDelay,
+} from '@/lib/srs/session';
 import { useReviewStore } from '@/lib/stores/review';
 
 /**
@@ -40,6 +47,9 @@ export function ReviewSession() {
   const grading = useReviewStore((state) => state.grading);
   const now = useReviewStore((state) => state.now);
   const nextDue = useReviewStore((state) => state.nextDue);
+  const returning = useReviewStore((state) => state.returning);
+  const deferred = useReviewStore((state) => state.deferred);
+  const attempts = useReviewStore((state) => state.attempts);
   const waiting = useReviewStore((state) => state.waiting);
   const drawError = useReviewStore((state) => state.drawError);
   const settings = useReviewStore((state) => state.settings);
@@ -56,6 +66,26 @@ export function ReviewSession() {
     // next visit must re-read the queue rather than resume a stale one.
     return () => reset();
   }, [load, reset]);
+
+  /**
+   * Come back for a card that matures during the session.
+   *
+   * With `shortTermSteps` on (the default since Phase 8) a failed card is due
+   * again in a minute or ten, so the queue emptying no longer means the session
+   * is over — and until this existed the empty state simply stood there until
+   * the learner reloaded. The timer only runs while nothing is on screen (a
+   * re-read under a card would swap the card out mid-answer) and only for a
+   * card inside the short-step horizon; beyond that the session really is over
+   * and the empty state says when to come back.
+   */
+  const empty = queue[index] === undefined;
+  useEffect(() => {
+    if (!loaded || !empty) return;
+    const delay = sessionRefreshDelay(nextDue, Date.now());
+    if (delay === null) return;
+    const timer = setTimeout(() => void load(), delay);
+    return () => clearTimeout(timer);
+  }, [loaded, empty, nextDue, load]);
 
   const [suggestion, setSuggestion] = useState<{ cardId: string; value: RecallSuggestion } | null>(
     null,
@@ -151,7 +181,7 @@ export function ReviewSession() {
         aside={graded > 0 ? <span className="text-sm text-muted">{graded} graded</span> : null}
       >
         <p data-testid="review-empty" className="text-base">
-          {emptyStateMessage(nextDue, now, waiting)}
+          {emptyStateMessage({ next: nextDue, now, waiting, returning, deferred: deferred.length })}
         </p>
         {drawError ? (
           <p className="mt-2 text-sm text-warning">No new words could be drawn: {drawError}</p>
@@ -183,6 +213,18 @@ export function ReviewSession() {
           {revealed ? '1–4 to grade' : 'Space to flip'}
         </p>
       </div>
+
+      {/* The session's own cap, said out loud before it bites. A card can come
+          back inside the session now, so one you keep missing would otherwise
+          come round forever; after MAX_SESSION_REPEATS it is set aside. */}
+      {attempts >= MAX_SESSION_REPEATS - 2 ? (
+        <p data-testid="review-repeat-notice" className="text-xs text-warning">
+          Seen {attempts} {attempts === 1 ? 'time' : 'times'} this session
+          {attempts >= MAX_SESSION_REPEATS - 1
+            ? ' — one more and it is set aside until next time.'
+            : `. After ${MAX_SESSION_REPEATS} it is set aside until next time.`}
+        </p>
+      ) : null}
 
       <ReviewCard
         card={card}

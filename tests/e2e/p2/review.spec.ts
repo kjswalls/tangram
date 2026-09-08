@@ -158,8 +158,12 @@ test.describe('/review', () => {
     await seed(page, [{ entry: DASUAN, context: readerContext(), gradedDaysAgo: 0 }]);
 
     await expect(page.getByTestId('review-card')).toHaveCount(0);
+    // Three granularities are reachable since Phase 8: with `shortTermSteps`
+    // on, a card graded a moment ago is a ten-minute learning step away, and
+    // rounding that up to "1 hour" (which is what the copy did until Phase 8)
+    // sent the learner away from a session that was not over.
     await expect(page.getByTestId('review-empty')).toHaveText(
-      /^Nothing due — next card in \d+ (hours?|days?)\.$/,
+      /^Nothing due — (\d+ cards? comes? back in \d+ minutes?|next card in \d+ (hours?|days?))\.$/,
     );
   });
 

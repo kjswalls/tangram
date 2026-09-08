@@ -46,6 +46,7 @@ import { getDictIndex, getEntry, readingCount } from '@/lib/dict/index';
 import { dictErrorResponse } from '@/lib/dict/load';
 import { segment } from '@/lib/dict/segment';
 import { HSK_BANDS, type Entry, type EntryId, type HskBand, type LearnerProfile } from '@/lib/types';
+import { requireAccess } from '@/lib/server/access';
 
 // The dictionary is read from disk per process; never prerender this at build time.
 export const dynamic = 'force-dynamic';
@@ -371,11 +372,24 @@ function info(provider: ProviderName): ExamplesRouteInfo {
   };
 }
 
-export function GET(): Response {
+/**
+ * The access gate (lib/server/access.ts). A no-op unless
+ * `TANGRAM_ACCESS_SECRET` is set in the environment; when it is, this route
+ * costs money and answers nothing without the cookie. `middleware.ts` refuses
+ * the same request one layer earlier — the handler checks again because a
+ * matcher is easy to break and an invoice is expensive.
+ */
+export function GET(request: Request): Response {
+  const denied = requireAccess(request);
+  if (denied) return denied;
+
   return Response.json(info(selectProvider().name));
 }
 
 export async function POST(request: Request): Promise<Response> {
+  const denied = requireAccess(request);
+  if (denied) return denied;
+
   let payload: unknown;
   try {
     payload = await request.json();

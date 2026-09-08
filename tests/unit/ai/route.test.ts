@@ -38,7 +38,7 @@ async function post(body: unknown): Promise<{ status: number; body: AskRouteResp
 
 describe('GET /api/ask', () => {
   it('reports the provider and the prompt version the client needs for the cache key', async () => {
-    const res = GET();
+    const res = GET(new Request('http://localhost/api/ask'));
     expect(res.status).toBe(200);
     const info = (await res.json()) as AskRouteInfo;
     // No key in this container, so the fake answers — and says so.

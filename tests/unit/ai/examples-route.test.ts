@@ -87,7 +87,7 @@ const target = (): Entry => entryFor('开始');
 
 describe('GET /api/examples', () => {
   it('reports the provider and the prompt version the card back keys its cache on', async () => {
-    const info = (await GET().json()) as ExamplesRouteInfo;
+    const info = (await GET(new Request('http://localhost/api/examples')).json()) as ExamplesRouteInfo;
     expect(info).toEqual({ provider: 'fake', promptVersion: EXAMPLES_PROMPT_VERSION });
   });
 });

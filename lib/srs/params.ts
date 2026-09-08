@@ -27,8 +27,10 @@
  */
 
 import {
+  clipParameters,
   default_w,
   fsrs,
+  FSRSAlgorithm,
   generatorParameters,
   type FSRS,
   type FSRSParameters,
@@ -139,6 +141,69 @@ export function buildParameters(settings?: ParameterSettings | null): FSRSParame
     relearning_steps: [...RELEARNING_STEPS],
     w: resolveWeights(settings).w,
   });
+}
+
+/**
+ * A candidate weight vector, held inside the bounds `ts-fsrs` will accept.
+ *
+ * `clipParameters` is the library's own clamp — the same table
+ * (`CLAMP_PARAMETERS`) the scheduler validates against — so a vector that has
+ * been through it can never be one `fsrs()` rejects or silently rewrites. It
+ * also launders `NaN`: the clamp reads a non-finite entry as 0 and pins it to
+ * the bound, which is exactly the failure `isValidWeightVector` exists to catch
+ * and is why this is not the place to trust an input either. A vector of the
+ * wrong length is not clippable at all and falls back to the defaults.
+ *
+ * The relearning-step count is `RELEARNING_STEPS.length`, because the ceiling
+ * `clipParameters` puts on w17/w18 depends on how many steps a lapse walks —
+ * pass the wrong number and the clamp is for a different app.
+ */
+export function clipWeights(
+  w: readonly number[],
+  settings?: ParameterSettings | null,
+): number[] {
+  if (!Array.isArray(w) || !VALID_WEIGHT_LENGTHS.includes(w.length)) {
+    return [...DEFAULT_WEIGHTS];
+  }
+  const shortTerm = settings?.shortTermSteps ?? DEFAULT_SETTINGS.shortTermSteps;
+  const clipped = clipParameters([...w], RELEARNING_STEPS.length, shortTerm);
+  return isValidWeightVector(clipped) ? clipped : [...DEFAULT_WEIGHTS];
+}
+
+/**
+ * The parameter object for a *candidate* vector — the optimizer's scoring path.
+ *
+ * `buildParameters` resolves the weights off the settings row, and deliberately
+ * refuses a stored fit that has not proved itself; a fit cannot prove itself
+ * without being scored first, so scoring needs a way in that is not the stored
+ * column. Everything else about the parameters (retention, the short steps) is
+ * still read from the settings, so a candidate is scored under the scheduler
+ * the learner actually runs.
+ */
+export function parametersForWeights(
+  w: readonly number[],
+  settings?: ParameterSettings | null,
+): FSRSParameters {
+  const shortTerm = settings?.shortTermSteps ?? DEFAULT_SETTINGS.shortTermSteps;
+  return generatorParameters({
+    request_retention: clampRetention(settings?.requestRetention),
+    enable_short_term: shortTerm,
+    learning_steps: [...LEARNING_STEPS],
+    relearning_steps: [...RELEARNING_STEPS],
+    w: clipWeights(w, settings),
+  });
+}
+
+/**
+ * The bare FSRS memory model behind a parameter object: `next_state` and the
+ * forgetting curve, without the card, the learning steps or the clock.
+ *
+ * It lives here for the same reason `fsrs()` does — one construction site — and
+ * it exists at all because the optimizer replays a review log through the model
+ * thousands of times and has no use for a schedule while doing it.
+ */
+export function algorithmFor(params: FSRSParameters): FSRSAlgorithm {
+  return new FSRSAlgorithm(params);
 }
 
 /**

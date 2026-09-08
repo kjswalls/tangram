@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/cn';
 import type { StoredRating } from '@/lib/db/schema';
 import type { GradeOption } from '@/lib/srs/session';
 
@@ -7,14 +8,21 @@ import type { GradeOption } from '@/lib/srs/session';
  * (PLAN.md §3.3) and bound to its number key. The interval comes from
  * `fsrs.repeat()` on the card's real state, so the button says what pressing it
  * will actually do rather than a fixed guess.
+ *
+ * `suggested` is free-recall grading's whole footprint here (Phase 6 item 2):
+ * it rings one button and marks it `data-suggested`. It cannot press it — the
+ * bar still only grades from a click or a key, which is the rule that feature
+ * is built around.
  */
 export function GradeBar({
   options,
   disabled,
+  suggested = null,
   onGrade,
 }: {
   options: GradeOption[];
   disabled?: boolean;
+  suggested?: StoredRating | null;
   onGrade: (rating: StoredRating) => void;
 }) {
   return (
@@ -24,11 +32,15 @@ export function GradeBar({
           key={option.rating}
           data-testid={`grade-${option.rating}`}
           data-interval={option.interval}
+          data-suggested={option.rating === suggested ? 'true' : undefined}
           variant={option.rating === 3 ? 'primary' : 'secondary'}
           size="lg"
           disabled={disabled}
           aria-keyshortcuts={String(option.rating)}
-          className="h-auto flex-col gap-0.5 py-2"
+          className={cn(
+            'h-auto flex-col gap-0.5 py-2',
+            option.rating === suggested && 'ring-2 ring-accent',
+          )}
           onClick={() => onGrade(option.rating)}
         >
           <span className="flex items-center gap-1.5">

@@ -1,13 +1,15 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { ExampleSentences } from '@/components/review/example-sentences';
 import { GradeBar } from '@/components/review/grade-bar';
+import { RecallInput } from '@/components/review/recall-input';
 import { ReviewCard } from '@/components/review/review-card';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import type { RecallSuggestion } from '@/lib/ai/recall';
 import { DEFAULT_SETTINGS, type StoredRating } from '@/lib/db/schema';
 import { emptyStateMessage, gradeOptions, isRevealKey, ratingFromKey } from '@/lib/srs/session';
 import { useReviewStore } from '@/lib/stores/review';
@@ -18,6 +20,15 @@ import { useReviewStore } from '@/lib/stores/review';
  * Space or Enter flips the card; 1–4 grade it; every other key is ignored. The
  * queue is re-read from the database after each grade (see the store), so what
  * is offered next always matches what was just written.
+ *
+ * When `settings.freeRecall` is on, the card front also carries the recall box
+ * (Phase 6 item 2). This component is where the two halves of that feature meet
+ * and it is deliberately the *only* place they do: the box reports a suggestion
+ * for a card id, this holds it, and the grade bar rings the matching button.
+ * The suggestion is filed against the card it was asked about, so one that
+ * lands after the queue has moved on is simply never shown — and either way
+ * nothing here turns a suggestion into a grade. `grade()` is reached from a
+ * key press and a button click, exactly as it was before the feature existed.
  */
 export function ReviewSession() {
   const queue = useReviewStore((state) => state.queue);
@@ -46,11 +57,27 @@ export function ReviewSession() {
     return () => reset();
   }, [load, reset]);
 
+  const [suggestion, setSuggestion] = useState<{ cardId: string; value: RecallSuggestion } | null>(
+    null,
+  );
+  const onSuggestion = useCallback((cardId: string, value: RecallSuggestion | null) => {
+    setSuggestion(value ? { cardId, value } : null);
+  }, []);
+
   const card = queue[index];
   const script = settings?.script ?? DEFAULT_SETTINGS.script;
   // `undefined` is "not decided" on a settings row written before the toggle
   // existed, never "off" (HANDOFF-prep, §6).
   const examplesOnBack = settings?.examplesOnBack ?? DEFAULT_SETTINGS.examplesOnBack ?? true;
+  // A phrase card has no dictionary entry to judge an answer against (its
+  // meaning is the English on its back), so the box is offered on word cards.
+  const freeRecall =
+    (settings?.freeRecall ?? DEFAULT_SETTINGS.freeRecall ?? false) &&
+    card !== undefined &&
+    card.kind === 'word' &&
+    card.entryId !== null;
+  const suggested =
+    card !== undefined && suggestion?.cardId === card.id ? suggestion.value.suggested : null;
 
   // The intervals are computed against the same instant the queue was built —
   // `store.now`, set by `load()` before `loaded` flips — so the four labels do
@@ -159,6 +186,20 @@ export function ReviewSession() {
         peeked={peeked}
         onPeek={peek}
         onReveal={reveal}
+        recall={
+          freeRecall ? (
+            // Keyed on the card: a new card is a new question, and the key is
+            // what abandons the previous one's request rather than letting its
+            // answer land under a different word.
+            <RecallInput
+              key={card.id}
+              card={card}
+              revealed={revealed}
+              onReveal={reveal}
+              onSuggestion={onSuggestion}
+            />
+          ) : null
+        }
         // The slot only mounts once the back is on screen, which is what keeps
         // the flip instant: the sentences are fetched after the reveal, never
         // before it. Off means gone, not hidden.
@@ -174,7 +215,7 @@ export function ReviewSession() {
       />
 
       {revealed ? (
-        <GradeBar options={options} disabled={grading} onGrade={onGrade} />
+        <GradeBar options={options} disabled={grading} suggested={suggested} onGrade={onGrade} />
       ) : (
         <Button data-testid="reveal" size="lg" className="w-full" onClick={reveal}>
           Show answer

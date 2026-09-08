@@ -21,7 +21,14 @@
  * arrive at the panel with a hole in it.
  */
 
-import type { AskContext, LLMProvider, ParsedAskResponse, ProposedPhrases } from '@/lib/ai/provider';
+import type {
+  AskContext,
+  LLMProvider,
+  ParsedAskResponse,
+  ParsedExampleSentences,
+  ParsedGradeRecall,
+  ProposedPhrases,
+} from '@/lib/ai/provider';
 import type { Entry, LearnerProfile } from '@/lib/types';
 
 /** How many entries the echo cites. */
@@ -329,4 +336,195 @@ export class FakeProvider implements LLMProvider {
     const canned = demo?.answer.build(citeFrom(retrieved));
     return canned ?? retrievalEcho(retrieved);
   }
+
+  async exampleSentences(
+    entry: Entry,
+    profile: LearnerProfile,
+    _senseIndex?: number,
+    support?: readonly Entry[],
+  ): Promise<ParsedExampleSentences> {
+    // The sense does not change which words the echo can cite; a live provider
+    // is what makes a sentence about one gloss rather than another.
+    return exampleEcho(entry, profile, support ?? []);
+  }
+
+  async gradeRecall(entry: Entry, answer: string, senseIndex?: number): Promise<ParsedGradeRecall> {
+    return recallEcho(entry, answer, senseIndex);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 6 item 1 — i+1 example sentences
+// ---------------------------------------------------------------------------
+
+/** How many sentences the offline echo offers when it has words to build with. */
+export const EXAMPLE_SENTENCE_COUNT = 3;
+
+/**
+ * The prose beside each offline sentence. It says what it is rather than
+ * pretending to be a translation, for the same reason `retrievalEcho` names the
+ * top entries instead of quoting them: this string is what a caller writes into
+ * `ask_cache`, and the cache holds no dictionary text (CLAUDE.md, §3.4).
+ */
+const EXAMPLE_LINES: readonly string[] = [
+  'Offline: the word you are studying, beside one you already know. With a key set, a real sentence would stand here.',
+  'Offline: a second pairing, drawn from the words the caller retrieved for you.',
+  'Offline: a third pairing. The offline provider orders words; it does not compose Chinese.',
+];
+
+const EXAMPLE_ALONE =
+  'Offline: nothing was retrieved to build a sentence from, so this is the word on its own.';
+
+/** Known words lead, then the most frequent; the id breaks the last tie. */
+function supportRank(entry: Entry, known: ReadonlySet<string>): number {
+  const frequency = entry.freqRank ?? 500_000;
+  return (known.has(entry.simp) ? 0 : 1_000_000) + frequency;
+}
+
+/**
+ * The offline stand-in for i+1 sentences: the target entry plus the highest-
+ * value words the caller retrieved, cited by id, one pairing per sentence.
+ *
+ * It is deliberately not pretending to write Chinese — the pairs are ordered
+ * citations, and the panel's offline badge says as much. What it does
+ * guarantee is the two things the pipeline above it needs: every token is an id
+ * the caller supplied (so the i+1 filter and `ground()` have something real to
+ * work on), and the result is **never empty** — a target entry with no support
+ * still comes back as one single-token sentence.
+ */
+export function exampleEcho(
+  entry: Entry,
+  profile: LearnerProfile,
+  support: readonly Entry[] = [],
+): ParsedExampleSentences {
+  const known = new Set(profile.knownSample);
+  const seen = new Set<string>([entry.simp]);
+  const pool: Entry[] = [];
+  for (const candidate of [...support].sort(
+    (a, b) => supportRank(a, known) - supportRank(b, known) || (a.id < b.id ? -1 : 1),
+  )) {
+    if (candidate.id === entry.id || seen.has(candidate.simp)) continue;
+    if (candidate.properNoun || candidate.isVariant || candidate.surname) continue;
+    seen.add(candidate.simp);
+    pool.push(candidate);
+    if (pool.length >= EXAMPLE_SENTENCE_COUNT) break;
+  }
+
+  if (pool.length === 0) {
+    return { sentences: [{ tokens: [{ entryId: entry.id }], en: EXAMPLE_ALONE }] };
+  }
+
+  return {
+    sentences: pool.map((word, index) => ({
+      tokens: [{ entryId: word.id }, { entryId: entry.id }],
+      en: EXAMPLE_LINES[index % EXAMPLE_LINES.length],
+    })),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Phase 6 item 2 — free-recall grading
+// ---------------------------------------------------------------------------
+
+/**
+ * Words that carry no meaning in a gloss. CC-CEDICT's own scaffolding
+ * ("to …", "used in …", "sb"/"sth") is in here too, so "to plan" and "plan"
+ * are the same answer.
+ */
+const RECALL_STOP_WORDS = new Set([
+  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'do', 'for', 'from', 'in', 'is', 'it', 'its',
+  'of', 'on', 'one', 'or', 'sb', 'so', 'some', 'someone', 'something', 'sth', 'that', 'the',
+  'this', 'to', 'used', 'with', 'you', 'your',
+]);
+
+/** Fold the endings an answer and a gloss are allowed to differ by. */
+function stem(word: string): string {
+  if (word.length > 5 && word.endsWith('ing')) return word.slice(0, -3);
+  if (word.length > 4 && word.endsWith('ed')) return word.slice(0, -2);
+  if (word.length > 3 && word.endsWith('es')) return word.slice(0, -2);
+  if (word.length > 3 && word.endsWith('s')) return word.slice(0, -1);
+  return word;
+}
+
+/** The meaning-bearing words of a piece of English, stemmed and deduped. */
+export function recallWords(text: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of text.toLowerCase().split(/[^a-z0-9]+/)) {
+    if (!raw || RECALL_STOP_WORDS.has(raw)) continue;
+    const word = stem(raw);
+    if (word.length < 2 || seen.has(word)) continue;
+    seen.add(word);
+    out.push(word);
+  }
+  return out;
+}
+
+/** The glosses a grade is judged against: the chosen sense, or all of them. */
+function gradedGlosses(entry: Entry, senseIndex?: number): string[] {
+  if (
+    senseIndex !== undefined &&
+    Number.isInteger(senseIndex) &&
+    senseIndex >= 0 &&
+    senseIndex < entry.glosses.length
+  ) {
+    return [entry.glosses[senseIndex]];
+  }
+  return [...entry.glosses];
+}
+
+/**
+ * The offline grade: how much of one gloss the answer actually covers, mapped
+ * onto FSRS's 1–4.
+ *
+ * The score is the **best** single gloss rather than an average over all of
+ * them, because an entry with eight senses is not eight things the learner
+ * failed to say — recalling one of them is recalling the word. `why` counts
+ * words; it never quotes the gloss, so nothing a caller caches from this
+ * carries dictionary text, and it is plain ASCII prose, so the no-CJK rule
+ * holds by construction.
+ */
+export function recallEcho(entry: Entry, answer: string, senseIndex?: number): ParsedGradeRecall {
+  const said = new Set(recallWords(answer));
+  const glosses = gradedGlosses(entry, senseIndex);
+
+  let bestMatched = 0;
+  let bestTotal = 0;
+  let bestShare = 0;
+  for (const gloss of glosses) {
+    const words = recallWords(gloss);
+    if (words.length === 0) continue;
+    const matched = words.filter((word) => said.has(word)).length;
+    const share = matched / words.length;
+    if (share > bestShare || bestTotal === 0) {
+      bestShare = share;
+      bestMatched = matched;
+      bestTotal = words.length;
+    }
+  }
+
+  if (said.size === 0) {
+    return {
+      suggested: 1,
+      why: 'Offline check: there was nothing typed to compare against this card, so it reads as a blank.',
+    };
+  }
+  if (bestTotal === 0 || bestMatched === 0) {
+    return {
+      suggested: 1,
+      why: 'Offline check: none of the words you typed appear in the sense this card is about. Grade it yourself if the wording was just different.',
+    };
+  }
+
+  const counted = `Offline check: your answer covers ${bestMatched} of the ${bestTotal} meaning-carrying words in the closest sense`;
+  if (bestShare >= 2 / 3) {
+    return { suggested: 4, why: `${counted} — that reads as recalled.` };
+  }
+  if (bestShare >= 1 / 3) {
+    return { suggested: 3, why: `${counted} — the gist is there.` };
+  }
+  return {
+    suggested: 2,
+    why: `${counted} — a thread of it came back, not the sense itself. This is word overlap, not understanding: override it if you had the meaning.`,
+  };
 }

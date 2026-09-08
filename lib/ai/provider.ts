@@ -81,6 +81,52 @@ export const askResponseSchema = z.object({
   notes: z.array(z.string()),
 });
 
+/**
+ * One i+1 example sentence (PLAN.md §4, Phase 6 item 1). Same citation
+ * discipline as `sayIt`: the model orders entry ids, and `lib/ai/ground.ts`
+ * renders the hanzi and the reading from the dictionary rows behind them. A
+ * `{text}` token is the model's own string and is flagged as such — the i+1
+ * filter that runs above this drops a sentence it cannot vouch for.
+ */
+export const exampleSentenceSchema = z.object({
+  tokens: z.array(askTokenSchema).min(1),
+  en: z.string(),
+});
+
+export const exampleSentencesSchema = z.object({
+  sentences: z.array(exampleSentenceSchema),
+});
+
+/** How many sentences one call may return, before the i+1 filter thins them. */
+export const MAX_EXAMPLE_SENTENCES = 4;
+
+/**
+ * A suggested FSRS grade for a free-recall answer (PLAN.md §4, Phase 6 item 2).
+ * `StoredRating` in `lib/db/schema.ts` is the same 1–4 vocabulary; this module
+ * may not import the database layer, so the two agree by value rather than by
+ * type. Nothing is ever submitted on the strength of this number — it
+ * highlights a button the learner can override, which is the whole feature.
+ */
+export const RECALL_GRADES = [1, 2, 3, 4] as const;
+export type RecallGrade = (typeof RECALL_GRADES)[number];
+
+export const recallGradeSchema = z.union([
+  z.literal(1),
+  z.literal(2),
+  z.literal(3),
+  z.literal(4),
+]);
+
+/** `why` is plain English prose: no hanzi, no pinyin — the same rule as `notes`. */
+export const gradeRecallSchema = z.object({
+  suggested: recallGradeSchema,
+  why: z.string(),
+});
+
+export type ParsedExampleSentence = z.infer<typeof exampleSentenceSchema>;
+export type ParsedExampleSentences = z.infer<typeof exampleSentencesSchema>;
+export type ParsedGradeRecall = z.infer<typeof gradeRecallSchema>;
+
 export type ParsedAskToken = z.infer<typeof askTokenSchema>;
 export type ParsedAskMatch = z.infer<typeof askMatchSchema>;
 export type ParsedAskSayIt = z.infer<typeof askSayItSchema>;
@@ -108,6 +154,29 @@ export interface LLMProvider {
     query: string,
     context?: AskContext,
   ): Promise<ParsedAskResponse>;
+  /**
+   * i+1 example sentences for one entry (Phase 6 item 1).
+   *
+   * `senseIndex` names the gloss the card is about, when it has one. `support`
+   * is the pool the sentence may be built from — the caller retrieves it (the
+   * learner's known words, and whatever else it wants offered) and the model
+   * may cite nothing else: a citation the caller never supplied is dropped
+   * upstream, exactly as in `answer`. It is the last argument because it is the
+   * one a bare "show me a sentence" call can leave out; a provider given none
+   * can still cite the target entry, so an empty result is never the answer.
+   */
+  exampleSentences(
+    entry: Entry,
+    profile: LearnerProfile,
+    senseIndex?: number,
+    support?: readonly Entry[],
+  ): Promise<ParsedExampleSentences>;
+  /**
+   * Read a typed free-recall answer against an entry and suggest a grade
+   * (Phase 6 item 2). The answer is the learner's own words in English; the
+   * provider judges it against the entry's glosses and says why in prose.
+   */
+  gradeRecall(entry: Entry, answer: string, senseIndex?: number): Promise<ParsedGradeRecall>;
 }
 
 /** A provider failure that the route turns into a 502 rather than a crash. */

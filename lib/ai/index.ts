@@ -18,7 +18,16 @@
 
 export * from '@/lib/ai/provider';
 export * from '@/lib/ai/prompts';
-export { FakeProvider, retrievalEcho, findDemo, ECHO_MATCHES } from '@/lib/ai/fake';
+export {
+  FakeProvider,
+  retrievalEcho,
+  exampleEcho,
+  recallEcho,
+  recallWords,
+  findDemo,
+  ECHO_MATCHES,
+  EXAMPLE_SENTENCE_COUNT,
+} from '@/lib/ai/fake';
 export { AnthropicProvider, DEFAULT_MODEL, MAX_TOKENS, REQUEST_TIMEOUT_MS } from '@/lib/ai/anthropic';
 export * from '@/lib/ai/ground';
 export * from '@/lib/ai/cache-key';

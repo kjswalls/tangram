@@ -1,4 +1,7 @@
+import type { ReactNode } from 'react';
+
 import { ContextLine } from '@/components/review/context-line';
+import { PhraseFace } from '@/components/review/phrase-face';
 import { SpeakButton } from '@/components/tts/speak-button';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -15,6 +18,19 @@ export interface ReviewCardProps {
   peeked: boolean;
   onPeek: () => void;
   onReveal: () => void;
+  /**
+   * The free-recall box (Phase 6 item 2), on the **front**, under the hanzi.
+   * It sits on the front because recall is what the learner does before they
+   * see the answer; this component owns where it goes and nothing else about
+   * it, so the whole feature — the toggle that gates it, the grading call, the
+   * suggested grade — lives in the slot's owner.
+   */
+  recall?: ReactNode;
+  /**
+   * The i+1 example sentences (Phase 6 item 1), on the **back**, under the
+   * glosses: after the learner has seen the meaning, not instead of it.
+   */
+  examples?: ReactNode;
 }
 
 /**
@@ -25,7 +41,16 @@ export interface ReviewCardProps {
  * the senses (the chosen one first), the classifiers, the HSK band, and the
  * same sentence with the target marked.
  */
-export function ReviewCard({ card, script, revealed, peeked, onPeek, onReveal }: ReviewCardProps) {
+export function ReviewCard({
+  card,
+  script,
+  revealed,
+  peeked,
+  onPeek,
+  onReveal,
+  recall = null,
+  examples = null,
+}: ReviewCardProps) {
   const face = cardFace(card.snapshot, script);
   const back = cardBack(card);
   const context = resolveContext(
@@ -63,12 +88,30 @@ export function ReviewCard({ card, script, revealed, peeked, onPeek, onReveal }:
         }
         aria-label={revealed ? undefined : 'Show the answer'}
       >
-        <h2 className="hanzi text-6xl font-medium sm:text-7xl">{face.primary}</h2>
+        {phrase ? (
+          <PhraseFace card={card} />
+        ) : (
+          <h2 className="hanzi text-6xl font-medium sm:text-7xl">{face.primary}</h2>
+        )}
         {face.secondary ? (
           <p className="hanzi text-2xl text-muted">
             <span className="sr-only">{face.secondaryLabel}: </span>
             {face.secondary}
           </p>
+        ) : null}
+
+        {recall ? (
+          <div
+            data-testid="card-recall"
+            className="w-full max-w-prose text-left"
+            // The box takes typing and Enter; the front is a button that
+            // reveals on either. Without this a keystroke into the answer
+            // would flip the card it is about.
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => event.stopPropagation()}
+          >
+            {recall}
+          </div>
         ) : null}
 
         {context && !revealed ? (
@@ -136,6 +179,8 @@ export function ReviewCard({ card, script, revealed, peeked, onPeek, onReveal }:
               </ul>
             </details>
           ) : null}
+
+          {examples ? <div data-testid="card-examples">{examples}</div> : null}
 
           {back.classifiers.length > 0 ? (
             <p data-testid="card-classifiers" className="text-sm text-muted">

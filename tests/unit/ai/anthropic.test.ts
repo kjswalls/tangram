@@ -13,8 +13,13 @@
 import { describe, expect, it } from 'vitest';
 
 import { AnthropicProvider, DEFAULT_MODEL } from '@/lib/ai/anthropic';
-import { ANSWER_TOOL_NAME, PROPOSE_TOOL_NAME } from '@/lib/ai/prompts';
-import { ProviderError } from '@/lib/ai/provider';
+import {
+  ANSWER_TOOL_NAME,
+  EXAMPLES_TOOL_NAME,
+  PROPOSE_TOOL_NAME,
+  RECALL_TOOL_NAME,
+} from '@/lib/ai/prompts';
+import { MAX_EXAMPLE_SENTENCES, ProviderError } from '@/lib/ai/provider';
 import type { Entry, LearnerProfile } from '@/lib/types';
 
 const PROFILE: LearnerProfile = { estimatedBand: 3, knownSample: ['我', '看'] };
@@ -201,5 +206,131 @@ describe('the response', () => {
     expect(error).toBeInstanceOf(ProviderError);
     expect((error as ProviderError).provider).toBe('anthropic');
     expect((error as ProviderError).status).toBe(404);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 6 items 1 and 2 — the same contract, on two more forced tool calls
+// ---------------------------------------------------------------------------
+
+const SUPPORT: Entry = {
+  id: '我|我[wo3]',
+  simp: '我',
+  trad: '我',
+  pinyinNum: 'wo3',
+  pinyinMarked: 'wǒ',
+  glosses: ['I', 'me'],
+  classifiers: [],
+  properNoun: false,
+  isVariant: false,
+  surname: false,
+  hskBand: 1,
+  freqRank: 8,
+};
+
+function toolMessage(name: string, input: unknown, stopReason = 'tool_use'): unknown {
+  return {
+    id: 'msg_test',
+    type: 'message',
+    role: 'assistant',
+    model: DEFAULT_MODEL,
+    stop_reason: stopReason,
+    stop_sequence: null,
+    usage: { input_tokens: 10, output_tokens: 10 },
+    content: [{ type: 'tool_use', id: 'toolu_3', name, input }],
+  };
+}
+
+const SENTENCE = {
+  tokens: [{ entryId: SUPPORT.id }, { entryId: ENTRY.id }],
+  en: 'I plan to go.',
+};
+
+describe('exampleSentences', () => {
+  it('forces its own tool and offers the model only the entries it may cite', async () => {
+    const { fetch, calls } = mockFetch(toolMessage(EXAMPLES_TOOL_NAME, { sentences: [SENTENCE] }));
+    const { sentences } = await provider(fetch).exampleSentences(ENTRY, PROFILE, 0, [SUPPORT]);
+
+    expect(sentences).toEqual([SENTENCE]);
+    const [call] = calls;
+    expect(call.body.model).toBe(DEFAULT_MODEL);
+    expect(call.body.tool_choice).toEqual({ type: 'tool', name: EXAMPLES_TOOL_NAME });
+
+    const tools = call.body.tools as { name: string; input_schema: Record<string, unknown> }[];
+    expect(tools[0].name).toBe(EXAMPLES_TOOL_NAME);
+    expect(tools[0].input_schema.required).toEqual(['sentences']);
+
+    const messages = call.body.messages as { role: string; content: string }[];
+    // The target, the chosen sense and the candidate pool all travel by id.
+    expect(messages[0].content).toContain(ENTRY.id);
+    expect(messages[0].content).toContain(SUPPORT.id);
+    expect(messages[0].content).toContain('SENSE: the card is about gloss 0');
+    expect(String(call.body.system)).toContain('never write Chinese characters');
+    expect(messages.some((message) => message.role === 'assistant')).toBe(false);
+  });
+
+  it('says so when the card is about the whole entry rather than one sense', async () => {
+    const { fetch, calls } = mockFetch(toolMessage(EXAMPLES_TOOL_NAME, { sentences: [SENTENCE] }));
+    await provider(fetch).exampleSentences(ENTRY, PROFILE);
+    const messages = calls[0].body.messages as { content: string }[];
+    expect(messages[0].content).toContain('SENSE: the learner is studying the whole entry');
+    expect(messages[0].content).toContain('(none');
+  });
+
+  it('caps what a chatty model returns', async () => {
+    const many = Array.from({ length: 9 }, () => SENTENCE);
+    const { fetch } = mockFetch(toolMessage(EXAMPLES_TOOL_NAME, { sentences: many }));
+    const { sentences } = await provider(fetch).exampleSentences(ENTRY, PROFILE, 0, [SUPPORT]);
+    expect(sentences).toHaveLength(MAX_EXAMPLE_SENTENCES);
+  });
+
+  it('maps every failure onto one error type', async () => {
+    const bad = mockFetch(toolMessage(EXAMPLES_TOOL_NAME, { sentences: [{ tokens: [], en: 3 }] }));
+    await expect(provider(bad.fetch).exampleSentences(ENTRY, PROFILE)).rejects.toBeInstanceOf(ProviderError);
+
+    const none = mockFetch(toolMessage(ANSWER_TOOL_NAME, { sentences: [SENTENCE] }));
+    await expect(provider(none.fetch).exampleSentences(ENTRY, PROFILE)).rejects.toThrow(/tool call/);
+
+    const http = mockFetch({ type: 'error', error: { type: 'overloaded_error', message: 'busy' } }, 529);
+    const error = await provider(http.fetch)
+      .exampleSentences(ENTRY, PROFILE)
+      .catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(ProviderError);
+    expect((error as ProviderError).status).toBe(529);
+  });
+});
+
+describe('gradeRecall', () => {
+  it('forces its own tool, and the grade is an enum of the four ratings', async () => {
+    const { fetch, calls } = mockFetch(
+      toolMessage(RECALL_TOOL_NAME, { suggested: 3, why: 'You had the sense, not the wording.' }),
+    );
+    const graded = await provider(fetch).gradeRecall(ENTRY, 'to intend to do something', 1);
+
+    expect(graded).toEqual({ suggested: 3, why: 'You had the sense, not the wording.' });
+    const [call] = calls;
+    expect(call.body.tool_choice).toEqual({ type: 'tool', name: RECALL_TOOL_NAME });
+
+    const tools = call.body.tools as { input_schema: { properties: Record<string, unknown> } }[];
+    expect(tools[0].input_schema.properties.suggested).toMatchObject({
+      type: 'number',
+      enum: [1, 2, 3, 4],
+    });
+
+    const messages = call.body.messages as { content: string }[];
+    // The learner's own words travel fenced, as data rather than instructions.
+    expect(messages[0].content).toContain('<<<to intend to do something>>>');
+    expect(messages[0].content).toContain('1: to intend');
+    expect(String(call.body.system)).toMatch(/never write Chinese characters/i);
+  });
+
+  it('rejects a grade outside 1–4 rather than passing it to the scheduler', async () => {
+    const { fetch } = mockFetch(toolMessage(RECALL_TOOL_NAME, { suggested: 7, why: 'nice try' }));
+    await expect(provider(fetch).gradeRecall(ENTRY, 'to plan')).rejects.toBeInstanceOf(ProviderError);
+  });
+
+  it('turns a refusal into a provider error rather than a grade nobody chose', async () => {
+    const { fetch } = mockFetch(toolMessage(RECALL_TOOL_NAME, {}, 'refusal'));
+    await expect(provider(fetch).gradeRecall(ENTRY, 'to plan')).rejects.toThrow(/declined/);
   });
 });

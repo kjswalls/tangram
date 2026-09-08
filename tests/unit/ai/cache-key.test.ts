@@ -9,7 +9,18 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { ASK_PROMPT_VERSION, askCacheKey, askCachePayload, askContextKey } from '@/lib/ai/cache-key';
+import {
+  ASK_PROMPT_VERSION,
+  EXAMPLES_PROMPT_VERSION,
+  RECALL_PROMPT_VERSION,
+  askCacheKey,
+  askCachePayload,
+  askContextKey,
+  examplesCacheKey,
+  examplesCachePayload,
+  recallCacheKey,
+  recallCachePayload,
+} from '@/lib/ai/cache-key';
 import { sha1Hex } from '@/lib/dev/sha1';
 
 const BASE = { query: 'how do I say I am just browsing', estimatedBand: 2 };
@@ -123,5 +134,68 @@ describe('the demo seed’s warm rows', () => {
     expect(askCachePayload({ query: 'q', estimatedBand: 2 })).toBe(
       JSON.stringify([ASK_PROMPT_VERSION, 'fake', 'q', '', 2]),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 6 — three key spaces, one `ask_cache` table
+// ---------------------------------------------------------------------------
+
+describe('the examples and recall keys', () => {
+  const ENTRY_ID = '打算|打算[da3 suan4]';
+
+  it('are sha1 digests of a tagged payload, and agree with the sync fallback', async () => {
+    const examples = { entryId: ENTRY_ID, estimatedBand: 2 };
+    const recall = { entryId: ENTRY_ID, answer: 'to plan' };
+
+    expect(await examplesCacheKey(examples)).toMatch(/^[0-9a-f]{40}$/);
+    expect(await examplesCacheKey(examples)).toBe(sha1Hex(examplesCachePayload(examples)));
+    expect(await recallCacheKey(recall)).toBe(sha1Hex(recallCachePayload(recall)));
+
+    expect(JSON.parse(examplesCachePayload(examples))[0]).toBe('examples');
+    expect(JSON.parse(recallCachePayload(recall))[0]).toBe('recall');
+  });
+
+  it('cannot collide with an ask key, or with each other', async () => {
+    // The three caches share one table. Nothing about the inputs may make two
+    // of them land on the same row — the tag and the payload length are what
+    // guarantee it, rather than the improbability of a hash collision.
+    const keys = await Promise.all([
+      askCacheKey({ query: ENTRY_ID, estimatedBand: 2 }),
+      examplesCacheKey({ entryId: ENTRY_ID, estimatedBand: 2 }),
+      recallCacheKey({ entryId: ENTRY_ID, answer: ENTRY_ID }),
+    ]);
+    expect(new Set(keys).size).toBe(3);
+
+    const payloads = [
+      askCachePayload({ query: ENTRY_ID, estimatedBand: 2 }),
+      examplesCachePayload({ entryId: ENTRY_ID, estimatedBand: 2 }),
+      recallCachePayload({ entryId: ENTRY_ID, answer: ENTRY_ID }),
+    ];
+    expect(new Set(payloads).size).toBe(3);
+  });
+
+  it('change with everything the prompt sees, and nothing else', async () => {
+    const base = { entryId: ENTRY_ID, estimatedBand: 2 };
+    const varied = await Promise.all([
+      examplesCacheKey(base),
+      examplesCacheKey({ ...base, senseIndex: 0 }),
+      examplesCacheKey({ ...base, senseIndex: 1 }),
+      examplesCacheKey({ ...base, estimatedBand: 3 }),
+      examplesCacheKey({ ...base, provider: 'anthropic' }),
+      examplesCacheKey({ ...base, promptVersion: 'v2' }),
+    ]);
+    expect(new Set(varied).size).toBe(6);
+
+    // Case and spacing are not what a learner meant, so they do not re-ask.
+    const typed = await recallCacheKey({ entryId: ENTRY_ID, answer: '  To  PLAN ' });
+    expect(typed).toBe(await recallCacheKey({ entryId: ENTRY_ID, answer: 'to plan' }));
+    expect(typed).not.toBe(await recallCacheKey({ entryId: ENTRY_ID, answer: 'to intend' }));
+  });
+
+  it('keeps a version per prompt, so one bump does not retire the other two', () => {
+    expect(EXAMPLES_PROMPT_VERSION).toMatch(/^v\d+$/);
+    expect(RECALL_PROMPT_VERSION).toMatch(/^v\d+$/);
+    expect(ASK_PROMPT_VERSION).toMatch(/^v\d+$/);
   });
 });

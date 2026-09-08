@@ -205,6 +205,17 @@ export interface SettingsRow {
   dayRollover: number;
   script: ScriptPreference;
   provider: ProviderPreference;
+  /**
+   * Show i+1 example sentences on the card back (Phase 6 item 1). Optional
+   * because a `settings` row written before this field existed does not carry
+   * it: `getSettings` returns the stored row as it stands, so a reader has to
+   * treat `undefined` as the default rather than as `false`. Adding it needs no
+   * Dexie version bump — `STORES_V1.settings` indexes `id` and nothing else,
+   * and IndexedDB does not police the shape of an unindexed field.
+   */
+  examplesOnBack?: boolean;
+  /** Offer the "what does it mean?" box on the card front (Phase 6 item 2). */
+  freeRecall?: boolean;
   /** dayKey → how many new cards were introduced that day. Persisted, per §3.3. */
   introduced: Record<string, number>;
   createdAt: number;
@@ -221,6 +232,8 @@ export const DEFAULT_SETTINGS: Omit<SettingsRow, 'createdAt' | 'updatedAt'> = {
   dayRollover: 4,
   script: 'simp',
   provider: 'fake',
+  examplesOnBack: true,
+  freeRecall: false,
   introduced: {},
 };
 

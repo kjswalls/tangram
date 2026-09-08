@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { getRepository } from '@/lib/db/get-db';
-import type { ScriptPreference, SettingsRow } from '@/lib/db/schema';
+import { DEFAULT_SETTINGS, type ScriptPreference, type SettingsRow } from '@/lib/db/schema';
 import { loadDemo, resetAll } from '@/lib/dev/seed';
 import { HSK_BANDS, hskBandLabel, type HskBand } from '@/lib/types';
 
@@ -16,7 +16,8 @@ const SELECT =
   'h-11 w-full rounded-lg border border-border bg-surface px-3 text-base focus:border-accent focus:outline-none';
 
 /**
- * The five settings the queue and the reader actually read (§3.3), plus the two
+ * The settings the queue, the reader and the review card actually read (§3.3,
+ * and Phase 6 items 1 and 2 for the two card toggles), plus the two
  * buttons that make a demo out of an empty database and an empty database out of
  * a demo. Every change is written straight through — there is no Save button to
  * forget to press, and the queue reads the row, not this component.
@@ -161,6 +162,45 @@ export function SettingsForm() {
             <option value="simp">Simplified</option>
             <option value="trad">Traditional</option>
           </select>
+        </label>
+      </div>
+
+      <div className="flex flex-col gap-3 border-t border-border pt-4">
+        <p className="text-sm tracking-wide text-muted uppercase">On a card</p>
+
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              className="size-4 accent-accent"
+              data-testid="settings-examples-on-back"
+              // A row written before this field existed carries neither
+              // toggle, and `undefined` there means "not decided", not "off".
+              checked={settings.examplesOnBack ?? DEFAULT_SETTINGS.examplesOnBack ?? true}
+              onChange={(event) => void patch({ examplesOnBack: event.target.checked })}
+            />
+            Example sentences on the back
+          </span>
+          <span className="text-xs text-muted">
+            Sentences built from words you already know, with the card&rsquo;s word in them.
+          </span>
+        </label>
+
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              className="size-4 accent-accent"
+              data-testid="settings-free-recall"
+              checked={settings.freeRecall ?? DEFAULT_SETTINGS.freeRecall ?? false}
+              onChange={(event) => void patch({ freeRecall: event.target.checked })}
+            />
+            Type the meaning before flipping
+          </span>
+          <span className="text-xs text-muted">
+            Adds a box to the front of the card. Nothing is ever graded for you &mdash; the
+            suggestion is a highlighted button you can ignore.
+          </span>
         </label>
       </div>
 

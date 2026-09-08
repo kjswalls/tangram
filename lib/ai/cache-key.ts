@@ -32,6 +32,19 @@ import type { AskContext } from '@/lib/ai/provider';
  */
 export const ASK_PROMPT_VERSION = 'v1';
 
+/**
+ * The other two caches keyed into the same `ask_cache` table (Phase 6 items 1
+ * and 2). Each has its own version so a prompt change retires only its own
+ * rows, and each payload is **tagged and a different length** from the ask
+ * payload below — the three key spaces cannot collide inside one table, and no
+ * amount of coincidence in the fields can make an examples key equal an ask
+ * key. The ask payload is deliberately left untagged: it is already written
+ * into every warm row the demo seed ships and into a learner's existing
+ * database, and tagging it now would orphan all of them.
+ */
+export const EXAMPLES_PROMPT_VERSION = 'v1';
+export const RECALL_PROMPT_VERSION = 'v1';
+
 export interface AskCacheKeyInput {
   query: string;
   /** The provenance the ask carried, or the plain string form of it. */
@@ -78,6 +91,53 @@ export function askCachePayload(input: AskCacheKeyInput): string {
   ]);
 }
 
+export interface ExamplesCacheKeyInput {
+  /** The entry the sentences are about. */
+  entryId: string;
+  /** The gloss the card is about, when it has one. */
+  senseIndex?: number;
+  /** The band the sentences are pitched at — it is what makes them i+1. */
+  estimatedBand: number;
+  provider?: string;
+  promptVersion?: string;
+}
+
+export interface RecallCacheKeyInput {
+  entryId: string;
+  senseIndex?: number;
+  /** What the learner typed. Normalised, because case and spacing are not an answer. */
+  answer: string;
+  provider?: string;
+  promptVersion?: string;
+}
+
+/** Case and surrounding space are not part of what a learner meant. */
+function normalizeAnswer(answer: string): string {
+  return answer.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+export function examplesCachePayload(input: ExamplesCacheKeyInput): string {
+  return JSON.stringify([
+    'examples',
+    input.promptVersion ?? EXAMPLES_PROMPT_VERSION,
+    input.provider ?? 'fake',
+    input.entryId,
+    input.senseIndex ?? null,
+    input.estimatedBand,
+  ]);
+}
+
+export function recallCachePayload(input: RecallCacheKeyInput): string {
+  return JSON.stringify([
+    'recall',
+    input.promptVersion ?? RECALL_PROMPT_VERSION,
+    input.provider ?? 'fake',
+    input.entryId,
+    input.senseIndex ?? null,
+    normalizeAnswer(input.answer),
+  ]);
+}
+
 function toHex(buffer: ArrayBuffer): string {
   return [...new Uint8Array(buffer)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
@@ -88,7 +148,21 @@ function toHex(buffer: ArrayBuffer): string {
  * in the other.
  */
 export async function askCacheKey(input: AskCacheKeyInput): Promise<string> {
-  const payload = askCachePayload(input);
+  return digest(askCachePayload(input));
+}
+
+/** The key for one entry's i+1 sentences. Distinct from an ask key by construction. */
+export async function examplesCacheKey(input: ExamplesCacheKeyInput): Promise<string> {
+  return digest(examplesCachePayload(input));
+}
+
+/** The key for one graded free-recall answer. */
+export async function recallCacheKey(input: RecallCacheKeyInput): Promise<string> {
+  return digest(recallCachePayload(input));
+}
+
+/** The one digest all three keys are taken with. */
+async function digest(payload: string): Promise<string> {
   const subtle = globalThis.crypto?.subtle;
   if (subtle) {
     try {

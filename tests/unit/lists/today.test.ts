@@ -30,7 +30,7 @@ afterEach(() => {
   open = [];
 });
 
-function setup(): { repo: Repository; reopen: () => Repository } {
+function setup(): { db: TangramDb; repo: Repository; reopen: () => Repository } {
   const { db, repo } = freshRepository();
   open.push(db);
   // A reload is a new Dexie instance and a new repository over the same store —
@@ -41,7 +41,7 @@ function setup(): { repo: Repository; reopen: () => Repository } {
     open.push(next);
     return createDexieRepository(next);
   };
-  return { repo, reopen };
+  return { db, repo, reopen };
 }
 
 describe('loadToday', () => {
@@ -121,11 +121,19 @@ describe('loadToday', () => {
   });
 
   it('starts again after the study day rolls over', async () => {
-    const { repo } = setup();
+    const { db, repo } = setup();
     const source = dictEntrySource();
     await repo.setSettings({ newPerDay: 2 });
     const first = await loadToday({ repo, now: NOW, source });
     for (const card of first.created) await repo.grade(card.id, 3, NOW);
+    // These cards were introduced *at NOW*, and the fixture has to say so:
+    // the repository stamps `createdAt` from the wall clock, while `buildQueue`
+    // compares that stamp against the injected `now` (`createdToday`, the
+    // backstop for a path that forgot to charge the counter). Left at the real
+    // clock, the two disagree the moment the real date passes NOW — the day
+    // this test was written it passed, and on 2026-09-08 it went red without a
+    // line of source changing.
+    await db.cards.where('id').anyOf(first.created.map((card) => card.id)).modify({ createdAt: NOW });
 
     // 01:00 the next calendar day is still the same study day (04:00 rollover),
     // so the counter still reads yesterday's two and nothing is drawn.

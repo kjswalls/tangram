@@ -142,3 +142,96 @@ describe('the retrieval echo', () => {
     expect(grounded.notes).toEqual(answer.notes);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 6 item 1 — i+1 example sentences, offline
+// ---------------------------------------------------------------------------
+
+describe('exampleSentences', () => {
+  const target = entryFor('打算');
+
+  it('cites the target and the words the caller retrieved, and nothing else', async () => {
+    const support = entriesFor('我', '明天', '去');
+    const { sentences } = await fake.exampleSentences(target, PROFILE, 0, support);
+
+    expect(sentences.length).toBeGreaterThan(0);
+    const allowed = new Set([target.id, ...support.map((entry) => entry.id)]);
+    for (const sentence of sentences) {
+      expect(sentence.tokens.length).toBeGreaterThan(0);
+      for (const token of sentence.tokens) {
+        expect('entryId' in token && allowed.has(token.entryId)).toBe(true);
+      }
+      // Every sentence is about the word being studied.
+      expect(sentence.tokens.some((token) => 'entryId' in token && token.entryId === target.id)).toBe(true);
+    }
+  });
+
+  it('never comes back empty, even with nothing to build from', async () => {
+    const { sentences } = await fake.exampleSentences(target, PROFILE);
+    expect(sentences).toHaveLength(1);
+    expect(sentences[0].tokens).toEqual([{ entryId: target.id }]);
+    expect(sentences[0].en.length).toBeGreaterThan(0);
+  });
+
+  it('is deterministic, and puts the words the learner knows first', async () => {
+    const support = entriesFor('去', '我');
+    const first = await fake.exampleSentences(target, PROFILE, 0, support);
+    const second = await fake.exampleSentences(target, PROFILE, 0, [...support].reverse());
+    expect(first).toEqual(second);
+
+    // PROFILE knows 我 and not 去, so 我 leads however the caller ordered them.
+    const wo = entryFor('我');
+    expect(first.sentences[0].tokens[0]).toEqual({ entryId: wo.id });
+  });
+
+  it('quotes no dictionary text and writes no hanzi in its prose', async () => {
+    const support = entriesFor('我');
+    const { sentences } = await fake.exampleSentences(target, PROFILE, 0, support);
+    for (const sentence of sentences) {
+      expect(sentence.en).not.toMatch(/[一-鿿]/);
+      for (const gloss of target.glosses) expect(sentence.en).not.toContain(gloss);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 6 item 2 — free-recall grading, offline
+// ---------------------------------------------------------------------------
+
+describe('gradeRecall', () => {
+  const target = entryFor('打算');
+
+  it('reads a right answer as recalled and a wrong one as forgotten', async () => {
+    const right = await fake.gradeRecall(target, target.glosses[0]);
+    expect(right.suggested).toBe(4);
+
+    const wrong = await fake.gradeRecall(target, 'a kind of soup, I think');
+    expect(wrong.suggested).toBe(1);
+  });
+
+  it('treats an empty answer as a blank rather than as a wrong answer', async () => {
+    const blank = await fake.gradeRecall(target, '   ');
+    expect(blank.suggested).toBe(1);
+    expect(blank.why).toMatch(/nothing typed|blank/i);
+  });
+
+  it('grades the sense the card is about when it has one', async () => {
+    // 打算 is "to plan", "to intend", "to calculate"; answering with the second
+    // sense is a 4 against that sense and not against the first.
+    const chosen = target.glosses.findIndex((gloss) => gloss.includes('intend'));
+    expect(chosen).toBeGreaterThan(0);
+    const onSense = await fake.gradeRecall(target, target.glosses[chosen], chosen);
+    expect(onSense.suggested).toBe(4);
+    const offSense = await fake.gradeRecall(target, target.glosses[chosen], 0);
+    expect(offSense.suggested).toBeLessThan(4);
+  });
+
+  it('always says why, in prose a learner can read, with no hanzi in it', async () => {
+    for (const answer of ['', 'to plan', 'plan or intend to do', 'nonsense words entirely']) {
+      const graded = await fake.gradeRecall(target, answer);
+      expect(graded.why.length).toBeGreaterThan(0);
+      expect(graded.why).not.toMatch(/[一-鿿]/);
+      expect([1, 2, 3, 4]).toContain(graded.suggested);
+    }
+  });
+});

@@ -17,24 +17,38 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import type { ZodType } from 'zod';
 
 import {
   ANSWER_TOOL_NAME,
+  EXAMPLES_SYSTEM_PROMPT,
+  EXAMPLES_TOOL_NAME,
   PROPOSE_TOOL_NAME,
   PROPOSE_SYSTEM_PROMPT,
+  RECALL_SYSTEM_PROMPT,
+  RECALL_TOOL_NAME,
   SYSTEM_PROMPT,
   answerTool,
   answerUserPrompt,
+  examplesTool,
+  examplesUserPrompt,
   proposeTool,
   proposeUserPrompt,
+  recallTool,
+  recallUserPrompt,
 } from '@/lib/ai/prompts';
 import {
+  MAX_EXAMPLE_SENTENCES,
   MAX_PROPOSED_PHRASES,
   ProviderError,
   askResponseSchema,
+  exampleSentencesSchema,
+  gradeRecallSchema,
   type AskContext,
   type LLMProvider,
   type ParsedAskResponse,
+  type ParsedExampleSentences,
+  type ParsedGradeRecall,
   type ProposedPhrases,
 } from '@/lib/ai/provider';
 import type { Entry, LearnerProfile } from '@/lib/types';
@@ -170,10 +184,96 @@ export class AnthropicProvider implements LLMProvider {
       throw new ProviderError('anthropic', `no ${ANSWER_TOOL_NAME} tool call in the response`);
     }
 
-    const parsed = askResponseSchema.safeParse(input);
+    return this.parse(askResponseSchema, input, 'the answer');
+  }
+
+  async exampleSentences(
+    entry: Entry,
+    profile: LearnerProfile,
+    senseIndex?: number,
+    support: readonly Entry[] = [],
+  ): Promise<ParsedExampleSentences> {
+    const message = await this.call({
+      system: EXAMPLES_SYSTEM_PROMPT,
+      prompt: examplesUserPrompt(entry, profile, senseIndex, support, MAX_EXAMPLE_SENTENCES),
+      tool: examplesTool(exampleSentencesSchema),
+      toolName: EXAMPLES_TOOL_NAME,
+    });
+    const parsed = this.parse(
+      exampleSentencesSchema,
+      this.toolInputOrThrow(message, EXAMPLES_TOOL_NAME),
+      'the sentences',
+    );
+    // The cap is the prompt's ask, enforced: a model that writes eight
+    // sentences has spent the learner's attention, not earned it.
+    return { sentences: parsed.sentences.slice(0, MAX_EXAMPLE_SENTENCES) };
+  }
+
+  async gradeRecall(entry: Entry, answer: string, senseIndex?: number): Promise<ParsedGradeRecall> {
+    const message = await this.call({
+      system: RECALL_SYSTEM_PROMPT,
+      prompt: recallUserPrompt(entry, answer, senseIndex),
+      tool: recallTool(gradeRecallSchema),
+      toolName: RECALL_TOOL_NAME,
+    });
+    return this.parse(
+      gradeRecallSchema,
+      this.toolInputOrThrow(message, RECALL_TOOL_NAME),
+      'the suggested grade',
+    );
+  }
+
+  /**
+   * One forced tool call. Every method above `answer`/`proposePhrases` goes
+   * through here: same model, same timeout, same error mapping, and the same
+   * refusal check — a refusal carries no tool call, so without it the caller
+   * would see "no tool call in the response" and blame the schema.
+   */
+  private async call(request: {
+    system: string;
+    prompt: string;
+    tool: { name: string; description: string; input_schema: Anthropic.Tool.InputSchema };
+    toolName: string;
+  }): Promise<Anthropic.Message> {
+    let message: Anthropic.Message;
+    try {
+      message = await this.client.messages.create(
+        {
+          model: this.model,
+          max_tokens: MAX_TOKENS,
+          system: request.system,
+          messages: [{ role: 'user', content: request.prompt }],
+          tools: [request.tool],
+          tool_choice: { type: 'tool', name: request.toolName },
+        },
+        { timeout: this.timeoutMs },
+      );
+    } catch (error) {
+      throw asProviderError(error);
+    }
+    if (message.stop_reason === 'refusal') {
+      throw new ProviderError('anthropic', 'the model declined to answer this question');
+    }
+    return message;
+  }
+
+  private toolInputOrThrow(message: Anthropic.Message, name: string): unknown {
+    const input = toolInput(message, name);
+    if (input === undefined) {
+      throw new ProviderError('anthropic', `no ${name} tool call in the response`);
+    }
+    return input;
+  }
+
+  private parse<T>(schema: ZodType<T>, input: unknown, what: string): T {
+    const parsed = schema.safeParse(input);
     if (!parsed.success) {
-      throw new ProviderError('anthropic', `the answer did not match the schema: ${parsed.error.issues[0]?.message ?? 'unknown'}`);
+      throw new ProviderError(
+        'anthropic',
+        `${what} did not match the schema: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+      );
     }
     return parsed.data;
   }
 }
+

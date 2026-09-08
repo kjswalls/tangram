@@ -10,6 +10,7 @@ import { getRepository } from '@/lib/db/get-db';
 import { isPhraseSnapshot, type CardRow } from '@/lib/db/schema';
 import { loadDemo } from '@/lib/dev/seed';
 import { loadToday, type TodaySummary } from '@/lib/lists/today';
+import { countByDirection } from '@/lib/srs/direction';
 
 /** `?seed=demo` runs once per page load, not once per effect (StrictMode). */
 let seeding: Promise<unknown> | undefined;
@@ -84,6 +85,11 @@ export function TodayView() {
   const due = summary?.dueCount ?? 0;
   const fresh = summary?.newCount ?? 0;
   const ready = due + fresh > 0;
+  // The two directions, counted apart (Phase 8). A learner who has turned
+  // production on has signed up for a second card per word, and the one number
+  // that used to stand for "cards" now hides which half is which. Shown only
+  // once there is a production card to show: before that it is noise.
+  const split = countByDirection(summary?.queue.cards ?? []);
 
   return (
     <div className="flex flex-col gap-4">
@@ -109,6 +115,19 @@ export function TodayView() {
             <span className="text-sm text-muted">new</span>
           </p>
         </div>
+
+        {split.production > 0 ? (
+          <p data-testid="today-direction-split" className="mt-3 text-sm text-muted">
+            <span data-testid="today-recognition-count" className="tabular-nums">
+              {split.recognition}
+            </span>{' '}
+            hanzi → meaning ·{' '}
+            <span data-testid="today-production-count" className="tabular-nums">
+              {split.production}
+            </span>{' '}
+            meaning → hanzi
+          </p>
+        ) : null}
 
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <Link href="/review" data-testid="start-review">

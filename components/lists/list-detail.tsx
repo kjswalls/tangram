@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
+import { ProductionListToggle } from '@/components/lists/production-list-toggle';
 import { WordSearch } from '@/components/lists/word-search';
 import { WordStateBadge } from '@/components/lists/word-state';
 import { Badge } from '@/components/ui/badge';
@@ -14,6 +15,7 @@ import type { CardRow, ListRow } from '@/lib/db/schema';
 import { getEntrySource } from '@/lib/lists/entry-source';
 import { queueFromList } from '@/lib/lists/introduce';
 import { ensureMembers } from '@/lib/lists/members';
+import { preferRecognition } from '@/lib/srs/direction';
 import { wordState, type WordState } from '@/lib/srs/states';
 import type { Entry, EntryId } from '@/lib/types';
 
@@ -54,8 +56,14 @@ async function readDetail(listId: string, limit: number): Promise<DetailData> {
   ]);
 
   const byId = new Map(entries.map((entry) => [entry.id, entry]));
+  // A word can now carry two cards — one per direction (Phase 8). The row is
+  // about the *word*, so it answers with the recognition card: a reverse added
+  // this morning must not repaint a word learned in March as new.
   const cardByEntry = new Map<string, CardRow>();
-  for (const card of cards) if (card.entryId) cardByEntry.set(card.entryId, card);
+  for (const card of cards) {
+    if (!card.entryId) continue;
+    cardByEntry.set(card.entryId, preferRecognition(cardByEntry.get(card.entryId), card));
+  }
   const knownIds = new Set(known);
 
   return {
@@ -142,6 +150,14 @@ export function ListDetail({ listId }: { listId: string }) {
         <p role="status" className="text-sm text-warning">
           {error}
         </p>
+      ) : null}
+
+      {list ? (
+        <ProductionListToggle
+          listId={list.id}
+          entryIds={entryIds}
+          onAdded={() => setReload((value) => value + 1)}
+        />
       ) : null}
 
       {list && list.kind !== 'hsk' ? (

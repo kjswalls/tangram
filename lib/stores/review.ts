@@ -42,6 +42,7 @@ import { create } from 'zustand';
 
 import type { CardRow, SettingsRow, StoredRating } from '@/lib/db/schema';
 import { loadToday } from '@/lib/lists/today';
+import { spaceDirections } from '@/lib/srs/direction';
 import {
   deferredCardIds,
   nextDueAt,
@@ -131,7 +132,14 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
       // name a card this session has stopped offering.
       const repeats = get().repeats;
       const deferred = deferredCardIds(repeats);
-      const queue = sessionQueue(summary.queue.cards, deferred);
+      // Both Phase 8 queue rules, in the one order that keeps both true.
+      // `sessionQueue` drops the cards this session has set aside; only then is
+      // the order adjusted, because spacing a list and *then* removing rows from
+      // it can put a word's two directions back to back — the very thing the
+      // spacing exists to prevent. Recognition immediately followed by
+      // production of the same word is not a test of the second memory: the
+      // answer is sitting on the back of the card just graded.
+      const queue = spaceDirections(sessionQueue(summary.queue.cards, deferred));
       set({
         queue,
         settings: summary.settings,

@@ -33,9 +33,44 @@ async function openReview(page: Page): Promise<void> {
   await expect(page.getByTestId('review-card')).toBeVisible({ timeout: 60_000 });
 }
 
-/** `trad|simp[pinyin]` → `simp`, the same split `parseEntryId` makes. */
-function simpOf(entryId: string): string {
-  return entryId.split('|')[1]?.split('[')[0] ?? '';
+/**
+ * Is each of these entries one the learner knows — by the app's own rule, not
+ * by the filter's idea of itself?
+ *
+ * `wordState` (lib/srs/states.ts) restated in the browser, deliberately: a
+ * declared `known_words` row, else the card's own state (Review, stability ≥
+ * 21 days), else the band assumption for a word with no card. Compared **by
+ * entry id**, because 看 kàn and 看 kān are two words that share their
+ * characters and only one of them may have been met.
+ */
+async function knownVerdicts(page: Page, ids: string[]): Promise<string[]> {
+  return page.evaluate(async (wanted: string[]) => {
+    const repo = window.__tangram.repo;
+    const [known, cards, settings] = await Promise.all([
+      repo.knownEntryIds(),
+      repo.allCards(),
+      repo.getSettings(),
+    ]);
+    const declared = new Set(known);
+    const byEntry = new Map(
+      cards.filter((card) => card.entryId).map((card) => [card.entryId as string, card]),
+    );
+    const query = wanted.map((id) => `ids=${encodeURIComponent(id)}`).join('&');
+    const response = await fetch(`/api/dict/entries?${query}`);
+    const bands = new Map<string, number | undefined>(
+      ((await response.json()).entries as { id: string; hskBand?: number }[]).map((entry) => [
+        entry.id,
+        entry.hskBand,
+      ]),
+    );
+    return wanted.map((id) => {
+      if (declared.has(id)) return 'known';
+      const card = byEntry.get(id);
+      if (card) return card.fsrs.state === 2 && card.fsrs.stability >= 21 ? 'known' : 'learning';
+      const band = bands.get(id);
+      return band !== undefined && band <= settings.knownBand ? 'known' : 'new';
+    });
+  }, ids);
 }
 
 test.describe('example sentences on the card back', () => {
@@ -80,28 +115,25 @@ test.describe('example sentences on the card back', () => {
     const ids = await tokens.evaluateAll((nodes) =>
       nodes.map((node) => node.getAttribute('data-entry-id') ?? ''),
     );
-    const knownSimps = new Set(
-      await page.evaluate(async () =>
-        (await window.__tangram.repo.knownEntryIds()).map(
-          (id) => id.split('|')[1]?.split('[')[0] ?? '',
-        ),
-      ),
-    );
     const card = await page.evaluate(
       async (id) => (await window.__tangram.repo.allCards()).find((row) => row.id === id),
       cardId,
     );
-    const targetSimp = card?.snapshot.simp ?? '';
-    expect(targetSimp).not.toBe('');
+    const targetId = card?.entryId ?? '';
+    expect(targetId).not.toBe('');
 
-    for (const id of ids) {
+    // Compared by **entry id**, never by characters: a check on the simplified
+    // form passes for a reading the learner has never met (看 kàn / 看 kān), and
+    // the reading is what a learner cannot check for themselves.
+    const verdicts = await knownVerdicts(page, ids);
+    for (const [index, id] of ids.entries()) {
       expect(id).not.toBe('');
-      const simp = simpOf(id);
       // The one word the sentence is allowed to teach is the card's own.
-      expect(knownSimps.has(simp) || simp === targetSimp).toBe(true);
+      if (id === targetId) continue;
+      expect(verdicts[index], `${id} is on the back of the card`).toBe('known');
     }
     // …and the card's word is actually in the sentence, or it is not an example.
-    expect(ids.map(simpOf)).toContain(targetSimp);
+    expect(ids).toContain(targetId);
   });
 
   test('a repeat is served from the cache without asking again', async ({ page }) => {
@@ -128,6 +160,32 @@ test.describe('example sentences on the card back', () => {
     });
     await expect(page.getByTestId('examples-list')).toBeVisible();
     expect(asks).toBe(1);
+  });
+
+  test('leaves the grade buttons reachable on a phone, under the whole block', async ({
+    page,
+  }) => {
+    // The block is on by default and it is tall: glosses, sentences, the
+    // context box. On a 390×844 screen that used to put the four grade buttons
+    // 300px below the fold — and a phone has no keyboard, so 1–4 is not an
+    // escape. They dock to the bottom of the viewport instead.
+    await page.setViewportSize({ width: 390, height: 844 });
+    await loadDemo(page);
+    await openReview(page);
+    await page.keyboard.press('Space');
+    await expect(page.getByTestId('card-back')).toBeVisible();
+    await expect(page.getByTestId('example-sentences')).toHaveAttribute('data-status', 'ready', {
+      timeout: 60_000,
+    });
+
+    const bar = page.getByTestId('grade-bar');
+    await expect(bar).toBeInViewport();
+    const box = await bar.boundingBox();
+    expect(box).not.toBeNull();
+    expect((box?.y ?? 0) + (box?.height ?? 0)).toBeLessThanOrEqual(844);
+    // And it still grades from where it sits.
+    await page.getByTestId('grade-3').click();
+    await expect(page.getByTestId('review-card')).toBeVisible();
   });
 
   test('the settings toggle takes the block off the card entirely', async ({ page }) => {

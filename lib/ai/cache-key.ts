@@ -33,14 +33,25 @@ import type { AskContext } from '@/lib/ai/provider';
 export const ASK_PROMPT_VERSION = 'v1';
 
 /**
- * The other two caches keyed into the same `ask_cache` table (Phase 6 items 1
- * and 2). Each has its own version so a prompt change retires only its own
- * rows, and each payload is **tagged and a different length** from the ask
- * payload below — the three key spaces cannot collide inside one table, and no
- * amount of coincidence in the fields can make an examples key equal an ask
- * key. The ask payload is deliberately left untagged: it is already written
- * into every warm row the demo seed ships and into a learner's existing
- * database, and tagging it now would orphan all of them.
+ * The two other key spaces in the same `ask_cache` table (Phase 6 items 1 and
+ * 2). Each has its own version so a prompt change retires only its own rows,
+ * and each payload is **tagged and a different length** from the ask payload
+ * below — the key spaces cannot collide inside one table, and no amount of
+ * coincidence in the fields can make an examples key equal an ask key. The ask
+ * payload is deliberately left untagged: it is already written into every warm
+ * row the demo seed ships and into a learner's existing database, and tagging
+ * it now would orphan all of them.
+ *
+ * **Only one of the two is a cache.** `EXAMPLES_PROMPT_VERSION` keys real rows
+ * (`components/review/example-sentences.tsx`). The recall key — this constant,
+ * `recallCachePayload` and `recallCacheKey` — is **reserved and unused**:
+ * nothing in `app/` or `components/` calls it, and free-recall grading is
+ * deliberately uncached, because a recall row's payload is the model's `why`
+ * and a live model explaining a grade quotes the gloss, which `ask_cache` may
+ * not hold (CLAUDE.md, licence boundary). The hit rate argues the same way —
+ * the key folds in the exact answer a learner typed. It is kept, tested and
+ * named here so that caching `suggested` *without* `why` is a five-line change
+ * rather than a new key space; it is not a contract anything relies on today.
  */
 export const EXAMPLES_PROMPT_VERSION = 'v1';
 export const RECALL_PROMPT_VERSION = 'v1';
@@ -91,6 +102,15 @@ export function askCachePayload(input: AskCacheKeyInput): string {
   ]);
 }
 
+/**
+ * The examples key. Note what is **not** in it: the learner's known set. A row
+ * is a statement about that set and the key cannot see it move, so the card
+ * back re-runs the filter over every cached row before drawing it
+ * (`filterCachedSentences`, `lib/ai/examples.ts`) and replaces one that no
+ * longer passes. Folding a digest of the known set in here would work too, and
+ * would retire every row already written; the re-check costs one comparison and
+ * orphans nothing.
+ */
 export interface ExamplesCacheKeyInput {
   /** The entry the sentences are about. */
   entryId: string;
@@ -156,7 +176,7 @@ export async function examplesCacheKey(input: ExamplesCacheKeyInput): Promise<st
   return digest(examplesCachePayload(input));
 }
 
-/** The key for one graded free-recall answer. */
+/** The key for one graded free-recall answer. Reserved and unused — see above. */
 export async function recallCacheKey(input: RecallCacheKeyInput): Promise<string> {
   return digest(recallCachePayload(input));
 }

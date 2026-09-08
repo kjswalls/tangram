@@ -460,6 +460,22 @@ export function recallWords(text: string): string[] {
   return out;
 }
 
+/**
+ * One CC-CEDICT gloss is often a run of synonyms — "nearby; neighboring", "to
+ * continue; to proceed with; to go on with". Each one is a complete answer on
+ * its own, so they are scored separately: a learner who says "nearby" has
+ * recalled 附近, and marking that 1-of-2 ("the gist is there", a 3) is the
+ * grader under-reading a right answer. Scoring the whole run only makes sense
+ * for a learner who lists every synonym in the dictionary.
+ */
+function synonyms(gloss: string): string[] {
+  const parts = gloss
+    .split(';')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return parts.length > 0 ? parts : [gloss];
+}
+
 /** The glosses a grade is judged against: the chosen sense, or all of them. */
 function gradedGlosses(entry: Entry, senseIndex?: number): string[] {
   if (
@@ -492,14 +508,18 @@ export function recallEcho(entry: Entry, answer: string, senseIndex?: number): P
   let bestTotal = 0;
   let bestShare = 0;
   for (const gloss of glosses) {
-    const words = recallWords(gloss);
-    if (words.length === 0) continue;
-    const matched = words.filter((word) => said.has(word)).length;
-    const share = matched / words.length;
-    if (share > bestShare || bestTotal === 0) {
-      bestShare = share;
-      bestMatched = matched;
-      bestTotal = words.length;
+    for (const meaning of synonyms(gloss)) {
+      const words = recallWords(meaning);
+      if (words.length === 0) continue;
+      const matched = words.filter((word) => said.has(word)).length;
+      const share = matched / words.length;
+      // A longer meaning breaks a tie: covering 3 of 3 words says more than
+      // covering 1 of 1, and both are a share of one.
+      if (share > bestShare || (share === bestShare && matched > bestMatched) || bestTotal === 0) {
+        bestShare = share;
+        bestMatched = matched;
+        bestTotal = words.length;
+      }
     }
   }
 
@@ -516,7 +536,7 @@ export function recallEcho(entry: Entry, answer: string, senseIndex?: number): P
     };
   }
 
-  const counted = `Offline check: your answer covers ${bestMatched} of the ${bestTotal} meaning-carrying words in the closest sense`;
+  const counted = `Offline check: your answer covers ${bestMatched} of the ${bestTotal} meaning-carrying words in the closest meaning this card lists`;
   if (bestShare >= 2 / 3) {
     return { suggested: 4, why: `${counted} — that reads as recalled.` };
   }

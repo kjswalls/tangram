@@ -226,6 +226,23 @@ describe('gradeRecall', () => {
     expect(offSense.suggested).toBeLessThan(4);
   });
 
+  it('reads a complete answer as recalled when the gloss packs synonyms into one line', async () => {
+    // CC-CEDICT writes a sense as a run of synonyms — 继续 is "to continue; to
+    // proceed with; to go on with". Scoring the whole run means a learner who
+    // answers "to continue", which is completely right, covers one word in
+    // three and is told "the gist is there". Each synonym is a whole answer.
+    const jixu = entryFor('继续');
+    expect(jixu.glosses[0]).toContain(';');
+    expect((await fake.gradeRecall(jixu, 'to continue')).suggested).toBe(4);
+
+    const fujin = entryFor('附近');
+    expect((await fake.gradeRecall(fujin, 'nearby, close by')).suggested).toBe(4);
+
+    // And a wrong answer is still wrong: splitting the run makes the right
+    // answer reachable, not the grade generous.
+    expect((await fake.gradeRecall(jixu, 'a kind of soup')).suggested).toBe(1);
+  });
+
   it('always says why, in prose a learner can read, with no hanzi in it', async () => {
     for (const answer of ['', 'to plan', 'plan or intend to do', 'nonsense words entirely']) {
       const graded = await fake.gradeRecall(target, answer);

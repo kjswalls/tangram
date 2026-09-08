@@ -1949,3 +1949,249 @@ every provider test injects one.
   it on trees their work was stashed out of. On this merge commit, alone on the
   box, the suite is 581/581 green. If it ever bites CI, the fix is a `testTimeout`
   bump in `vitest.config.ts`.
+
+---
+
+## Phase 7 review fixes
+
+The Phase 7 merge went to review; eleven blocking/major findings and seven minors
+came back verified (two pairs of them are the same bug seen twice — the 32-token
+trim, and the known set keyed by characters). Every one is addressed below: most
+by changing code, five by correcting a claim that was not true, several by both.
+Nothing was waved through, and one finding's supporting detail turns out to be
+wrong about the data (noted under *What the review got wrong*).
+
+**Everything the filter now stops is a permanent test.** The eleven attack cases
+live in `tests/unit/ai/` (`examples.test.ts`, `examples-route.test.ts`,
+`examples-card.test.tsx`, `attacks.test.ts`) and run against the real
+dictionary, not a fixture that could agree with the bug. Unit suite: 581 → 608.
+
+### The one that was on screen: a known **headword** is not a known **word**
+
+`/api/examples` took the learner's known set as simplified headword *strings*
+and re-expanded each one through `index.bySimp` — every entry sharing those
+characters — straight into the filter's whitelist. So a learner who knows
+看 kàn "to see" (HSK 1) was shown 看 kān "to look after" (HSK 6) under the
+heading "Sentences from words you know", with its reading printed under it. The
+reviewer found 為|为 wéi on eight consecutive card backs in the demo. 会 huì/kuài,
+好 hǎo/hào, 还 hái/huán/Huán are all the same shape. The tone is the whole
+difference in meaning, and it is the one thing a learner cannot check — §1
+commitment 3.
+
+The known set now crosses the wire as **`knownSet`** (`lib/ai/examples.ts`), in
+the three shapes `wordState` actually has:
+
+| Field | What it is | What it is for |
+|---|---|---|
+| `ids` | exact entry ids — a `known_words` row, or a card at Review with stability ≥ 21 | the filter's whitelist |
+| `headwords` | the same set as characters | the prompt, which reads words and not ids |
+| `knownBand` + `excludeIds` | /settings "assume known through HSK N", and the cards that outrank it | expanded server-side, per entry |
+
+`supportEntries` builds the pool from ids and bands, never from characters. The
+headword path survives for a caller with no ids and is deliberately lossy: a
+headword with **more than one entry is skipped**, because "the learner knows 看"
+does not say which 看, and variants, proper nouns and surnames are dropped. The
+`offered`/`allowed` split is unchanged and still enforced separately.
+
+### "Assume known through HSK N" now contributes something
+
+It contributed nothing at all: `knownHeadwords` only ever iterated cards and
+`known_words`, and `wordState`'s band branch is unreachable from there. A
+learner who used the /settings control instead of "Mark known" got an empty
+support pool and the permanent line "Not enough known words yet…". The demo hid
+it, because `loadDemo` writes explicit `known_words` rows for HSK 1–2.
+
+The band cannot be expanded in the browser — that needs the dictionary — so it
+travels as the band plus its exceptions and is expanded in `supportEntries`
+against `index.byHsk`. `hskBand` is a property of an *entry*, so the expansion
+is per reading and stays exact (看 kàn is band 1; 看 kān is band 6). `excludeIds`
+carries `wordState`'s rule that a card outranks the band, so the word the spine
+is teaching today does not come back as one the learner knows.
+
+### A cached row is a statement about a known set, and the key does not hold one
+
+`examplesCachePayload` keys on (promptVersion, provider, entryId, senseIndex,
+estimatedBand) and `estimatedBand` never moves on its own (below). Meanwhile the
+known set **shrinks on the most ordinary action in the app**: every explicit Add
+runs `repo.unmarkKnown` (`lib/lists/looked-up.ts`) and the new card outranks the
+band, so the word a cached sentence was built from becomes a word the learner is
+being taught. Nothing re-checked it: the cache-hit branch rendered
+`cached.data.sentences` straight through.
+
+`filterCachedSentences` (`lib/ai/examples.ts`) now runs the same filter over
+every cached row before it is drawn, against today's set and against the entries
+`/api/dict/entries` just resolved. A row that no longer passes is not shown and
+not patched — the POST below it writes a fresh one over the top, so nothing is
+orphaned. Folding a digest of the known set into the key would work too and
+would retire every row already written; this costs one comparison.
+
+The same re-check closes the second hole: a **cited entry that no longer
+resolves**. An entry id is content-derived, so a CC-CEDICT rebuild retires it,
+and the old block drew that token as `?` with `—` under it, mid-sentence, with
+`renderPhrase`'s `unverified` verdict computed and thrown away. Now the missing
+token drops its sentence, and the render pass drops any phrase `renderPhrase`
+flags — if that empties the list, the honest `examples-empty` line is what shows.
+
+### `ground()` trimmed a sentence to 32 tokens and called it whole
+
+`for (const token of phrase.tokens.slice(0, MAX_PHRASE_TOKENS))`. Everything
+past position 32 vanished silently, and the survivor was emitted with the
+model's `en` for the **whole** sentence — a half sentence advertised as a
+complete one, and a hiding place for exactly the two things the filter exists to
+catch (a citation the learner does not know, an uncited `{text}` run). Three
+places said the opposite in as many words: `lib/ai/examples.ts:13`, `:188`, and
+HANDOFF's own "there is no trimming path".
+
+`ground` now drops an over-long phrase (`usable = phrase.tokens.length <=
+MAX_PHRASE_TOKENS`), which is what those three sentences already claimed.
+`tests/unit/ai/attacks.test.ts` asserted the trimming, and now asserts the drop;
+`examples.test.ts` drives both hiding places — a stranger cited at position 33,
+and 绝绝子 written at position 33 — and both sentences go.
+
+### The card back answers `settings.script`
+
+`renderPhrase` rendered `entry.simp` unconditionally, so a traditional-script
+learner got a traditional card front (`cardFace`) over simplified sentences.
+`renderPhrase(phrase, lookup, script)` takes the preference (default `'simp'`),
+`ReviewSession` threads `settings.script` into `ExampleSentences`, and the ask
+panel reads it too. **The ask panel renders in the preference but stores in
+simplified**: a phrase card keeps its tokens and a snapshot is never re-resolved
+(§3.3), so `PhraseCard` takes both the displayed phrase and a `stored` one —
+writing the display script into a card would make a changeable preference a
+permanent property of that card.
+
+`ground()` itself still renders `'simp'`, deliberately: what it builds is
+re-segmented against the simplified dictionary.
+
+### Free recall: the box is focused, and the offline grader says so
+
+`document.activeElement` on a fresh card was `BODY`. Typing without clicking put
+nothing in the box, and the first space of a natural answer ("close by") reached
+the session's window listener as a *reveal* key — the card flipped mid-word, the
+box disabled itself, and the recall was over before it was typed. The box now
+takes the keyboard on mount (`autoFocus`, once per card, since the caller keys
+the component on `card.id`). The session ignores keys aimed at an `INPUT` and
+`submit()` already blurs, so 1–4 still grade after the flip. **Space no longer
+flips while the box has focus, by design** — "Show answer" is the way past it,
+which is what the full-loop spec now presses.
+
+`RecallSuggestion` carries `provider`, and the box renders the same warning line
+the ask panel and the i+1 block carry when it is `'fake'`
+(`data-testid="recall-offline"`). A grade recommendation is the most
+consequential thing this app suggests, and it was the one AI surface with no
+badge; the only disclosure was that `recallEcho` happened to start its prose
+with "Offline check:".
+
+The offline grader also under-read right answers. `gradedGlosses` hands it whole
+CC-CEDICT gloss strings, which are semicolon-joined synonym runs: 继续 is "to
+continue; to proceed with; to go on with", so "to continue" — completely correct
+— covered one word in three and scored 3. Each synonym is now scored as the whole
+answer it is, with the longer meaning as the tiebreak.
+
+### The suggestion ring was invisible on Good
+
+Rating 3 is the primary button (`bg-accent`) and the cue was `ring-2 ring-accent`
+with no offset: the same colour on the same pixel. 3 is what a right-but-
+differently-worded answer scores, so the cue disappeared for the most common
+suggestion. The ring has `ring-offset-2 ring-offset-background`, and the button
+also carries the word **suggested** — the non-colour half of the cue, for a
+learner who would not see a teal ring at all. The specs assert the word, not the
+attribute alone.
+
+### The grade bar on a phone
+
+Measured on 390×844: the default-on examples block put `grade-bar` at 1150px on
+a 1314px page, ~300px below the fold, on every card back — and a phone has no
+1–4 keys to escape with. The bar (rendered outside the card in
+`review-session.tsx`) is now `sticky bottom-0` with a background under `sm`, and
+static from `sm` up. `tests/e2e/a/examples.spec.ts` walks a 390px viewport with
+both blocks up and asserts the bar is in the viewport and still grades.
+
+### The two tests that could not have caught any of this
+
+- `tests/e2e/a/examples.spec.ts` compared `data-entry-id` **by simplified form**
+  against `knownEntryIds()`, which passes for every other reading of a known
+  headword. It now compares by id and asks the app's own question — declared
+  row, else the card's state, else the band with no card — restated in the
+  browser. `tests/e2e/full-loop.spec.ts` did the same thing on the one mined
+  card and now does the same check.
+- `tests/unit/ai/examples-route.test.ts` built its expected set with
+  `supportEntries(KNOWN, …)`, the same expansion it was meant to be checking. It
+  now compares against the ids the learner declared.
+- `tests/e2e/b/recall.spec.ts` hard-coded `data-suggested="4"` for one answer —
+  a number produced by `recallEcho`'s stemmed word overlap, not by anything
+  reading meaning, and one that a real key would break. It asserts the shape
+  now: one of the four grades, on the matching button and no other, badged
+  offline, never written. Its header says the grader under test is
+  `FakeProvider`.
+
+### Claims corrected rather than papered over
+
+- **`lib/ai/cache-key.ts`** said "the other two caches keyed into the same
+  `ask_cache` table". Only one of them is a cache: `recallCacheKey`,
+  `recallCachePayload` and `RECALL_PROMPT_VERSION` are called by nothing outside
+  their own test. The header now says they are reserved and unused, and why
+  recall is not cached (the row's payload is the model's `why`, and a live model
+  explaining a grade quotes the gloss).
+- **HANDOFF's** "it self-corrects when the band estimate moves" was not true:
+  `estimatedBand` only moves inside `if (input.bandSizes)`, and no call site
+  supplies `bandSizes` — it is a constant equal to the `knownBand` setting. The
+  debt entry below says what actually keeps the promise (the re-check) and that
+  `estimatedBand` is inert. §3.3's "highest band with ≥80% known/learning" is
+  dead for the same reason and predates Phase 7.
+- **`/api/examples` fell back to `profile.knownSample`** when no known set was
+  sent — the *looser* set, which counts words the learner is still learning, on
+  the path whose whole promise is that it does not. `lib/ai/examples.ts` says so
+  itself two lines from the code that did it. The fallback is gone: a body that
+  declares nothing gets the target by itself, which is legal, documented and
+  tested. The bare `{entryId, profile}` request is still not a 400.
+- **`knownHeadwords`'s doc block** claimed membership was `wordState`, "so
+  'known' means here what it means everywhere else", while the band branch was
+  structurally unreachable. It is `wordState` now, all three branches, split
+  across the wire.
+- **`components/review/example-sentences.tsx`** said "the filtering already
+  happened … this component never re-decides it". It re-decides a cached row,
+  and the header says so and why.
+
+### What the review got wrong
+
+One finding's evidence says 图书馆 is band 3 and another test comment said the
+same. In this dictionary snapshot 图书馆 is **band 1** (`圖書館|图书馆[tu2 shu1
+guan3]`, freqRank 5016) — the HSK 3.0 join puts it there. The finding it
+appeared in stands on its own (the case is about a word outside `allowed`, which
+is exactly what it tests), but the tests that leaned on the band have been moved
+to 附近 (band 4), which really is past a `knownBand` of 2, and the stale comment
+in `examples.test.ts` is corrected.
+
+### Known debt, updated
+
+- The examples cache key still omits the known set, and `estimatedBand` is
+  **inert** — it equals the `knownBand` setting until something supplies
+  `bandSizes`, which nothing does. What keeps the promise is the client-side
+  re-check on every cache hit (`filterCachedSentences`), not the key. A learner
+  whose vocabulary grows still sees the same sentences for a given (entry,
+  sense) until the row stops passing; growth alone will not refresh them.
+- `excludeIds` is capped at `MAX_BAND_EXCEPTIONS` (500) on both sides of the
+  wire. A learner with more than 500 unfinished cards *inside* their assumed
+  bands could have one of them slip into the server's pool; the client re-check
+  would then drop the sentence rather than show it, so the failure is an empty
+  block, not a broken promise.
+- The band expansion walks every entry in bands 1..N per request (~1,500 rows
+  for band 2) before the `SUPPORT_CAP` cut. It is milliseconds against a
+  dictionary that is already in memory, and it is not cached.
+
+### Gates on this commit
+
+| Gate | Result |
+|---|---|
+| `npx tsc --noEmit` | pass |
+| `pnpm lint` | pass, no warnings |
+| `pnpm test` | pass — **608** in 59 files (581 before) |
+| `pnpm build` | pass (Turbopack), worker stamped |
+| `PORT=3000 pnpm e2e` | pass — **90/90** (89 before: +1 mobile grade bar) |
+
+No frozen file was edited: `package.json`, `pnpm-lock.yaml`, `next.config.ts`,
+`lib/db/**` and the UI primitives are untouched. No dependency was added. No
+server is left running. `/home/user/v0-anchor` was not touched. **No live model
+call has been made from this container** — there is still no key here, and every
+new test injects a provider or stubs `fetch`.

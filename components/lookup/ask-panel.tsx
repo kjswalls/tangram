@@ -30,6 +30,7 @@ import {
   entryLookup,
   groundedAskResponseSchema,
   renderPhrase,
+  type PhraseScript,
   type GroundedAskResponse,
   type RenderedPhrase,
 } from '@/lib/ai/ground';
@@ -279,11 +280,21 @@ function wordsMessage(result: WordsAdded): string {
 
 function PhraseCard({
   phrase,
+  stored,
   onAddPhrase,
   onAddWords,
   onProbe,
 }: {
+  /** The phrase as the learner reads it — in their script preference. */
   phrase: RenderedPhrase;
+  /**
+   * The same phrase rendered simplified, which is what a card *stores*. A
+   * phrase card keeps its tokens (`PhraseFace` draws them one at a time), and a
+   * snapshot is never re-resolved (§3.3), so writing the display script into it
+   * would make a preference that can be changed a permanent property of a card.
+   * The reading and the ids are identical between the two.
+   */
+  stored: RenderedPhrase;
   onAddPhrase: (phrase: RenderedPhrase) => Promise<'added' | 'existing'>;
   onAddWords: (phrase: RenderedPhrase) => Promise<WordsAdded>;
   onProbe: (phrase: RenderedPhrase) => Promise<boolean>;
@@ -300,7 +311,7 @@ function PhraseCard({
    */
   useEffect(() => {
     let cancelled = false;
-    onProbe(phrase).then(
+    onProbe(stored).then(
       (existing) => {
         if (!cancelled && existing) setState('existing');
       },
@@ -391,7 +402,7 @@ function PhraseCard({
           }
           onClick={() => {
             setState('saving');
-            onAddPhrase(phrase).then(setState, () => setState('error'));
+            onAddPhrase(stored).then(setState, () => setState('error'));
           }}
         >
           {blocked
@@ -406,7 +417,7 @@ function PhraseCard({
             disabled={wordsState === 'saving' || wordsState === 'added'}
             onClick={() => {
               setWordsState('saving');
-              onAddWords(phrase).then(
+              onAddWords(stored).then(
                 (result) => {
                   setWordsResult(result);
                   setWordsState('added');
@@ -446,6 +457,9 @@ export interface AskPanelProps {
 export function AskPanel({ query, context, className }: AskPanelProps) {
   const [state, setState] = useState<AskState>({ status: 'idle' });
   const [provider, setProvider] = useState<AskRouteInfo['provider']>();
+  // The learner's script, read once. Display only: ids, readings and everything
+  // a card stores are the same row either way.
+  const [script, setScript] = useState<PhraseScript>('simp');
 
   // The context is an object literal from a store, so it is a new reference on
   // every render. Serialising it makes the effect fire when the provenance
@@ -458,6 +472,14 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
     askInfo().then((info) => {
       if (!cancelled) setProvider(info.provider);
     });
+    getRepository()
+      .getSettings()
+      .then(
+        (settings) => {
+          if (!cancelled) setScript(settings.script);
+        },
+        () => undefined,
+      );
     return () => {
       cancelled = true;
     };
@@ -592,8 +614,16 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
 
   const lookup = useMemo(() => entryLookup(ready?.entries ?? []), [ready?.entries]);
   const phrases = useMemo(
-    () => (ready ? ready.response.sayIt.map((phrase) => renderPhrase(phrase, lookup)) : []),
-    [ready, lookup],
+    () => (ready ? ready.response.sayIt.map((phrase) => renderPhrase(phrase, lookup, script)) : []),
+    [ready, lookup, script],
+  );
+  // What a card would keep, which is always simplified — see `PhraseCard`.
+  const storedPhrases = useMemo(
+    () =>
+      ready && script !== 'simp'
+        ? ready.response.sayIt.map((phrase) => renderPhrase(phrase, lookup))
+        : phrases,
+    [ready, lookup, script, phrases],
   );
   const empty =
     ready !== undefined &&
@@ -757,6 +787,7 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
                   <PhraseCard
                     key={`${phrase.zh}-${index}`}
                     phrase={phrase}
+                    stored={storedPhrases[index]}
                     onAddPhrase={addPhrase}
                     onAddWords={addWords}
                     onProbe={probePhrase}

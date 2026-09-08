@@ -172,6 +172,28 @@ describe('what reaches the card front', () => {
   it('tolerates a missing reason rather than refusing the grade', () => {
     expect(asRecallSuggestion({ suggested: 2 })).toEqual({ suggested: 2, why: '' });
   });
+
+  it('carries who graded it, and only a name it recognises', () => {
+    // The box badges the offline grader the way the ask panel and the i+1 block
+    // do, so the name has to survive the trip — and an unrecognised one must
+    // not, because it decides whether a warning is shown.
+    expect(asRecallSuggestion({ suggested: 3, why: 'ok', provider: 'fake' })).toEqual({
+      suggested: 3,
+      why: 'ok',
+      provider: 'fake',
+    });
+    expect(asRecallSuggestion({ suggested: 3, why: 'ok', provider: 'anthropic' })).toEqual({
+      suggested: 3,
+      why: 'ok',
+      provider: 'anthropic',
+    });
+    for (const value of ['openai', '', 7, null, undefined]) {
+      expect(asRecallSuggestion({ suggested: 3, why: 'ok', provider: value })).toEqual({
+        suggested: 3,
+        why: 'ok',
+      });
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

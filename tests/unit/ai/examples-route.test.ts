@@ -24,7 +24,7 @@ import { EXAMPLES_PROMPT_VERSION } from '@/lib/ai/cache-key';
 import { resetDictCache } from '@/lib/dict/load';
 import type { Entry, LearnerProfile } from '@/lib/types';
 import { requireDictData } from '../dict/data-required';
-import { entryFor } from './helpers';
+import { entriesFor, entryFor, readingOf } from './helpers';
 
 /** What `selectProvider` hands the route, when a case wants to choose. */
 const stubbed = vi.hoisted(() => ({ provider: undefined as LLMProvider | undefined }));
@@ -50,6 +50,14 @@ afterEach(() => {
 /** HSK 1–2 words, the way a demo learner's known set arrives. */
 const KNOWN = ['我', '是', '的', '很', '好', '你', '天', '看', '书', '学习'];
 const PROFILE: LearnerProfile = { estimatedBand: 2, knownSample: KNOWN };
+
+/**
+ * The same learner as entry ids — which is what the filter is built from. A
+ * headword is not a word: 看 alone is `看|看[kan4]` "to see" and
+ * `看|看[kan1]` "to look after", and knowing one of them says nothing about
+ * the other.
+ */
+const KNOWN_IDS = KNOWN.map((word) => entriesFor(word)[0].id);
 
 function request(body: unknown): Request {
   return new Request('http://localhost/api/examples', {
@@ -105,14 +113,21 @@ describe('the request', () => {
 describe('the offline provider', () => {
   it('answers with sentences that cite only the target and words the learner knows', async () => {
     const entry = target();
-    const { status, body } = await post({ entryId: entry.id, profile: PROFILE, known: KNOWN });
+    const { status, body } = await post({
+      entryId: entry.id,
+      profile: PROFILE,
+      known: KNOWN,
+      knownIds: KNOWN_IDS,
+    });
 
     expect(status).toBe(200);
     expect(body.provider).toBe('fake');
     expect(body.sentences.length).toBeGreaterThan(0);
     expect(body.sentences.length).toBeLessThanOrEqual(2);
 
-    const allowed = new Set(supportEntries(KNOWN, entry.id).map((row) => row.id));
+    // The ids the learner declared, and nothing derived from the route's own
+    // expansion of them — a whitelist checked against itself proves nothing.
+    const allowed = new Set(KNOWN_IDS);
     for (const sentence of body.sentences) {
       expect(sentence.tokens.length).toBeGreaterThan(0);
       for (const token of sentence.tokens) {
@@ -133,10 +148,36 @@ describe('the offline provider', () => {
     expect(body.cacheable).toBe(true);
   });
 
-  it('falls back to the profile’s looser sample when no known set is sent', async () => {
-    const { status, body } = await post({ entryId: target().id, profile: PROFILE });
+  it('declares nothing when the body declares nothing, rather than borrowing the profile', async () => {
+    // `profile.knownSample` counts words the learner is still *learning*
+    // (`buildLearnerProfile`), and this route's one promise is that it does not.
+    // A body with no known set is legal and gets the target by itself.
+    const entry = target();
+    const { status, body } = await post({ entryId: entry.id, profile: PROFILE });
     expect(status).toBe(200);
+    expect(body.support).toBe(0);
+    expect(body.sentences).toEqual([{ tokens: [{ entryId: entry.id }], en: expect.any(String), register: '', unverified: false }]);
+  });
+
+  it('expands the band assumption server-side, where the dictionary is', async () => {
+    // "Assume known through HSK 2" is a real answer to "what do you know", and
+    // it is the only one a learner who never pressed "Mark known" has. Before
+    // this it contributed nothing and they got the empty line forever.
+    const entry = target();
+    const { body } = await post({
+      entryId: entry.id,
+      profile: PROFILE,
+      knownBand: 2,
+    });
     expect(body.support).toBeGreaterThan(0);
+    expect(body.sentences.length).toBeGreaterThan(0);
+    for (const sentence of body.sentences) {
+      for (const token of sentence.tokens) {
+        if (token.entryId === entry.id) continue;
+        const cited = body.entries.find((row) => row.id === token.entryId);
+        expect(cited?.hskBand).toBeLessThanOrEqual(2);
+      }
+    }
   });
 
   it('still answers a learner who knows nothing yet, with the word by itself', async () => {
@@ -145,6 +186,7 @@ describe('the offline provider', () => {
       entryId: entry.id,
       profile: { estimatedBand: 1, knownSample: [] },
       known: [],
+      knownIds: [],
     });
     expect(body.support).toBe(0);
     expect(body.sentences).toHaveLength(1);
@@ -162,7 +204,12 @@ describe('a provider that breaks the rules', () => {
       ],
     }));
 
-    const { status, body } = await post({ entryId: entry.id, profile: PROFILE, known: KNOWN });
+    const { status, body } = await post({
+      entryId: entry.id,
+      profile: PROFILE,
+      known: KNOWN,
+      knownIds: KNOWN_IDS,
+    });
     expect(status).toBe(200);
     // Nothing reached the client: the filter runs here, not in the browser.
     expect(body.sentences).toEqual([]);
@@ -182,9 +229,36 @@ describe('a provider that breaks the rules', () => {
       ],
     }));
 
-    const { body } = await post({ entryId: entry.id, profile: PROFILE, known: KNOWN });
+    const { body } = await post({
+      entryId: entry.id,
+      profile: PROFILE,
+      known: KNOWN,
+      knownIds: KNOWN_IDS,
+    });
     expect(body.sentences).toHaveLength(1);
     expect(body.sentences[0].tokens.every((token) => token.entryId !== undefined)).toBe(true);
+  });
+
+  it('drops a sentence citing another reading of a headword the learner knows', async () => {
+    // The learner knows 看 kàn (HSK 1). The provider cites 看 kān (HSK 6) — the
+    // same two characters, a word they have never met, and a reading they
+    // cannot check. This is the case a headword-keyed whitelist waved through.
+    const entry = target();
+    const kan = readingOf('看', 'kan4');
+    const kanOther = readingOf('看', 'kan1');
+    stubbed.provider = stub(() => ({
+      sentences: [{ tokens: [{ entryId: kanOther.id }, { entryId: entry.id }], en: 'Look after it.' }],
+    }));
+
+    const { body } = await post({
+      entryId: entry.id,
+      profile: PROFILE,
+      known: ['看'],
+      knownIds: [kan.id],
+    });
+    expect(body.sentences).toEqual([]);
+    expect(body.entries).toEqual([]);
+    expect(body.cacheable).toBe(false);
   });
 
   it('is a 502 when the provider throws', async () => {
@@ -223,11 +297,44 @@ describe('a provider that breaks the rules', () => {
 describe('the support pool', () => {
   it('is frequency-ordered, excludes the target, and is bounded', () => {
     const entry = entryFor('我');
-    const pool = supportEntries(['图书馆', '我', '是'], entry.id);
-    expect(pool.some((row) => row.id === entry.id)).toBe(false);
-    const ranks = pool.map((row) => row.freqRank ?? Number.MAX_SAFE_INTEGER);
+    const support = supportEntries({ ids: KNOWN_IDS }, entry.id);
+    expect(support.some((row) => row.id === entry.id)).toBe(false);
+    const ranks = support.map((row) => row.freqRank ?? Number.MAX_SAFE_INTEGER);
     expect([...ranks].sort((a, b) => a - b)).toEqual(ranks);
     expect(SUPPORT_CAP).toBeGreaterThan(0);
+  });
+
+  it('never turns a known headword into every reading of it', () => {
+    const kan = readingOf('看', 'kan4');
+    const kanOther = readingOf('看', 'kan1');
+    const ids = supportEntries({ ids: [kan.id] }, '').map((row) => row.id);
+    expect(ids).toEqual([kan.id]);
+    expect(ids).not.toContain(kanOther.id);
+  });
+
+  it('takes a headword only when it has one reading, for a caller with no ids', () => {
+    // The fallback is deliberately lossy: "the learner knows 看" does not say
+    // which 看, and guessing is what put an unmet reading on a card back.
+    const ambiguous = supportEntries({ headwords: ['看'] }, '');
+    expect(ambiguous).toEqual([]);
+
+    const unambiguous = supportEntries({ headwords: ['学习'] }, '');
+    expect(unambiguous.map((row) => row.simp)).toEqual(['学习']);
+  });
+
+  it('expands a band per entry, and lets a card outrank it', () => {
+    const wo = entryFor('我');
+    const banded = supportEntries({ knownBand: 1 }, '');
+    expect(banded.length).toBeGreaterThan(50);
+    for (const row of banded) expect(row.hskBand).toBe(1);
+    expect(banded.some((row) => row.id === wo.id)).toBe(true);
+
+    // 看 kān is band 6: a band-1 expansion cannot reach it however common the
+    // characters are.
+    expect(banded.some((row) => row.id === readingOf('看', 'kan1').id)).toBe(false);
+
+    const excluded = supportEntries({ knownBand: 1, excludeIds: [wo.id] }, '');
+    expect(excluded.some((row) => row.id === wo.id)).toBe(false);
   });
 });
 

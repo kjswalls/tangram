@@ -29,7 +29,7 @@
  */
 
 import { scrubProse } from '@/lib/ai/ground';
-import type { ParsedGradeRecall } from '@/lib/ai/provider';
+import type { ParsedGradeRecall, ProviderName } from '@/lib/ai/provider';
 
 /**
  * The 1–4 vocabulary, by value. `RECALL_GRADES` in `lib/ai/provider.ts` and
@@ -45,6 +45,13 @@ export interface RecallSuggestion {
   suggested: RecallGradeValue;
   /** One line of plain English: no hanzi, no pinyin. Scrubbed twice, see below. */
   why: string;
+  /**
+   * Who graded it. The route has always reported this; carrying it here is what
+   * lets the box say "offline" the way the ask panel and the i+1 block do
+   * (PLAN.md §3.4). `undefined` means the body did not say, which is treated as
+   * "unknown", never as "live".
+   */
+  provider?: ProviderName;
 }
 
 /** The same cap `/api/ask` puts on a query: an answer is a sentence, not an essay. */
@@ -86,10 +93,14 @@ export function isRecallGrade(value: unknown): value is RecallGradeValue {
  */
 export function asRecallSuggestion(body: unknown): RecallSuggestion | null {
   if (typeof body !== 'object' || body === null) return null;
-  const value = body as Partial<ParsedGradeRecall>;
+  const value = body as Partial<ParsedGradeRecall> & { provider?: unknown };
   if (!isRecallGrade(value.suggested)) return null;
   const why = typeof value.why === 'string' ? oneLine(scrubProse(value.why)) : '';
-  return { suggested: value.suggested, why };
+  // A name this module knows, or nothing: an unrecognised string must not end
+  // up in a `data-` attribute or decide whether a warning is shown.
+  const provider: ProviderName | undefined =
+    value.provider === 'fake' || value.provider === 'anthropic' ? value.provider : undefined;
+  return { suggested: value.suggested, why, ...(provider === undefined ? {} : { provider }) };
 }
 
 export interface RecallRequestInput {

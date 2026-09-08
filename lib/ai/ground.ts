@@ -132,7 +132,7 @@ export interface RenderedToken {
 
 export interface RenderedPhrase {
   tokens: RenderedToken[];
-  /** The phrase itself, simplified. */
+  /** The phrase itself, in the script it was rendered in (simplified by default). */
   zh: string;
   /** Syllable-marked pinyin, one group per token. */
   pinyin: string;
@@ -150,6 +150,20 @@ export function entryLookup(entries: readonly Entry[]): EntryLookup {
 }
 
 /**
+ * Which characters a rendered token shows. `'simp'` unless the learner asked
+ * for traditional in /settings — the same preference `cardFace` honours on the
+ * front of a review card (`lib/srs/presentation.ts`), threaded here so a
+ * traditional learner is not handed a traditional card front over simplified
+ * sentences.
+ *
+ * It is a display choice and nothing else: the entry, its id and its reading
+ * are the same row either way, so the cache, the filter and the segmenter are
+ * all untouched by it. `ground()` renders in `'simp'` on purpose — what it
+ * builds is re-segmented against the simplified dictionary.
+ */
+export type PhraseScript = 'simp' | 'trad';
+
+/**
  * Render one validated phrase. Pure, and safe in the browser: the client calls
  * it with entries fetched from `/api/dict/entries`, which is what "cached
  * responses are re-resolved against the dictionary at render" means (§3.4).
@@ -157,6 +171,7 @@ export function entryLookup(entries: readonly Entry[]): EntryLookup {
 export function renderPhrase(
   phrase: Pick<GroundedSayIt, 'tokens' | 'en' | 'register'> & { unverified?: boolean },
   lookup: EntryLookup,
+  script: PhraseScript = 'simp',
 ): RenderedPhrase {
   const tokens: RenderedToken[] = phrase.tokens.map((token) => {
     if (token.entryId === undefined) {
@@ -171,7 +186,7 @@ export function renderPhrase(
     }
     const entry = lookup(token.entryId);
     return {
-      text: entry?.simp ?? '',
+      text: (script === 'trad' ? entry?.trad : entry?.simp) ?? '',
       pinyin: entry?.pinyinMarked ?? '',
       entryId: token.entryId,
       aiGenerated: false,
@@ -438,8 +453,18 @@ const MAX_MATCHES = 8;
 const MAX_SAYIT = 4;
 /** Notes are a footnote, not a chapter. */
 const MAX_NOTES = 8;
-/** A phrase is a sentence somebody could say out loud. */
-const MAX_PHRASE_TOKENS = 32;
+/**
+ * A phrase is a sentence somebody could say out loud.
+ *
+ * Over this length the phrase is **dropped, not trimmed**. Slicing it looks
+ * like the safe move and is the opposite: a trimmed phrase still carries the
+ * model's `en` for the whole sentence, so what reaches the screen is half a
+ * sentence advertised as a complete one — and every rule below (a citation
+ * outside the retrieved set, an uncited `{text}` run) would stop applying to
+ * whatever sat past the cut. `lib/ai/examples.ts` states "shown whole or not at
+ * all" as an absolute; this is where that is either true or a lie.
+ */
+export const MAX_PHRASE_TOKENS = 32;
 
 export interface Span {
   start: number;
@@ -583,9 +608,12 @@ export function ground(response: RawAskResponse, context: GroundContext): Ground
   for (const phrase of response.sayIt) {
     if (sayIt.length >= MAX_SAYIT) break;
     const tokens: GroundedToken[] = [];
-    let usable = true;
+    // A phrase longer than the cap is not shortened into one that fits: see
+    // `MAX_PHRASE_TOKENS`. Nothing downstream could tell the difference between
+    // a sentence the model wrote and the first 32 tokens of one.
+    let usable = phrase.tokens.length <= MAX_PHRASE_TOKENS;
 
-    for (const token of phrase.tokens.slice(0, MAX_PHRASE_TOKENS)) {
+    for (const token of usable ? phrase.tokens : []) {
       if (token.entryId !== undefined) {
         // A citation outside the retrieved set is the failure mode this whole
         // file exists for. The phrase cannot be rendered without it, so the

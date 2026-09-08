@@ -44,6 +44,8 @@ import {
 import type { CardRow } from '@/lib/db/schema';
 import { RATING_LABELS } from '@/lib/srs/card';
 
+const OFFLINE_NOTE = 'Offline grader — set ANTHROPIC_API_KEY for a real reading of your answer.';
+
 export interface RecallInputProps {
   card: CardRow;
   revealed: boolean;
@@ -165,6 +167,21 @@ export function RecallInput({
         <Input
           id={fieldId}
           data-testid="recall-answer"
+          /*
+           * The box takes the keyboard as soon as the card is on screen — on
+           * mount, which is once per card, because the caller keys this
+           * component on `card.id`.
+           *
+           * Without it the answer has to be reached with the mouse or eight
+           * tabs, and — worse — the first space in a natural answer ("close
+           * by") is a *reveal* key to the session's window listener: the card
+           * flips mid-word, the box disables itself, and the recall is over
+           * before it was typed. Focus is what makes a space a space. The
+           * session ignores keys aimed at an `INPUT` and the card's wrapper
+           * stops the rest from escaping the slot, so 1–4 still grade once
+           * `submit()` has blurred the box.
+           */
+          autoFocus={!revealed}
           autoComplete="off"
           placeholder="in your own words"
           value={state.answer}
@@ -217,6 +234,16 @@ export function RecallInput({
           <span className="mt-1 block text-xs text-muted">
             A suggestion only — you grade the card.
           </span>
+          {suggestion.provider === 'fake' ? (
+            // The same disclosure the ask panel and the i+1 block carry
+            // (PLAN.md §3.4). A grade recommendation is the most consequential
+            // thing this app suggests, and offline it is a word counter: that
+            // has to be visible as a property of the UI, not as prose the
+            // provider happened to write.
+            <span data-testid="recall-offline" className="mt-1 block text-xs text-warning">
+              {OFFLINE_NOTE}
+            </span>
+          ) : null}
         </p>
       ) : null}
 

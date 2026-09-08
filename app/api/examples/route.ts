@@ -2,8 +2,9 @@
  * `POST /api/examples` (PLAN.md §4, Phase 6 item 1) — i+1 example sentences for
  * one card.
  *
- *   1. resolve the target entry, and the learner's known headwords into the
- *      dictionary rows behind them (the **support** pool);
+ *   1. resolve the target entry, and what the learner declared knowing — exact
+ *      entry ids, plus the /settings "assume known through HSK N" band, minus
+ *      the cards that outrank it — into dictionary rows (the **support** pool);
  *   2. `exampleSentences(entry, profile, senseIndex, support)` — the prompt
  *      asks for sentences built from those words and the target;
  *   3. `groundExamples()` — ground exactly as `/api/ask` grounds an answer, and
@@ -28,7 +29,12 @@
 import { DEFAULT_MODEL } from '@/lib/ai/anthropic';
 import { EXAMPLES_PROMPT_VERSION } from '@/lib/ai/cache-key';
 import { withDeadline } from '@/lib/ai/deadline';
-import { citedEntryIds, groundExamples, type ExampleSentence } from '@/lib/ai/examples';
+import {
+  citedEntryIds,
+  groundExamples,
+  MAX_BAND_EXCEPTIONS,
+  type ExampleSentence,
+} from '@/lib/ai/examples';
 import {
   exampleSentencesSchema,
   ProviderError,
@@ -39,7 +45,7 @@ import {
 import { getDictIndex, getEntry, readingCount } from '@/lib/dict/index';
 import { dictErrorResponse } from '@/lib/dict/load';
 import { segment } from '@/lib/dict/segment';
-import type { Entry, EntryId, HskBand, LearnerProfile } from '@/lib/types';
+import { HSK_BANDS, type Entry, type EntryId, type HskBand, type LearnerProfile } from '@/lib/types';
 
 // The dictionary is read from disk per process; never prerender this at build time.
 export const dynamic = 'force-dynamic';
@@ -53,9 +59,11 @@ export const dynamic = 'force-dynamic';
  */
 export const SUPPORT_CAP = 40;
 
-/** How many headwords a request may carry. `KNOWN_SAMPLE_LIMIT` client-side. */
+/** How many headwords or ids a request may carry. `KNOWN_SAMPLE_LIMIT` client-side. */
 const MAX_KNOWN_WORDS = 200;
 const MAX_HEADWORD_CHARS = 24;
+/** `trad|simp[pinyin]` for a long phrase, with room to spare. */
+const MAX_ENTRY_ID_CHARS = 160;
 
 /**
  * The learner is mid-review with a grade to press, so the card back gives up
@@ -102,12 +110,21 @@ interface ExamplesRequestBody {
   senseIndex?: number;
   profile: LearnerProfile;
   /**
-   * The learner's known headwords (`knownHeadwords`, `lib/ai/examples.ts`).
-   * Optional: a bare `{entryId, profile}` request is legal and falls back to
-   * `profile.knownSample`, which is the looser set — it counts words the
-   * learner is still *learning* as well. The client sends the strict set.
+   * What the learner knows (`knownSet`, `lib/ai/examples.ts`), in the three
+   * shapes `wordState` needs: `known` is the headwords, `knownIds` the exact
+   * entries, and `knownBand` + `excludeIds` the /settings band assumption with
+   * its exceptions.
+   *
+   * All four are optional and a bare `{entryId, profile}` request is still
+   * legal — it simply declares nothing, so nothing but the target may be cited
+   * and the answer is the word by itself. `profile.knownSample` is **not** used
+   * as a stand-in: it counts words the learner is still *learning*, and the one
+   * promise this route makes is that it does not.
    */
   known?: string[];
+  knownIds?: string[];
+  knownBand?: HskBand;
+  excludeIds?: string[];
 }
 
 function badRequest(hint: string): Response {
@@ -135,13 +152,40 @@ function parseBody(payload: unknown): ExamplesRequestBody | string {
   const knownSample = words(rawProfile.knownSample);
 
   const known = body.known === undefined ? undefined : words(body.known);
+  const knownIds = body.knownIds === undefined ? undefined : ids(body.knownIds, MAX_KNOWN_WORDS);
+  const excludeIds =
+    body.excludeIds === undefined ? undefined : ids(body.excludeIds, MAX_BAND_EXCEPTIONS);
+
+  const rawBand = Number(body.knownBand);
+  const knownBand: HskBand | undefined =
+    Number.isInteger(rawBand) && rawBand >= 1 && rawBand <= 7 ? (rawBand as HskBand) : undefined;
 
   return {
     entryId,
     ...(senseIndex === undefined ? {} : { senseIndex }),
     profile: { estimatedBand, knownSample },
     ...(known === undefined ? {} : { known }),
+    ...(knownIds === undefined ? {} : { knownIds }),
+    ...(knownBand === undefined ? {} : { knownBand }),
+    ...(excludeIds === undefined ? {} : { excludeIds }),
   };
+}
+
+/**
+ * A list of entry ids, bounded. Unlike a headword an id is never trimmed to
+ * length — half an id is a different id, and the honest move is to ignore it.
+ */
+function ids(value: unknown, max: number): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  for (const item of value) {
+    if (typeof item !== 'string') continue;
+    const id = item.trim();
+    if (!id || id.length > MAX_ENTRY_ID_CHARS) continue;
+    out.push(id);
+    if (out.length >= max) break;
+  }
+  return out;
 }
 
 /** A list of headwords, cleaned and bounded. Anything else in it is ignored. */
@@ -158,24 +202,80 @@ function words(value: unknown): string[] {
 }
 
 /**
- * The dictionary rows behind a list of simplified headwords, most frequent
- * first. Every reading of a headword is included: the learner knows the word
- * they see, and which of its readings a sentence wants is the model's problem —
- * both are equally known.
+ * What the client declared about the learner's vocabulary. `KnownSet` on the
+ * other side of the wire (`lib/ai/examples.ts`) — the same three shapes, minus
+ * the dictionary the browser does not have.
  */
-export function supportEntries(headwords: readonly string[], exclude: EntryId): Entry[] {
+export interface KnownPool {
+  /** Exact entry ids: a `known_words` row, or a card mature enough to count. */
+  ids?: readonly string[];
+  /** `settings.knownBand` — every entry at or below it is assumed known. */
+  knownBand?: HskBand;
+  /** Entries inside those bands the learner is still learning: a card outranks the band. */
+  excludeIds?: readonly string[];
+  /** Simplified headwords, for a caller that has no ids. See below. */
+  headwords?: readonly string[];
+}
+
+/**
+ * The dictionary rows the learner knows, most frequent first — the **support**
+ * pool, which is both what the prompt may build from and (after the cap) what a
+ * sentence may cite.
+ *
+ * It is assembled from ids and bands, never from characters, and that is the
+ * whole point. A headword is not a word: 看 is `看|看[kan4]` "to see" (HSK 1)
+ * *and* `看|看[kan1]` "to look after" (HSK 6); 会 is huì and kuài; 还 is hái,
+ * huán and the surname Huán. Expanding a known headword into every entry that
+ * shares its characters — which is what this function used to do — put readings
+ * the learner has never met into the whitelist, and the card back then showed
+ * them under the heading "Sentences from words you know". The tone is the whole
+ * difference in meaning (`lib/ai/fake.ts`), and a learner cannot check it —
+ * that is why they are here.
+ *
+ * The three sources:
+ *
+ *  1. **`ids`** — exact, and the only one that needs no judgement.
+ *  2. **`knownBand`** — the /settings "Assume known through HSK N" control.
+ *     `hskBand` is a property of an *entry*, so the expansion is per reading and
+ *     stays exact: 看[kan4] is band 1, 看[kan1] is band 6. `excludeIds` carries
+ *     `wordState`'s rule that a card outranks the band, so a word in band 1 the
+ *     learner is being taught today does not come back as known.
+ *  3. **`headwords`** — the fallback for a caller with no ids, and deliberately
+ *     lossy: a headword with more than one entry is **skipped**, because
+ *     "the learner knows 看" does not say which 看. Variants, proper nouns and
+ *     surnames are dropped too; none of them is a word somebody learned.
+ */
+export function supportEntries(pool: KnownPool, exclude: EntryId): Entry[] {
   const index = getDictIndex();
-  const seen = new Set<EntryId>();
+  const excluded = new Set<string>(pool.excludeIds ?? []);
+  const seen = new Set<EntryId>([exclude]);
   const out: Entry[] = [];
-  for (const word of headwords) {
-    for (const id of index.bySimp.get(word) ?? []) {
-      if (id === exclude || seen.has(id)) continue;
-      const entry = getEntry(id);
-      if (!entry) continue;
-      seen.add(id);
-      out.push(entry);
+
+  const add = (id: EntryId): void => {
+    if (seen.has(id) || excluded.has(id)) return;
+    const entry = getEntry(id);
+    if (!entry) return;
+    seen.add(id);
+    out.push(entry);
+  };
+
+  for (const id of pool.ids ?? []) add(id);
+
+  if (pool.knownBand !== undefined) {
+    for (const band of HSK_BANDS) {
+      if (band > pool.knownBand) continue;
+      for (const id of index.byHsk.get(band) ?? []) add(id);
     }
   }
+
+  for (const word of pool.headwords ?? []) {
+    const bucket = index.bySimp.get(word) ?? [];
+    if (bucket.length !== 1) continue;
+    const entry = getEntry(bucket[0]);
+    if (!entry || entry.properNoun || entry.isVariant || entry.surname) continue;
+    add(entry.id);
+  }
+
   return out.sort(
     (a, b) =>
       (a.freqRank ?? Number.MAX_SAFE_INTEGER) - (b.freqRank ?? Number.MAX_SAFE_INTEGER) ||
@@ -187,8 +287,8 @@ export interface ExamplesInput {
   entry: Entry;
   senseIndex?: number;
   profile: LearnerProfile;
-  /** The known headwords the sentences may be built from. */
-  known: readonly string[];
+  /** What the learner knows: the pool the sentences may be built from. */
+  known: KnownPool;
 }
 
 export type ExamplesOutcome =
@@ -235,11 +335,11 @@ export async function examplesFor(
   }
 
   // `retrieved` is what may be cited at all; `allowed` is what may be cited
-  // *and shown*. They are the same set by construction here — the model is only
-  // ever offered words the learner knows — and they are still enforced
-  // separately, because the day the route offers a wider pool (a live provider
-  // that needs a particle the learner has not formally met) the promise on the
-  // card back must not quietly widen with it.
+  // *and shown*. They are the same set by construction here — `supportEntries`
+  // resolves ids and bands, so every entry in it is one `wordState` calls known
+  // — and they are still enforced separately, because the day the route offers
+  // a wider pool (a live provider that needs a particle the learner has not
+  // formally met) the promise on the card back must not quietly widen with it.
   const sentences = groundExamples(
     parsed.data,
     {
@@ -285,7 +385,7 @@ export async function POST(request: Request): Promise<Response> {
 
   const parsedBody = parseBody(payload);
   if (typeof parsedBody === 'string') return badRequest(parsedBody);
-  const { entryId, senseIndex, profile, known } = parsedBody;
+  const { entryId, senseIndex, profile, known, knownIds, knownBand, excludeIds } = parsedBody;
 
   const provider = selectProvider();
 
@@ -314,7 +414,12 @@ export async function POST(request: Request): Promise<Response> {
       entry,
       ...(senseIndex === undefined ? {} : { senseIndex }),
       profile,
-      known: known ?? profile.knownSample,
+      known: {
+        ...(known === undefined ? {} : { headwords: known }),
+        ...(knownIds === undefined ? {} : { ids: knownIds }),
+        ...(knownBand === undefined ? {} : { knownBand }),
+        ...(excludeIds === undefined ? {} : { excludeIds }),
+      },
     },
     provider,
   );

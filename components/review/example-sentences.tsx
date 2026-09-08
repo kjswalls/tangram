@@ -15,9 +15,14 @@
  *    come from entries the route returned (or, on a cache hit, from
  *    `/api/dict/entries`) through `renderPhrase` — the ask panel's renderer,
  *    not a second copy of it.
- *  - **The filtering already happened.** Every sentence here was checked
- *    server-side against the learner's known set (`lib/ai/examples.ts`); this
- *    component draws what survived and never re-decides it.
+ *  - **The filtering already happened — and a cached row is checked again.**
+ *    Every sentence was filtered server-side against the learner's known set
+ *    (`lib/ai/examples.ts`), which is where the promise is kept for a fresh
+ *    answer. A row out of `ask_cache` is different: its key holds no known set,
+ *    and the set shrinks on the most ordinary action in the app (an Add
+ *    un-marks the word it was built from). So a cache hit runs the same filter
+ *    over the same ids before drawing anything, and a row that no longer passes
+ *    is replaced rather than shown.
  *  - **An empty answer is a normal answer.** A learner three days in knows too
  *    few words for a sentence to be buildable out of them. That is one quiet
  *    line, not an error — and it is deliberately not cached, so it fixes itself
@@ -30,11 +35,12 @@ import type { ExamplesRouteInfo, ExamplesRouteResponse } from '@/app/api/example
 import { examplesCacheKey } from '@/lib/ai/cache-key';
 import {
   citedEntryIds,
+  filterCachedSentences,
   groundedExamplesSchema,
-  knownHeadwords,
+  knownSet,
   type ExampleSentence,
 } from '@/lib/ai/examples';
-import { entryLookup, renderPhrase } from '@/lib/ai/ground';
+import { entryLookup, renderPhrase, type PhraseScript } from '@/lib/ai/ground';
 import { cn } from '@/lib/cn';
 import { getRepository } from '@/lib/db/get-db';
 import { fetchEntriesResponse } from '@/lib/dict/client';
@@ -112,10 +118,21 @@ export interface ExampleSentencesProps {
   entryId: string | null;
   /** The gloss the card is about, when it has one — it changes the sentences. */
   senseIndex?: number;
+  /**
+   * The learner's script preference, from the same settings row the card front
+   * reads (`cardFace`). A traditional card front over simplified sentences is
+   * the app answering a preference on one half of the card.
+   */
+  script?: PhraseScript;
   className?: string;
 }
 
-export function ExampleSentences({ entryId, senseIndex, className }: ExampleSentencesProps) {
+export function ExampleSentences({
+  entryId,
+  senseIndex,
+  script = 'simp',
+  className,
+}: ExampleSentencesProps) {
   const [state, setState] = useState<State>({ status: 'loading' });
 
   const requested = requestKey(entryId, senseIndex);
@@ -149,7 +166,7 @@ export function ExampleSentences({ entryId, senseIndex, className }: ExampleSent
           cards,
           known: knownIds.map((id) => ({ entryId: id })),
         });
-        const known = knownHeadwords({ settings, cards, known: knownIds });
+        const known = knownSet({ settings, cards, known: knownIds });
 
         const key = await examplesCacheKey({
           entryId,
@@ -170,15 +187,27 @@ export function ExampleSentences({ entryId, senseIndex, className }: ExampleSent
               ? await fetchEntriesResponse(ids, { signal: controller.signal })
               : { meta: { version: '' }, entries: [] };
           if (cancelled) return;
-          setState({
-            status: 'ready',
-            answered: requested,
-            sentences: cached.data.sentences,
+          // The row is a statement about a known set the key does not hold, so
+          // it is re-checked against *today's* — the filter, run again on what
+          // is about to be drawn (`filterCachedSentences`). A row that no
+          // longer passes is not shown and not repaired: the request below
+          // writes a fresh one over it.
+          const kept = filterCachedSentences(cached.data.sentences, {
+            targetId: entryId,
             entries: resolved.entries,
-            provider: info.provider,
-            cached: true,
+            set: known,
           });
-          return;
+          if (kept.length > 0) {
+            setState({
+              status: 'ready',
+              answered: requested,
+              sentences: kept,
+              entries: resolved.entries,
+              provider: info.provider,
+              cached: true,
+            });
+            return;
+          }
         }
 
         const res = await fetch('/api/examples', {
@@ -189,7 +218,13 @@ export function ExampleSentences({ entryId, senseIndex, className }: ExampleSent
             entryId,
             ...(senseIndex === undefined ? {} : { senseIndex }),
             profile,
-            known,
+            // Three shapes of one answer to "what does this learner know":
+            // headwords for the prompt, ids for the filter, and the band
+            // assumption with the cards that outrank it (`knownSet`).
+            known: known.headwords,
+            knownIds: known.ids,
+            knownBand: known.knownBand,
+            excludeIds: known.excludeIds,
           }),
         });
         if (!res.ok) {
@@ -249,8 +284,19 @@ export function ExampleSentences({ entryId, senseIndex, className }: ExampleSent
   const failed = settled?.status === 'error' ? settled : undefined;
   const lookup = useMemo(() => entryLookup(ready?.entries ?? []), [ready?.entries]);
   const rendered = useMemo(
-    () => (ready ? ready.sentences.map((sentence) => renderPhrase(sentence, lookup)) : []),
-    [ready, lookup],
+    () =>
+      ready
+        ? ready.sentences
+            .map((sentence) => renderPhrase(sentence, lookup, script))
+            // Last gate, and the only one that sees what is actually about to be
+            // painted. `renderPhrase` ORs the phrase flag with every token's
+            // `unverified` and `missing`, so this drops a sentence whose cited
+            // entry no longer resolves — which would otherwise draw a `?` and a
+            // `—` mid-sentence under a heading that promises the opposite. The
+            // empty line below is the honest answer when it empties the list.
+            .filter((phrase) => !phrase.unverified)
+        : [],
+    [ready, lookup, script],
   );
 
   // A phrase card has no single entry behind it, so there is nothing to build a
@@ -302,10 +348,22 @@ export function ExampleSentences({ entryId, senseIndex, className }: ExampleSent
                     key={`${token.entryId ?? token.text}-${position}`}
                     data-testid="example-token"
                     data-entry-id={token.entryId ?? ''}
+                    data-polyphone={token.polyphone ? 'true' : undefined}
                     className="flex flex-col items-center"
+                    // The same hint the ask panel gives a cited polyphone
+                    // (§3.4): these characters have more than one reading, and
+                    // the one under them is the one the sentence means.
+                    title={
+                      token.polyphone
+                        ? 'This character has more than one reading — the one shown is the one this sentence uses.'
+                        : undefined
+                    }
                   >
                     <span className="hanzi text-xl">{token.text || '?'}</span>
-                    <span className="text-xs text-muted">{token.pinyin || '—'}</span>
+                    <span className="text-xs text-muted">
+                      {token.pinyin || '—'}
+                      {token.polyphone ? ' · polyphone' : ''}
+                    </span>
                   </span>
                 ))}
               </p>

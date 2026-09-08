@@ -208,6 +208,8 @@ export function ReviewSession() {
             <ExampleSentences
               key={card.id}
               entryId={card.entryId}
+              // The same preference the front is drawn with: one card, one script.
+              script={script}
               {...(card.senseIndex === undefined ? {} : { senseIndex: card.senseIndex })}
             />
           ) : null
@@ -215,7 +217,16 @@ export function ReviewSession() {
       />
 
       {revealed ? (
-        <GradeBar options={options} disabled={grading} suggested={suggested} onGrade={onGrade} />
+        // Sticky to the bottom of the viewport on a phone. The back of a card
+        // can be taller than the screen — glosses, the i+1 block, the context
+        // box — and the four buttons are the only way to move on when there is
+        // no keyboard to press 1–4 on. Above `sm` it sits where it always did.
+        <div
+          data-testid="grade-dock"
+          className="sticky bottom-0 z-10 bg-background pt-2 pb-2 sm:static sm:bg-transparent sm:p-0"
+        >
+          <GradeBar options={options} disabled={grading} suggested={suggested} onGrade={onGrade} />
+        </div>
       ) : (
         <Button data-testid="reveal" size="lg" className="w-full" onClick={reveal}>
           Show answer

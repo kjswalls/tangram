@@ -114,6 +114,74 @@ describe('free recall in a review session', () => {
     expect(row.rating).toBe(2);
   });
 
+  it('takes the keyboard, so a space in the answer is a space and not a flip', async () => {
+    // Without focus the box is eight tabs or a mouse trip away, and — worse —
+    // the first space in a natural answer ("close by") reaches the session's
+    // window listener as a *reveal* key: the card flips mid-word and the box
+    // disables itself. The session ignores keys aimed at an `INPUT`, so focus
+    // is what makes a space a space.
+    const fetcher = deferredFetch();
+    await openSession();
+
+    const box = screen.getByTestId('recall-answer');
+    expect(box).toHaveFocus();
+
+    fireEvent.keyDown(box, { key: ' ' });
+    expect(screen.queryByTestId('card-back')).toBeNull();
+    expect(box).not.toBeDisabled();
+    expect(screen.queryByTestId('recall-missed')).toBeNull();
+    expect(fetcher.impl).not.toHaveBeenCalled();
+
+    // And the keys still grade once the answer is in and focus is handed back.
+    type('to plan');
+    await screen.findByTestId('card-back');
+    fireEvent.keyDown(window, { key: '2' });
+    await waitFor(async () => expect(await getDb().reviews.count()).toBe(1));
+  });
+
+  it('says who graded it when the grader is the offline one', async () => {
+    // The two comparable surfaces both badge the fake (the ask panel, the i+1
+    // block). A grade recommendation is the most consequential thing this app
+    // suggests, so it does not get to be the one that does not say.
+    const fetcher = deferredFetch();
+    await openSession();
+
+    type('to plan');
+    fetcher.answer({ suggested: 3, why: 'Offline check: two of three words.', provider: 'fake' });
+    await screen.findByTestId('recall-suggestion');
+    expect(screen.getByTestId('recall-offline')).toBeVisible();
+  });
+
+  it('says nothing about being offline when a real model answered', async () => {
+    const fetcher = deferredFetch();
+    await openSession();
+
+    type('to plan');
+    fetcher.answer({ suggested: 3, why: 'The gist is there.', provider: 'anthropic' });
+    await screen.findByTestId('recall-suggestion');
+    expect(screen.queryByTestId('recall-offline')).toBeNull();
+  });
+
+  it('draws the suggestion on the Good button too, where the ring is invisible', async () => {
+    // 3 renders as the primary button — `bg-accent` — and `ring-accent` on it
+    // is the same colour on the same pixel. A suggestion of 3 is what a right
+    // but differently-worded answer scores, so it is a common suggestion and
+    // cannot be the one that shows nothing.
+    const fetcher = deferredFetch();
+    await openSession();
+
+    type('to intend');
+    fetcher.answer({ suggested: 3, why: 'The gist is there.' });
+    await screen.findByTestId('recall-suggestion');
+
+    const good = screen.getByTestId('grade-3');
+    expect(good).toHaveAttribute('data-suggested', 'true');
+    expect(good).toHaveTextContent('suggested');
+    for (const other of ['grade-1', 'grade-2', 'grade-4']) {
+      expect(screen.getByTestId(other)).not.toHaveTextContent('suggested');
+    }
+  });
+
   it('closes the box when the card is flipped another way, rather than grading the back', async () => {
     const fetcher = deferredFetch();
     await openSession();

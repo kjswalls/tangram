@@ -13,6 +13,14 @@ import { ready } from '../p3/helpers';
  * Everything else here (the flip that does not wait, the failure that says
  * nothing much) is the same promise seen from the other side — the suggestion
  * is advice, and the app never acts on it.
+ *
+ * **The grader under test is `FakeProvider`** — there is no key in this
+ * container. So nothing here pins the *number* it suggests: that number is
+ * stemmed word overlap against a gloss (`recallEcho`, lib/ai/fake.ts), not a
+ * reading of meaning, and asserting it would be asserting the word counter and
+ * would break the day a real model answers. What is pinned is the shape: one
+ * of the four grades, on the matching button and no other, offline-badged, and
+ * never written to the database.
  */
 test.describe('/review with free recall on', () => {
   test('suggests a grade and records the one the learner presses instead', async ({ page }) => {
@@ -40,9 +48,14 @@ test.describe('/review with free recall on', () => {
     // The box is on the front, where recall happens — before the answer is up.
     await expect(page.getByTestId('card-recall')).toBeVisible();
     await expect(page.getByTestId('card-back')).toHaveCount(0);
-
-    await page.getByTestId('recall-answer').fill('to plan, to intend');
-    await page.getByTestId('recall-answer').press('Enter');
+    // …and it already has the keyboard, so an answer with a space in it can be
+    // typed without a click. Space is the reveal key everywhere else on this
+    // page; inside the box it is a space.
+    await expect(page.getByTestId('recall-answer')).toBeFocused();
+    await page.keyboard.type('to plan, to intend');
+    await expect(page.getByTestId('card-back')).toHaveCount(0);
+    await expect(page.getByTestId('recall-answer')).toHaveValue('to plan, to intend');
+    await page.keyboard.press('Enter');
 
     // The flip does not wait for the grader.
     await expect(page.getByTestId('card-back')).toBeVisible();
@@ -50,23 +63,38 @@ test.describe('/review with free recall on', () => {
 
     const suggestion = page.getByTestId('recall-suggestion');
     await expect(suggestion).toBeVisible();
-    await expect(suggestion).toHaveAttribute('data-suggested', '4');
+    const suggested = Number(await suggestion.getAttribute('data-suggested'));
+    expect([1, 2, 3, 4]).toContain(suggested);
     await expect(page.getByTestId('recall-why')).not.toBeEmpty();
-    await expect(page.getByTestId('grade-4')).toHaveAttribute('data-suggested', 'true');
-    await expect(page.getByTestId('grade-2')).not.toHaveAttribute('data-suggested', 'true');
+    // Offline, and it says so — the same badge the ask panel and the i+1 block
+    // carry. This is the fake grading; nothing here is a model's judgement.
+    await expect(page.getByTestId('recall-offline')).toBeVisible();
+
+    // One button carries the cue, and it is a cue you can see without colour.
+    const rung = page.getByTestId(`grade-${suggested}`);
+    await expect(rung).toHaveAttribute('data-suggested', 'true');
+    await expect(rung).toContainText('suggested');
+    for (const rating of [1, 2, 3, 4].filter((value) => value !== suggested)) {
+      await expect(page.getByTestId(`grade-${rating}`)).not.toHaveAttribute(
+        'data-suggested',
+        'true',
+      );
+      await expect(page.getByTestId(`grade-${rating}`)).not.toContainText('suggested');
+    }
 
     // Still nothing written: a suggestion on screen is not a grade.
     expect(await reviewRows(page)).toHaveLength(1);
 
-    // The learner overrides it.
-    await page.keyboard.press('2');
+    // The learner overrides it — with a key that is not the suggested one.
+    const pressed = suggested === 2 ? 3 : 2;
+    await page.keyboard.press(String(pressed));
     await expect(page.getByTestId('review-empty')).toBeVisible();
 
     const rows = await reviewRows(page);
     expect(rows).toHaveLength(2);
-    expect(rows[rows.length - 1].rating).toBe(2);
-    // What the model thought never reached the database.
-    expect(rows.some((row) => row.rating === 4)).toBe(false);
+    expect(rows[rows.length - 1].rating).toBe(pressed);
+    // What the grader thought never reached the database.
+    expect(rows.some((row) => row.rating === suggested)).toBe(false);
   });
 
   test('a failing grader costs the learner nothing but the suggestion', async ({ page }) => {

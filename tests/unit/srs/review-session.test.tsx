@@ -1,15 +1,19 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ReviewSession } from '@/components/review/review-session';
 import { closeDb, getDb, getRepository } from '@/lib/db/get-db';
 import { gradeOptions } from '@/lib/srs/session';
 import { useReviewStore } from '@/lib/stores/review';
+import { resetExamplesInfo } from '@/components/review/example-sentences';
+import type { Entry } from '@/lib/types';
 import { context, DASUAN, KANKAN } from '../db/fixtures';
 
 const DAY = 86_400_000;
 
 afterEach(async () => {
+  vi.unstubAllGlobals();
+  resetExamplesInfo();
   useReviewStore.getState().reset();
   await getDb().delete();
   await closeDb();
@@ -128,6 +132,69 @@ describe('the review session', () => {
     const others = screen.getByTestId('other-senses');
     expect(others).toHaveTextContent('Other senses (2)');
     expect(others).toHaveTextContent('to plan');
+  });
+
+  it('writes the i+1 sentences in the script the card front is written in', async () => {
+    // The front honours `settings.script` through `cardFace`; the block under
+    // the glosses is on the same card and answers the same preference. A
+    // traditional-script learner reading simplified sentences under a
+    // traditional headword is the app answering half a question.
+    const XUEXI: Entry = {
+      id: '學習|学习[xue2 xi2]',
+      simp: '学习',
+      trad: '學習',
+      pinyinNum: 'xue2 xi2',
+      pinyinMarked: 'xuéxí',
+      glosses: ['to learn'],
+      classifiers: [],
+      properNoun: false,
+      isVariant: false,
+      surname: false,
+      hskBand: 1,
+      freqRank: 400,
+    };
+    resetExamplesInfo();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const body =
+          url === '/api/examples' && init?.method === 'POST'
+            ? {
+                provider: 'fake',
+                promptVersion: 'v1',
+                entryId: DASUAN.id,
+                dictVersion: 'test',
+                sentences: [
+                  {
+                    tokens: [{ entryId: XUEXI.id }, { entryId: DASUAN.id }],
+                    en: 'I plan to study.',
+                    register: '',
+                    unverified: false,
+                  },
+                ],
+                entries: [XUEXI, DASUAN],
+                support: 1,
+                cacheable: true,
+              }
+            : { provider: 'fake', promptVersion: 'v1' };
+        return { ok: true, status: 200, json: async () => body } as Response;
+      }),
+    );
+
+    const repo = getRepository();
+    await repo.setSettings({ script: 'trad', newPerDay: 0 });
+    await repo.addCardFromEntry(DASUAN, context({ source: 'lookup' }));
+
+    render(<ReviewSession />);
+    await screen.findByTestId('review-card');
+    fireEvent.keyDown(window, { key: ' ' });
+    await screen.findByTestId('card-back');
+
+    const tokens = await screen.findAllByTestId('example-token');
+    expect(tokens[0]).toHaveTextContent('學習');
+    expect(tokens[0]).not.toHaveTextContent('学习');
+    expect(tokens[0]).toHaveTextContent('xuéxí');
   });
 
   it('says when the next card is due once the queue is empty', async () => {

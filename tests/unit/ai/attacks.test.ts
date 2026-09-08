@@ -174,7 +174,7 @@ describe('polyphone means several readings, not several rows', () => {
 });
 
 describe('an answer is bounded', () => {
-  it('caps notes and tokens, truncates prose and drops a duplicate match', () => {
+  it('caps notes, truncates prose, drops a duplicate match — and drops an over-long phrase', () => {
     const dasuan = entryFor('打算');
     const wo = entryFor('我');
     const grounded = ground(
@@ -191,6 +191,11 @@ describe('an answer is bounded', () => {
             en: 'me '.repeat(5_000),
             register: 'neutral',
           },
+          {
+            tokens: [{ entryId: wo.id }, { entryId: dasuan.id }],
+            en: 'x'.repeat(50_000),
+            register: 'neutral',
+          },
         ],
         notes: Array.from({ length: 10_000 }, (_, index) => `note number ${index}`),
       }),
@@ -199,7 +204,12 @@ describe('an answer is bounded', () => {
 
     expect(grounded.interpretation.length).toBeLessThanOrEqual(2_000);
     expect(grounded.matches).toHaveLength(2);
-    expect(grounded.sayIt[0].tokens.length).toBeLessThanOrEqual(32);
+    // The 5,000-token phrase is **gone**, not shortened to 32. Trimming it
+    // would put the first 32 tokens on screen under an English translation of
+    // the whole thing, and would hide whatever the model wrote past the cut
+    // from every rule in `ground` — see `MAX_PHRASE_TOKENS`.
+    expect(grounded.sayIt).toHaveLength(1);
+    expect(grounded.sayIt[0].tokens).toHaveLength(2);
     expect(grounded.sayIt[0].en.length).toBeLessThanOrEqual(2_000);
     expect(grounded.notes).toHaveLength(8);
   });

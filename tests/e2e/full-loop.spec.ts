@@ -235,6 +235,10 @@ test('the whole loop with i+1 sentences and free recall on', async ({ page }) =>
       await expect(page.getByTestId('recall-answer')).toHaveValue(RECALL_ANSWER);
       expect(await page.evaluate(() => window.__tangram.db.reviews.count())).toBe(rowsBefore);
 
+      // The suggestion says who made it: offline here, and badged as such.
+      await expect(page.getByTestId('recall-offline')).toBeVisible();
+      await expect(page.getByTestId(`grade-${suggested}`)).toContainText('suggested');
+
       // The i+1 block, on the same back, at the same time: sentences built from
       // words this learner knows, or the honest line saying there are not
       // enough of them yet. Both are answers; a spinner that never settles and
@@ -252,15 +256,45 @@ test('the whole loop with i+1 sentences and free recall on', async ({ page }) =>
         // Every token on the back cites a dictionary row — the filter's promise,
         // seen from the browser.
         for (const value of cited) expect(value).not.toBe('');
-        const known = new Set(
-          await page.evaluate(() => window.__tangram.repo.knownEntryIds()),
-        );
         const targetId = await page.evaluate(async (cardId) => {
           const row = (await window.__tangram.repo.allCards()).find((item) => item.id === cardId);
           return row?.entryId ?? '';
         }, cards.minedId);
-        for (const value of cited) {
-          expect(known.has(value) || value === targetId).toBe(true);
+        // By entry id, and by the app's own rule for "known" — a declared row,
+        // a card that has matured, or a band the learner assumed past with no
+        // card on the word. A check on characters passes for a reading of a
+        // known headword that the learner has never met.
+        const verdicts = await page.evaluate(async (ids: string[]) => {
+          const repo = window.__tangram.repo;
+          const [known, allCards, settings] = await Promise.all([
+            repo.knownEntryIds(),
+            repo.allCards(),
+            repo.getSettings(),
+          ]);
+          const declared = new Set(known);
+          const byEntry = new Map(
+            allCards.filter((row) => row.entryId).map((row) => [row.entryId as string, row]),
+          );
+          const query = ids.map((id) => `ids=${encodeURIComponent(id)}`).join('&');
+          const bands = new Map<string, number | undefined>(
+            (
+              (await (await fetch(`/api/dict/entries?${query}`)).json()).entries as {
+                id: string;
+                hskBand?: number;
+              }[]
+            ).map((entry) => [entry.id, entry.hskBand]),
+          );
+          return ids.map((id) => {
+            if (declared.has(id)) return 'known';
+            const row = byEntry.get(id);
+            if (row) return row.fsrs.state === 2 && row.fsrs.stability >= 21 ? 'known' : 'learning';
+            const band = bands.get(id);
+            return band !== undefined && band <= settings.knownBand ? 'known' : 'new';
+          });
+        }, cited);
+        for (const [index, value] of cited.entries()) {
+          if (value === targetId) continue;
+          expect(verdicts[index], `${value} is on the back of the card`).toBe('known');
         }
       }
 
@@ -270,9 +304,12 @@ test('the whole loop with i+1 sentences and free recall on', async ({ page }) =>
       continue;
     }
 
-    // Every other card is one of the demo's: flipped the ordinary way, which
+    // Every other card is one of the demo's: flipped without answering, which
     // closes the recall box rather than letting a grade be typed off the back.
-    await page.keyboard.press('Space');
+    // The reveal button, not Space: with free recall on, the box has the
+    // keyboard (a space belongs to the answer being typed), so "Show answer" is
+    // the way past it that does not go through the box.
+    await page.getByTestId('reveal').click();
     await expect(page.getByTestId('card-back')).toBeVisible();
     await expect(page.getByTestId('recall-missed')).toBeVisible();
     await gradeAndAdvance(page, id, '3');

@@ -22,6 +22,18 @@ export interface ListCardProps {
 export function ListCard({ view, busy, onToggleActive, onMarkAllKnown }: ListCardProps) {
   const { list, count, knownCount } = view;
   const allKnown = count > 0 && knownCount === count;
+  /**
+   * Why the button is disabled, said out loud.
+   *
+   * There are two reasons and they mean opposite things: `busy` is "this write
+   * is in flight, wait", `all-known` is "there is nothing left to do here".
+   * A list whose band is at or below `settings.knownBand` reaches `all-known`
+   * the moment its members are materialised, without anyone pressing anything —
+   * so a caller (or a test) that cannot tell the two apart is left clicking a
+   * button that will never enable. `idle` is the only state a press does
+   * anything in.
+   */
+  const markState = busy ? 'busy' : allKnown ? 'all-known' : 'idle';
 
   return (
     <Card
@@ -63,7 +75,8 @@ export function ListCard({ view, busy, onToggleActive, onMarkAllKnown }: ListCar
         <Button
           variant="secondary"
           size="sm"
-          disabled={busy || allKnown}
+          data-mark-state={markState}
+          disabled={markState !== 'idle'}
           onClick={onMarkAllKnown}
           aria-label={`Mark all known: ${list.name}`}
         >

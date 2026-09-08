@@ -57,8 +57,20 @@ export interface RecallInputProps {
    * names and discards it otherwise.
    */
   onSuggestion?: (cardId: string, suggestion: RecallSuggestion | null) => void;
-  /** The network seam, injected by tests. */
+  /** The network seam, injected by tests — and by the production direction,
+   *  which grades an exact answer locally and never asks anyone
+   *  (`productionRecallRequest`, lib/srs/direction.ts). */
   request?: RecallRequest;
+  /**
+   * What the box is asking for. It defaults to the meaning, which is what the
+   * recognition card wants; the production card asks for the characters
+   * instead. Only the two strings differ — the state machine, the "nothing is
+   * ever submitted for the learner" rule and the late-suggestion guard are the
+   * same box either way, which is the point of passing copy rather than
+   * writing a second one.
+   */
+  label?: string;
+  placeholder?: string;
 }
 
 export function RecallInput({
@@ -67,6 +79,8 @@ export function RecallInput({
   onReveal,
   onSuggestion,
   request = requestRecallGrade,
+  label = 'What does it mean?',
+  placeholder = 'in your own words',
 }: RecallInputProps) {
   const [stored, dispatch] = useReducer(recallReducer, card.id, blankRecall);
   const requestIdRef = useRef(0);
@@ -161,7 +175,7 @@ export function RecallInput({
   return (
     <div data-testid="recall" data-phase={state.phase} className="space-y-2">
       <label htmlFor={fieldId} className="block text-xs tracking-wide text-muted uppercase">
-        What does it mean?
+        {label}
       </label>
       <div className="flex items-center gap-2">
         <Input
@@ -183,7 +197,7 @@ export function RecallInput({
            */
           autoFocus={!revealed}
           autoComplete="off"
-          placeholder="in your own words"
+          placeholder={placeholder}
           value={state.answer}
           disabled={closed}
           onChange={(event) =>

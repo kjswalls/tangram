@@ -3,14 +3,17 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { AddReverse } from '@/components/review/add-reverse';
 import { ExampleSentences } from '@/components/review/example-sentences';
 import { GradeBar } from '@/components/review/grade-bar';
 import { RecallInput } from '@/components/review/recall-input';
+import { ProductionCard } from '@/components/review/production-card';
 import { ReviewCard } from '@/components/review/review-card';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import type { RecallSuggestion } from '@/lib/ai/recall';
 import { DEFAULT_SETTINGS, type StoredRating } from '@/lib/db/schema';
+import { isProduction, productionRecallRequest } from '@/lib/srs/direction';
 import { emptyStateMessage, gradeOptions, isRevealKey, ratingFromKey } from '@/lib/srs/session';
 import { useReviewStore } from '@/lib/stores/review';
 
@@ -71,11 +74,21 @@ export function ReviewSession() {
   const examplesOnBack = settings?.examplesOnBack ?? DEFAULT_SETTINGS.examplesOnBack ?? true;
   // A phrase card has no dictionary entry to judge an answer against (its
   // meaning is the English on its back), so the box is offered on word cards.
+  const judgeable = card !== undefined && card.kind === 'word' && card.entryId !== null;
+  const production = card !== undefined && isProduction(card);
   const freeRecall =
-    (settings?.freeRecall ?? DEFAULT_SETTINGS.freeRecall ?? false) &&
-    card !== undefined &&
-    card.kind === 'word' &&
-    card.entryId !== null;
+    (settings?.freeRecall ?? DEFAULT_SETTINGS.freeRecall ?? false) && judgeable && !production;
+  /**
+   * The production card's box is the card. Typing the hanzi is the exercise, so
+   * it is not gated on `settings.freeRecall` — that toggle is about offering to
+   * type a *meaning* the recognition card would otherwise only ask you to think
+   * of. What it is handed is a grader that settles an exact answer in the
+   * browser and only asks the provider about a near miss.
+   */
+  const productionRequest = useMemo(
+    () => (production && card ? productionRecallRequest(card, script) : undefined),
+    [production, card, script],
+  );
   const suggested =
     card !== undefined && suggestion?.cardId === card.id ? suggestion.value.suggested : null;
 
@@ -184,42 +197,79 @@ export function ReviewSession() {
         </p>
       </div>
 
-      <ReviewCard
-        card={card}
-        script={script}
-        revealed={revealed}
-        peeked={peeked}
-        onPeek={peek}
-        onReveal={reveal}
-        recall={
-          freeRecall ? (
-            // Keyed on the card: a new card is a new question, and the key is
-            // what abandons the previous one's request rather than letting its
-            // answer land under a different word.
+      {production ? (
+        <ProductionCard
+          card={card}
+          script={script}
+          revealed={revealed}
+          onReveal={reveal}
+          recall={
             <RecallInput
               key={card.id}
               card={card}
               revealed={revealed}
               onReveal={reveal}
               onSuggestion={onSuggestion}
+              request={productionRequest}
+              label="Write it in hanzi"
+              placeholder="the characters"
             />
-          ) : null
-        }
-        // The slot only mounts once the back is on screen, which is what keeps
-        // the flip instant: the sentences are fetched after the reveal, never
-        // before it. Off means gone, not hidden.
-        examples={
-          examplesOnBack ? (
-            <ExampleSentences
-              key={card.id}
-              entryId={card.entryId}
-              // The same preference the front is drawn with: one card, one script.
-              script={script}
-              {...(card.senseIndex === undefined ? {} : { senseIndex: card.senseIndex })}
-            />
-          ) : null
-        }
-      />
+          }
+          examples={
+            examplesOnBack ? (
+              <ExampleSentences
+                key={card.id}
+                entryId={card.entryId}
+                script={script}
+                {...(card.senseIndex === undefined ? {} : { senseIndex: card.senseIndex })}
+              />
+            ) : null
+          }
+        />
+      ) : (
+        <ReviewCard
+          card={card}
+          script={script}
+          revealed={revealed}
+          peeked={peeked}
+          onPeek={peek}
+          onReveal={reveal}
+          recall={
+            freeRecall ? (
+              // Keyed on the card: a new card is a new question, and the key is
+              // what abandons the previous one's request rather than letting its
+              // answer land under a different word.
+              <RecallInput
+                key={card.id}
+                card={card}
+                revealed={revealed}
+                onReveal={reveal}
+                onSuggestion={onSuggestion}
+              />
+            ) : null
+          }
+          actions={
+            // Offered only where a reverse can exist and the learner has said
+            // they want the direction at all. Pressing it is what makes the card;
+            // the setting only opens the door (lib/srs/direction.ts).
+            settings?.productionDirection && judgeable ? <AddReverse key={card.id} card={card} /> : null
+          }
+          // The slot only mounts once the back is on screen, which is what keeps
+          // the flip instant: the sentences are fetched after the reveal, never
+          // before it. Off means gone, not hidden.
+          examples={
+            examplesOnBack ? (
+              <ExampleSentences
+                key={card.id}
+                entryId={card.entryId}
+                // The same preference the front is drawn with: one card, one script.
+                script={script}
+                {...(card.senseIndex === undefined ? {} : { senseIndex: card.senseIndex })}
+              />
+            ) : null
+          }
+        />
+      )}
 
       {revealed ? (
         // Sticky to the bottom of the viewport on a phone. The back of a card

@@ -19,6 +19,7 @@ import type { Repository } from '@/lib/db/repository';
 import { getEntrySource } from '@/lib/lists/entry-source';
 import { ensureMembers, markListKnown } from '@/lib/lists/members';
 import { ensureSystemLists } from '@/lib/lists/system-lists';
+import { preferRecognition } from '@/lib/srs/direction';
 import { wordState } from '@/lib/srs/states';
 import type { EntryId } from '@/lib/types';
 
@@ -79,8 +80,13 @@ async function readViews(repo: Repository): Promise<{ lists: ListRow[]; views: L
     repo.allCards(),
   ]);
   const knownIds = new Set(known);
+  // One word, up to two cards since Phase 8 (one per direction). The count is
+  // about the word, so the recognition card answers for it (`preferRecognition`).
   const cardByEntry = new Map<string, CardRow>();
-  for (const card of cards) if (card.entryId) cardByEntry.set(card.entryId, card);
+  for (const card of cards) {
+    if (!card.entryId) continue;
+    cardByEntry.set(card.entryId, preferRecognition(cardByEntry.get(card.entryId), card));
+  }
 
   const views: ListView[] = [];
   for (const list of lists) {

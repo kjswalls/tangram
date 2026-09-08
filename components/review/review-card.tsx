@@ -9,6 +9,7 @@ import { cn } from '@/lib/cn';
 import type { CardRow, ScriptPreference } from '@/lib/db/schema';
 import { isPhraseSnapshot } from '@/lib/db/schema';
 import { resolveContext } from '@/lib/srs/context';
+import { directionOf } from '@/lib/srs/direction';
 import { cardBack, cardFace } from '@/lib/srs/presentation';
 
 export interface ReviewCardProps {
@@ -31,6 +32,13 @@ export interface ReviewCardProps {
    * glosses: after the learner has seen the meaning, not instead of it.
    */
   examples?: ReactNode;
+  /**
+   * Anything the back offers to *do* with this card, under the meaning — Phase
+   * 8's "add the reverse" is the first. It is a slot for the same reason the
+   * other two are: the card decides where a control goes and the slot's owner
+   * decides what it does, so nothing here has to know what a direction is.
+   */
+  actions?: ReactNode;
 }
 
 /**
@@ -50,6 +58,7 @@ export function ReviewCard({
   onReveal,
   recall = null,
   examples = null,
+  actions = null,
 }: ReviewCardProps) {
   const face = cardFace(card.snapshot, script);
   const back = cardBack(card);
@@ -64,6 +73,11 @@ export function ReviewCard({
     <article
       data-testid="review-card"
       data-card-id={card.id}
+      // Recognition, in every case: the production direction has a card of its
+      // own (`components/review/production-card.tsx`). It is stated rather than
+      // assumed so that "which way round is this card?" is one attribute on
+      // both, for a reader and for a test.
+      data-direction={directionOf(card)}
       data-revealed={revealed ? 'true' : 'false'}
       className="rounded-xl border border-border bg-surface"
     >
@@ -187,6 +201,8 @@ export function ReviewCard({
               Classifier <span className="hanzi text-foreground">{back.classifiers.join(' · ')}</span>
             </p>
           ) : null}
+
+          {actions ? <div data-testid="card-actions">{actions}</div> : null}
 
           {card.note ? (
             <p data-testid="card-note" className="text-sm text-muted italic">

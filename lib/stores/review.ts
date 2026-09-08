@@ -34,6 +34,7 @@ import { create } from 'zustand';
 
 import type { CardRow, SettingsRow, StoredRating } from '@/lib/db/schema';
 import { loadToday } from '@/lib/lists/today';
+import { spaceDirections } from '@/lib/srs/direction';
 import { nextDueAt } from '@/lib/srs/session';
 
 export interface ReviewState {
@@ -98,7 +99,12 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
       const summary = await loadToday({ repo, now });
       const all = await repo.allCards();
       set({
-        queue: summary.queue.cards,
+        // The queue as `buildQueue` ordered it, with one adjustment that is not
+        // the queue's business: a word's two directions are never shown back to
+        // back (Phase 8, `lib/srs/direction.ts`). Recognition immediately
+        // followed by production of the same word is not a test of the second
+        // memory — the answer is on the back of the card just graded.
+        queue: spaceDirections(summary.queue.cards),
         settings: summary.settings,
         nextDue: nextDueAt(all, now),
         waiting: summary.queue.draws.length,

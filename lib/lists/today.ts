@@ -66,7 +66,9 @@ async function run(input: TodayInput): Promise<TodaySummary> {
   let created: CardRow[] = [];
   let after = settings;
   let drawError: string | undefined;
+  let drew = false;
   if (input.introduce !== false && first.drawLimit > 0) {
+    drew = true;
     try {
       const candidates = await collectDrawCandidates({
         repo,
@@ -84,9 +86,6 @@ async function run(input: TodayInput): Promise<TodaySummary> {
           now,
           source,
           settings,
-          // The card set is already in hand: pass it so the counter cannot be
-          // charged twice for a word that was drawn and created a moment ago.
-          carded: new Set(cards.flatMap((card) => (card.entryId ? [card.entryId] : []))),
           // The draw has just read the dictionary, so the source knows which
           // snapshot these rows came from; without it the card records
           // 'unknown' and can never be re-checked against a rebuilt dictionary.
@@ -102,7 +101,13 @@ async function run(input: TodayInput): Promise<TodaySummary> {
     }
   }
 
-  const queue = buildQueue({ now, cards: [...cards, ...created], settings: after });
+  // The card table is re-read whenever a draw ran, rather than assumed to be
+  // what was read plus what this call created. A second tab introducing the
+  // same words a moment earlier leaves `created` empty here — its cards are
+  // today's all the same, and a page reporting "0 new" over four rows in the
+  // database would send the learner to a review it says is empty.
+  const settled = drew ? await repo.allCards() : cards;
+  const queue = buildQueue({ now, cards: settled, settings: after });
 
   return {
     now,

@@ -140,8 +140,9 @@ export async function addPhraseCardChecked(
   tokens: PhraseToken[],
   en: string,
   context: CardContext,
+  dictVersion?: string,
 ): Promise<PhraseAdd> {
   const existing = await phraseCardFor(repo, tokens);
   if (existing) return { card: existing, created: false };
-  return { card: await repo.addPhraseCard(tokens, en, context), created: true };
+  return { card: await repo.addPhraseCard(tokens, en, context, dictVersion), created: true };
 }

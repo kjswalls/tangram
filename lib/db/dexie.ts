@@ -14,6 +14,8 @@ import {
   DEFAULT_SETTINGS,
   SETTINGS_ID,
   STORES_V1,
+  STORES_V2,
+  systemListKey,
   type AskCacheRow,
   type CardRow,
   type EntrySnapshot,
@@ -73,7 +75,32 @@ export class TangramDb extends Dexie {
 
   constructor(name: string = DB_NAME) {
     super(name);
-    this.version(DB_VERSION).stores(STORES_V1);
+    // v1 is declared as it shipped so a database that stopped there upgrades
+    // rather than being rebuilt; v2 adds the `&systemKey` index and stamps the
+    // key onto the system lists the old database already has.
+    this.version(1).stores(STORES_V1);
+    this.version(DB_VERSION)
+      .stores(STORES_V2)
+      .upgrade(async (tx) => {
+        const table = tx.table<ListRow, string>('lists');
+        const rows = (await table.toArray()).sort((a, b) => a.createdAt - b.createdAt);
+        const claimed = new Set<string>();
+        for (const row of rows) {
+          const key = systemListKey(row.kind, row.band);
+          // A tombstone never holds the key: deleting a system list is a reset,
+          // and `ensureSystemLists` has to be able to create it again.
+          if (key === undefined || row.deletedAt !== null) continue;
+          if (claimed.has(key)) {
+            // The bug this index closes could already have run: the oldest row
+            // is the one the app has been using, so the later copy is retired
+            // rather than left to fail the index.
+            await table.put({ ...row, deletedAt: Date.now(), updatedAt: Date.now() });
+            continue;
+          }
+          claimed.add(key);
+          await table.put({ ...row, systemKey: key });
+        }
+      });
   }
 }
 
@@ -153,6 +180,76 @@ export function createDexieRepository(db: TangramDb): Repository {
     return word;
   }
 
+  /**
+   * The word-card write itself, assuming a caller that has already opened a
+   * readwrite transaction over `words` and `cards`.
+   *
+   * It is separate from `addCardFromEntry` because `introduceCard` needs the
+   * same work to happen inside a *wider* transaction — one that also holds
+   * `settings` — so that "did this call create the card?" and "charge the day
+   * for it" are one atomic decision rather than two a second tab can interleave.
+   * `created` is that decision, and only the transaction can make it honestly.
+   */
+  async function writeCard(
+    entry: Entry,
+    context: CardContext | undefined,
+    senseIndex: number | undefined,
+    dictVersion: string,
+    now: number,
+  ): Promise<{ card: CardRow; created: boolean }> {
+    const existing = (await db.cards.where('entryId').equals(entry.id).toArray())
+      .filter(alive)
+      .find((card) => card.kind === 'word' && card.senseIndex === senseIndex);
+    if (existing) {
+      // Idempotent per (entryId, senseIndex) — but not silent: an Add that
+      // brings provenance the stored card has not got writes it on.
+      const merged = mergeCardContext(existing.context, context);
+      if (!merged) return { card: existing, created: false };
+      const updated: CardRow = { ...existing, context: merged, updatedAt: now };
+      await db.cards.put(updated);
+      return { card: updated, created: false };
+    }
+
+    const word = await ensureWord(entry, dictVersion, now);
+    const fsrs = newCard(now);
+    const card: CardRow = {
+      id: newId(),
+      wordId: word.id,
+      entryId: entry.id,
+      kind: 'word',
+      direction: 'recognition',
+      snapshot: toEntrySnapshot(entry, dictVersion),
+      ...(senseIndex === undefined ? {} : { senseIndex }),
+      ...(context === undefined ? {} : { context }),
+      fsrs,
+      due: fsrs.due,
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: null,
+    };
+    await db.cards.add(card);
+    return { card, created: true };
+  }
+
+  /**
+   * `settings.introduced[dayKey] += count`, read and written inside whatever
+   * transaction the caller has open. Two tabs that each read the counter, add
+   * their own ten and write it back lose one of the two writes; the read and
+   * the write have to be the same transaction, and the *caller's* transaction
+   * at that, or the card creation it is counting is not covered by it.
+   */
+  async function bump(dayKey: string, count: number): Promise<SettingsRow> {
+    const current = await getSettings();
+    if (count <= 0) return current;
+    const updated: SettingsRow = {
+      ...current,
+      introduced: { ...current.introduced, [dayKey]: (current.introduced[dayKey] ?? 0) + count },
+      updatedAt: Date.now(),
+    };
+    await db.settings.put(updated);
+    return updated;
+  }
+
   async function getSettings(): Promise<SettingsRow> {
     const existing = await db.settings.get(SETTINGS_ID);
     if (existing) return existing;
@@ -180,43 +277,41 @@ export function createDexieRepository(db: TangramDb): Repository {
       // this returns is what a double-tapped Add awaits twice. IndexedDB
       // serialises overlapping readwrite scopes, so the second call sees the
       // first card instead of racing it into a duplicate card and word row.
-      return db.transaction('rw', db.words, db.cards, async () => {
-        const existing = (await db.cards.where('entryId').equals(entry.id).toArray())
-          .filter(alive)
-          .find((card) => card.kind === 'word' && card.senseIndex === senseIndex);
-        if (existing) {
-          // Idempotent per (entryId, senseIndex) — but not silent: an Add that
-          // brings provenance the stored card has not got writes it on.
-          const merged = mergeCardContext(existing.context, context);
-          if (!merged) return existing;
-          const updated: CardRow = { ...existing, context: merged, updatedAt: now };
-          await db.cards.put(updated);
-          return updated;
-        }
+      return db.transaction(
+        'rw',
+        db.words,
+        db.cards,
+        async () => (await writeCard(entry, context, senseIndex, dictVersion, now)).card,
+      );
+    },
 
-        const word = await ensureWord(entry, dictVersion, now);
-        const fsrs = newCard(now);
-        const card: CardRow = {
-          id: newId(),
-          wordId: word.id,
-          entryId: entry.id,
-          kind: 'word',
-          direction: 'recognition',
-          snapshot: toEntrySnapshot(entry, dictVersion),
-          ...(senseIndex === undefined ? {} : { senseIndex }),
-          ...(context === undefined ? {} : { context }),
-          fsrs,
-          due: fsrs.due,
-          createdAt: now,
-          updatedAt: now,
-          deletedAt: null,
-        };
-        await db.cards.add(card);
-        return card;
+    async introduceCard(entry, context, dayKey, dictVersion = UNKNOWN_DICT_VERSION) {
+      const now = Date.now();
+      // One transaction over the card *and* the counter. Two tabs opening Today
+      // at once both draw the same ten words: without this, both see an empty
+      // card table, both create, and both charge — twenty introductions for ten
+      // cards, or ten charged twice. Inside the transaction the second tab finds
+      // the first tab's card committed, `created` is false, and the day is not
+      // charged again. Serialising these writes is IndexedDB's job and it does
+      // it across tabs, which a BroadcastChannel cannot (the tabs can be in
+      // different processes, and the message can arrive after the write).
+      return db.transaction('rw', db.words, db.cards, db.settings, async () => {
+        const { card, created } = await writeCard(entry, context, undefined, dictVersion, now);
+        const settings = created ? await bump(dayKey, 1) : await getSettings();
+        return { card, created, settings };
       });
     },
 
-    async addPhraseCard(tokens: PhraseToken[], en: string, context: CardContext) {
+    async bumpIntroduced(dayKey, count) {
+      return db.transaction('rw', db.settings, async () => bump(dayKey, count));
+    },
+
+    async addPhraseCard(
+      tokens: PhraseToken[],
+      en: string,
+      context: CardContext,
+      dictVersion: string = UNKNOWN_DICT_VERSION,
+    ) {
       const now = Date.now();
       const snapshot: PhraseSnapshot = {
         tokens,
@@ -228,7 +323,7 @@ export function createDexieRepository(db: TangramDb): Repository {
         // token at all; this is the layer below saying the same thing.
         pinyinMarked: tokens.map((token) => token.pinyinMarked ?? '?').join(' '),
         en,
-        dictVersion: UNKNOWN_DICT_VERSION,
+        dictVersion,
       };
       const fsrs = newCard(now);
       const card: CardRow = {
@@ -358,20 +453,36 @@ export function createDexieRepository(db: TangramDb): Repository {
 
     async createList(input: CreateListInput) {
       const now = Date.now();
-      const row: ListRow = {
-        id: newId(),
-        name: input.name,
-        owner: input.owner ?? 'user',
-        kind: input.kind,
-        ...(input.band === undefined ? {} : { band: input.band }),
-        active: input.active ?? true,
-        order: input.order ?? (await db.lists.count()),
-        createdAt: now,
-        updatedAt: now,
-        deletedAt: null,
-      };
-      await db.lists.add(row);
-      return row;
+      const systemKey = systemListKey(input.kind, input.band);
+      // A system list is one row per natural key, and the check has to run in
+      // the same transaction as the insert: two tabs both read "not there yet"
+      // otherwise, and IndexedDB is the only thing either of them shares. The
+      // `&systemKey` index is the backstop underneath this — if a path ever
+      // inserts without asking, the database refuses it rather than growing a
+      // second "Looked up" nothing reads.
+      return db.transaction('rw', db.lists, async () => {
+        if (systemKey !== undefined) {
+          const existing = (await db.lists.where('systemKey').equals(systemKey).toArray()).find(
+            alive,
+          );
+          if (existing) return existing;
+        }
+        const row: ListRow = {
+          id: newId(),
+          name: input.name,
+          owner: input.owner ?? 'user',
+          kind: input.kind,
+          ...(input.band === undefined ? {} : { band: input.band }),
+          active: input.active ?? true,
+          order: input.order ?? (await db.lists.count()),
+          ...(systemKey === undefined ? {} : { systemKey }),
+          createdAt: now,
+          updatedAt: now,
+          deletedAt: null,
+        };
+        await db.lists.add(row);
+        return row;
+      });
     },
 
     async listMembers(listId) {
@@ -426,7 +537,14 @@ export function createDexieRepository(db: TangramDb): Repository {
       // tombstoned list is a row nothing can ever read or clean up.
       await db.transaction('rw', db.lists, db.list_members, async () => {
         const row = await db.lists.get(id);
-        if (row && alive(row)) await db.lists.put({ ...row, deletedAt: now, updatedAt: now });
+        if (row && alive(row)) {
+          // The natural key goes with the row. Deleting a system list is a
+          // reset — `ensureSystemLists` makes it again on the next visit — and
+          // a tombstone still holding `systemKey` would make that impossible.
+          const released: ListRow = { ...row, deletedAt: now, updatedAt: now };
+          delete released.systemKey;
+          await db.lists.put(released);
+        }
         const members = (await db.list_members.where('listId').equals(id).toArray()).filter(alive);
         if (members.length > 0) {
           await db.list_members.bulkPut(members.map((member) => ({ ...member, deletedAt: now })));

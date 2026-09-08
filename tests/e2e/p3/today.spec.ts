@@ -51,11 +51,23 @@ test.describe('today', () => {
     await page.goto('/lists');
     for (const name of ['HSK 1', 'HSK 2', 'HSK 3']) {
       const card = page.locator(`[data-list-name="${name}"]`);
-      await card.getByRole('button', { name: `Mark all known: ${name}` }).click();
-      await expect(card.getByRole('button', { name: `Mark all known: ${name}` })).toHaveText(
-        'All known',
-        { timeout: 120_000 },
-      );
+      // `/lists` materialises HSK membership in the background, band by band,
+      // and a card cannot know whether everything in it is already known until
+      // its own band has arrived. The count appearing is that signal — waiting
+      // on it is what makes the rest of this deterministic under load, where
+      // the fill used to land in the middle of the click below.
+      await expect(card.getByTestId('list-count')).toBeVisible({ timeout: 180_000 });
+
+      const button = card.getByRole('button', { name: `Mark all known: ${name}` });
+      // Bands at or below `settings.knownBand` (2 by default) are known by
+      // assumption, so HSK 1 and HSK 2 arrive already spent — the button is
+      // disabled because there is nothing to do, not because a write is in
+      // flight, and `data-mark-state` is what tells those two apart. Clicking a
+      // button that will never enable is what the 30 s retry used to be.
+      if ((await button.getAttribute('data-mark-state')) === 'idle') await button.click();
+
+      await expect(button).toHaveText('All known', { timeout: 120_000 });
+      await expect(button).toHaveAttribute('data-mark-state', 'all-known');
     }
 
     await page.goto('/');

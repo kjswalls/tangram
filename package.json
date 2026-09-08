@@ -8,13 +8,14 @@
   },
   "scripts": {
     "dev": "next dev",
-    "build": "pnpm data:ensure && next build",
+    "build": "pnpm data:ensure && next build && pnpm sw",
     "start": "next start",
     "lint": "eslint .",
     "test": "vitest run",
     "e2e": "playwright test",
     "data": "tsx scripts/build-data.ts",
-    "data:ensure": "tsx scripts/build-data.ts --ensure"
+    "data:ensure": "tsx scripts/build-data.ts --ensure",
+    "sw": "tsx scripts/build-sw.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.124.0",

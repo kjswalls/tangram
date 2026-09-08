@@ -18,8 +18,14 @@ import type { CardContext, HskBand } from '@/lib/types';
 
 export const DB_NAME = 'tangram';
 
-/** Dexie version 1. A schema change stops the build (see CLAUDE.md). */
-export const DB_VERSION = 1;
+/**
+ * Dexie version 2. A schema change stops the build (see CLAUDE.md); this one
+ * was commissioned — the unique index that stops two open tabs creating the
+ * eight system lists twice (`systemKey` below) cannot exist without a version.
+ * Nothing else about v1 changed, and no data is rewritten beyond stamping the
+ * new key onto the system lists a v1 database already holds.
+ */
+export const DB_VERSION = 2;
 
 /** Columns every soft-deletable row carries. */
 export interface BaseRow {
@@ -156,6 +162,35 @@ export interface ListRow extends BaseRow {
   band?: HskBand;
   active: boolean;
   order: number;
+  /**
+   * The natural key of a system list — `'looked-up'`, or `'hsk:3'` — indexed
+   * `&systemKey` so the database itself refuses a second copy. Two tabs are two
+   * JS contexts over one IndexedDB and both could read "no lists yet" before
+   * either wrote; a promise memoised per repository cannot see across that.
+   *
+   * Absent on a user's own list (nothing to be unique about) and absent on a
+   * tombstone (`deleteList` releases it), because deleting a system list is a
+   * reset and `ensureSystemLists` has to be able to make it again. IndexedDB
+   * does not index a row whose key path is missing, so neither takes part in
+   * the constraint.
+   */
+  systemKey?: string;
+}
+
+/**
+ * The natural key of a system list, or `undefined` for a list the learner made.
+ *
+ * "Looked up" is one row per database and an HSK list is one row per band, so
+ * those two facts *are* the key. It lives here rather than in `lib/lists`
+ * because the uniqueness it names is enforced by the schema.
+ */
+export function systemListKey(
+  kind: ListRow['kind'],
+  band?: HskBand,
+): string | undefined {
+  if (kind === 'hsk') return band === undefined ? undefined : `hsk:${band}`;
+  if (kind === 'looked-up') return 'looked-up';
+  return undefined;
 }
 
 export interface ListMemberRow {
@@ -238,7 +273,8 @@ export const DEFAULT_SETTINGS: Omit<SettingsRow, 'createdAt' | 'updatedAt'> = {
 };
 
 /**
- * Dexie store definitions, version 1.
+ * Dexie store definitions, version 1. Kept verbatim: a version's schema is
+ * history, and Dexie needs v1 declared to upgrade a database that stopped there.
  *
  * `id` is always the primary key. Booleans and nulls are not valid IndexedDB
  * keys, so `active` and `deletedAt` are intentionally not indexed — tombstones
@@ -255,5 +291,19 @@ export const STORES_V1 = {
   ask_cache: 'id, createdAt',
   settings: 'id',
 } as const;
+
+/**
+ * Version 2 — v1 plus one index: `&systemKey` on `lists`, the constraint that
+ * makes "one 'Looked up', one list per HSK band" a fact about the database
+ * rather than a convention two tabs can each believe they are the first to
+ * honour. Every other store is byte-identical to v1.
+ */
+export const STORES_V2 = {
+  ...STORES_V1,
+  lists: 'id, kind, owner, order, &systemKey',
+} as const;
+
+/** The current definitions. `STORES_V1` is kept for the upgrade path. */
+export const STORES = STORES_V2;
 
 export type StoreName = keyof typeof STORES_V1;

@@ -44,6 +44,14 @@ export interface CreateListInput {
   order?: number;
 }
 
+/** What `introduceCard` did: the card, whether this call made it, and the counter after. */
+export interface IntroducedCard {
+  card: CardRow;
+  /** False when the card was already there — the day's counter was not charged. */
+  created: boolean;
+  settings: SettingsRow;
+}
+
 export interface AskCache {
   get(key: string): Promise<AskCacheRow | undefined>;
   set(key: string, response: unknown): Promise<AskCacheRow>;
@@ -66,8 +74,52 @@ export interface Repository {
     dictVersion?: string,
   ): Promise<CardRow>;
 
-  /** A phrase card whose front is rendered from cited entries (§3.4). */
-  addPhraseCard(tokens: PhraseToken[], en: string, context: CardContext): Promise<CardRow>;
+  /**
+   * Create the card for a drawn word **and** charge the day's counter for it,
+   * atomically (§3.3, `lib/lists/introduce.ts`).
+   *
+   * Two open tabs are two JS contexts over one IndexedDB. Both can open Today,
+   * both draw the same ten words, and with the card write and the counter write
+   * as separate calls both charge — so `settings.introduced` says twenty for ten
+   * cards, or a lost update says ten for twenty. Here the two are one
+   * transaction: whichever tab gets there second finds the card already
+   * committed, reports `created: false`, and does not charge.
+   *
+   * `dayKey` is the caller's (`todayKey(now, settings.dayRollover)`) because the
+   * repository has no notion of the study day; `settings` comes back so the
+   * caller does not have to re-read what it just changed.
+   */
+  introduceCard(
+    entry: Entry,
+    context: CardContext | undefined,
+    dayKey: string,
+    dictVersion?: string,
+  ): Promise<IntroducedCard>;
+
+  /**
+   * `settings.introduced[dayKey] += count`, read-modify-written in one
+   * transaction. For the callers that create their cards themselves (the demo
+   * seed) and still owe the day's allowance. A `count` at or below zero is a
+   * no-op, never a decrement.
+   */
+  bumpIntroduced(dayKey: string, count: number): Promise<SettingsRow>;
+
+  /**
+   * A phrase card whose front is rendered from cited entries (§3.4).
+   *
+   * `dictVersion` is the fourth argument for the same reason
+   * `addCardFromEntry` has one: a snapshot records the dictionary it was cut
+   * from, and the layer that holds a phrase together (the ask panel, which has
+   * just been told `meta.version` by the route that resolved the citations) is
+   * the only one that knows it. Omitted, it stamps `'unknown'` — which is what
+   * every phrase card written before this argument existed says.
+   */
+  addPhraseCard(
+    tokens: PhraseToken[],
+    en: string,
+    context: CardContext,
+    dictVersion?: string,
+  ): Promise<CardRow>;
 
   /** Cards past their due instant, oldest first. New cards are not due. */
   listDue(now: number): Promise<CardRow[]>;

@@ -49,9 +49,13 @@ function matches(row: ListRow, spec: SystemListSpec): boolean {
 }
 
 /**
- * Two components can mount at once (the Today draw and the lists page), and
- * `createList` has no uniqueness constraint to lean on, so the whole
- * read-then-create is shared through one in-flight promise per repository.
+ * Two components can mount at once (the Today draw and the lists page), so the
+ * whole read-then-create is shared through one in-flight promise per
+ * repository. That memo is an optimisation, not the guarantee: it holds inside
+ * one JS context and a second tab is a second context. The guarantee is in the
+ * database — `lists.systemKey` is unique (`lib/db/schema.ts`) and `createList`
+ * checks for the row and inserts it in one transaction — so two tabs arriving
+ * together end up with one set of eight lists whatever this map believes.
  */
 const inFlight = new WeakMap<Repository, Promise<ListRow[]>>();
 
@@ -59,6 +63,8 @@ async function create(repo: Repository): Promise<ListRow[]> {
   const existing = await repo.lists();
   for (const spec of SYSTEM_LISTS) {
     if (existing.some((row) => matches(row, spec))) continue;
+    // `createList` is idempotent for a system list: it returns the row another
+    // tab committed in the moment between the read above and this call.
     await repo.createList({
       name: spec.name,
       owner: 'system',

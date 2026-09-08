@@ -29,8 +29,6 @@ export interface IntroduceOptions {
   source?: EntrySource;
   /** Saves a read when the caller has it; the counter is written off a fresh read. */
   settings?: SettingsRow;
-  /** Entry ids that already have a card, so a re-draw is not counted twice. */
-  carded?: ReadonlySet<EntryId>;
   /** `meta.version` of `data/dict.json`, when the caller knows it. */
   dictVersion?: string;
 }
@@ -53,10 +51,6 @@ export async function introduceCards(
   if (candidates.length === 0) return { created: [], cards: [], settings };
 
   const source = options.source ?? getEntrySource();
-  const carded = new Set<EntryId>(
-    options.carded ??
-      (await repo.allCards()).flatMap((card) => (card.entryId ? [card.entryId] : [])),
-  );
 
   // The spine pass already holds its rows; only list draws need a round trip.
   const known = new Map<EntryId, Entry>();
@@ -70,32 +64,29 @@ export async function introduceCards(
 
   const created: CardRow[] = [];
   const cards: CardRow[] = [];
+  const key = todayKey(now, settings.dayRollover);
+  let latest = settings;
   for (const candidate of candidates) {
     const entry = known.get(candidate.entryId);
     // An id the dictionary no longer has (a rebuilt snapshot, a stale list) is
     // skipped rather than throwing: one dead row must not empty the queue.
     if (!entry) continue;
-    const card = await repo.addCardFromEntry(
+    // The card and the day's charge are one transaction (`introduceCard`), and
+    // "did this call create it?" is decided inside that transaction. Counting
+    // creations from a card set read before the loop — which is what this did —
+    // is a guess that a second tab invalidates between the read and the write.
+    const outcome = await repo.introduceCard(
       entry,
       { source: 'list', addedAt: now },
-      undefined,
+      key,
       options.dictVersion,
     );
-    cards.push(card);
-    if (!carded.has(entry.id)) {
-      carded.add(entry.id);
-      created.push(card);
-    }
+    cards.push(outcome.card);
+    if (outcome.created) created.push(outcome.card);
+    latest = outcome.settings;
   }
 
-  if (created.length === 0) return { created, cards, settings };
-
-  const fresh = await repo.getSettings();
-  const key = todayKey(now, fresh.dayRollover);
-  const next = await repo.setSettings({
-    introduced: { ...fresh.introduced, [key]: (fresh.introduced[key] ?? 0) + created.length },
-  });
-  return { created, cards, settings: next };
+  return { created, cards, settings: latest };
 }
 
 export interface QueueFromListOptions {
@@ -142,8 +133,7 @@ export async function chargeIntroduced(
 ): Promise<SettingsRow> {
   const fresh = await repo.getSettings();
   if (count <= 0) return fresh;
-  const key = todayKey(now, fresh.dayRollover);
-  return repo.setSettings({
-    introduced: { ...fresh.introduced, [key]: (fresh.introduced[key] ?? 0) + count },
-  });
+  // Read-modify-write inside one transaction: a second context adding its own
+  // introductions between the read and the write would otherwise be overwritten.
+  return repo.bumpIntroduced(todayKey(now, fresh.dayRollover), count);
 }

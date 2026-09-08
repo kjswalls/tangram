@@ -22,17 +22,28 @@
  * looks cheaper and is wrong: a document cached before a deploy references
  * `/_next/static/chunks/<old-hash>.js` that the new deployment no longer serves,
  * so the first visit to every route after every deploy renders a page that never
- * hydrates. The cache name's VERSION is hand-bumped, so a routine `next build`
- * does not purge anything — nothing rescues that stale document except the user
- * reloading. Answering from the network whenever there *is* a network removes
- * the whole class, and costs nothing offline, where the cached copy is still
- * what gets served.
+ * hydrates. Binding the cache name to the build (below) closes most of that —
+ * the old cache is dropped on activate — but not the window before the new
+ * worker activates, and a cached document is a document from whenever it was
+ * cached whatever the cache is called. Answering from the network whenever there
+ * *is* a network removes the whole class, and costs nothing offline, where the
+ * cached copy is still what gets served.
  *
- * The cache name carries a version. `activate` deletes every cache that is not
- * the current one. Bump VERSION whenever the shell or this file changes.
+ * The cache name carries the build's own id. This file is a **template**:
+ * `scripts/build-sw.ts` writes `public/sw.js` from it after `next build`,
+ * substituting the id Next just generated (`.next/BUILD_ID`) for the
+ * placeholder below. That is what makes `activate` — which deletes every cache
+ * that is not the current one — collect the *previous* build's hashed chunks
+ * instead of leaving them to accumulate deploy after deploy. A hand-bumped
+ * literal purged only when somebody remembered to change it, which on a routine
+ * build is never.
+ *
+ * Editing the served worker means editing this file; `public/sw.js` is
+ * generated and gitignored, and a hand edit to it is overwritten by the next
+ * build.
  */
 
-const VERSION = 'v2';
+const VERSION = '__TANGRAM_BUILD_ID__';
 const CACHE = `tangram-${VERSION}`;
 
 /** Served for a navigation we have never cached while the network is down. */

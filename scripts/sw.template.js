@@ -49,8 +49,8 @@ const CACHE = `tangram-${VERSION}`;
 /** Served for a navigation we have never cached while the network is down. */
 const OFFLINE_URL = '/offline.html';
 
-/** The routes the app shell is made of (PLAN.md §4: the six nav destinations). */
-const SHELL = ['/', '/lookup', '/review', '/read', '/lists', '/settings', OFFLINE_URL];
+/** The routes the app shell is made of — every nav destination (`NAV_ITEMS`). */
+const SHELL = ['/', '/lookup', '/review', '/read', '/lists', '/stats', '/settings', OFFLINE_URL];
 
 /** Best-effort: one 404 must not fail the whole install. */
 async function precache() {

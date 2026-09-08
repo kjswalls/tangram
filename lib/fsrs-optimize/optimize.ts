@@ -147,7 +147,12 @@ function bounds(length: number, shortTerm: boolean): [number, number][] {
   return CLAMP_PARAMETERS(W17_W18_Ceiling, shortTerm).slice(0, length) as [number, number][];
 }
 
-function empty(reason: OptimizeStatus, set: TrainingSet, currentIsOptimized: boolean): OptimizeResult {
+function empty(
+  reason: OptimizeStatus,
+  set: TrainingSet,
+  currentIsOptimized: boolean,
+  evaluations = 0,
+): OptimizeResult {
   return {
     status: reason,
     reviewCount: set.scorableReviews,
@@ -159,7 +164,7 @@ function empty(reason: OptimizeStatus, set: TrainingSet, currentIsOptimized: boo
     defaultLoss: null,
     w: null,
     fit: null,
-    evaluations: 0,
+    evaluations,
     currentIsOptimized,
   };
 }
@@ -214,7 +219,7 @@ export async function optimizeWeights(input: OptimizeInput): Promise<OptimizeRes
     for (let sweep = 0; sweep < MAX_SWEEPS; sweep += 1) {
       let improvedThisSweep = false;
       for (let index = 0; index < best.length; index += 1) {
-        if (input.signal?.aborted) return empty('cancelled', set, currentIsOptimized);
+        if (input.signal?.aborted) return empty('cancelled', set, currentIsOptimized, evaluations);
         const [min, max] = range[index] ?? [0, 0];
         const step = fraction * Math.max(Math.abs(best[index]), floors[index]);
 
@@ -255,7 +260,7 @@ export async function optimizeWeights(input: OptimizeInput): Promise<OptimizeRes
     }
   }
   input.onProgress?.({ done: total, total, trainLoss: bestLoss });
-  if (input.signal?.aborted) return empty('cancelled', set, currentIsOptimized);
+  if (input.signal?.aborted) return empty('cancelled', set, currentIsOptimized, evaluations);
 
   // Scored once, on the half the search never saw.
   const fitted = scoreWeights(set, best, settings).heldOut;

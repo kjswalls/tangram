@@ -65,6 +65,27 @@ describe('buildTrainingSet', () => {
     expect(a.map((entry) => entry.scorable)).toEqual([false, true]);
   });
 
+  it('does not score a same-day review — the curve says "certain" by construction', () => {
+    // A learning step taken ten minutes after the last one is `elapsed_days: 0`,
+    // where the forgetting curve returns 1. Scoring it charges the model ~13.8
+    // nats for every within-session lapse and measures nothing but how badly
+    // the session went. It is still replayed: the short-term path is part of
+    // how the memory state moves. FSRS's own optimizer excludes them too, and
+    // since `shortTermSteps` defaults on there are a lot of them.
+    const base = review({ cardId: 'a', reviewedAt: START });
+    const sameDay = review({ cardId: 'a', reviewedAt: START + 600_000 });
+    const nextDay = review({ cardId: 'a', reviewedAt: START + DAY });
+    const set = buildTrainingSet([
+      base,
+      { ...sameDay, log: { ...sameDay.log, elapsed_days: 0 } },
+      { ...nextDay, log: { ...nextDay.log, elapsed_days: 1 } },
+    ]);
+
+    expect(set.totalReviews).toBe(3);
+    expect(set.cards[0].map((entry) => entry.scorable)).toEqual([false, false, true]);
+    expect(set.scorableReviews).toBe(1);
+  });
+
   it('takes the elapsed days the scheduler recorded, not one it re-derives', () => {
     // `log.elapsed_days` is whole UTC calendar days (ts-fsrs's `dateDiffInDays`),
     // which is what the scheduler used and therefore what the fit must predict

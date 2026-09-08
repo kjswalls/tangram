@@ -12,9 +12,17 @@
  *
  * Two rules that are not obvious and are load-bearing:
  *
- * 1. **A card's first review is not scorable.** There is no memory state to
- *    predict recall from — FSRS *initialises* the state from that first grade.
- *    It is replayed (the state has to come from somewhere) and never scored.
+ * 1. **A card's first review is not scorable, and neither is a same-day one.**
+ *    The first has no memory state to predict recall from — FSRS *initialises*
+ *    the state from that grade. A review at `elapsed_days === 0` is a learning
+ *    step taken minutes after the last one, where the forgetting curve says
+ *    "certainly remembered" by construction, so scoring it charges the model
+ *    ~13.8 nats for every within-session lapse and measures nothing but how
+ *    badly the session went. FSRS's own optimizer excludes them for the same
+ *    reason. Both kinds are **replayed** — the state has to come from
+ *    somewhere, and the short-term path is part of how it moves — and neither
+ *    is scored. Since `shortTermSteps` defaults on (Phase 8) this is most of
+ *    the difference between a signal and a mood.
  * 2. **The train/held-out split is chronological, never random.** A random
  *    split leaks the future: a card's later review sits in train while its
  *    earlier one sits in held-out, and the fit is scored on reviews it has
@@ -34,7 +42,7 @@ export interface TrainingReview {
   rating: StoredRating;
   /** Days since this card's previous review, as the scheduler measured them. */
   elapsedDays: number;
-  /** False for a card's first review — replayed, never scored. */
+  /** False for a first or same-day review — replayed, never scored. */
   scorable: boolean;
 }
 
@@ -105,12 +113,13 @@ export function buildTrainingSet(
     const sequence: TrainingReview[] = [];
     let previousAt: number | null = null;
     for (const row of ordered) {
-      const scorable = previousAt !== null;
+      const elapsedDays = elapsedDaysFor(row, previousAt);
+      const scorable = previousAt !== null && elapsedDays > 0;
       sequence.push({
         cardId,
         reviewedAt: row.reviewedAt,
         rating: row.rating,
-        elapsedDays: elapsedDaysFor(row, previousAt),
+        elapsedDays,
         scorable,
       });
       if (scorable) scorableAt.push(row.reviewedAt);

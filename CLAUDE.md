@@ -98,6 +98,9 @@ swap a swap. The rules that keep it swappable:
   it. Since Phase 8 `shortTermSteps` defaults **true**, which is ts-fsrs's own default: a
   failed card comes back in minutes, so a grade can schedule inside the session. v1's
   `enable_short_term: false` was the deviation, and it is now one settings column away.
+  The optimizer scores weights that are not yet anybody's setting through the same module
+  (`clipWeights`, `parametersForWeights`, `algorithmFor`) rather than opening a second
+  construction site — `new FSRSAlgorithm(...)` counts as one and belongs here too.
 - The dictionary loader throws `DictDataMissingError` when `data/` is absent; routes map it
   to `503 {error:'dict-data-missing', hint:'run pnpm data'}`. Missing data is a banner, not
   a crash — keep it that way.

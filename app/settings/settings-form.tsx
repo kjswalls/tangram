@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 
+import { OptimizerPanel } from '@/components/settings/optimizer-panel';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { getRepository } from '@/lib/db/get-db';
@@ -221,6 +222,11 @@ export function SettingsForm() {
             to make every card wait at least a day.
           </span>
         </label>
+
+        {/* The optimizer (Phase 8 item 3). It writes `fsrsWeights` through the
+            same repository call the rest of this form does, and hands back the
+            row it wrote so the source line above stays in step. */}
+        <OptimizerPanel settings={settings} onSettings={setSettings} />
 
         <label className="flex flex-col gap-1 text-sm">
           <span className="flex items-center gap-2">

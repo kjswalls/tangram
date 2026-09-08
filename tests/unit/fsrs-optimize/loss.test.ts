@@ -80,6 +80,21 @@ describe('predict', () => {
     );
   });
 
+  it('replays a same-day review without scoring it', () => {
+    // Its state update still happens — the short-term stability path is how a
+    // learning step moves the card — but it contributes nothing to the loss.
+    const reviews = syntheticReviews({ w: default_w, cards: 20, reviewsPerCard: 5, seed: 44 });
+    const withSameDay = reviews.map((row, index) =>
+      index % 4 === 1 ? { ...row, log: { ...row.log, elapsed_days: 0 } } : row,
+    );
+    const set = buildTrainingSet(withSameDay);
+    const scored = set.cards.flat().filter((entry) => entry.scorable);
+    expect(scored.length).toBeLessThan(
+      set.cards.flat().filter((entry, index) => index > 0).length,
+    );
+    expect(predict(set, default_w)).toHaveLength(scored.length);
+  });
+
   it('never returns a probability of exactly 0 or 1', () => {
     // An unclamped certainty makes one review's log-loss infinite and every
     // comparison after it NaN-poisoned.

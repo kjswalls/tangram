@@ -84,7 +84,11 @@ export function predict(
           P_MAX,
         );
         if (!Number.isFinite(p)) break;
-        out.push({ reviewedAt: review.reviewedAt, p, recalled: review.rating !== 1 });
+        // Replayed either way; scored only when the dataset says it carries
+        // information (not a first review, not a same-day learning step).
+        if (review.scorable) {
+          out.push({ reviewedAt: review.reviewedAt, p, recalled: review.rating !== 1 });
+        }
         state = sane(algorithm.next_state(state, review.elapsedDays, review.rating, p));
         if (state === null) break;
       } catch {

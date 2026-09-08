@@ -8,12 +8,16 @@
  * branches meet on one card back, in a browser, in the order a learner meets
  * them.
  *
- *   /settings Load demo + free recall on → /lookup an English sentence → the
- *   ask panel → Add the phrase → /read the demo paragraph → tap a word → Add it
- *   with its sentence → /review: the reader card shows its sentence
- *   highlighted, the phrase card is drawn per token, the recall box takes an
- *   answer and suggests a grade the learner overrides, and the back carries the
- *   i+1 sentences (or the honest empty state) → grade → / has moved.
+ *   /settings Load demo + free recall + production direction on → /lookup an
+ *   English sentence → the ask panel → Add the phrase → /read the demo
+ *   paragraph → tap a word → Add it with its sentence → /review: the reader
+ *   card shows its sentence highlighted, the phrase card is drawn per token,
+ *   the recall box takes an answer and suggests a grade the learner overrides,
+ *   the back carries the i+1 sentences (or the honest empty state) *and* the
+ *   "add the reverse" control, which is pressed — so the same word comes back
+ *   the other way round, meaning on the front and the hanzi to be written →
+ *   grade both directions → / has moved → /stats says it has too little to go
+ *   on, and then, over a seeded history, says the numbers.
  *
  * What fails here and in no single branch's suite:
  *
@@ -25,6 +29,21 @@
  *    then reviewed; the mined card is introduced through `introduceCard`.
  *  - **The suggestion never becomes a grade** even when it lands on a card that
  *    is also fetching sentences. The row records the key that was pressed.
+ *
+ * Phase 8 added three more crossings, and they are why this spec grew:
+ *
+ *  - **One session holds both directions of one word** (Phase 8 B) and both
+ *    Phase 6 features. The reverse is made from the back of the card the
+ *    learner just answered, inside the session, and the queue picks it up with
+ *    no reload — which is Phase 8 A's re-read doing its job.
+ *  - **Two schedules, no coordination.** Grading the production card must not
+ *    move the recognition card it was cut from; that is asserted here against a
+ *    due date read before and after.
+ *  - **`/stats` reads what this walk wrote** (Phase 8 C). A dozen reviews is
+ *    below every rate floor on the page, so the honest empty state is the
+ *    correct answer and is asserted first; the numbers are then made to appear
+ *    by seeding a history, which also proves the panels are reading the log
+ *    rather than a fixture.
  */
 import { expect, test, type Page } from '@playwright/test';
 
@@ -38,6 +57,10 @@ const MINED_SENTENCE = '中午我和同事一起在公司附近的饭馆吃饭�
 const BROWSING = "how do I say I'm just browsing";
 /** What the learner types into the recall box for 附近. */
 const RECALL_ANSWER = 'nearby, close by';
+/** …and what they write when the same word is asked the other way round. */
+const PRODUCTION_ANSWER = MINED;
+
+const DAY = 86_400_000;
 
 /** The full walk is a demo load, a build, two adds and a whole session. */
 test.setTimeout(300_000);
@@ -47,6 +70,35 @@ interface Cards {
   phraseSimp: string;
   phraseDictVersion: string;
   minedId: string;
+}
+
+/**
+ * A synthetic review history, written straight through the repository.
+ *
+ * `/stats` reports *rates*, and a rate wants trials: the demo seed plus this
+ * walk's own handful of grades are below every floor on the page by design.
+ * Rather than grade three hundred cards through the UI, the history is written
+ * the way builder C's own spec writes it — twenty-four cards graduated by an Easy
+ * from New (a learning review, which the retention denominator excludes) and
+ * then answered Good on five days apart.
+ */
+async function seedHistory(page: Page): Promise<void> {
+  await page.evaluate(
+    async ({ days, cards, day }) => {
+      const { repo } = window.__tangram;
+      const now = Date.now();
+      for (let index = 0; index < cards; index += 1) {
+        const card = await repo.addPhraseCard(
+          [{ text: `stat${index}`, entryId: `stat${index}|stat${index}[x]` }],
+          `the ${index} one`,
+          { source: 'seed', addedAt: now - 70 * day },
+        );
+        await repo.grade(card.id, 4, now - 60 * day);
+        for (const ago of days) await repo.grade(card.id, 3, now - ago * day);
+      }
+    },
+    { days: [45, 25, 18, 11, 4], cards: 24, day: DAY },
+  );
 }
 
 /**
@@ -84,10 +136,30 @@ test('the whole loop with i+1 sentences and free recall on', async ({ page }) =>
   // The i+1 block is on by default; assert it rather than set it, because
   // "undefined means on" is the contract a legacy settings row relies on.
   await expect(page.getByTestId('settings-examples-on-back')).toBeChecked();
+
+  // Phase 8's second direction, thrown the same way. The setting only *reveals*
+  // the controls that make production cards — it creates nothing, which is
+  // checked below once the demo's cards are on the table.
+  const production = page.getByTestId('settings-production-direction');
+  await expect(production).not.toBeChecked();
+  await production.click();
+  await expect(production).toBeChecked();
+
   await page.waitForFunction(async () => {
     const settings = await window.__tangram.repo.getSettings();
-    return settings.freeRecall === true && (settings.examplesOnBack ?? true) === true;
+    return (
+      settings.freeRecall === true &&
+      (settings.examplesOnBack ?? true) === true &&
+      settings.productionDirection === true
+    );
   });
+  // Turning it on made no card: every row the demo left is a recognition card.
+  expect(
+    await page.evaluate(async () =>
+      (await window.__tangram.repo.allCards()).filter((card) => card.direction === 'production')
+        .length,
+    ),
+  ).toBe(0);
 
   // The spine draw is off for the rest of the walk: this spec is about the two
   // cards it adds by hand and the demo's own due cards, not about the ten HSK
@@ -169,8 +241,13 @@ test('the whole loop with i+1 sentences and free recall on', async ({ page }) =>
 
   let sawPhrase = false;
   let sawMined = false;
+  let sawProduction = false;
   let suggested = 0;
   let pressed = 0;
+  /** The reverse of the mined card, made from its back part-way through. */
+  let productionId: string | null = null;
+  /** The mined card's schedule after it was graded — the twin must not move it. */
+  let minedAfterGrade: { due: number; reps: number } | null = null;
 
   for (let step = 0; step < 40; step += 1) {
     if (await page.getByTestId('review-empty').isVisible().catch(() => false)) break;
@@ -298,9 +375,68 @@ test('the whole loop with i+1 sentences and free recall on', async ({ page }) =>
         }
       }
 
+      // Phase 8: the reverse is offered on this same back, under the answer —
+      // which is where the learner has just found out whether they could have
+      // written the word rather than only recognised it. One press, one card,
+      // and no charge against the daily allowance (§3.3's rule for an explicit
+      // add). The session picks it up on the next re-read, with no reload.
+      const addReverse = page.getByTestId('add-reverse-button');
+      await expect(addReverse).toBeEnabled();
+      await addReverse.click();
+      await expect(page.getByTestId('add-reverse')).toHaveAttribute('data-phase', 'present');
+
+      productionId = await page.evaluate(async (recognitionId) => {
+        const rows = await window.__tangram.repo.allCards();
+        const recognition = rows.find((card) => card.id === recognitionId);
+        const twin = rows.find(
+          (card) => card.direction === 'production' && card.entryId === recognition?.entryId,
+        );
+        if (!twin) throw new Error('add the reverse wrote no production card');
+        // One word, two cards, two schedules.
+        if (twin.wordId !== recognition?.wordId) throw new Error('the twin is a different word');
+        return twin.id;
+      }, cards.minedId);
+
       // The learner disagrees with the suggestion, and the learner wins.
       pressed = suggested === 2 ? 3 : 2;
       await gradeAndAdvance(page, id, String(pressed));
+      minedAfterGrade = await page.evaluate(async (cardId) => {
+        const row = (await window.__tangram.repo.allCards()).find((card) => card.id === cardId);
+        if (!row) throw new Error('the mined card vanished');
+        return { due: row.due, reps: row.fsrs.reps };
+      }, cards.minedId);
+      continue;
+    }
+
+    if (productionId !== null && id === productionId) {
+      sawProduction = true;
+      // The same word, asked the other way round: the meaning is the question
+      // and the hanzi is the answer, so nothing on the front may give it away —
+      // not the glosses, not the reading, and not the sentence it was mined
+      // from, which is blanked where the word stood.
+      const front = page.getByTestId('card-front');
+      await expect(front).toBeVisible();
+      await expect(front).not.toContainText(MINED);
+      await expect(page.getByTestId('card-back')).toHaveCount(0);
+
+      // An exact answer is settled in the browser. Any request is a failure of
+      // that promise, so the route is made to fail if it is reached at all.
+      let asked = 0;
+      await page.route('**/api/recall', (route) => {
+        asked += 1;
+        return route.fulfill({ status: 500, body: '{}' });
+      });
+
+      await page.getByTestId('recall-answer').fill(PRODUCTION_ANSWER);
+      await page.getByTestId('recall-answer').press('Enter');
+
+      await expect(page.getByTestId('card-back')).toBeVisible();
+      await expect(page.getByTestId('production-answer')).toHaveText(MINED);
+      await expect(page.getByTestId('recall-suggestion')).toHaveAttribute('data-suggested', '3');
+      expect(asked).toBe(0);
+      await page.unroute('**/api/recall');
+
+      await gradeAndAdvance(page, id, '3');
       continue;
     }
 
@@ -317,7 +453,19 @@ test('the whole loop with i+1 sentences and free recall on', async ({ page }) =>
 
   expect(sawPhrase).toBe(true);
   expect(sawMined).toBe(true);
+  // The reverse was made mid-session and the queue found it with no reload:
+  // Phase 8 A's re-read carrying Phase 8 B's card.
+  expect(sawProduction).toBe(true);
   await expect(page.getByTestId('review-empty')).toBeVisible();
+
+  // Two directions, two memories: grading the twin left the card it was cut
+  // from exactly where its own grade had put it.
+  const minedNow = await page.evaluate(async (cardId) => {
+    const row = (await window.__tangram.repo.allCards()).find((card) => card.id === cardId);
+    if (!row) throw new Error('the mined card vanished');
+    return { due: row.due, reps: row.fsrs.reps };
+  }, cards.minedId);
+  expect(minedNow).toEqual(minedAfterGrade);
 
   // --- what reached the database -------------------------------------------
   const graded = await page.evaluate(async (ids) => {
@@ -338,10 +486,77 @@ test('the whole loop with i+1 sentences and free recall on', async ({ page }) =>
   expect(graded.mined).not.toContain(suggested);
   expect(graded.stillNew).toBe(0);
 
-  // --- Today has moved (P3) ------------------------------------------------
+  // --- Today has moved (P3), and counts the two directions apart (Phase 8 B)
   await page.goto('/');
   await ready(page);
   await expect(page.getByTestId('today-due-count')).toHaveText('0');
   await expect(page.getByTestId('today-new-count')).toHaveText('0');
   await expect(page.getByTestId('start-review').getByRole('button')).toBeDisabled();
+  // The split line counts *today's plate*, and the walk emptied it — so the
+  // correct thing for it to do here is not appear. What is durable is the row:
+  // one production card, its own schedule, its own review.
+  await expect(page.getByTestId('today-direction-split')).toHaveCount(0);
+  const twin = await page.evaluate(async (id) => {
+    const rows = await window.__tangram.repo.allCards();
+    const card = rows.find((row) => row.id === id);
+    const reviews = await window.__tangram.db.reviews.where('cardId').equals(id).toArray();
+    return {
+      production: rows.filter((row) => row.direction === 'production').length,
+      state: card?.fsrs.state ?? -1,
+      ratings: reviews.map((row) => row.rating),
+    };
+  }, productionId!);
+  expect(twin.production).toBe(1);
+  expect(twin.ratings).toEqual([3]);
+  // Graded once and rescheduled: the twin is a card like any other.
+  expect(twin.state).not.toBe(0);
+
+  // --- /stats: the honest empty state first (Phase 8 C) ---------------------
+  // Everything this walk graded was a learning-step review of a card the demo
+  // had barely started, and the retention denominator counts Review-state
+  // reviews only. So the page has almost nothing to go on, and the thing it
+  // must not do is draw a confident curve over it.
+  await page.goto('/stats');
+  await expect(page.getByRole('heading', { level: 1, name: 'Stats' })).toBeVisible();
+
+  const retentionEmpty = page.getByTestId('stats-retention-empty');
+  await expect(retentionEmpty).toBeVisible({ timeout: 60_000 });
+  await expect(retentionEmpty).toContainText('Not enough reviews yet');
+  await expect(page.getByTestId('stats-retention-rate')).toHaveCount(0);
+  await expect(page.getByTestId('stats-calibration-empty')).toBeVisible();
+  await expect(page.getByTestId('stats-calibration-dot')).toHaveCount(0);
+  // Counts are exact at any size, so the maturity panel is drawn regardless —
+  // and the cards this walk created are in it.
+  await expect(page.getByTestId('stats-maturity')).toBeVisible();
+  await expect(page.getByTestId('stats-card-total')).toBeVisible();
+
+  // --- …and the numbers, once there is a history to read --------------------
+  await seedHistory(page);
+  await page.reload();
+
+  await expect(page.getByTestId('stats-retention-empty')).toHaveCount(0, { timeout: 60_000 });
+  await expect(page.getByTestId('stats-retention-rate')).toHaveText(/^\d+%$/);
+  await expect(page.getByTestId('stats-retention-denominator')).toContainText('reviews recalled');
+  await expect(page.getByTestId('stats-retention-denominator')).toContainText(
+    'already in the Review state',
+  );
+
+  await expect(page.getByTestId('stats-calibration-empty')).toHaveCount(0);
+  const dots = page.getByTestId('stats-calibration-dot');
+  expect(await dots.count()).toBeGreaterThan(0);
+  for (const dot of await dots.all()) {
+    // Nothing too thin to mean anything was drawn.
+    expect(Number(await dot.getAttribute('data-count'))).toBeGreaterThanOrEqual(10);
+  }
+
+  // The workload panel is reading the same log: the seeded cohort answered on
+  // four days inside the 30-day window, 24 cards each time.
+  await expect(page.getByTestId('stats-workload-empty')).toHaveCount(0);
+  await expect(page.locator('[data-testid="stats-workload-row"][data-reviewed="24"]')).toHaveCount(
+    4,
+  );
+  // And the 24 graduated cards are in the Review state, on top of this walk's.
+  expect(
+    Number(await page.getByTestId('stats-state-review').textContent()),
+  ).toBeGreaterThanOrEqual(24);
 });

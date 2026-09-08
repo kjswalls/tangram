@@ -28,6 +28,7 @@
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { NAV_ITEMS } from '../components/shell/nav';
 import { ACCESS_COOKIE } from '../lib/server/access';
 import { discoverApiRoutes, type HttpMethod } from '../lib/server/route-inventory';
 
@@ -188,14 +189,16 @@ export const SMOKE_CASES: SmokeCase[] = [
   },
 ];
 
-/** The six nav routes plus the three files the PWA cannot install without. */
+/**
+ * Every nav route plus the three files the PWA cannot install without.
+ *
+ * The page list is **derived from `NAV_ITEMS`**, not copied from it. Phase 8
+ * added `/stats` to the nav in another worktree and this list did not know:
+ * a route reachable from the header but never requested by the smoke run is
+ * exactly the page that 500s in production. Add a nav entry and it is smoked.
+ */
 export const PAGE_CASES: SmokeCase[] = [
-  '/',
-  '/lookup',
-  '/review',
-  '/read',
-  '/lists',
-  '/settings',
+  ...NAV_ITEMS.map((item) => item.href),
   '/offline.html',
   '/manifest.webmanifest',
   '/sw.js',

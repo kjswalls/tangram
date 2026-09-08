@@ -24,7 +24,7 @@
  *
  * The on/off flag itself lives in `localStorage` (`lib/srs/direction-prefs.ts`)
  * because `ListRow` is frozen for Phase 8. The cards are in IndexedDB like
- * everything else; only the preference is at stake. See HANDOFF-b.md.
+ * everything else; only the preference is at stake. See HANDOFF.md, Phase 8 (builder B).
  */
 
 import { useEffect, useState } from 'react';

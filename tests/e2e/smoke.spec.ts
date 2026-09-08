@@ -1,12 +1,16 @@
 import { expect, test, type Page } from '@playwright/test';
 
-/** The six routes of PLAN.md §4, and the heading each one opens with. */
+/**
+ * The nav routes of PLAN.md §4 plus Phase 8's `/stats`, and the heading each
+ * one opens with. The order is `components/shell/nav.ts`'s order.
+ */
 const ROUTES = [
   { path: '/', label: 'Today', heading: 'Today' },
   { path: '/lookup', label: 'Lookup', heading: 'Lookup' },
   { path: '/review', label: 'Review', heading: 'Review' },
   { path: '/read', label: 'Read', heading: 'Read' },
   { path: '/lists', label: 'Lists', heading: 'Lists' },
+  { path: '/stats', label: 'Stats', heading: 'Stats' },
   { path: '/settings', label: 'Settings', heading: 'Settings' },
 ] as const;
 
@@ -82,8 +86,9 @@ test.describe('app shell', () => {
   });
 
   test('the nav fits a 390px phone', async ({ page }) => {
-    // The six links used to total 381px in a 366px row and scroll silently, so
-    // the last one read "Setting" with no affordance to reach the rest.
+    // The links used to total 381px in a 366px row and scroll silently, so the
+    // last one read "Setting" with no affordance to reach the rest. Phase 8
+    // added a seventh (`/stats`), which is why this still has to be checked.
     const width = 390;
     await page.setViewportSize({ width, height: 844 });
     await page.goto('/');

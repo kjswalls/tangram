@@ -378,7 +378,7 @@ export const DEFAULT_SETTINGS: Omit<SettingsRow, 'createdAt' | 'updatedAt'> = {
   // 0.70–0.97 (`lib/srs/params.ts` clamps to the same range).
   requestRetention: 0.9,
   // TRUE on purpose: it is the ts-fsrs default, and v1's `false` was the
-  // deviation. See the field's doc block, and HANDOFF-prep8.md.
+  // deviation. See the field’s doc block, and HANDOFF.md (Phase 8 prep).
   shortTermSteps: true,
   productionDirection: false,
   fsrsWeights: null,

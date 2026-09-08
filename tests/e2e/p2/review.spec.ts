@@ -225,7 +225,7 @@ test.describe('/review', () => {
     // "Again" is a learning step now (Phase 8: `shortTermSteps` defaults on),
     // so the card is minutes away rather than a day — far enough that this
     // session ends rather than looping, and close enough that the queue has to
-    // expect it back (HANDOFF-prep8.md, builder A).
+    // expect it back (HANDOFF.md, Phase 8 prep).
     expect(stored?.due).toBeGreaterThan(rows[0].reviewedAt);
     expect(stored?.due).toBeLessThan(rows[0].reviewedAt + DAY_MS);
   });

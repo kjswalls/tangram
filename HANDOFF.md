@@ -2207,11 +2207,12 @@ new test injects a provider or stubs `fetch`.
 
 ---
 
-## Phase 8 prep — the shared surface (see HANDOFF-prep8.md)
+## Phase 8 prep — the shared surface
 
 Written on `main` before the four Phase 8 builders branch. It is seams only, no
-feature, and the details are in [HANDOFF-prep8.md](HANDOFF-prep8.md). The four
-things that change what any of the rest of this document says:
+feature. It lived in `HANDOFF-prep8.md` while the four worktrees were open and
+was folded in here at the merge, below, so this file is again the only place to
+read. The four things that change what any of the rest of this document says:
 
 1. **`lib/srs/params.ts` is now the only place FSRS parameters are built.**
    `fsrs()` and `generatorParameters()` appear nowhere else in the app. It reads
@@ -2234,3 +2235,698 @@ things that change what any of the rest of this document says:
    `allReviewsChronological`, `cardCountsByState`, `stabilityHistogram`, and
    `cardForEntry` extended for direction) so the dashboard and the optimizer do
    not each write their own Dexie access.
+
+### The shared surface in full
+
+*Was `HANDOFF-prep8.md`, verbatim from the heading below, folded in at the merge.
+Where it addresses "the four builders" or "you", it is speaking to a phase that
+has now shipped; the content is the record of what the seam is and why.*
+
+#### Why this phase exists (the audit, in one paragraph)
+
+The spacing and testing effects are solid ground and the app is built on them.
+FSRS is the best-evidenced scheduler available and we ship it — but with its
+**population-default parameters**, which is leaving its main benefit unused: the
+whole point of FSRS is that it can be fitted to *one* learner's review history.
+And v1 ran it with `enable_short_term: false`, a deliberate deviation from
+ts-fsrs's own default (`enable_short_term: true`, `learning_steps: ['1m','10m']`)
+made so a session would always end cleanly. The cost was real: failing a
+brand-new card and not seeing it again for a day is worse than seeing it again in
+ten minutes. Both are addressed in Phase 8; this commit builds the surface.
+
+---
+
+#### 1. `lib/srs/params.ts` — the one place FSRS parameters are built
+
+**Nothing else in the app may call `fsrs()` or `generatorParameters()`.** Two
+construction sites are two sets of parameters, and two schedulers that disagree
+produce a card whose stored schedule its own review rows cannot reproduce. A
+test would not catch that; a grep would, so the rule is written into CLAUDE.md.
+
+```ts
+buildParameters(settings?)      // FSRSParameters — the only generatorParameters() call
+getScheduler(settings?)         // FSRS — the only fsrs() call, memoised per parameter set
+describeParameters(settings?)   // "FSRS defaults" | "Optimized from your 1,240 reviews on 3 Mar"
+resolveWeights(settings?)       // { w, source: 'default'|'optimized', fit, rejected }
+isValidWeightVector(w)          // 17/19/21 finite numbers
+isUsableFit(fit)                // valid AND heldOutLogLoss < baselineLogLoss
+clampRetention(value)           // held inside 0.70–0.97
+RETENTION_CHOICES               // the steps the settings control offers
+DEFAULT_WEIGHTS                 // ts-fsrs `default_w` (21 — this build is FSRS-6)
+```
+
+`ParameterSettings` is a `Partial` of the three settings columns, not the row, so
+the optimizer can score a candidate vector without inventing a `SettingsRow`.
+
+**The weights are validated rather than trusted, and this is not paranoia:**
+`generatorParameters` swaps a wrong-length vector for the defaults with only a
+`console` warning, and *clamps a vector full of `NaN` to 0.001 and schedules with
+it*. Both cases are covered in `tests/unit/srs/params.test.ts`. A stored fit that
+fails validation, or that did not beat the population defaults on held-out
+reviews, is ignored and `describeParameters()` says which of the two happened.
+
+Call sites replaced (this was the whole of the "grep for them" work):
+
+| Was | Now |
+|---|---|
+| `lib/srs/card.ts`: `FSRS_PARAMETERS`, module-level `getScheduler()` | gone; `gradeCard`, `previewGrades`, `replayCard` take an optional trailing `settings` and go through `params.ts` |
+| `lib/db/dexie.ts` `grade()` | reads the settings row **inside the grade transaction** and passes it to `gradeCard` |
+| `lib/srs/session.ts` `gradeOptions(state, now)` | `gradeOptions(state, now, settings?)` — the preview must run under the parameters the grade will |
+| `components/review/review-session.tsx` | passes `settings` into `gradeOptions` |
+| `tests/unit/srs/grade.test.ts` (replay through raw `fsrs()`) | `fsrs(buildParameters(settings))` |
+
+There is no other `fsrs(`/`generatorParameters(` in `lib`, `app`, `components` or
+`tests`. If you add one, you are adding a bug.
+
+#### 2. Schema — four settings columns, a widened `direction`, one index
+
+`lib/db/schema.ts`:
+
+- `requestRetention: number` — default **0.9** (FSRS's own default).
+- `shortTermSteps: boolean` — default **true**. See §5; this is the changed one.
+- `productionDirection: boolean` — default **false**.
+- `fsrsWeights: FsrsWeights | null` — default **null**;
+  `{ w, fittedAt, reviewCount, heldOutLogLoss, baselineLogLoss }`.
+- `CardRow.direction` is now `CardDirection = 'recognition' | 'production'`, with
+  `CARD_DIRECTIONS` and `DEFAULT_CARD_DIRECTION` exported beside it.
+- `STORES_V3` = `STORES_V2` plus `[entryId+direction]` on `cards`. Every index
+  `cards` already had is still there, so no existing query changes plan.
+
+The four settings columns are **required**, not optional like the two Phase 6
+toggles, because `getSettings` now merges `DEFAULT_SETTINGS` *under* the stored
+row and writes the filled row back once. A reader never spells `?? 0.9` and never
+has to guess whether `undefined` meant "off" or "not decided". The merge is a
+repository rule, not a Dexie one, so it survives the Supabase swap.
+
+##### The migration conclusion — asked for explicitly
+
+**Yes, this needed a Dexie version bump, and it is v3. No row is rewritten by it
+and none is dropped.**
+
+- The *settings* columns needed nothing: Dexie declares indexes, not shapes, and
+  `settings` is indexed on `id` alone. IndexedDB does not police an unindexed
+  field. (`tests/unit/settings/scheduling.test.tsx` asserts this, as its Phase 6
+  sibling did.)
+- The *`[entryId+direction]` index* did need one: an index is part of the schema,
+  and Dexie will not add one without a version. Adding an index does **not**
+  rewrite rows — IndexedDB builds it from what is already stored — and every
+  `cards` row ever written carries `direction: 'recognition'` literally, so the
+  new index covers Kirby's existing data as it stands.
+- The v3 upgrade function is belt-and-braces on top of that: it stamps
+  `DEFAULT_CARD_DIRECTION` onto any card row that somehow has no `direction`, so
+  that no row can be invisible to a compound-index query. It touches nothing
+  else, and a row that already has a direction is not rewritten.
+- v1 and v2 remain declared verbatim, so a database that stopped at either
+  upgrades through rather than being rebuilt.
+
+The evidence is a test, not a claim: `tests/unit/db/queries.test.ts` › *a
+database written before the direction index existed* opens a Dexie at the v2
+stores, writes one card **with** a direction, one **without** and a review row,
+closes it, reopens it as `TangramDb`, and asserts `verno === 3`, that both cards
+and the review survive, that the unstamped row now answers `cardForEntry`, and
+that it was stamped rather than dropped.
+
+#### 3. Repository — read-only queries you should not write yourself
+
+`lib/db/repository.ts` (interface) + `lib/db/dexie.ts` (implementation). Every
+existing signature still works; everything below is additive.
+
+```ts
+reviewsBetween(fromMs, toMs)   // half-open [from, to), oldest first
+allReviewsChronological()      // every review, ordered by reviewedAt — the optimizer's input
+cardCountsByState()            // { new, learning, review, relearning, total }, tombstones out
+stabilityHistogram()           // STABILITY_BUCKETS with counts; New cards excluded
+cardForEntry(entryId, senseIndex?, direction?)      // direction defaults 'recognition'
+addCardFromEntry(entry, context?, senseIndex?, dictVersion?, direction?)
+```
+
+- `STABILITY_BUCKETS` is exported so the dashboard and the repository cannot
+  disagree about what a bar means. The 21-day edge is `KNOWN_STABILITY_DAYS`, the
+  same threshold the reader colours a word "known" at.
+- `reviewsBetween` is half-open so consecutive windows tile without
+  double-counting the row on the boundary.
+- **Card identity is now (entryId, senseIndex, direction).** `addCardFromEntry`
+  gained a fifth optional argument so that whoever builds the production
+  direction does not need a frozen file changed. Asking for one direction never
+  returns or disturbs the other, and idempotency holds per triple. A production
+  card shares the `words` row with its recognition twin — same word, asked the
+  other way round — and has its own FSRS state, because the two are learned at
+  different rates and one schedule cannot serve both.
+- `reviews` rows have no tombstone (append-only, §3.3), so nothing is filtered
+  out of the two review reads.
+
+Tests: `tests/unit/db/queries.test.ts` (11 cases).
+
+#### 4. Settings UI
+
+`app/settings/settings-form.tsx` gained a **Scheduling** section above *On a
+card*, following the form's existing write-through pattern (no Save button):
+
+- `settings-request-retention` — a select over `RETENTION_CHOICES`
+  (0.70–0.97, marking 90% as the FSRS default), with the plain sentence: *higher
+  means more reviews and better retention; lower means fewer reviews and more
+  forgetting*. A stored value outside the offered steps (an optimizer could write
+  one) is added to the list rather than leaving the select blank.
+- `settings-fsrs-source` — one line from `describeParameters()`.
+- `settings-short-term-steps`, `settings-production-direction` — checkboxes.
+
+**The optimizer UI is deliberately absent — it is builder A's.** The settings and
+the `fsrsWeights` column are in place and read by `params.ts`; wire the "optimize
+now" affordance to them.
+
+#### 5. What changed underneath everyone: `shortTermSteps` defaults TRUE
+
+This is the item to read twice. It restores ts-fsrs's own default and undoes
+v1's deviation. **Grading can now schedule a card minutes away rather than days**
+— Again on a new card is 1m, Good is 10m, Easy graduates to 8d — and the FSRS
+`Learning` (1) and `Relearning` (3) states now actually occur, where under v1
+they never did.
+
+Nothing was flipped back to keep a test green. Every existing test that asserted
+the old behaviour was rewritten to assert the *new* truth, and none was marked
+`.todo`:
+
+| Test | Was | Now |
+|---|---|---|
+| `srs/card.test.ts` | "schedules at least a day for every rating" | a failed new card comes back inside the day by default; the ≥ 1 day claim is re-asserted with `{ shortTermSteps: false }`; a lapse is now counted from a card that has *graduated* (Easy), since a lapse is a failure from Review |
+| `srs/grade.test.ts` | same, through the repository | `honours settings.shortTermSteps when it schedules` — the same grade on the same card lands a day out or minutes out depending on one column |
+| `srs/session.test.ts` | `gradeOptions` days ≥ 1, interval `/(d\|mo\|y)/` | a learning step is labelled in minutes; the day-and-up claim re-asserted with the steps off; new `formatDelay` cases |
+| `db/repository.test.ts` | "Again is at least a day out" | Again is a Learning step inside the minute, and a day out again with the steps off |
+| `srs/review-session.test.tsx`, `e2e/p2/review.spec.ts` | due ≥ reviewedAt + 1 day; interval regex | the card moved, and by how much is the settings row's business; regex admits `m`/`h` |
+| `db/import.test.ts`, `lists/two-tabs.test.ts` | version 2 | version 3, plus the v3-is-v2-plus-one-index assertion |
+
+Two UI consequences of the label change, which are mine and are done:
+`lib/srs/session.ts` gained `formatDelay(ms)` (`1m`/`10m`/`2h`, handing anything
+≥ 1 day back to `formatInterval`), and `GradeOption` gained `ms` while `days` is
+now honestly `0` for a step inside the day. A button that said `1d` over a
+one-minute schedule was the alternative.
+
+##### Left for builder A — the queue, not the seam
+
+These are real and are A's by the brief. None of them is a crash; all of them are
+the queue not yet knowing that a card can come back inside a session.
+
+1. **The session can now legitimately re-serve a card it just graded.**
+   `lib/stores/review.ts` re-reads the queue after every grade with a fresh
+   `now`; v1 leaned on the queue only ever shortening. It still terminates today
+   (a 1–10 minute step outlasts the walk), but "the queue always shortens" is no
+   longer a property — the module header says so now rather than claiming the old
+   invariant.
+2. **Nothing brings a matured learning card back on its own.** When the queue
+   empties with a card due in nine minutes, the empty state stands until a
+   reload. A timer, or a "1 card is coming back in 9 min" line, is the fix.
+3. **`emptyStateMessage` floors at one hour** (`Math.max(1, ceil(diff / HOUR))`),
+   so "next card in 9 minutes" renders as "next card in 1 hour". I left it: the
+   copy and the refresh above are one decision, and it is yours. Its unit test
+   pins the current wording, so change both together.
+4. **Learning cards are not prioritised over new ones.** `buildQueue` sorts due
+   by `due` and appends new cards; Anki-style, a matured learning step should
+   usually come before introducing a brand-new word.
+5. **`listLearningSoon(now, horizon)` now returns cards inside a 60-second
+   horizon**, because that is what a learning step *is*. `lib/lists/today.ts` and
+   anything showing "learning soon" counts may want a floor.
+6. **The demo seed** (`lib/dev/seed.ts`) replays its backdated grades through
+   `repo.grade`, so a single Good now leaves the card in `Learning` rather than
+   `Review`. `wordState` calls both "learning", so no colour changed and the
+   e2e suite is green — but if you assert on `fsrs.state` in new work, that is
+   why it is 1.
+
+#### 6. Frozen for the four builders
+
+Do not edit these. If you need one changed: **stop, write the need into your
+`HANDOFF-<letter>.md`, and continue without it** — the orchestrator applies it on
+`main` and merges forward. This is what stops four worktrees fighting over one
+file, and a schema change in particular stops the build rather than landing in a
+branch.
+
+```
+package.json          pnpm-lock.yaml        lib/srs/params.ts
+lib/db/schema.ts      lib/db/repository.ts  lib/types.ts
+app/layout.tsx        components/ui/**      app/globals.css
+vitest.config.ts      playwright.config.ts  eslint.config.mjs      tsconfig.json
+```
+
+`lib/db/dexie.ts` is *not* frozen — but it is the only implementation of a frozen
+interface, so a change there that the interface does not describe is a change
+nobody else can see. Add the query to `repository.ts` first (via the orchestrator)
+or you will have written a private one.
+
+Worktree procedure: `pnpm install --offline --frozen-lockfile`, `data/*.json` and
+`.cache` copied from `main`'s tree (they are gitignored and generated), ports
+3001/3002/3003 for `pnpm e2e` — 3000 belongs to `main`.
+
+
+---
+
+## Phase 8 — FSRS optimization, the production direction, /stats, deploy hardening
+
+Four builders in worktrees off the prep commit `a8fe928`, merged `--no-ff` in the
+order `a` → `b` → `c` → `d`. The four `HANDOFF-<letter>.md` files are folded in
+below and deleted; this is now the only place to read.
+
+Green on the merge commit: `pnpm lint`, `pnpm test` (**852 unit in 85 files**,
+647 before), `pnpm build`, `PORT=3000 pnpm e2e` (**105 specs**, 90 before), and
+`pnpm smoke` against the built server. No dependency was added and
+`pnpm-lock.yaml` is untouched. No live model call was made from this container —
+there is still no key here.
+
+### The merge: two conflicts, and the file both of them are about
+
+Only branch `b` conflicted, and only in the review session — which is exactly
+where A's work (a card can come back inside the session) and B's work (a card
+can be asked the other way round) had to meet.
+
+**1. `lib/stores/review.ts` — the queue the session actually offers.** A filters
+out the cards this session has set aside (`sessionQueue`); B reorders so that a
+word's two directions are never back to back (`spaceDirections`). Resolved as
+
+```ts
+const queue = spaceDirections(sessionQueue(summary.queue.cards, deferred));
+```
+
+and **that order is load-bearing, not stylistic**: spacing a list and *then*
+removing rows from it can put a word's two directions back together, because the
+row that was separating them is the one that got removed. Both orders are pinned
+against each other in `tests/unit/srs/queue-phase8.test.ts`, which shows the
+wrong one producing adjacent twins.
+
+**2. `components/review/review-session.tsx`.** A's refresh timer, repeat notice
+and new `emptyStateMessage` call against B's `card.direction === 'production'`
+branch. Different parts of one component; both kept whole, neither reconciled
+away.
+
+**`lib/lists/queue.ts` — the hot spot that never collided.** A changed
+`queue.due` to sort cards mid-step (FSRS Learning/Relearning) ahead of the
+overdue Review pile. B changed **nothing** in the file, by design: a production
+card is an ordinary `cards` row, offered because `buildQueue` offers every live
+card whatever its direction, and capped at *creation* against `drawLimit` rather
+than at offer time. So the reconciliation was not a text merge but a proof that
+both rules survive composition, and that is what the new test file is for:
+
+`tests/unit/srs/queue-phase8.test.ts` (5 cases) seeds a real Dexie with a word
+mid-relearning-step, that same word's production twin, and a third overdue
+Review card, chosen so the two orderings disagree — and asserts, through the
+**real store**, that the mid-step card is offered first (A) and that its own twin
+is not the next question (B), that both are scheduled by FSRS independently, and
+that grading one moves no field of the other.
+
+### Wired at the merge, beyond the conflicts
+
+- **`/stats` is in the shared route lists, and derived rather than copied.**
+  Builder C added `/stats` to `components/shell/nav.ts` and to the service
+  worker's `SHELL`; builder D's `pnpm smoke` and `tests/unit/pwa/manifest.test.ts`
+  each carried their own hand-written list of "the six routes" and so did not
+  know about it. All three now read `NAV_ITEMS`: `scripts/smoke.ts`'s
+  `PAGE_CASES`, the manifest test's precache check, and
+  `tests/unit/server/routes.test.ts`. A route reachable from the header is now
+  smoked and precached by construction. `tests/e2e/smoke.spec.ts` gained `/stats`
+  to its `ROUTES` (heading, nav walk, and the 390px fit, which now has a seventh
+  link to fit).
+- **`tests/e2e/full-loop.spec.ts` covers the new surface.** The walk now turns on
+  free recall *and* the production direction (asserting the second creates no
+  card by itself), and part-way through the session it presses **"add the
+  reverse"** on the mined card's back — so the reverse is made from inside the
+  session and picked up with no reload, which is A's re-read carrying B's card.
+  The twin is then answered in hanzi with `/api/recall` routed to fail if it is
+  touched, the suggestion lands on Good, and the recognition card's schedule is
+  read before and after to prove nothing coordinated them. It ends on `/stats`:
+  the honest empty state first (this walk's grades are learning-step reviews, so
+  every rate is below its floor), then a seeded synthetic history and the numbers
+  appearing — rate, calibration dots, workload rows, Review-state counts.
+- **`README.md` and `CLAUDE.md` now point at `docs/deploy.md`** — the one line
+  each builder D could not add without conflicting with three branches.
+
+### Builder A — FSRS fidelity and personal optimization
+
+**1. The session honours `shortTermSteps`.** Prep flipped the default to
+ts-fsrs's own `true`; this makes the app work *with* it rather than around it.
+Scheduling did not change — everything downstream that assumed a grade could
+never land inside a session did.
+
+- `emptyStateMessage` takes an `EmptyState` object and counts **minutes** inside
+  the hour. It floored at "1 hour", which sent the learner away from a session
+  nine minutes from continuing.
+- The session arms its own timer (`sessionRefreshDelay`) when the queue empties
+  with a card inside a 15-minute horizon, and picks it up **with no reload** —
+  only while nothing is on screen, so a re-read cannot swap a card out
+  mid-answer.
+- **It terminates.** `MAX_SESSION_REPEATS = 6` grades of one card set it aside
+  for the rest of the session; the store counts per card, and the queue and every
+  number the empty state quotes exclude the set-aside ones. The UI says so both
+  before and after the cap bites. `reset()` clears it — leaving and coming back
+  is the learner deciding to try again, and the app has no business remembering a
+  bad five minutes. This replaces v1's "the queue can only shorten", which the
+  short steps ended.
+- `buildQueue` puts cards mid-step ahead of the overdue Review pile.
+
+**2. `lib/fsrs-optimize/`.** ts-fsrs ships **no** optimizer (`clipParameters`
+and `checkParameters` are validation), so the fit is ours: pure, dependency-free,
+no route, no worker.
+
+- `dataset.ts` — chronological per-card sequences; delta-t is `log.elapsed_days`,
+  the number the *scheduler* recorded. Two kinds of review are replayed but never
+  scored: a card's first (no memory state to predict from) and a **same-day** one
+  (`elapsed_days === 0`, where the forgetting curve returns 1 by construction, so
+  scoring it charges ~13.8 nats for every within-session lapse). FSRS's own
+  optimizer excludes same-day reviews for the same reason, and with the short
+  steps on there are now many, so `MIN_REVIEWS_FOR_FIT` counts *long-term*
+  reviews.
+- `loss.ts` — replays through ts-fsrs's own `FSRSAlgorithm.next_state` and
+  predicts with the exported `forgetting_curve(w, …)` parameter-vector overload;
+  binary log-loss, probabilities clamped off 0 and 1, and a candidate that
+  refuses abandons that card and scores badly rather than returning `NaN`
+  (`NaN < best` is false, so a silent one would end the search at whatever came
+  first).
+- `optimize.ts` — coordinate descent, shrinking step, chunked and cancellable.
+  Two things are load-bearing and not obvious: the step is a fraction of each
+  weight's own **magnitude**, never of its legal range (the ranges are wildly
+  unlike each other), and a **ridge pull towards the population defaults**
+  (`RIDGE = 0.05`) applies to the **training objective only** — without it the
+  search walks weakly-identified weights to their clamp bounds (`w3` pinned at
+  100 days) for a fourth decimal of training loss. Every reported number and the
+  gate itself are pure held-out log-loss.
+- `previous.ts` — the undo.
+
+**The safety rule:** split chronologically (never randomly — that leaks the
+future); the search sees the train half only; a fit is offered only if it beats
+**both** the weights in force **and** the population defaults on held-out;
+≥ `MIN_REVIEWS_FOR_FIT` (400) scorable reviews; and `optimizeWeights` **never
+writes anything** — it returns a proposal.
+
+**3. `components/settings/optimizer-panel.tsx`**, mounted with one line in the
+settings form: the parameters in force, review counts, the floor copy, Run with a
+percentage and Cancel, both held-out losses labelled as such, a worked-example
+table of what "Good" would schedule before and after, Apply, Revert. Apply is a
+separate press from Run.
+
+**Deviations.**
+
+1. **`lib/srs/params.ts` (frozen) gained three additive exports** —
+   `clipWeights`, `parametersForWeights`, `algorithmFor`. No existing signature
+   changed. `buildParameters` correctly refuses a fit that has not proved itself,
+   and a fit cannot prove itself without being scored first; the alternative was
+   faking a `SettingsRow` at every call site, or opening the second
+   `generatorParameters()` construction site CLAUDE.md forbids. One sentence was
+   added to the CLAUDE.md FSRS bullet.
+2. `emptyStateMessage` changed signature (one options object); `nextDueAt` gained
+   a third optional argument; `queue.due` changed order.
+3. `tests/e2e/p2/review.spec.ts` — one regex widened, for copy this branch
+   changed. The only file A touched outside its lanes.
+4. `app/settings/settings-form.tsx` — one import and one JSX line, directly above
+   B's `settings-production-direction` checkbox.
+5. **"A log of pure noise is refused" was not implemented literally, and that is
+   right.** Uniformly random ratings have a ~75% base recall rate stock FSRS does
+   not predict, so a fit that learns it genuinely generalizes; refusing it would
+   be refusing something correct. The two cases the rule actually exists for are
+   tested instead: a log the defaults already explain is refused, and a fit that
+   *chased* noise (random train half, real held-out half) is refused with the
+   fitted loss clearly worse.
+6. **A fidelity fix taken on the builder's own judgement:** the same-day
+   exclusion above.
+
+**Honest limits.**
+
+- **The schema column A needed and could not add:** `settings.fsrsWeights` holds
+  one vector, so the undo lives in `localStorage` (`tangram.fsrs.previous`) — per
+  browser, one deep, gone with site data. Reverting to the defaults always works,
+  and no review row is touched either way. **The ask stands:**
+  `previousFsrsWeights: FsrsWeights | null` on `SettingsRow`, no Dexie version
+  bump needed (`settings` is indexed on `id` alone); `lib/fsrs-optimize/previous.ts`
+  is the only file that would change.
+- `RIDGE` and the step schedule are hand-tuned against synthetic logs, not
+  derived.
+- Recovery on a 2,000-review synthetic log: 0.29 relative distance to the true
+  weights, against the defaults' 0.47. This is coordinate descent with a ridge,
+  not FSRS's Rust optimizer, and does not claim to be.
+- The simulation uses the *current* `shortTermSteps` for the whole history;
+  nothing records what it was at each past grade.
+- The whole review log is read into memory (fine at thousands, not at hundreds of
+  thousands) and re-read on every `/settings` visit.
+- **The repeat cap is proved in jsdom, not Playwright.** The refresh timer is
+  armed from the schedule the grade wrote, and moving `due` behind the app's back
+  does not re-arm it — nothing in the product does that, but it means the e2e
+  cannot compress six one-minute steps.
+- No `app/api/optimize` route, deliberately: the data is in IndexedDB.
+
+### Builder B — the production direction (meaning → hanzi)
+
+A word can carry a **second card** with `direction: 'production'` — a separate
+row with its own FSRS state, because the two directions are different memories
+learned at different rates and one schedule cannot serve both. Nothing
+coordinates the twins, so grading one cannot move the other.
+
+- **`lib/srs/direction.ts`** is all of the logic: `gradeProduction`,
+  `productionRecallRequest` (the seam swapped into Phase 7's box),
+  `planProductionTwins`/`addProductionTwins`, `maskTargets`/`revealsTarget`,
+  `countByDirection`, `spaceDirections`, `preferRecognition`,
+  `entryFromSnapshot`.
+- **The card** (`components/review/production-card.tsx`): the meaning on the
+  front, chosen sense first, the context sentence blanked, no pinyin and no
+  classifiers — the reading is most of the answer. Hiding the word is more than
+  not printing it, and each of these is a closed, tested leak: a gloss can quote
+  the headword (`variant of 打算[da3 suan4]`), so glosses go through
+  `maskTargets`, which takes the bracketed reading with them; a sentence whose
+  target cannot be located is not shown at all; a sentence that says the word
+  twice is blanked only where the offset points, so the masked line is re-checked
+  and dropped if the word survives.
+- **The answer reuses Phase 7's `RecallInput`** (two optional copy props, one
+  injected `request`). Exact match in either script → Good, graded in the browser
+  with **no model call**; "the word inside a longer answer" and "that is pinyin,
+  not hanzi" are local too; only a one-character miss reaches `/api/recall`, and
+  if that answers nothing the local reading stands. No auto-submit — Phase 7's
+  rule is untouched.
+- **Two deliberate ways in**, and the setting is not one of them.
+  `settings.productionDirection` only *reveals* them.
+  `components/review/add-reverse.tsx` on the recognition back is one card, one
+  explicit press, no charge — the rule §3.3 has always applied to an explicit
+  add. `components/lists/production-list-toggle.tsx` is the bulk path and the one
+  that could do damage: capped at `buildQueue(...).drawLimit`, it **charges**
+  `introduced` for what it makes, only twins words whose recognition card has
+  been started, and reports the rest as pending.
+- **Today** shows the split (`today-recognition-count` /
+  `today-production-count`), rendered only once a production card exists.
+
+**Shared files B touched, minimally:** `lib/stores/review.ts` (one line, the
+`spaceDirections` fold — see the merge notes above), `app/(today)/today-view.tsx`,
+`components/review/review-card.tsx` (additive `data-direction` and an optional
+`actions` slot), `recall-input.tsx` (two optional props, same defaults),
+`review-session.tsx`, and `components/lists/list-detail.tsx` + `lib/stores/lists.ts`,
+where `cardByEntry` now folds with `preferRecognition`. That last one matters
+more than it looks: both maps were `map.set(entryId, card)`, so without it a
+reverse added this morning decides the *word's* state and a word learned in March
+renders "new" on the lists page.
+
+**Frozen-file need, not taken:** `ListRow` wants `production?: boolean`, next to
+`active`, which is the other per-list switch that changes what the queue does.
+The flag lives instead in `localStorage` behind three functions in
+`lib/srs/direction-prefs.ts`; the column turns that file into three repository
+calls and changes nothing above it. The **cards** are in IndexedDB as normal —
+losing the key loses a preference, not a schedule.
+
+**Honest limits.**
+
+- **The near-miss provider call asks a meaning question about a produced word.**
+  `gradeRecall` was built to judge an *English* answer against glosses; handing
+  it hanzi is defensible but not what its prompt was written for, and the
+  `FakeProvider` — the only grader in this container — is a word-overlap counter
+  that will usually say Again. The real fix is a `direction` on the provider
+  contract plus a second prompt, in `lib/ai/**`, which B did not own. Until then
+  the local reading is what a learner offline actually sees, and it is right.
+- **Turning the setting off does not retire existing production cards.** Chosen
+  over silently hiding due cards: a scheduled card is a commitment, and a Today
+  count that disagrees with the database is worse. Nothing in the app deletes a
+  card yet.
+- The list top-up runs when the list page is open, not from Today (the schema
+  column above would let it run in `loadToday`).
+- `spaceDirections` is display order only: in a queue holding one word's two
+  directions and nothing else, they stay adjacent.
+- Sense-level twins are supported (`twinKey` is (entryId, senseIndex)) but only
+  "add the reverse" can make one.
+- **Trap for the next spec author:** use `resetApp` (p3 helpers), not
+  `openReview`, when the daily allowance matters — `openReview` navigates to
+  `/review` before resetting, so a spine draw can land its charge after the wipe.
+
+### Builder C — `/stats`, the retention dashboard
+
+A read-only client route, four panels over **one** read of the review log. It
+never writes: opening Today introduces cards and opening Review grades them, so a
+dashboard that changed the thing it measures would be its own worst data source.
+
+1. **True retention** — the hero figure for the last 30 days, all-time beside it.
+   The denominator counts only reviews where `before.state === 2` (Review), is
+   stated on screen in words, and the excluded learning-step reviews get their own
+   tile so the two figures add back up to the log. This matters more than it did
+   in v1: with `shortTermSteps` on, Learning and Relearning reviews now actually
+   occur, a new word can be answered three times in ten minutes, and folding those
+   in drifts the headline toward 95% and stops it responding to the schedule at
+   all — 50% counted properly against 83% counted naively, on the same rows.
+   **Hard counts as a recall**; Again is FSRS's only failure and is what its
+   forgetting curve is fitted against.
+2. **Calibration** — predicted against observed by decile over a diagonal, dot
+   area = reviews, count labelled beside each dot, a decile under 10 reviews
+   **not drawn** and its reviews reported instead. Predictions are **recomputed
+   from the weights in force now**, through ts-fsrs's own `forgetting_curve` with
+   `buildParameters(settings).w` — so builder A can screenshot before and after an
+   optimize and watch the dots move. No `fsrs()`/`generatorParameters()` call was
+   added; the CLAUDE.md rule still greps to one construction site.
+3. **Workload** — last-30 reviews and next-30 dues on one axis split at today.
+   New cards are excluded from the forecast (a New card's `due` is the moment it
+   was created, so counting them would put every word ever added on today's bar);
+   overdue is folded onto today and said out loud; each card is counted exactly
+   once.
+4. **Maturity** — four state tiles, the stability histogram on an ordinal ramp,
+   and the known count at `KNOWN_STABILITY_DAYS` (21) — the same threshold the
+   reader paints a word "known" at.
+
+**The empty states are the point**, and the line they draw is between a **count**
+and a **rate**. A count is exact at any size and has no floor; a rate estimated
+from a handful of trials is noise wearing a percent sign: 30 Review-state reviews
+for retention, 100 for calibration, 10 per decile, and below the floor the panel
+says how far off it is and renders no marks. With `?seed=demo` — the state Kirby
+actually opens the app in — both rates are under the floor, and that is the first
+e2e test.
+
+Charts are inline SVG with a `<details>` table view each; no value is reachable
+only by hovering. The `dataviz` skill was loaded and its validator run: the app's
+jade `#0f766e` fails the OKLCH chroma floor as a data colour and `#5eead4` is
+above the dark lightness band, so the series pair and the 6-step ordinal ramp are
+stepped versions of the same hues, PASS on every check in both modes (reasoning
+in `components/stats/chart-tokens.tsx`). Rendered at 390px and 900px, light and
+dark; colliding decile labels, the reference-line label landing on the data and
+oversized in-SVG type on desktop were fixed.
+
+**Honest limits.**
+
+- **Calibration cannot detect a fit's own overfitting** — it scores the weights
+  in force against *all* reviews, including a fit's training data. That is A's
+  held-out log loss to judge; `calibration(reviews, w)` takes both arguments if a
+  held-out chart is ever wanted.
+- Elapsed time is measured fractionally from `before.last_review`, not from
+  `log.elapsed_days` (a card answered 14 hours after a 10-minute step is not "0
+  days elapsed", and the curve at t=0 is exactly 1.0), falling back to the stored
+  integer when `before` has no `last_review`.
+- The forecast is a snapshot of stored due dates — a floor, not a prediction. It
+  does not simulate the reviews between now and then, and cannot know how many new
+  cards Today will introduce.
+- `predictedRecall` is `null`, never 0, when a row cannot support one.
+- One read, no refresh: grading in another tab needs a reload.
+- **`reviewsBetween` is unused.** The dashboard needs the whole log anyway for
+  all-time retention and calibration, so it slices one array in memory — cheaper,
+  and it is why the three panels provably read the same rows. It remains on the
+  interface for A's optimizer.
+- DST is handled where it can fail: day windows are walked with `setDate`, not by
+  adding 86,400,000 ms, and `tests/unit/stats/workload.test.ts` sets
+  `TZ=America/New_York` for one block and shows the naive walk losing a day.
+
+### Builder D — deploy hardening
+
+**1. The access gate.** `lib/server/access.ts` (logic, importing nothing from
+`next/*`, so Edge, Node and vitest run the same code) + `middleware.ts` +
+`requireAccess(request)` as the first statement of every handler in `/api/ask`,
+`/api/examples` and `/api/recall`. With `TANGRAM_ACCESS_SECRET` **unset** every
+function short-circuits and the app is byte-for-byte what it was — the state the
+whole suite runs in. Set: `?key=<secret>` on any page is traded for a one-year
+`HttpOnly; SameSite=Lax; Secure` cookie and **303'd back to the same URL with the
+key removed** (`?access=granted|denied`), so the secret never sits in history, a
+bookmark or a `Referer`; a wrong key also clears the cookie the device had.
+Constant-time compare, hand-rolled because `node:crypto` is not on Edge. A
+refusal is `401 {"error":"unauthorized"}` with `no-store` — no hint, no stack, no
+echo, and the secret is never logged. A secret outside `[A-Za-z0-9._~-]` is
+refused rather than encoded (two spellings of one credential is a hole). Pages,
+dictionary routes, the manifest, `sw.js` and `/offline.html` stay open so the PWA
+installs and the offline session runs without a key. **Two layers on purpose:** a
+`matcher` is one edit away from silently not running, and that failure mode is an
+invoice.
+
+**The cookie carries the secret verbatim** — deliberate: a synchronous check with
+no crypto in the request path, and rotation that actually works (change the
+variable and every cookie dies at once). The cookie *is* the credential, and both
+the module header and the doc say so.
+
+**2. Cold start — measured, then reduced.** Before: every route parsed 33.5 MB
+and built all seven indexes, **3.9–4.6 s / 280–292 MB per cold instance**. After,
+median of three fresh processes: `/api/dict/entries` 4064 → **972 ms**,
+`/api/dict/hsk` 4141 → **1026**, `/api/dict/segment` 4373 → **1346**,
+`/api/dict/search` hanzi/English/pinyin 4610/4147/3909 → **1443/1698/2429**,
+every index 4052 → **2348**. RSS 171–267 MB depending on route.
+
+Three changes: indexes built one part at a time (`LazyDictIndex`; **nothing above
+`lib/dict/index.ts` changed** — `index.byGloss` still reads like a field and the
+`WeakMap`s still key on the same object); `readingKeys()` skips the query
+parser's DP because CC-CEDICT's pinyin is already syllable-split (1310 → ~250 ms),
+falling back for the 742 readings that are not plain numbered pinyin; and a
+one-pass `glossTokens` (~210 ms). Both fast paths are proved against **the whole
+dictionary** — all 124,154 readings and every gloss, against the old
+implementation kept as an oracle — not against examples. Laziness itself is
+proved via `builtIndexParts()`.
+
+**Not done, honestly:** there is no dead field in `dict.json` to drop (`glosses`
+is the biggest at 20% and every response renders it); packing the three booleans
+buys ~120 ms of a 650 ms parse for a change to a frozen type and the `pnpm data`
+contract; a precomputed key file adds a staleable second artifact for less than it
+looks now that derivation is not dominant. The remaining floor **is** the 650 ms
+`JSON.parse`, and beating it is a storage-format change, not a tweak. `pnpm data`
+outputs are byte-identical (verified by a `--force` rebuild; only `meta.builtAt`
+differs) and the dict/decomp licence split is untouched.
+
+**3. `pnpm smoke`.** Hits 20 things on a built server — all 11 API handlers
+(including the `HEAD /api/dict/hsk` probe the data banner actually makes), every
+nav page, and `sw.js`/`manifest.webmanifest`/`offline.html` — failing on any
+non-2xx. Cases chain, so the search hands its real entry id downstream rather
+than depending on an id a CC-CEDICT snapshot could stop containing. Two guards
+keep it from rotting: `checkRouteCoverage()` **refuses to run** if a handler in
+`app/api/**` has no case, and `untracedDictRoutes()` walks each route's import
+graph and fails if one reaches `lib/dict/load.ts` without an
+`outputFileTracingIncludes` key — the `/api/examples` + `/api/recall` bug turned
+into a test. Wired into `pnpm e2e` via `tests/e2e/d/smoke.spec.ts`, plus a spec
+that starts a **second** `next start` with the secret actually set and drives
+refused → `?key=` → cookie → 200.
+
+**4. `docs/deploy.md`** — import, data generation and its cost, env vars, the
+gate, cold start/memory/tracing, function-timeout-vs-ask-deadline, and an
+after-deploy checklist.
+
+**Deviations and limits.**
+
+- **`package.json` (frozen) gained one line**: `"smoke": "tsx scripts/smoke.ts"`.
+  Nothing else; no dependency, no lockfile change.
+- **`GET` on `/api/ask` and `/api/examples` now takes a `Request`** (it has to
+  inspect it). Two unit-test call sites updated.
+- Next 16 prints *"the middleware file convention is deprecated, use proxy"*.
+  `middleware.ts` was kept: it is what the brief names, it demonstrably works,
+  and swapping conventions blind is not what a hardening branch does last thing.
+  Migration is a rename plus the export name
+  (`npx @next/codemod@canary middleware-to-proxy .`);
+  `tests/e2e/d/access-gate.spec.ts` is what will say it still runs.
+- **`/api/ask`'s 30 s deadline can outlive a small Vercel plan's function
+  timeout.** No `export const maxDuration` was added — the value depends on
+  Kirby's plan; `docs/deploy.md` §6 says to raise the limit or lower
+  `TANGRAM_ASK_ANSWER_TIMEOUT_MS`, which needs no rebuild.
+- Each of the 8 functions carries its own ~34.4 MB copy of `data/` (verified in
+  the `.nft.json` files). Inside the 250 MB limit; narrowing it saves ~40 MB of
+  upload for a real risk of a 500 the day someone adds a decomposition read, so
+  it was left conservative.
+- **Nothing here was verified against Vercel.** Serverless claims are inference
+  from build artefacts plus documented Next behaviour; §7 of the doc marks the one
+  item only a real deployment can settle.
+- `tests/unit/server/cold-start.test.ts` calls `resetDictCache()`, so it must
+  stay in its own file.
+- **One accident owned:** while clearing its own servers, branch `d` killed PID
+  6437, which turned out to be builder C's `next-server`. If C had an e2e run in
+  flight it was aborted; the harness restarts the server on the next run, and C's
+  suite is green on the merge.
+
+### Open after Phase 8
+
+1. **`previousFsrsWeights: FsrsWeights | null` on `SettingsRow`** (A) — the
+   optimizer's undo is in `localStorage` until it exists. No Dexie version bump.
+2. **`production?: boolean` on `ListRow`** (B) — the per-list flag is in
+   `localStorage` until it exists, and with it the list top-up could run from
+   `loadToday` instead of needing the list page open.
+3. **A `direction` on the provider contract plus a second prompt** (B) — the
+   near-miss grader currently asks an English-answer prompt about hanzi.
+4. **No way to delete a card**, so turning the production direction off leaves its
+   cards in the queue.
+5. **`maxDuration` on `/api/ask`** (D), once Kirby's Vercel plan is known.
+6. **The one deploy claim only a real deployment can settle** —
+   `docs/deploy.md` §7.

@@ -17,6 +17,7 @@ import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { NAV_ITEMS } from '@/components/shell/nav';
 import nextConfig from '@/next.config';
 import {
   discoverApiRoutes,
@@ -86,11 +87,12 @@ describe('smoke coverage', () => {
     expect(checkRouteCoverage(ROOT), 'add a case to SMOKE_CASES in scripts/smoke.ts').toEqual([]);
   });
 
-  it('also walks the six nav routes and the three files the PWA needs', () => {
+  it('also walks every nav route and the three files the PWA needs', () => {
     const paths = PAGE_CASES.map((c) => c.url({}));
-    expect(paths).toEqual(
-      expect.arrayContaining(['/', '/lookup', '/review', '/read', '/lists', '/settings']),
-    );
+    // Derived from the nav, not restated: `/stats` was added to the header in
+    // one Phase 8 worktree and to the smoke list in another, and a hand-copied
+    // list is what let those two disagree in the first place.
+    expect(paths).toEqual(expect.arrayContaining(NAV_ITEMS.map((item) => item.href)));
     expect(paths).toEqual(
       expect.arrayContaining(['/sw.js', '/manifest.webmanifest', '/offline.html']),
     );

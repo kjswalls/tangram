@@ -18,6 +18,8 @@ import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { NAV_ITEMS } from '@/components/shell/nav';
+
 const root = resolve(import.meta.dirname, '../../..');
 const manifest = JSON.parse(readFileSync(resolve(root, 'public/manifest.webmanifest'), 'utf8'));
 const sw = readFileSync(resolve(root, 'scripts/sw.template.js'), 'utf8');
@@ -89,10 +91,12 @@ describe('sw.js', () => {
     expect(staticIndex).toBeGreaterThan(apiIndex);
   });
 
-  it('caches the hashed static chunks and precaches the six shell routes', () => {
+  it('caches the hashed static chunks and precaches every nav route', () => {
     expect(sw).toContain('cacheFirst(event)');
-    for (const route of ['/', '/lookup', '/review', '/read', '/lists', '/settings']) {
-      expect(sw).toContain(`'${route}'`);
+    // Read off the nav rather than listed here: `/stats` arrived in Phase 8 and
+    // a hand-copied list is how a nav destination quietly stops being offline.
+    for (const item of NAV_ITEMS) {
+      expect(sw).toContain(`'${item.href}'`);
     }
   });
 

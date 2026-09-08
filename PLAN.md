@@ -170,7 +170,7 @@ in a `'use client'` module (`getDb()` memoised on `globalThis`), never at import
 ```
 words        { id, entryId, snapshot: EntrySnapshot, createdAt, updatedAt, deletedAt }
              // EntrySnapshot = { simp, trad, pinyinMarked, pinyinNum, glosses[], classifiers[], hskBand?, freqRank?, dictVersion }
-cards        { id, wordId, entryId, kind:'word'|'phrase', direction:'recognition',
+cards        { id, wordId, entryId, kind:'word'|'phrase', direction:'recognition'|'production',   // Phase 8; index [entryId+direction]
                snapshot: EntrySnapshot | PhraseSnapshot, senseIndex?, note?,
                context?: { sentence?, question?, query?, offset?, length?, source:'lookup'|'ask'|'reader'|'list'|'seed', addedAt },
                fsrs: { state, due, stability, difficulty, reps, lapses, scheduled_days, learning_steps, last_review? },
@@ -181,27 +181,68 @@ list_members { id, listId, wordId|entryId, order, createdAt, deletedAt }        
 known_words  { id, entryId, createdAt }
 texts        { id, title, body, createdAt, updatedAt, deletedAt }
 ask_cache    { id /* = cache key */, response: ValidatedAskResponse(ids + indexes only), createdAt }
-settings     { id:'singleton', newPerDay:10, spineStartBand:3, knownBand:2, dayRollover:4, script:'simp', provider:'fake', introduced: Record<dayKey, number> }
+settings     { id:'singleton', newPerDay:10, spineStartBand:3, knownBand:2, dayRollover:4, script:'simp', provider:'fake', introduced: Record<dayKey, number>,
+               requestRetention:0.9, shortTermSteps:true, productionDirection:false, fsrsWeights: FsrsWeights|null }   // the four are Phase 8, required not optional
 ```
 
-`lib/db/repository.ts` (interface, frozen): `addCardFromEntry(entry, context?, senseIndex?)`,
+`lib/db/repository.ts` (interface, frozen): `addCardFromEntry(entry, context?, senseIndex?, dictVersion?, direction?)`,
 `addPhraseCard(tokens, en, context)`, `listDue(now)`, `listLearningSoon(now, horizonMs)`,
 `grade(cardId, rating, now)` (writes card + review row), `newCandidates(limit)`,
 `markKnown(entryIds)`, `lists()`, `listMembers(listId)`, `setListActive(id, bool)`,
 `saveText`, `texts()`, `getSettings`, `setSettings`, `askCache.get/set`, `resetAll()`.
+Phase 8 added read-only queries for the optimizer and the dashboard —
+`reviewsBetween(fromMs, toMs)` (half-open), `allReviewsChronological()`, `cardCountsByState()`,
+`stabilityHistogram()`, `cardForEntry(entryId, senseIndex?, direction?)` — so that neither
+writes its own Dexie access. Card identity is now **(entryId, senseIndex, direction)**.
 
-**FSRS.** `ts-fsrs` with `fsrs({ enable_short_term: false })` in v1 — every grade schedules
-≥ 1 day, so a session ends cleanly and "Again" means "tomorrow". Elapsed time derives from
-`last_review`/`reviewedAt`, never `elapsed_days`. Replay =
-`fsrs().reschedule(createEmptyCard(), reviews.map(r => ({rating, review: new Date(r.reviewedAt)})))`;
-a P2 unit test asserts it reproduces the stored card state. Keyboard 1–4 → `Rating` 1–4; the
-four buttons show the interval each would schedule (from `repeat()`).
+**FSRS.** `ts-fsrs`, and since Phase 8 every parameter set is built in exactly one place:
+`lib/srs/params.ts`. Nothing else in the app may call `fsrs()` or `generatorParameters()` —
+two construction sites are two schedulers that disagree, and a card whose stored schedule its
+own review rows cannot reproduce. Grading, the four interval previews and replay all go
+through it, and it reads three settings columns: `requestRetention`, `shortTermSteps` and
+`fsrsWeights` (validated, because `generatorParameters` silently clamps a `NaN` weight to
+0.001 and schedules with it). Elapsed time derives from `last_review`/`reviewedAt`, never
+`elapsed_days`. Replay = `reschedule(createEmptyCard(), reviews.map(r => ({rating, review: new Date(r.reviewedAt)})))`
+under those same parameters; a P2 unit test asserts it reproduces the stored card state.
+Keyboard 1–4 → `Rating` 1–4; the four buttons show the interval each would schedule (from
+`repeat()`), in minutes when the schedule is minutes.
+
+> **The short learning steps: off in v1, on since Phase 8.** v1 shipped
+> `fsrs({ enable_short_term: false })` — a deliberate deviation from ts-fsrs's own default
+> (`enable_short_term: true`, `learning_steps: ['1m','10m']`) — so that every grade scheduled
+> ≥ 1 day, a session always ended cleanly, and "Again" meant "tomorrow". **Phase 8 turned it
+> on**, because the cost was real and it was paid by the learner: failing a brand-new card and
+> not seeing it again for a day is worse than seeing it again in ten minutes, and the whole
+> spacing argument says so. It is now `settings.shortTermSteps`, defaulting `true`, so the v1
+> behaviour is one column away rather than compiled in.
+>
+> What that changed, and what had to be built to pay for it: the FSRS `Learning` (1) and
+> `Relearning` (3) states now actually occur, where under v1 they never did — so a grade can
+> schedule *inside* the session, the session can legitimately re-serve a card it just graded,
+> and "the queue can only shorten" stopped being an invariant. In its place the store counts
+> grades per card and sets a card aside after `MAX_SESSION_REPEATS` (6), which is what makes
+> the session provably terminate; the empty state counts minutes rather than flooring at an
+> hour; and the session arms a timer for a card maturing inside a 15-minute horizon so a
+> matured step is picked up with no reload. `/stats` excludes learning-state reviews from true
+> retention for the same reason — they are nearly all successes and would drift the headline
+> to 95% and stop it responding to the schedule at all.
 
 **Day.** `todayKey(now)` in `lib/srs/day.ts`: the browser's local calendar day rolling over
 at local 04:00 (`settings.dayRollover`). Used by the introduced counter, the seed and the
 Today counts; `due` comparisons use instants, never day keys.
 
-**Queue (`lib/lists/queue.ts`).** `due(now)` = `state != New && due <= now`, sorted by due.
+**Queue (`lib/lists/queue.ts`).** `due(now)` = `state != New && due <= now`. Since Phase 8 the
+order is **cards mid-step first** (FSRS `Learning` or `Relearning`), then everything else by
+due instant: a card in a learning step is halfway through being acquired and its step is a
+measured few minutes, while a Review card three days overdue has already waited three days and
+one more minute costs it nothing. Sorting purely by `due` puts the overdue pile first and lets
+every short step rot behind it. A **production** card (§ below) is an ordinary card here — it
+is offered because the queue offers every live card whatever its direction, and it is capped
+at *creation* against `drawLimit` rather than at offer time — so the two Phase 8 queue rules
+never met in this file. The session store composes them: it drops the cards the session has
+set aside and *then* spaces a word's two directions apart, in that order, because spacing a
+list and then removing rows from it can put twins back together.
+
 New cards are created lazily — a `words` row for every spine word, a `cards` row only when
 introduced or explicitly added. Explicit Add (lookup, ask, reader) creates a card in state
 New and is *always* in today's queue; the `newPerDay` cap applies only to spine auto-draw.
@@ -213,6 +254,16 @@ and 一点儿, 一块儿, 小孩儿 are `isVariant` ("erhua variant of …"), an
 such words would take six of band 1 out of the spine. `introducedToday` = `settings.introduced[todayKey]`,
 persisted. FSRS never sees lists; the queue builder does. After grading 10 new cards and
 reloading, no further spine cards are offered today; an explicitly added word still appears.
+
+**Two directions (Phase 8).** A word can carry a second card, `direction: 'production'` —
+the meaning on the front, the hanzi to be written. It is a separate `cards` row with its own
+FSRS state, because the two directions are different memories learned at different rates and
+one schedule cannot serve both; nothing coordinates them, and grading one cannot move the
+other. `settings.productionDirection` only *reveals* the two ways of making one — "add the
+reverse" on a recognition card's back (one card, explicit, uncapped like every explicit add)
+and a per-list bulk toggle (capped at `drawLimit` and charged to `introduced`). Turning the
+setting on creates nothing. An exact answer is graded in the browser against the headword,
+either script, with no model call; only a one-character miss reaches `/api/recall`.
 
 **Reader/known states (`lib/srs/states.ts`, unit-tested).** No card and not known → `new`;
 card in New/Learning/Relearning, or Review with `stability < 21` → `learning`; Review with
@@ -381,6 +432,30 @@ Neither P4 nor P5 edits `package.json`, `lib/db/**`, or the frozen panel shell.
    button (§3.6). 4. **PWA** shell caching (§3.6). 5. Full-loop e2e: look up → add → review →
    read → add-from-text → ask → add phrase.
 
+### Phase 7 — the merge
+
+The three Phase 6 branches met on one card back. i+1 sentences and free-recall grading both
+landed (item 1 and item 2 of the Phase 6 list above, which the build night's reorder had left
+unstarted), the five-item debt list from the P1–P5 reviews was cleared, and
+`tests/e2e/full-loop.spec.ts` walked the whole loop with both card features switched on.
+
+### Phase 8 — FSRS optimization, the second direction, the dashboard, the deploy
+
+Four parallel worktrees off a prep commit that built the shared surface first
+(`lib/srs/params.ts` as the one parameter construction site, four settings columns, a widened
+`direction` with its index, five read-only repository queries, and the `shortTermSteps`
+default flipped to ts-fsrs's own `true`).
+
+| Builder | Shipped |
+|---|---|
+| **A** | The session honours the short steps — minutes in the empty state, a refresh timer, a per-session repeat cap that makes it terminate, learning steps ahead of the overdue pile. `lib/fsrs-optimize/`: a coordinate-descent fit of FSRS's weights to this learner's own log, gated on a chronological split and a held-out log loss that must beat both the weights in force and the population defaults, over ≥ 400 scorable reviews — and it never applies anything. `components/settings/optimizer-panel.tsx` is the affordance. |
+| **B** | The production direction: a word may carry a second card asked meaning → hanzi, its own row, its own FSRS state, nothing coordinating the two. Exact answers are graded in the browser; the front never leaks the answer, glosses and mined sentences included. |
+| **C** | `/stats`: true retention over a stated Review-state denominator, calibration by decile recomputed from the weights in force, a workload panel, and maturity — each with an empty state that draws nothing below its floor. |
+| **D** | Deploy hardening: an access gate on the three routes that spend money (off entirely when `TANGRAM_ACCESS_SECRET` is unset), a cold start cut from ~4 s to ~1 s by building the dictionary indexes lazily, `pnpm smoke` against a built server with coverage guards, and [docs/deploy.md](docs/deploy.md). |
+
+Merged `a` → `b` → `c` → `d`; the two conflicts and their resolution are in
+[HANDOFF.md](HANDOFF.md) under *Phase 8*, along with what each builder needed and did not get.
+
 **Not in v1, on purpose:** camera/OCR; tone scoring (v1.x: a pitch-contour *overlay* with no
 judgment; scoring is a bought API — Azure pronunciation assessment or iFlytek); confusion-pair
 detection (needs weeks of review data); compounding mnemonics; listening direction; Supabase
@@ -428,6 +503,8 @@ I actually have about this word in this sentence."
 1. **Codename** — default *Tangram*. Alternates: *Inkstone* (砚), *Lantern*.
 2. **Repo** — done: `kjswalls/tangram`, `main`. Delete the parking branch on anchor when
    convenient. Vercel: new project on the new repo; `data/` is generated at build (`pnpm build`).
+   The whole deployment story — env vars, the access gate, cold start and memory, function
+   timeouts, and an after-deploy checklist — is [docs/deploy.md](docs/deploy.md) (Phase 8).
 3. **Persistence** — local-first IndexedDB, single user. Supabase later; §3.3 is the seam.
 4. **Model + key** — `AnthropicProvider` has never made a live call from here. Set
    `ANTHROPIC_API_KEY` and `TANGRAM_LLM_PROVIDER=anthropic` in `/home/user/tangram/.env.local`
@@ -448,7 +525,8 @@ post-merge integration spec; merged pinyin/English search routing with ranking; 
 ids; Schema v1 with UUIDs, soft deletes, FSRS replay, lazy Dexie; per-token grounding with
 senseIndex and phrase cards; classifier/variant/proper-noun fields; full dependency list;
 polyphones never truncated; DP segmentation with `text` tokens; queue semantics under ts-fsrs
-with a persisted daily counter and `enable_short_term:false`; spine start band, known words,
+with a persisted daily counter and `enable_short_term:false` (v1's deviation; Phase 8 turned
+the short steps on — §3.3); spine start band, known words,
 learner profile, reader states; provenance in the card shape and a "Looked up" list; P4/P5
 ownership; a FakeProvider that never renders an empty panel; ask cache keyed on context and
 prompt version; profile travels with the request; attribution surfaces; Playwright from Phase

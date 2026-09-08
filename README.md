@@ -22,6 +22,7 @@ pnpm e2e          # playwright test     (builds, then serves on $PORT, default 3
 pnpm data         # build data/*.json from the upstream sources
 pnpm data:ensure  # same, but only when data/dict.json is missing
 pnpm sw           # generate public/sw.js (gitignored) from scripts/sw.template.js
+pnpm smoke        # hit every route of a built, running server and fail on any non-2xx
 ```
 
 Node >= 20.9 (`.nvmrc` says 22), pnpm 10.
@@ -46,6 +47,9 @@ Copy `.env.example` to `.env.local`:
 | `TANGRAM_LLM_PROVIDER` | `fake` (default) or `anthropic`. |
 | `TANGRAM_MODEL` | Model id for `AnthropicProvider`; empty uses its default. |
 | `TANGRAM_DATA_DIR` | Where `dict.json` / `decomp.json` live. Empty → `<repo>/data`. |
+| `TANGRAM_ACCESS_SECRET` | Set it and the three model-backed routes need a key; unset (the default) and the gate does not exist. See the deploy doc. |
 
 The full design lives in [PLAN.md](PLAN.md); the verified upstream formats and pinned
-versions are in [docs/data-sources.md](docs/data-sources.md).
+versions are in [docs/data-sources.md](docs/data-sources.md); deploying it — Vercel setup,
+env vars, the access gate, cold start and memory, the after-deploy checklist — is
+[docs/deploy.md](docs/deploy.md).

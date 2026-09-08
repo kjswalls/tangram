@@ -3,12 +3,12 @@
  *
  * **This is a stopgap and it is written down as one.** The flag belongs on the
  * `lists` row next to `active`, but `lib/db/schema.ts` is frozen for the four
- * Phase 8 builders (HANDOFF-prep8.md §6), and the rule for a frozen file is to
+ * Phase 8 builders (HANDOFF.md, Phase 8 prep §6), and the rule for a frozen file is to
  * stop, write the need down and continue without it. So the preference lives in
  * `localStorage` behind the three functions below, which are the whole seam: a
  * `production?: boolean` column on `ListRow` turns this file into three
  * repository calls and changes nothing above it. The need is recorded in
- * HANDOFF-b.md.
+ * HANDOFF.md, Phase 8 (builder B).
  *
  * What is *not* at risk in the meantime: the cards. Turning the toggle on
  * writes real rows through the repository, and those are in IndexedDB like

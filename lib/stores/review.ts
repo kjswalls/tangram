@@ -19,7 +19,7 @@
  * instant rather than because the list can only get smaller. Making that a
  * feature rather than an accident — a card that comes back mid-session, and an
  * empty state that knows it is minutes away — is Phase 8's queue work
- * (HANDOFF-prep8.md, builder A).
+ * (HANDOFF.md, Phase 8 prep).
  *
  * Two things make that safe rather than merely true (Phase 8, builder A):
  * `repeats` counts the grades this session has written per card, and a card

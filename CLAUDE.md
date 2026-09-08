@@ -18,6 +18,7 @@ pnpm e2e          # playwright test                   (tests/e2e/**, builds then
 pnpm data         # generate data/*.json from upstream sources
 pnpm data:ensure  # generate only if data/dict.json is missing
 pnpm sw           # generate public/sw.js from scripts/sw.template.js, stamped with BUILD_ID
+pnpm smoke        # hit every route of a built, running server; fails on any non-2xx
 ```
 
 Node >= 20.9, pnpm 10. Playwright uses the container's Chromium via `executablePath:
@@ -105,3 +106,7 @@ swap a swap. The rules that keep it swappable:
   to `503 {error:'dict-data-missing', hint:'run pnpm data'}`. Missing data is a banner, not
   a crash — keep it that way.
 - `HANDOFF.md` is append-only: add your section, never rewrite someone else's.
+- **Deploying is [docs/deploy.md](docs/deploy.md)** — env vars, the `TANGRAM_ACCESS_SECRET`
+  gate on the three model-backed routes (unset means the gate does not exist), cold start and
+  memory, `outputFileTracingIncludes`, and the after-deploy checklist. `pnpm smoke` is what
+  proves a built server before it is trusted.

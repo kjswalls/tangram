@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo } from 'react';
 
+import { ExampleSentences } from '@/components/review/example-sentences';
 import { GradeBar } from '@/components/review/grade-bar';
 import { ReviewCard } from '@/components/review/review-card';
 import { Button } from '@/components/ui/button';
@@ -47,6 +48,9 @@ export function ReviewSession() {
 
   const card = queue[index];
   const script = settings?.script ?? DEFAULT_SETTINGS.script;
+  // `undefined` is "not decided" on a settings row written before the toggle
+  // existed, never "off" (HANDOFF-prep, §6).
+  const examplesOnBack = settings?.examplesOnBack ?? DEFAULT_SETTINGS.examplesOnBack ?? true;
 
   // The intervals are computed against the same instant the queue was built —
   // `store.now`, set by `load()` before `loaded` flips — so the four labels do
@@ -155,6 +159,18 @@ export function ReviewSession() {
         peeked={peeked}
         onPeek={peek}
         onReveal={reveal}
+        // The slot only mounts once the back is on screen, which is what keeps
+        // the flip instant: the sentences are fetched after the reveal, never
+        // before it. Off means gone, not hidden.
+        examples={
+          examplesOnBack ? (
+            <ExampleSentences
+              key={card.id}
+              entryId={card.entryId}
+              {...(card.senseIndex === undefined ? {} : { senseIndex: card.senseIndex })}
+            />
+          ) : null
+        }
       />
 
       {revealed ? (

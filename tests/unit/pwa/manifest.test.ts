@@ -4,9 +4,14 @@
  * The manifest and the worker are hand-written static files, so nothing else
  * type-checks them. These assertions are the type check: the fields a browser
  * refuses to install without, an icon that actually exists on disk, and the
- * cache rules that make the worker safe (skipWaiting/claim, a versioned cache
- * name, no route under /api ever entering it, and navigations that ask the
- * network first so a deploy cannot serve the previous build's HTML).
+ * cache rules that make the worker safe (skipWaiting/claim, a cache name bound
+ * to the build, no route under /api ever entering it, and navigations that ask
+ * the network first so a deploy cannot serve the previous build's HTML).
+ *
+ * The worker read here is `scripts/sw.template.js`, the committed source.
+ * `public/sw.js` is generated from it at build time (`scripts/build-sw.ts`) and
+ * is gitignored, so it is absent in a fresh clone; what the generator does with
+ * the template is pinned in `build-sw.test.ts` beside this file.
  */
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -15,7 +20,7 @@ import { describe, expect, it } from 'vitest';
 
 const root = resolve(import.meta.dirname, '../../..');
 const manifest = JSON.parse(readFileSync(resolve(root, 'public/manifest.webmanifest'), 'utf8'));
-const sw = readFileSync(resolve(root, 'public/sw.js'), 'utf8');
+const sw = readFileSync(resolve(root, 'scripts/sw.template.js'), 'utf8');
 
 describe('manifest.webmanifest', () => {
   it('carries the fields an install prompt requires', () => {
@@ -62,11 +67,16 @@ describe('manifest.webmanifest', () => {
 });
 
 describe('sw.js', () => {
-  it('takes over immediately and versions its cache', () => {
+  it('takes over immediately and names its cache after the build', () => {
     expect(sw).toContain('skipWaiting');
     expect(sw).toContain('clients.claim');
-    expect(sw).toMatch(/const VERSION = '[^']+'/);
+    // The version is a placeholder in the template and a build id in the file
+    // the browser gets, which is what makes `activate` purge the last build's
+    // chunks instead of keeping every deploy's forever.
+    expect(sw).toContain("const VERSION = '__TANGRAM_BUILD_ID__'");
     expect(sw).toMatch(/const CACHE = `tangram-\$\{VERSION\}`/);
+    // `activate` drops every other cache; with a per-build name, that is the purge.
+    expect(sw).toMatch(/names\.filter\(\(name\) => name !== CACHE\)/);
   });
 
   it('bails out of every /api request before it can respond', () => {

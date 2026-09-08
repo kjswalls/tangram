@@ -31,6 +31,7 @@ import { search, hasCjk } from '@/lib/dict/search';
 import { segment } from '@/lib/dict/segment';
 import type { Entry, EntryId, HskBand, LearnerProfile } from '@/lib/types';
 import { DEFAULT_MODEL } from '@/lib/ai/anthropic';
+import { requireAccess } from '@/lib/server/access';
 
 // The dictionary is read from disk per process; never prerender this at build time.
 export const dynamic = 'force-dynamic';
@@ -232,7 +233,17 @@ export function mergeRetrieved(fromSearch: readonly Entry[], fromCandidates: rea
   return out;
 }
 
-export function GET(): Response {
+/**
+ * The access gate (lib/server/access.ts). A no-op unless
+ * `TANGRAM_ACCESS_SECRET` is set in the environment; when it is, this route
+ * costs money and answers nothing without the cookie. `middleware.ts` refuses
+ * the same request one layer earlier — the handler checks again because a
+ * matcher is easy to break and an invoice is expensive.
+ */
+export function GET(request: Request): Response {
+  const denied = requireAccess(request);
+  if (denied) return denied;
+
   const provider = selectProvider();
   const info: AskRouteInfo = {
     provider: provider.name,
@@ -245,6 +256,9 @@ export function GET(): Response {
 }
 
 export async function POST(request: Request): Promise<Response> {
+  const denied = requireAccess(request);
+  if (denied) return denied;
+
   let payload: unknown;
   try {
     payload = await request.json();

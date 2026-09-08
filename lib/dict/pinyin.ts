@@ -340,3 +340,56 @@ export function normalizePinyin(query: string): NormalizedPinyin {
   const letters = chunks.map((c) => c.letters).join('');
   return { toneless: letters, toned: letters, syllables: [], fullyParsed: false };
 }
+
+/**
+ * The two index keys for a **dictionary** reading, without running the query
+ * parser over it.
+ *
+ * `normalizePinyin` exists to make sense of what a *learner* types — an
+ * unsegmented run like `dasuan` that has to be split by a DP over the syllable
+ * table. CC-CEDICT's `pinyinNum` is not that: it is already segmented, one
+ * space-separated `<letters><tone digit>` token per syllable, so the same keys
+ * fall out of a single pass with no searching at all. Building the two pinyin
+ * indexes over 124k entries costs 1.3 s through the parser and about 0.2 s
+ * through this — a second off the cold start of every route that searches
+ * (docs/deploy.md).
+ *
+ * It returns `null` for anything that is not that shape — a Latin run like
+ * `A quan1 r5` or `san1 C`, 742 entries in the current snapshot — and the
+ * caller falls back to `normalizePinyin`. That fallback is what makes this
+ * safe: the fast path is allowed to recognise less, never to answer
+ * differently. `tests/unit/server/cold-start.test.ts` proves the two agree on every
+ * reading in the built dictionary, so a divergence is a failing test rather
+ * than a word that quietly stops being findable.
+ */
+export function readingKeys(pinyinNum: string): { toneless: string; toned: string } | null {
+  let toneless = '';
+  let toned = '';
+  for (const token of pinyinNum.trim().split(/\s+/)) {
+    if (!token) continue;
+    const tone = token.charCodeAt(token.length - 1) - 48;
+    if (tone < 1 || tone > 5) return null;
+    let base = '';
+    for (let i = 0; i < token.length - 1; i += 1) {
+      const ch = token[i];
+      // `u:`/`U:` and `v`/`V` are ü, and the indexes fold ü to u.
+      if ((ch === 'u' || ch === 'U') && token[i + 1] === ':') {
+        base += 'u';
+        i += 1;
+        continue;
+      }
+      if (ch === 'v' || ch === 'V' || ch === 'ü' || ch === 'Ü') {
+        base += 'u';
+        continue;
+      }
+      if (ch >= 'a' && ch <= 'z') base += ch;
+      else if (ch >= 'A' && ch <= 'Z') base += ch.toLowerCase();
+      else return null;
+    }
+    if (!base) return null;
+    toneless += base;
+    // The neutral tone contributes no digit — see `NormalizedPinyin.toned`.
+    toned += tone === 5 ? base : base + String(tone);
+  }
+  return toneless ? { toneless, toned } : null;
+}

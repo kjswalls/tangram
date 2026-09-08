@@ -2153,6 +2153,15 @@ both blocks up and asserts the bar is in the viewport and still grades.
   happened … this component never re-decides it". It re-decides a cached row,
   and the header says so and why.
 
+One suggested fix was **not** taken as written: the minor asking the i+1 token
+row to carry the ask panel's dotted underline for `unverified`/`aiGenerated`/
+`missing` tokens. On this path those tokens can no longer reach the screen at
+all — an uncited token drops its sentence server-side, and a missing or
+unverified one drops it in the render pass above — so the underline would be
+unreachable styling that reads as a promise the block does not need to make. The
+polyphone hint, which is about a token that *is* shown, is there: the same title
+and the same `· polyphone` suffix, plus `data-polyphone` for the tests.
+
 ### What the review got wrong
 
 One finding's evidence says 图书馆 is band 3 and another test comment said the

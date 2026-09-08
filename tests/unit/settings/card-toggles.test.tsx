@@ -12,7 +12,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { SettingsForm } from '@/app/settings/settings-form';
 import { closeDb, getDb, getRepository } from '@/lib/db/get-db';
-import { DB_VERSION, DEFAULT_SETTINGS, STORES_V1 } from '@/lib/db/schema';
+import { DB_VERSION, DEFAULT_SETTINGS, STORES, STORES_V1 } from '@/lib/db/schema';
 
 afterEach(async () => {
   await getDb().delete();
@@ -60,7 +60,12 @@ describe('the card toggles', () => {
   });
 
   it('needed no Dexie version bump: the settings store indexes the key alone', () => {
+    // The version has since moved to 2 for an index on `lists` (the system-list
+    // uniqueness fix), but the settings store's definition is untouched at both
+    // versions — which is the fact these two fields relied on: IndexedDB does
+    // not police the shape of a row whose key path it does not index.
     expect(STORES_V1.settings).toBe('id');
-    expect(DB_VERSION).toBe(1);
+    expect(STORES.settings).toBe(STORES_V1.settings);
+    expect(DB_VERSION).toBeGreaterThanOrEqual(1);
   });
 });

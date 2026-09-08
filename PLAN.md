@@ -44,7 +44,7 @@ Three commitments; everything else is subordinate:
 | No Anthropic key in the container (the base URL present 401s) | `LLMProvider` interface. `FakeProvider` is the default and drives tests, the dev UI and the morning demo; `AnthropicProvider` is wired, unit-tested against a mocked HTTP layer, **never called live from here**. |
 | `mdbg.net`, `kaikki.org`, `github.com` HTML and `api.github.com` are blocked; npm registry and `raw.githubusercontent.com` are reachable | Every data source is a verified exact URL (§3.1). Wiktionary deferred (⏳). |
 | No Supabase project; Supabase MCP needs OAuth this session can't run | **Local-first.** IndexedDB via Dexie behind a repository interface; single user; reviews work offline. Supabase is a later data-layer swap only if the schema rules in §3.3 hold. |
-| GitHub integration cannot create repos (403); session scoped to `kjswalls/v0-anchor` | Standalone repo at `/home/user/tangram` (own `main`). **Needs `kjswalls/tangram` created by Kirby** with the Claude GitHub App granted access; the history pushes there unchanged. Until then, after each phase: `git -C /home/user/tangram push --force <anchor-origin-url> main:refs/heads/claude/mandarin-srs-app-concept-vidblr` (parking only; never merged; deleted after the move). Nothing under `/home/user/v0-anchor` is edited; its `git status` stays clean. |
+| GitHub integration cannot create repos (403); session scoped to `kjswalls/v0-anchor` | Built as a standalone repo (own `main`). Overnight the history was parked after each phase on anchor's `claude/mandarin-srs-app-concept-vidblr` branch (never merged). Kirby created `kjswalls/tangram` in the morning and the history was pushed there unchanged; the parking branch is redundant. Nothing under anchor's tree was edited. |
 | Node 22 here; anchor CI pins 20; `cedict-json` pins `engines.node=22` | `engines.node: ">=20.9"`, no engine-strict; `cedict-json` is consumed only by the build script, never at runtime. |
 | 4 CPUs → at most 2 concurrent agents | Phases are sized for two builders at a time; the third worktree in P1–3 queues. |
 | pnpm 10 does not run `pre*`/`post*` scripts | No `prebuild`. `pnpm build` = `pnpm data:ensure && next build`; `pnpm data:ensure` generates only when `data/dict.json` is missing; `pnpm data --force` rebuilds. |
@@ -426,9 +426,8 @@ I actually have about this word in this sentence."
 ## 6. ⏳ Decisions deferred to the morning (build proceeds on the defaults)
 
 1. **Codename** — default *Tangram*. Alternates: *Inkstone* (砚), *Lantern*.
-2. **Repo** — create `kjswalls/tangram` (empty, private), grant the Claude GitHub App access;
-   the standalone history is pushed there as `main`; then delete the parking branch on anchor.
-   Vercel: new project on the new repo; `data/` is generated at build (`pnpm build`).
+2. **Repo** — done: `kjswalls/tangram`, `main`. Delete the parking branch on anchor when
+   convenient. Vercel: new project on the new repo; `data/` is generated at build (`pnpm build`).
 3. **Persistence** — local-first IndexedDB, single user. Supabase later; §3.3 is the seam.
 4. **Model + key** — `AnthropicProvider` has never made a live call from here. Set
    `ANTHROPIC_API_KEY` and `TANGRAM_LLM_PROVIDER=anthropic` in `/home/user/tangram/.env.local`

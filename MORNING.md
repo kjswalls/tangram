@@ -16,18 +16,13 @@ the same content for the repo.
 
 ## Where the code is
 
-`kjswalls/tangram` did not exist and the GitHub integration cannot create repos, so the whole
-history is parked on anchor's `claude/mandarin-srs-app-concept-vidblr` branch. It shares no
-commits with anchor's `main`; never merge it.
+<https://github.com/kjswalls/tangram>, branch `main`. Overnight, before the repo existed, the
+same history was parked on anchor's `claude/mandarin-srs-app-concept-vidblr` branch; that
+branch is now redundant and can be deleted. It shares no commits with anchor's `main`.
 
 ```bash
-git clone -b claude/mandarin-srs-app-concept-vidblr https://github.com/kjswalls/v0-anchor tangram
+git clone https://github.com/kjswalls/tangram
 cd tangram
-# create an empty private repo kjswalls/tangram, then:
-git remote set-url origin https://github.com/kjswalls/tangram
-git push -u origin main
-# delete the parking branch on anchor afterwards
-
 pnpm install
 pnpm data      # ~3 min, ~40 MB of downloads
 pnpm dev       # open /settings → Load demo
@@ -35,7 +30,7 @@ pnpm dev       # open /settings → Load demo
 
 ## Decisions that were yours (defaults in force)
 
-1. Repo — see above.
+1. Repo — done: `kjswalls/tangram`. Delete the parking branch on anchor when convenient.
 2. Key and model — `ANTHROPIC_API_KEY` + `TANGRAM_LLM_PROVIDER=anthropic` in `.env.local`;
    the adapter has never made a live call. Default: fake provider with an offline badge.
 3. `spineStartBand` 3 and `knownBand` 2 in /settings — raise them if you are past HSK 3.

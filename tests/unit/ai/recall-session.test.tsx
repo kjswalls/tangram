@@ -26,8 +26,10 @@ afterEach(async () => {
 /**
  * A `fetch` whose one call to `/api/recall` is settled by hand, whenever the
  * test says so. Everything else fails the way an offline browser fails — the
- * session's own spine draw is off (`newPerDay: 0`), so nothing else should be
- * asking, and a call that did would be visible rather than silently pending.
+ * session's own spine draw is off (`newPerDay: 0`) and the card back's example
+ * sentences are off (`examplesOnBack: false`, Phase 6 item 1, which shares this
+ * component), so nothing else should be asking, and a call that did would be
+ * visible rather than silently pending.
  */
 function deferredFetch() {
   let settle: ((response: Response) => void) | undefined;
@@ -52,10 +54,14 @@ function deferredFetch() {
   };
 }
 
-async function openSession(settings: { freeRecall?: boolean } = { freeRecall: true }) {
+async function openSession(
+  settings: { freeRecall?: boolean; examplesOnBack?: boolean } = { freeRecall: true },
+) {
   const repo = getRepository();
   // The spine draw is another feature's; these cards are the ones seeded here.
-  await repo.setSettings({ newPerDay: 0, ...settings });
+  // So is the i+1 block on the back: it fetches at the flip, and this file
+  // counts calls to prove that nothing but the recall box asked anyone.
+  await repo.setSettings({ newPerDay: 0, examplesOnBack: false, ...settings });
   const card = await repo.addCardFromEntry(DASUAN, context({ source: 'lookup' }));
   render(<ReviewSession />);
   await screen.findByTestId('review-card');
@@ -171,7 +177,7 @@ describe('free recall in a review session', () => {
   it('carries the sense the card is about to the route', async () => {
     const fetcher = deferredFetch();
     const repo = getRepository();
-    await repo.setSettings({ newPerDay: 0, freeRecall: true });
+    await repo.setSettings({ newPerDay: 0, freeRecall: true, examplesOnBack: false });
     await repo.addCardFromEntry(DASUAN, context({ source: 'lookup' }), 1);
     render(<ReviewSession />);
     await screen.findByTestId('review-card');

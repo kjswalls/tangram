@@ -47,11 +47,16 @@ offline on a device · real phones · IDS glyphs (font gap in the container).
 
 ## Open
 
-- Two tabs could each introduce today's new cards (needs a schema index).
-- Phrase cards record `dictVersion: 'unknown'`; nothing reads it.
-- Review card renders a phrase card's front as plain text, not per-token markup.
-- 35 MB dictionary loads whole: ~2 s and ~300 MB per server process.
-- Hashed static chunks accumulate in the service-worker cache across deploys.
-- One intermittent e2e (`tests/e2e/p3/today.spec.ts:49`) under load; suspect named in HANDOFF.
+*This list is the state on the morning of 2026-09-08. Phase 7 (later the same
+day) closed five of the six — see `HANDOFF.md` §"Phase 7" for the current list;
+the strikethroughs below are that section's, not a rewrite of this report.*
+
+- ~~Two tabs could each introduce today's new cards (needs a schema index).~~ Fixed.
+- ~~Phrase cards record `dictVersion: 'unknown'`; nothing reads it.~~ Fixed for new cards.
+- ~~Review card renders a phrase card's front as plain text, not per-token markup.~~ Fixed.
+- 35 MB dictionary loads whole: ~2 s and ~300 MB per server process. **Still open.**
+- ~~Hashed static chunks accumulate in the service-worker cache across deploys.~~ Fixed.
+- ~~One intermittent e2e (`tests/e2e/p3/today.spec.ts:49`) under load; suspect named in HANDOFF.~~
+  Fixed — and the suspect named here was the wrong one.
 
 See `HANDOFF.md` for every decision in order and `PLAN.md` §7 for the review log.

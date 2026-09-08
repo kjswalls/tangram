@@ -25,6 +25,7 @@
  * written by the learner in `useReviewStore.grade` and nowhere else.
  */
 
+import { withDeadline } from '@/lib/ai/deadline';
 import { scrubProse } from '@/lib/ai/ground';
 import { oneLine, RECALL_ANSWER_MAX_CHARS } from '@/lib/ai/recall';
 import {
@@ -102,27 +103,6 @@ export function parseRecallBody(payload: unknown): RecallRequestBody | string {
 }
 
 /**
- * Reject when the provider has not answered in time. The provider interface
- * takes no `AbortSignal`, so this is a race: the call may still be in flight,
- * but nobody is waiting on it any more. `/api/ask` keeps its own private copy
- * of this helper; lifting the two into `lib/ai` would mean editing that route,
- * which belongs to another builder this week — the merge can fold them.
- */
-async function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new Error(`${what} took longer than ${ms} ms`)), ms);
-      }),
-    ]);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
-}
-
-/**
  * The grading half, with the provider passed in, so a test can hand it one that
  * throws, hangs, or answers with hanzi in the prose — the three things the
  * route exists to absorb.
@@ -135,7 +115,7 @@ export async function gradeRecallWith(
 ): Promise<Response> {
   let raw: unknown;
   try {
-    raw = await withTimeout(
+    raw = await withDeadline(
       provider.gradeRecall(entry, answer, senseIndex),
       timeoutMs(),
       'the grade',

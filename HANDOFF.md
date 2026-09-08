@@ -1604,3 +1604,348 @@ reading a Phase 6 e2e number.
 
 No server is left running; port 3000 is free. `/home/user/v0-anchor` was not
 touched; `package.json` and `pnpm-lock.yaml` are unchanged.
+
+---
+
+## Phase 7 — the merge: i+1 sentences, free recall, the debt list, the full loop
+
+Three builders worked in parallel worktrees off `b419205` (the prep commit) and
+this section is the merge: `a` (PLAN.md §4 Phase 6 item 1, i+1 example
+sentences), `b` (item 2, free-recall grading), `c` (the five debt items from the
+list at the end of §Phase 6), merged `--no-ff` in that order on `main`, plus the
+full-loop e2e that item 5 asks for.
+
+`HANDOFF-prep.md`, `HANDOFF-a.md`, `HANDOFF-b.md` and `HANDOFF-c.md` are folded
+into this section and deleted; everything load-bearing in them is below.
+Phase 6 is complete: all five items are on `main`.
+
+### The merge itself
+
+| Merge | Conflicts | Resolution |
+|---|---|---|
+| `a` → `main` | none | — |
+| `b` → `main` | **1**, `components/review/review-session.tsx` | Both taken; nothing dropped. |
+| `c` → `main` | none | — |
+
+The one conflict is the one both builders predicted: A and B each added a slot to
+the same `<ReviewCard>` in the same component. A's hunks are the `examplesOnBack`
+derivation and the `examples={…}` prop; B's are the suggestion state, the
+`freeRecall`/`suggested` derivations, `recall={…}` and `suggested={suggested}` on
+the grade bar. They share no line but the `<ReviewCard …>` call, so the merged
+file carries both, in that order — recall on the front, examples on the back.
+
+**No frozen file was touched by a builder in conflict, so the frozen-file rule
+never had to be enforced against anyone.** Two edits to frozen files landed
+anyway and are recorded here rather than reverted:
+
+- **`package.json`** (builder C): one added script, `"sw": "tsx scripts/build-sw.ts"`,
+  and `"build"` is now `pnpm data:ensure && next build && pnpm sw`. It is what
+  makes the service worker's cache name a build id rather than a hand-bumped
+  literal, so it is the fix, not an accessory to it. `pnpm-lock.yaml` is
+  untouched, no dependency was added, and `pnpm install --frozen-lockfile` is
+  still a no-op.
+- **`lib/db/schema.ts` / `lib/db/repository.ts`** (builder C): frozen to A and B,
+  not to C — prep left the db layer open for the two-tabs fix, which cannot be
+  done anywhere else. Every change is additive (below), and A's and B's readers
+  compile against it unchanged.
+- **`next.config.ts`** (the merge): `outputFileTracingIncludes` gained
+  `'/api/examples/**'` and `'/api/recall/**'`. Tracing is **per function**, so a
+  route that reads `data/*.json` and is missing from that map works perfectly
+  under `next dev` and 500s in production — the two new routes both call
+  `getEntry`/`getDictIndex`. Neither builder could edit the frozen config, which
+  is exactly the case the frozen-file rule hands to the orchestrator.
+
+### The real overlap: A and B on one card
+
+`review-session.tsx` was the only shared source file. The only place the two
+features actually interfere is a **test** that counts `fetch` calls:
+`tests/unit/ai/recall-session.test.tsx` stubs `fetch` and asserts the recall box
+asked exactly once (or not at all) — and with A merged, the same flip also fetches
+`/api/examples`. The fix is in the test and is the honest one: the session it
+opens now sets `examplesOnBack: false`, so "nothing but the recall box asked
+anyone" is again what the spy proves. No source file changed for it.
+
+Everything else composed: C's `lib/db` changes are additive, A and B read the
+repository through the interface, and the merged tree type-checks with no edit
+to either feature.
+
+### The seams prep laid down (folded from `HANDOFF-prep.md`)
+
+Written on `main` before the builders started, so the three of them shared a
+compiling, tested surface. Nothing in it was a feature.
+
+- **`lib/ai/provider.ts`** gained `exampleSentences(entry, profile, senseIndex?, support?)`
+  and `gradeRecall(entry, answer, senseIndex?)`, with `exampleSentenceSchema` /
+  `exampleSentencesSchema` / `recallGradeSchema` / `gradeRecallSchema`,
+  `MAX_EXAMPLE_SENTENCES` (4) and `RECALL_GRADES`. A sentence is a list of
+  `{entryId}` tokens in spoken order — the same citation discipline as `sayIt`,
+  so `ground.ts` renders hanzi and pinyin from dictionary rows and the model
+  never writes display text. `renderPhrase` wants a `register`, and a sentence
+  has none: pass `register: ''`. `why` is plain prose and is **not** scrubbed for
+  you — run it through `scrubProse`. `support` is the pool a sentence may be
+  built from; it is what the *prompt* asks over, and nothing in prep drops a
+  sentence for citing outside it. `RecallGrade` is `StoredRating`'s 1–4 by value,
+  because `provider.ts` may not import the database layer.
+- **`lib/ai/fake.ts`** implements both deterministically and never returns
+  nothing: `exampleEcho` cites the target plus the best of `support`
+  (known-words-first, then `freqRank`, then id), and with no support returns one
+  single-token sentence rather than an empty panel; `recallEcho` is stemmed,
+  stopworded token overlap against the **best single gloss** (0 → 1, under a
+  third → 2, under two thirds → 3, else 4; an empty answer is a blank, not a
+  wrong answer). Neither quotes gloss text or writes hanzi in its prose.
+- **`lib/ai/anthropic.ts`** wires both the way `answer` was wired — forced tool
+  call, schema-derived input, shared `call()`/`toolInputOrThrow()`/`parse()`
+  helpers, refusal → `ProviderError`. `zodToJsonSchema` learned three honest
+  cases (a literal emits its value, a union of same-typed literals collapses to
+  an `enum`, a number's `max` emits `maximum`). It has still never made a live
+  call from this container.
+- **`lib/ai/cache-key.ts`** has three key spaces in one `ask_cache` table.
+  The two new payloads are **tagged** (`'examples'`, `'recall'`) and six elements
+  long, so they cannot collide with the ask payload's five — that is the
+  argument, not sha1 improbability. The ask payload stays untagged on purpose:
+  tagging it would orphan every warm row already shipped in the demo seed.
+- **`components/review/review-card.tsx`** gained the two slots — `recall` on the
+  front (wrapped in a div that stops click and keydown propagation, or typing
+  would flip the card) and `examples` on the back — both defaulting to `null`,
+  plus `<PhraseFace>` as the phrase card's front (a stub, for builder C).
+- **`lib/db/schema.ts`** gained `examplesOnBack?: boolean` (default true) and
+  `freeRecall?: boolean` (default false), with **no Dexie bump**: `STORES_V1.settings`
+  is `'id'`, so an unindexed field needs no version. Both are optional and must be
+  read as `?? true` / `?? false` — `undefined` means "not decided", never "off".
+  (Builder C did bump `DB_VERSION` to 2, for the `lists.systemKey` index; the
+  settings fields still needed nothing.)
+- **`app/settings`** carries both toggles (`settings-examples-on-back`,
+  `settings-free-recall`), written through with no Save button.
+- One repair not on the list: `tests/unit/lists/today.test.ts:123` was red on a
+  clean tree before any of this (the repository stamps `createdAt` from the wall
+  clock while `buildQueue` compares it against an injected `now`). The test now
+  backdates the cards it introduced, and is time-independent. No source changed.
+
+### Builder A — i+1 example sentences (`16f6218`)
+
+New: `lib/ai/examples.ts` (pure, browser-safe: the filter, the known set, the
+cached shape), `app/api/examples/route.ts` (`GET` handshake, `POST` pipeline,
+`examplesFor()` with the provider injected), `components/review/example-sentences.tsx`
+(the card-back block).
+
+**The prompt asks; the filter enforces — twice, independently.** `ground()` is
+reused unchanged, so a citation outside the retrieved set is already gone and
+everything surviving is rendered from dictionary rows by the same `renderPhrase`
+the ask panel uses. Then `keepSentence` drops the **whole** sentence for an
+uncited `{text}` token, a citation that is neither the target nor known, anything
+grounding flagged `unverified`, or a sentence that never mentions the target.
+There is no trimming path: a sentence is shown whole or not at all. The two sets
+(retrieved, known) are the same by construction today and are still checked
+separately, so the day a live provider is offered a wider pool the promise on the
+card back does not silently widen with it.
+
+Known-set membership is `wordState` **called, not restated**, and it is the
+strict `'known'` — deliberately narrower than `LearnerProfile.knownSample`, which
+counts learning words too, because its job is to describe a learner to a model
+rather than to promise anything.
+
+- The block mounts **with** the back, so the fetch starts at the flip and the
+  flip never waits (the e2e delays the route three seconds and reads the glosses
+  and the grade buttons while the request is in flight).
+- Cached in `ask_cache` under prep's `examplesCacheKey`; the row holds ids only,
+  and the hanzi is re-fetched from `/api/dict/entries` at render, so no
+  dictionary text is redistributed out of the cache.
+- **An empty answer is a normal answer** — one quiet line, `cacheable: false`, so
+  a beginner who knows too few words gets sentences later without a cache row in
+  the way.
+- Hidden entirely, not styled away, when `examplesOnBack` is false; `undefined`
+  reads as on. A phrase card renders no block at all and fetches nothing.
+- **Deviation:** the request body carries an optional `known: string[]` beside
+  the brief's `{entryId, senseIndex?, profile}`, because the strict known set is
+  not expressible through `profile.knownSample`. It is optional and falls back to
+  `knownSample`, so the documented body is legal and tested.
+- `tests/unit/ai/examples-route.test.ts` partially mocks `selectProvider` (real
+  schemas kept) so a stub can cite unknown words, invent characters, throw, hang
+  and answer off-schema — the only way "the filter enforces" is testable at all,
+  since the fake never misbehaves. Nothing under `lib/ai/**` was changed for it.
+- No speak button on a sentence: `SpeakButton` renders a visible "No voice" label
+  with no Mandarin voice, and two of those on a card back is noise.
+
+### Builder B — free-recall grading (`cfc5537`)
+
+New: `lib/ai/recall.ts` (the client-safe half: the 1–4 vocabulary by value,
+`requestRecallGrade`, which never throws — every failure is `null` — and
+`recallReducer`, a card-scoped state machine), `app/api/recall/route.ts`,
+`components/review/recall-input.tsx`. Modified: `review-session.tsx` and
+`grade-bar.tsx` (an optional `suggested` prop → a ring plus
+`data-suggested="true"`; it cannot press the button).
+
+**The no-auto-submit rule is the feature, and it is enforced in four places:**
+the state has no field a rating could be read out of and the box takes no grading
+callback; every settle must match both `requestId` and `cardId`; `ReviewSession`
+files a suggestion under the card it was asked about and shows it against no
+other; and `onReveal()` runs in the same turn as the submit, before the request
+starts. One addition beyond the brief: if the learner flips the card any other
+way the box closes ("The answer is up — grade it yourself") — a suggested 4 typed
+off the back is the one grade this feature must never help anyone give themselves.
+
+The route answers `{suggested, why, provider}`; 400 (blank answer or entryId,
+over 400 chars), 404 unknown entry, 503 dict-data-missing, 502 for a provider
+that throws, hangs past 15 s (`TANGRAM_RECALL_TIMEOUT_MS`) or returns a grade
+`gradeRecallSchema` rejects — a 7 never reaches a button. An out-of-range
+`senseIndex` is dropped rather than rejected. `why` goes through `scrubProse`
+(reused, not reimplemented) and is flattened to one ≤320-char line; the client
+scrubs it again, because the promise is about what a learner is *shown*.
+
+- **No cache, deliberately.** `recallCacheKey`/`RECALL_PROMPT_VERSION` are left
+  unused: a recall row's payload is the model's `why`, and a live model
+  explaining a grade will quote the gloss — `ask_cache` is documented as holding
+  ids and no dictionary text. The hit rate argues the same way (the key folds in
+  the exact answer). Cache `suggested` without `why` if it is ever wanted.
+- The box is offered on **word cards only** — a phrase card has `entryId: null`
+  and its meaning is the English on its back.
+- Testids: `recall`, `recall-answer`, `recall-submit`, `recall-thinking`,
+  `recall-suggestion` (`data-suggested="1|2|3|4"`), `recall-why`,
+  `recall-no-suggestion`, `recall-missed`, plus `data-suggested="true"` on one
+  `grade-N` button.
+
+### Builder C — the five debt items (`1ca36de`, `8e17e1d`, `30dc92c`, `b4256e5`, `72f558d`)
+
+1. **Phrase fronts render per token.** `PhraseFace` draws the stored
+   `PhraseToken[]` one token at a time. The flag rule is *not* the stored flag
+   alone: **a token with no `entryId` is ungrounded whatever the row says**,
+   because the card this exists for — written before the Add-time refusal — carries
+   no `unverified` at all. `data-ai-generated` (no citation) is marked apart from
+   `data-unverified` (cited, unconfirmed by the segmenter), with a warning line
+   under the phrase. No pinyin on the front: the reading is the answer. Falls
+   back to `snapshot.simp` for a token-less snapshot.
+2. **`addPhraseCard` records its dictionary** — an optional fourth argument
+   exactly like `addCardFromEntry`, threaded through `addPhraseCardChecked`, with
+   the ask panel passing `ready?.dictVersion`. Nothing is migrated: a phrase
+   snapshot is never re-resolved, so an old `'unknown'` row is inert.
+3. **Two tabs cannot double-introduce**, durably on both halves. `lists.systemKey`
+   (`'looked-up'`, `'hsk:3'`) is a **unique index** (Dexie v2, with an upgrade
+   that stamps keys and retires a duplicate a v1 database already holds; a
+   tombstone releases the key, so deleting a system list stays a reset).
+   `repo.introduceCard` writes the card and charges `settings.introduced[dayKey]`
+   in **one transaction**, reporting whether *this* call created it;
+   `bumpIntroduced` does the counter's read-modify-write; `IntroduceOptions.carded`
+   is gone. One extra bug found and fixed: `loadToday` reported `0 new` over rows
+   another tab had just created — it now re-reads the card table after a draw.
+4. **The worker's cache name is the build's id.** `public/sw.js` is generated
+   (and gitignored) from the committed `scripts/sw.template.js` by
+   `scripts/build-sw.ts`, stamping `.next/BUILD_ID`. Network-first navigation,
+   `/offline.html` and the `/api` bail-out are byte-identical — a test asserts the
+   generator's output is the template verbatim apart from the version. **Edit the
+   template, not `public/sw.js`**; a fresh clone has no worker until a build runs.
+5. **`today.spec.ts:49` is deterministic** — and **HANDOFF's suspect was wrong**.
+   `busy` is per-list and never blocked another band. `allKnown` did: `knownCount`
+   uses `wordState`, so HSK 1–2 (≤ `knownBand` 2) disable themselves the moment
+   the background fill materialises them, and the spec was racing that fill. The
+   button now carries `data-mark-state="busy" | "all-known" | "idle"`; the spec
+   waits for the band's count, clicks only an idle button, and asserts the end
+   state either way. No timeout raised, nothing skipped, ~2.4 s.
+
+**`lib/db` additions, all additive:** `ListRow.systemKey`, `systemListKey()`,
+`DB_VERSION = 2` with `STORES_V2`/`STORES` (`STORES_V1` kept verbatim, because
+Dexie needs v1 declared to upgrade a database that stopped there),
+`addPhraseCard`'s fourth argument, `introduceCard`, `bumpIntroduced`. **If a
+future branch also bumps `DB_VERSION`, the two upgrades must be renumbered, not
+merged into one.**
+
+### What the merge wired
+
+- **The `review-session.tsx` conflict**, above: both slots, recall on the front
+  and examples on the back, on one card.
+- **`tests/unit/ai/recall-session.test.tsx`** now opens its session with
+  `examplesOnBack: false`, so its `fetch` spy still means what it says.
+- **One deadline helper instead of three.** `withTimeout` was a private copy in
+  `/api/ask` and again in `/api/recall`, and a public `withDeadline` in
+  `lib/ai/examples.ts` — three identical bodies, because no builder could edit
+  another's file. They are now `lib/ai/deadline.ts`, imported by all three
+  routes; each keeps its own `ms`, which is where they legitimately differ.
+  Behaviour is unchanged: the bodies were byte-identical.
+- **`tests/e2e/full-loop.spec.ts`**, below.
+
+### The full-loop spec (PLAN.md §4, Phase 6 item 5)
+
+`tests/e2e/full-loop.spec.ts` walks the whole product with **both** Phase 6 card
+features switched on, which no branch suite could do:
+
+> /settings Load demo **and** turn on free recall → /lookup an English sentence →
+> the ask panel answers from the seeded cache → Add the phrase → /read the demo
+> paragraph → tap 附近 → Add it with its sentence → Today counts them both →
+> /review: the phrase card is drawn per token (every token cited, no warning, and
+> no recall box, because a phrase has no entry), the reader card shows its
+> sentence with the word highlighted, the recall box takes an answer and rings a
+> button, the same back settles the i+1 block into sentences (every token cited,
+> and every citation known or the target) **or** the honest empty state, the
+> learner grades with a *different* key → the review row records the key that was
+> pressed and never the suggestion → / shows 0 due, 0 new, Start review disabled.
+
+Three things fail here and nowhere else: A's and B's slots on one card with their
+two requests in flight together, the phrase card written through the ask panel
+carrying a real `dictVersion` (C's item 2 by the path a learner takes), and the
+suggestion staying advice when it lands on a card that is also fetching sentences.
+
+### Gates on the merge commit
+
+| Gate | Result |
+|---|---|
+| `pnpm install --frozen-lockfile` | no-op, lockfile unchanged |
+| `pnpm data:ensure` | `data/dict.json` present |
+| `npx tsc --noEmit` | pass |
+| `pnpm lint` | pass, no warnings |
+| `pnpm test` | pass — **581** in 59 files (478 in 48 at the prep commit: +30 A, +45 B, +28 C) |
+| `pnpm build` | pass (Turbopack), and `pnpm sw` stamps the worker |
+| `PORT=3000 pnpm e2e` | pass — **89/89** (78 before: +3 A, +3 B, +4 C, +1 full loop) |
+
+No server is left running; port 3000 is free. `/home/user/v0-anchor` was not
+touched. `pnpm-lock.yaml` is unchanged and no dependency was added. **No live
+model call has ever been made from this container** — there is no key here, and
+every provider test injects one.
+
+### Known debt, as it stands after Phase 7
+
+**Closed by builder C**, and struck from the list MORNING.md carries:
+
+- ~~Two tabs could each introduce today's new cards~~ — a unique `systemKey`
+  index plus one-transaction `introduceCard`/`bumpIntroduced` (item 3).
+- ~~Phrase cards record `dictVersion: 'unknown'`~~ — recorded at the Add now
+  (item 2). Rows written before it still say `'unknown'`; nothing reads the
+  field, and a phrase snapshot is never re-resolved.
+- ~~The review card renders a phrase front as plain text~~ — per-token, flagged
+  (item 1).
+- ~~Hashed static chunks accumulate in the service-worker cache across deploys~~
+  — the cache name is the build id, so `activate` purges the previous build
+  (item 4).
+- ~~One intermittent e2e (`today.spec.ts:49`)~~ — the real cause was `allKnown`
+  racing the background fill, not `busy`; fixed in the component and the spec
+  (item 5).
+
+**Still open**, honestly:
+
+- **The 35 MB dictionary loads whole** — ~2 s and ~300 MB per server process. The
+  same load is why `pnpm test` goes intermittently red under CPU contention (see
+  below).
+- **Phrase cards still do not join the "Looked up" list**: membership joins on
+  `entryId` and a phrase has none.
+- **The v2 upgrade leaves `list_members` rows under a tombstoned duplicate list.**
+  Nothing reads them; a sweep would need a repository member of its own.
+- **`PhraseFace` can mark an uncited token but cannot *unmark* one**: a card whose
+  token cites an entry that has since left the dictionary still draws clean. The
+  snapshot is what a card renders from, by design (§3.3).
+- **The examples cache key omits the known set** (prep's design: promptVersion,
+  provider, entryId, senseIndex, estimatedBand), so within one band a learner sees
+  the same sentences as their vocabulary grows; it self-corrects when the band
+  estimate moves. Fixing it is a key change that would orphan existing rows.
+- **Recall suggestions are not cached at all**, for the licence reason above. If
+  that is ever wanted, cache `suggested` and drop `why`.
+- **`public/sw.js` is generated**, so a reviewer reading a clean checkout sees the
+  template. Any tooling that lints or serves `public/` must run `pnpm sw` first.
+- **No live model call has ever been made.** Every AI path is exercised against
+  the fake or an injected stub; `AnthropicProvider` compiles and passes unit tests
+  against a mocked HTTP layer, and that is all anyone can say from this container.
+- **Unverified on real devices**: PWA install and offline, audio (headless
+  Chromium has no Chinese voice), IDS glyphs (font gap).
+- **`pnpm test` flakes under CPU contention, not under any of this code.** With
+  three builders sharing four CPUs, 3–12 dictionary-loading cases hit vitest's 5 s
+  default the first time a worker parses `data/dict.json`; both A and B reproduced
+  it on trees their work was stashed out of. On this merge commit, alone on the
+  box, the suite is 581/581 green. If it ever bites CI, the fix is a `testTimeout`
+  bump in `vitest.config.ts`.

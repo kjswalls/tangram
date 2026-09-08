@@ -20,6 +20,7 @@
  * returns something unparseable is a 502 with a message the panel can show.
  */
 
+import { withDeadline } from '@/lib/ai/deadline';
 import { ground, type GroundedAskResponse } from '@/lib/ai/ground';
 import { ASK_PROMPT_VERSION } from '@/lib/ai/cache-key';
 import { selectProvider, askResponseSchema, ProviderError, type AskContext, type ProviderName } from '@/lib/ai/provider';
@@ -66,26 +67,6 @@ function timeoutMs(name: string, fallback: number): number {
 const MAX_QUERY_CHARS = 400;
 const MAX_SENTENCE_CHARS = 400;
 const MAX_KNOWN_SAMPLE = 200;
-
-/**
- * Reject when `promise` has not settled in time. The provider interface takes
- * no `AbortSignal` (the SDK's own timeout is 45 s across two sequential calls),
- * so this is a race: the call may still be in flight, but nobody is waiting on
- * it any more.
- */
-async function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new Error(`${what} took longer than ${ms} ms`)), ms);
-      }),
-    ]);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
-}
 
 interface AskRequestBody {
   query: string;
@@ -288,7 +269,7 @@ export async function POST(request: Request): Promise<Response> {
     if (needsProposals(query)) {
       try {
         candidates = (
-          await withTimeout(
+          await withDeadline(
             provider.proposePhrases(query, context),
             timeoutMs('TANGRAM_ASK_PROPOSE_TIMEOUT_MS', PROPOSE_TIMEOUT_MS),
             'proposePhrases',
@@ -309,7 +290,7 @@ export async function POST(request: Request): Promise<Response> {
 
   let raw: unknown;
   try {
-    raw = await withTimeout(
+    raw = await withDeadline(
       provider.answer(retrieved, profile, query, context),
       timeoutMs('TANGRAM_ASK_ANSWER_TIMEOUT_MS', ANSWER_TIMEOUT_MS),
       'the answer',

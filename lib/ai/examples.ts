@@ -257,27 +257,3 @@ export function citedEntryIds(sentences: readonly ExampleSentence[]): EntryId[] 
   }
   return [...ids];
 }
-
-// ---------------------------------------------------------------------------
-
-/**
- * Reject when `promise` has not settled in time.
- *
- * The provider interface takes no `AbortSignal`, so this is a race: the call
- * may still be in flight, but nobody is waiting on it any more. A card back is
- * a worse place to hang than a lookup panel — the learner is mid-review with a
- * grade to press — so the deadline here is shorter than the ask's.
- */
-export async function withDeadline<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new Error(`${what} took longer than ${ms} ms`)), ms);
-      }),
-    ]);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
-}

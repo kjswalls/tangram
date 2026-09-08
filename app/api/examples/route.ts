@@ -27,12 +27,8 @@
 
 import { DEFAULT_MODEL } from '@/lib/ai/anthropic';
 import { EXAMPLES_PROMPT_VERSION } from '@/lib/ai/cache-key';
-import {
-  citedEntryIds,
-  groundExamples,
-  withDeadline,
-  type ExampleSentence,
-} from '@/lib/ai/examples';
+import { withDeadline } from '@/lib/ai/deadline';
+import { citedEntryIds, groundExamples, type ExampleSentence } from '@/lib/ai/examples';
 import {
   exampleSentencesSchema,
   ProviderError,

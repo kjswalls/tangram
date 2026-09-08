@@ -10,13 +10,14 @@ criteria. Upstream data formats and the pinned dependency versions are in
 
 ```bash
 pnpm dev          # next dev
-pnpm build        # pnpm data:ensure && next build   (Turbopack, the Next 16 default)
+pnpm build        # pnpm data:ensure && next build && pnpm sw  (Turbopack, the Next 16 default)
 pnpm start        # serve the production build
 pnpm lint         # eslint .                          (next lint no longer exists)
 pnpm test         # vitest run                        (jsdom, tests/unit/**)
 pnpm e2e          # playwright test                   (tests/e2e/**, builds then serves)
 pnpm data         # generate data/*.json from upstream sources
 pnpm data:ensure  # generate only if data/dict.json is missing
+pnpm sw           # generate public/sw.js from scripts/sw.template.js, stamped with BUILD_ID
 ```
 
 Node >= 20.9, pnpm 10. Playwright uses the container's Chromium via `executablePath:

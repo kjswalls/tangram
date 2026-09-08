@@ -14,13 +14,14 @@ interface. Single user, works offline, no server database.
 
 ```bash
 pnpm dev          # next dev
-pnpm build        # pnpm data:ensure && next build
+pnpm build        # pnpm data:ensure && next build && pnpm sw
 pnpm start        # serve the production build
 pnpm lint         # eslint .            (next lint is gone in Next 16)
 pnpm test         # vitest run          (unit, jsdom + fake-indexeddb)
 pnpm e2e          # playwright test     (builds, then serves on $PORT, default 3000)
 pnpm data         # build data/*.json from the upstream sources
 pnpm data:ensure  # same, but only when data/dict.json is missing
+pnpm sw           # generate public/sw.js (gitignored) from scripts/sw.template.js
 ```
 
 Node >= 20.9 (`.nvmrc` says 22), pnpm 10.

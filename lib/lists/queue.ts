@@ -83,6 +83,11 @@ export function isExplicitAdd(card: CardRow): boolean {
 
 const alive = (card: CardRow): boolean => card.deletedAt === null;
 
+/** 0 for a card mid-step (FSRS Learning or Relearning), 1 for everything else. */
+function stepRank(card: CardRow): number {
+  return card.fsrs.state === 1 || card.fsrs.state === 3 ? 0 : 1;
+}
+
 function unique(cards: readonly (readonly CardRow[])[]): CardRow[] {
   const seen = new Map<string, CardRow>();
   for (const group of cards) for (const card of group) if (!seen.has(card.id)) seen.set(card.id, card);
@@ -100,9 +105,18 @@ export function buildQueue(input: QueueInput): Queue {
   const all = unique([input.cards ?? [], input.due ?? [], input.candidates ?? []]).filter(alive);
 
   // A New card is never due, whatever its `due` column says (§3.3).
+  //
+  // Order: cards mid-step first, then everything else, each by due instant.
+  // Since Phase 8 `shortTermSteps` defaults on, so FSRS's Learning (1) and
+  // Relearning (3) states actually occur and a card can mature *during* a
+  // session. A card in a learning step is halfway through being acquired and
+  // its step is a measured few minutes; a Review card three days overdue has
+  // already waited three days and one more minute costs it nothing. Sorting
+  // purely by `due` would put the overdue pile first and let every short step
+  // rot behind it.
   const due = all
     .filter((card) => card.fsrs.state !== 0 && card.due <= input.now)
-    .sort((a, b) => a.due - b.due);
+    .sort((a, b) => stepRank(a) - stepRank(b) || a.due - b.due);
 
   const fresh = all.filter((card) => card.fsrs.state === 0).sort((a, b) => a.createdAt - b.createdAt);
   const explicit = fresh.filter(isExplicitAdd);

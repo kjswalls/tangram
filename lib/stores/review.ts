@@ -21,6 +21,14 @@
  * empty state that knows it is minutes away — is Phase 8's queue work
  * (HANDOFF-prep8.md, builder A).
  *
+ * Two things make that safe rather than merely true (Phase 8, builder A):
+ * `repeats` counts the grades this session has written per card, and a card
+ * that reaches `MAX_SESSION_REPEATS` is set aside for the rest of the session.
+ * The session therefore always terminates — every card can be served at most a
+ * fixed number of times and no new ones appear — and `deferred` is surfaced
+ * rather than hidden, because a queue that quietly drops a card the learner is
+ * struggling with is a queue that lies.
+ *
  * The re-read goes through `loadToday` — the same call Today makes — so the two
  * routes introduce and offer the same rows whichever one is opened first.
  * Reading `listDue`/`newCandidates` here instead made `/review` a dead end on a
@@ -34,7 +42,13 @@ import { create } from 'zustand';
 
 import type { CardRow, SettingsRow, StoredRating } from '@/lib/db/schema';
 import { loadToday } from '@/lib/lists/today';
-import { nextDueAt } from '@/lib/srs/session';
+import {
+  deferredCardIds,
+  nextDueAt,
+  returningWithin,
+  sessionQueue,
+  SESSION_RETURN_HORIZON_MS,
+} from '@/lib/srs/session';
 
 export interface ReviewState {
   queue: CardRow[];
@@ -53,6 +67,17 @@ export interface ReviewState {
   now: number;
   /** When the next card comes back, for the empty state. */
   nextDue: number | null;
+  /** How many cards come back inside `SESSION_RETURN_HORIZON_MS`. */
+  returning: number;
+  /**
+   * Grades written this session, per card. Not persisted: leaving and coming
+   * back is the learner deciding to try again.
+   */
+  repeats: Record<string, number>;
+  /** Cards set aside this session after `MAX_SESSION_REPEATS` tries. */
+  deferred: string[];
+  /** How many times the card on screen has been graded this session. */
+  attempts: number;
   /**
    * New words today's cap still allows that could not be created — a dictionary
    * outage, since the load introduces them otherwise. The empty state says so
@@ -83,6 +108,10 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
   grading: false,
   now: 0,
   nextDue: null,
+  returning: 0,
+  repeats: {},
+  deferred: [],
+  attempts: 0,
   waiting: 0,
   drawError: undefined,
   settings: undefined,
@@ -97,10 +126,19 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
       const repo = getRepository();
       const summary = await loadToday({ repo, now });
       const all = await repo.allCards();
+      // The set-aside cards are filtered out of the queue *and* out of every
+      // number the empty state quotes, so "next card in 9 minutes" can never
+      // name a card this session has stopped offering.
+      const repeats = get().repeats;
+      const deferred = deferredCardIds(repeats);
+      const queue = sessionQueue(summary.queue.cards, deferred);
       set({
-        queue: summary.queue.cards,
+        queue,
         settings: summary.settings,
-        nextDue: nextDueAt(all, now),
+        nextDue: nextDueAt(all, now, deferred),
+        returning: returningWithin(all, now, SESSION_RETURN_HORIZON_MS, deferred),
+        deferred: [...deferred],
+        attempts: queue[0] ? (repeats[queue[0].id] ?? 0) : 0,
         waiting: summary.queue.draws.length,
         ...(summary.drawError === undefined ? {} : { drawError: summary.drawError }),
         now,
@@ -130,7 +168,12 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
     try {
       const { getRepository } = await import('@/lib/db/get-db');
       await getRepository().grade(card.id, rating, now);
-      set((state) => ({ graded: state.graded + 1 }));
+      // Counted before the re-read, so a card that has just spent its last try
+      // is already set aside by the time the next queue is built.
+      set((state) => ({
+        graded: state.graded + 1,
+        repeats: { ...state.repeats, [card.id]: (state.repeats[card.id] ?? 0) + 1 },
+      }));
       await get().load(now);
     } catch (error) {
       set({ error: error instanceof Error ? error.message : String(error) });
@@ -140,7 +183,17 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
   },
 
   /** Skip forward without grading. The queue itself is untouched. */
-  next: () => set((state) => ({ index: state.index + 1, revealed: false, peeked: false })),
+  next: () =>
+    set((state) => {
+      const index = state.index + 1;
+      const card = state.queue[index];
+      return {
+        index,
+        revealed: false,
+        peeked: false,
+        attempts: card ? (state.repeats[card.id] ?? 0) : 0,
+      };
+    }),
 
   reset: () =>
     set({
@@ -152,6 +205,10 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
       graded: 0,
       grading: false,
       nextDue: null,
+      returning: 0,
+      repeats: {},
+      deferred: [],
+      attempts: 0,
       waiting: 0,
       drawError: undefined,
       error: undefined,

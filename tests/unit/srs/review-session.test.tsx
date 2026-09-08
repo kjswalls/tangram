@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ReviewSession } from '@/components/review/review-session';
 import { closeDb, getDb, getRepository } from '@/lib/db/get-db';
-import { gradeOptions } from '@/lib/srs/session';
+import { gradeOptions, MAX_SESSION_REPEATS } from '@/lib/srs/session';
 import { useReviewStore } from '@/lib/stores/review';
 import { resetExamplesInfo } from '@/components/review/example-sentences';
 import type { Entry } from '@/lib/types';
@@ -205,6 +205,9 @@ describe('the review session', () => {
   it('says when the next card is due once the queue is empty', async () => {
     const repo = getRepository();
     const card = await repo.addCardFromEntry(DASUAN, context({ source: 'lookup' }));
+    // Off, so the card is a day out: with the short steps on it is ten minutes
+    // away, which is the *other* empty state (below).
+    await repo.setSettings({ shortTermSteps: false });
     await repo.grade(card.id, 3, Date.now());
 
     render(<ReviewSession />);
@@ -212,6 +215,94 @@ describe('the review session', () => {
     expect(empty).toHaveTextContent(/Nothing due — next card in \d+ (hours?|days?)\./);
     expect(screen.queryByTestId('review-card')).toBeNull();
   });
+
+  it('says the card is coming back in minutes rather than declaring the session over', async () => {
+    // The Phase 8 case: `shortTermSteps` defaults on, so Good on a new card is
+    // a ten-minute learning step. Until this the empty state floored at an hour
+    // and the learner was told to come back tomorrow-ish for a card that was
+    // ten minutes away.
+    const repo = getRepository();
+    const card = await repo.addCardFromEntry(DASUAN, context({ source: 'lookup' }));
+    await repo.grade(card.id, 3, Date.now());
+
+    render(<ReviewSession />);
+    const empty = await screen.findByTestId('review-empty');
+    expect(empty).toHaveTextContent(/^Nothing due — 1 card comes back in \d+ minutes?\.$/);
+  });
+
+  it('sets aside a card the learner keeps failing, and says it did', async () => {
+    // Again on a card in a learning step schedules it a minute out, so the
+    // session would otherwise serve the same card for as long as 1 is pressed.
+    // Each pass here grades, then re-reads five minutes later — which is what
+    // the session's own refresh timer does when the queue empties.
+    const repo = getRepository();
+    const card = await repo.addCardFromEntry(DASUAN, context({ source: 'lookup' }));
+    const base = Date.now();
+    const store = useReviewStore.getState();
+
+    render(<ReviewSession />);
+    await screen.findByTestId('review-card');
+
+    for (let i = 0; i < MAX_SESSION_REPEATS; i += 1) {
+      await store.grade(1, base + i * 5 * 60_000);
+      await store.load(base + (i + 1) * 5 * 60_000);
+    }
+
+    // The card is due at this instant — it is out of the session because the
+    // session set it aside, not because the clock has not caught up.
+    const empty = await screen.findByTestId('review-empty');
+    expect(empty).toHaveTextContent('1 card you kept missing is set aside until next time.');
+    expect(screen.queryByTestId('review-card')).toBeNull();
+    // Six grades, six review rows: the cap ends the session, it does not
+    // silently drop the last answer, and the card is not deleted.
+    expect(await getDb().reviews.count()).toBe(MAX_SESSION_REPEATS);
+    expect((await getDb().cards.get(card.id))?.deletedAt).toBeNull();
+
+    // Leaving and coming back is the learner deciding to try again.
+    store.reset();
+    await store.load(base + 60 * 60_000);
+    expect(useReviewStore.getState().queue).toHaveLength(1);
+  });
+
+  it('warns before the cap bites', async () => {
+    const repo = getRepository();
+    await repo.addCardFromEntry(DASUAN, context({ source: 'lookup' }));
+    const base = Date.now();
+    const store = useReviewStore.getState();
+
+    render(<ReviewSession />);
+    await screen.findByTestId('review-card');
+    expect(screen.queryByTestId('review-repeat-notice')).toBeNull();
+
+    for (let i = 0; i < MAX_SESSION_REPEATS - 2; i += 1) {
+      await store.grade(1, base + i * 5 * 60_000);
+      await store.load(base + (i + 1) * 5 * 60_000);
+    }
+    await screen.findByTestId('review-card');
+    expect(await screen.findByTestId('review-repeat-notice')).toHaveTextContent(
+      `Seen ${MAX_SESSION_REPEATS - 2} times this session`,
+    );
+  });
+
+  it('comes back for a card that matures while the empty state is on screen', async () => {
+    // Nothing brought a matured learning card back before Phase 8: the empty
+    // state stood there until the learner reloaded the page. The card below is
+    // a second away rather than ten minutes so the test can watch it happen.
+    const repo = getRepository();
+    const card = await repo.addCardFromEntry(DASUAN, context({ source: 'lookup' }));
+    const at = Date.now();
+    await repo.grade(card.id, 1, at);
+    const due = Date.now() + 1_200;
+    await getDb().cards.update(card.id, { due, 'fsrs.due': due });
+
+    render(<ReviewSession />);
+    await screen.findByTestId('review-empty');
+    expect(screen.queryByTestId('review-card')).toBeNull();
+
+    await waitFor(() => expect(screen.getByTestId('review-card')).toBeVisible(), {
+      timeout: 8_000,
+    });
+  }, 15_000);
 
   it('says so when there is nothing scheduled at all', async () => {
     render(<ReviewSession />);

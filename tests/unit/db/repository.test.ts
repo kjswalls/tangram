@@ -156,6 +156,24 @@ describe('cards', () => {
     expect(card.snapshot.pinyinMarked).toBe('wǒ suíbiàn kànkan');
     expect(card.snapshot.tokens).toHaveLength(3);
   });
+
+  it('records the dictionary a phrase was cut from, and says so when it was not told', async () => {
+    const repo = setup();
+    const tokens = [{ text: '我', entryId: '我|我[wo3]', pinyinMarked: 'wǒ' }];
+
+    const stamped = await repo.addPhraseCard(
+      tokens,
+      'me',
+      context({ source: 'ask' }),
+      '1.3.20251213',
+    );
+    expect(stamped.snapshot.dictVersion).toBe('1.3.20251213');
+
+    // No fourth argument is not a version: it is the absence of one, and the
+    // snapshot has to say that rather than name a dictionary it cannot know.
+    const bare = await repo.addPhraseCard(tokens, 'me', context({ source: 'ask' }));
+    expect(bare.snapshot.dictVersion).toBe('unknown');
+  });
 });
 
 describe('queues', () => {

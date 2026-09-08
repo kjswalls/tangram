@@ -216,7 +216,12 @@ export function createDexieRepository(db: TangramDb): Repository {
       });
     },
 
-    async addPhraseCard(tokens: PhraseToken[], en: string, context: CardContext) {
+    async addPhraseCard(
+      tokens: PhraseToken[],
+      en: string,
+      context: CardContext,
+      dictVersion: string = UNKNOWN_DICT_VERSION,
+    ) {
       const now = Date.now();
       const snapshot: PhraseSnapshot = {
         tokens,
@@ -228,7 +233,7 @@ export function createDexieRepository(db: TangramDb): Repository {
         // token at all; this is the layer below saying the same thing.
         pinyinMarked: tokens.map((token) => token.pinyinMarked ?? '?').join(' '),
         en,
-        dictVersion: UNKNOWN_DICT_VERSION,
+        dictVersion,
       };
       const fsrs = newCard(now);
       const card: CardRow = {

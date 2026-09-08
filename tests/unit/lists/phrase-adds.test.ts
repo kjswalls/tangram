@@ -84,6 +84,18 @@ describe('addPhraseCardChecked', () => {
     // shorter than its hanzi teaches a reading that is not the word.
     expect(card.snapshot).toMatchObject({ simp: '我隨便', pinyinMarked: 'wǒ ?' });
   });
+
+  it('passes the caller’s dictionary version down to the snapshot', async () => {
+    const repo = setup();
+    const { card } = await addPhraseCardChecked(
+      repo,
+      TOKENS,
+      'I am just looking.',
+      CONTEXT,
+      '1.3.20251213',
+    );
+    expect(card.snapshot.dictVersion).toBe('1.3.20251213');
+  });
 });
 
 describe('an explicit Add and “Mark known” are exclusive', () => {

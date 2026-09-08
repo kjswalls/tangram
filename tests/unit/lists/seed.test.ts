@@ -13,6 +13,7 @@ import {
   sentenceAround,
 } from '@/lib/dev/seed';
 import { askCacheKey } from '@/lib/ai/cache-key';
+import { addPhraseCardChecked } from '@/lib/lists/looked-up';
 import { todayKey } from '@/lib/srs/day';
 import { wordState } from '@/lib/srs/states';
 import { requireDictData } from '../dict/data-required';
@@ -101,6 +102,35 @@ describe('loadDemo', () => {
       const response = row?.response as { matches: { entryId: string }[]; interpretation: string };
       expect(response.interpretation).not.toMatch(/[一-鿿]/);
       for (const match of response.matches) expect(match.entryId).toContain('|');
+    }
+  });
+
+  it('leaves no card in the demo database stamped “unknown” — a phrase card included', async () => {
+    const repo = setup();
+    const source = dictEntrySource();
+    await loadDemo({ repo, now: NOW, source });
+
+    // The seed writes word cards only; a phrase reaches the database through the
+    // ask panel, which resolves its citations through the same routes and is
+    // handed the same `meta.version`. Pinned here because this file is where
+    // "no card in a demo database says 'unknown'" lives, and the phrase Add was
+    // the one path that could not honour it — the repository took no version.
+    const { card } = await addPhraseCardChecked(
+      repo,
+      [
+        { text: '我', entryId: '我|我[wo3]', pinyinMarked: 'wǒ' },
+        { text: '随便', entryId: '隨便|随便[sui2 bian4]', pinyinMarked: 'suíbiàn' },
+        { text: '看看', entryId: '看看|看看[kan4 kan5]', pinyinMarked: 'kànkan' },
+      ],
+      'I am just browsing.',
+      { question: 'how do I say I am just browsing', source: 'ask', addedAt: NOW },
+      source.dictVersion?.(),
+    );
+
+    expect(card.kind).toBe('phrase');
+    expect(card.snapshot.dictVersion).toMatch(/\d/);
+    for (const row of await repo.allCards()) {
+      expect(row.snapshot.dictVersion).not.toBe('unknown');
     }
   });
 

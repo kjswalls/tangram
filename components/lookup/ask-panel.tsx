@@ -638,6 +638,9 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
       tokens,
       phrase.en,
       askContextFor(trimmed, context),
+      // The same snapshot the cited entries were resolved from: a phrase card
+      // records the dictionary behind it exactly as a word card does.
+      ready?.dictVersion,
     );
     return result.created ? 'added' : 'existing';
   };

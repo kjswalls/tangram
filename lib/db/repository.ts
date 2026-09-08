@@ -66,8 +66,22 @@ export interface Repository {
     dictVersion?: string,
   ): Promise<CardRow>;
 
-  /** A phrase card whose front is rendered from cited entries (§3.4). */
-  addPhraseCard(tokens: PhraseToken[], en: string, context: CardContext): Promise<CardRow>;
+  /**
+   * A phrase card whose front is rendered from cited entries (§3.4).
+   *
+   * `dictVersion` is the fourth argument for the same reason
+   * `addCardFromEntry` has one: a snapshot records the dictionary it was cut
+   * from, and the layer that holds a phrase together (the ask panel, which has
+   * just been told `meta.version` by the route that resolved the citations) is
+   * the only one that knows it. Omitted, it stamps `'unknown'` — which is what
+   * every phrase card written before this argument existed says.
+   */
+  addPhraseCard(
+    tokens: PhraseToken[],
+    en: string,
+    context: CardContext,
+    dictVersion?: string,
+  ): Promise<CardRow>;
 
   /** Cards past their due instant, oldest first. New cards are not due. */
   listDue(now: number): Promise<CardRow[]>;

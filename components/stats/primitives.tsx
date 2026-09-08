@@ -156,7 +156,12 @@ export interface LegendItem {
 /** Always present for two or more series; never for one (the title names it). */
 export function Legend({ items }: { items: readonly LegendItem[] }) {
   return (
-    <ul className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
+    // `viz` carries the chart colour tokens (`--viz-s1` and friends,
+    // `chart-tokens.tsx`), which are declared on that class alone. The Legend is
+    // mounted *outside* `ChartFrame`, so without it every swatch resolved to an
+    // undefined custom property and painted nothing: two grey labels, and no
+    // way to tell which colour was which series.
+    <ul className="viz flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
       {items.map((item) => (
         <li key={item.label} className="flex items-center gap-1.5">
           <span

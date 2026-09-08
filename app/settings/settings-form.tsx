@@ -241,7 +241,9 @@ export function SettingsForm() {
           </span>
           <span className="text-xs text-muted">
             English on the front, the hanzi recalled. A second card per word, with its own
-            schedule — it roughly doubles how much there is to review.
+            schedule — it roughly doubles how much there is to review. Turning it off stops the
+            reverse cards you have already made from being asked; nothing is deleted, and they come
+            back with the schedule they earned if you turn it on again.
           </span>
         </label>
       </div>

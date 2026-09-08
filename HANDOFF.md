@@ -2930,3 +2930,199 @@ after-deploy checklist.
 5. **`maxDuration` on `/api/ask`** (D), once Kirby's Vercel plan is known.
 6. **The one deploy claim only a real deployment can settle** —
    `docs/deploy.md` §7.
+
+## Phase 8 review fixes
+
+One pass over the eight blocking/major findings and six minors from the Phase 8
+review, on `main`. Green on this commit: `pnpm lint`, `pnpm test`
+(**880 unit in 87 files**, 852 at the merge), `pnpm build`,
+`PORT=3000 pnpm e2e` (**108 specs**), and `pnpm smoke` against the built server
+(21 routes). No dependency was added; `pnpm-lock.yaml` is untouched. No live
+model call was made — there is still no key in this container.
+
+Every numerical attack case in the review is now a permanent test rather than a
+paragraph: `tests/unit/fsrs-optimize/noise-gate.test.ts` (new),
+`tests/unit/fsrs-optimize/dataset.test.ts`,
+`tests/unit/review/add-reverse-allowance.test.tsx` (new),
+`tests/unit/stats/workload.test.ts`, `tests/unit/stats/panels.test.tsx`,
+`tests/unit/stats/calibration.test.ts`.
+
+**Frozen file edited (one):** `lib/types.ts` — `ContextSource` gains `'reverse'`.
+It is one union member, additive, and the fix for the fourth finding below is not
+expressible without it: provenance is what decides who pays for a card. Nothing
+else frozen was touched.
+
+### The gate that offered noise as a personal fit (blocking)
+
+`optimizeWeights` compared two mean held-out log-losses with `<`. The reviewer
+generated 24 review logs **from the population defaults themselves** — where the
+only right answer is "nothing to find" — sized at the old floor, and got a fit
+offered on 9 of them, every accepted improvement inside one and a bit standard
+errors of zero and some of the vectors as far from the truth as a different
+learner's.
+
+Two changes, both measured:
+
+- **The improvement is measured against its own noise.** `pairedImprovement`
+  (`lib/fsrs-optimize/loss.ts`) takes the difference **per review** between two
+  vectors on the same held-out reviews and returns its mean, the standard error
+  of that mean, and `mean − 1.645 × SE`. A fit is offered only if that lower
+  bound is above zero against *both* the weights in force and the defaults.
+  Pairing is what makes the error small enough to be useful: the variance of the
+  reviews themselves cancels, leaving the variance of the difference. A review
+  one side could not model at all is charged that side the worst a single
+  prediction can cost (~13.8 nats), so abandoning a card can never read as an
+  improvement. `Prediction` gained `cardId`/`index` so the two replays can be
+  lined up review by review.
+- **`MIN_REVIEWS_FOR_FIT` 400 → 1,000.** Re-running the null experiment: the
+  gate alone takes 24 logs at ~420 scorable from 9 offers to 1 (the 5% it
+  advertises), and at ~990 scorable it is 0 of 18 — while a genuinely different
+  learner is still recovered at that size (accepted in 5 of 18, landing ~0.4
+  from the truth in normalized units where the defaults sit ~0.63 away). Below a
+  thousand this feature has nothing honest to say.
+
+The panel now quotes the margin **with** its uncertainty
+(`optimizer-margin`): "…0.3581 for the fit against 0.3661 for what you are
+running now — better by 0.0080 per review, give or take 0.0121 (one standard
+error), so the difference is inside the noise of the measurement and is not
+offered as a fit." The floor copy no longer promises that a thousand is where the
+exercise starts working; it says what being under the floor actually means.
+
+`isUsableFit` (`lib/srs/params.ts`, frozen) still re-checks the stored pair with
+a bare `<`. That is re-validation of a fit that has already passed the gate, not
+a second gate, and storing the margin would need a schema field — see the open
+list below.
+
+### The rest
+
+- **Scorability is decided from the real gap, not the calendar
+  (`lib/fsrs-optimize/dataset.ts`).** `log.elapsed_days` is `dateDiffInDays` —
+  whole **UTC** days — so a ten-minute step at 23:55 → 00:05 was recorded as a
+  day and scored against a stability minutes old, and the fitted weights
+  therefore depended on what hour the learner studies (the reviewer's two
+  sessions, identical but for the wall clock, differed by up to 28% on w2).
+  `TrainingReview` gained `gapDays`, measured from `before.last_review` the way
+  `lib/stats/calibration.ts` already measured it, and a review under a day of
+  real time is never scored. Replay still uses `log.elapsed_days`: the state has
+  to move the way the scheduler moved it. This is strictly more exclusive than
+  before, and it costs a real log almost nothing — the queue never offers a card
+  before its due instant, so any non-step interval is already ≥ 1 day.
+- **`resetAll()` and `loadDemo()` clear the optimizer's undo
+  (`lib/dev/seed.ts`).** It lives in `localStorage`, so it survived every wipe
+  and sat there offering to reinstate weights fitted to a review log that no
+  longer existed. Belt and braces, the slot is now **stamped** with the
+  `fittedAt` of the fit it undoes and `readPrevious(current)` refuses it unless
+  that fit is still in force — which also covers the wipe that happened on
+  another device. The panel reads the slot through `useSyncExternalStore`
+  (`subscribePrevious`/`previousSnapshot`), because it is exactly that: an
+  external store two other buttons on the same page write to.
+- **"Add the reverse" no longer spends the day's new-card allowance
+  (`components/review/add-reverse.tsx`).** It inherited the parent's `source`,
+  and every spine-drawn card carries `{source:'list'}`, so each press quietly
+  took one of the day's ten new spine words — and another the next day while the
+  twin sat ungraded. The twin is now written with `source: 'reverse'`, which
+  `isExplicitAdd` (`lib/lists/queue.ts`) and `EXPLICIT_SOURCES`
+  (`lib/db/dexie.ts`) count as a hand add. The bulk per-list toggle still writes
+  `'list'` and still charges, which is correct. `EXPLICIT_SOURCES` in
+  `lib/lists/looked-up.ts` is deliberately **not** changed: that list is "the
+  learner chose this *word*", and a reverse card is not a new word to look up.
+- **A production near miss is not handed to the meaning grader
+  (`lib/srs/direction.ts`).** `/api/recall` grades an English answer against
+  glosses and its contract has no direction, so asked about 打祘 the shipped
+  no-key build answered Again, "there was nothing typed to compare against this
+  card" — false about what the learner did, and rendered on the card in place of
+  the correct local "One character off.". `askProvider` stays on the near-miss
+  branch as the statement of intent it always was; a module flag
+  (`PROVIDER_GRADES_PRODUCTION`) is what opens the valve, and it flips when open
+  item 3 lands. The unit test now fails if the provider is touched at all.
+  Separately, the fake grader's "nothing typed" branch now fires only for an
+  actually empty answer (`lib/ai/fake.ts`) — it was saying that about any answer
+  with no ASCII words in it.
+- **`markKnown` no longer retires a word's production twin
+  (`lib/db/dexie.ts`).** It read the plain `entryId` index, which spans both
+  directions. "Mark known" is a reading judgement made from the reader's token
+  panel and the list row; it now writes `known_words` as before and re-dates
+  only the recognition card. `unmarkKnown` deliberately does not undo re-dating,
+  so this had no way back.
+- **Turning "Also practise the other direction" off now changes what you are
+  asked (`lib/lists/queue.ts`).** `buildQueue` drops production cards when
+  `settings.productionDirection` is false (`includeProduction`, defaulting to
+  true when there is no settings row to ask, so a caller that has not stated an
+  opinion is not stating "no"). The rows survive — nothing is deleted, and
+  turning it back on returns each card with the schedule it earned — and the
+  label says so. This replaces builder B's "chosen over silently hiding due
+  cards": a scheduled card is a commitment, but so is a setting whose label
+  promises a study switch, and with no way to delete a card the learner had no
+  way out of the experiment at all.
+- **Today's new-word list tells the two directions apart
+  (`app/(today)/today-view.tsx`).** A word and its reverse rendered as two
+  identical rows — same hanzi, same pinyin, same gloss, same badge — which reads
+  as a double add. The reverse row now leads with "write", drops the reading
+  (half of its own answer) and carries a `reverse` badge.
+
+### The minors, all taken
+
+- Calibration is badged **all time** and says so in its note; it is computed over
+  the whole log while the card beside it is badged "last 30 days"
+  (`lib/stats/summary.ts` is unchanged — the number was right, the label was
+  missing).
+- `Forecast.overdue` counts against `now`, not the 04:00 rollover, which is what
+  its docstring and the sentence on screen both say. At midday a three-hour
+  backlog used to report as none.
+- The Workload legend carries the `viz` class, so its swatches have the custom
+  properties they are painted in. They were transparent 10×10 boxes.
+- Calibration needs **two** drawn deciles before it calls itself a curve; one dot
+  in a corner is the normal shape of a well-scheduled log, not a chart. The
+  overall predicted-against-observed sentence — the part a non-statistician can
+  act on — moved above the plot and is rendered in the empty state too.
+- The production front is display-formatted (`promptGloss`): bracketed readings
+  and `trad|simp` alternates dropped, three senses on the front with the rest in
+  the existing "also:" line, type stepped down. It cannot unmask anything: where
+  either side of an alternate pair is masked, the masked side is the one kept.
+- The session empty state says "Stay on this page — they come back on their own"
+  when the refresh timer is actually armed, and says nothing extra when it is
+  not.
+
+### Still open
+
+1. **`previousFsrsWeights: FsrsWeights | null` on `SettingsRow`** — unchanged
+   from Phase 8. The undo is still `localStorage`, now stamped.
+2. **A margin on the stored fit.** `FsrsWeights` carries two losses;
+   `isUsableFit` re-checks them with `<`. Two more fields (the paired mean and
+   its standard error) would let the re-check be the same test the gate is.
+3. **`production?: boolean` on `ListRow`** — unchanged.
+4. **A `direction` on the provider contract plus a second prompt** — now the only
+   thing standing between a production near miss and a model that could judge it.
+   `PROVIDER_GRADES_PRODUCTION` in `lib/srs/direction.ts` is the one line.
+5. **Still no way to delete a card.** Turning the production direction off now
+   hides them, which is reversible and honest, but "retire these 14 reverse
+   cards" is a different promise and is not offered.
+6. **`maxDuration` on `/api/ask`**, and **the deploy claim only a real deployment
+   can settle** — unchanged from Phase 8.
+
+### What to check on your phone
+
+1. **/settings → "Fit the schedule to your history".** It should say you have
+   fewer than 1,000 scorable reviews and refuse to run. That is the honest state
+   for now — the button coming alive is a milestone, not a delay.
+2. **Turn "Also practise the other direction" on, review a card, and press "Add
+   the reverse" on its back.** Today should show the word twice but the two rows
+   should read differently — one is the word, the other says *write* it and is
+   badged `reverse` — and the "N of N new words introduced today" line must not
+   move. It used to cost you one of the day's new words per press.
+3. **Turn that setting back off.** The reverse cards should stop being offered on
+   /review and disappear from Today's split line. Turn it on again: they come
+   back where they were. Nothing is deleted either way.
+4. **Answer a reverse card with one character wrong** (e.g. 打祘 for 打算). It
+   should say *Suggested: 2 · Hard — One character off.* offline and instantly.
+   If you ever see "there was nothing typed", something has regressed.
+5. **Mark a word known from the reader** after making its reverse card. The
+   reading card retires; the writing card must keep its own due date.
+6. **/stats on a phone.** The calibration card should be badged **all time** —
+   it is not the same window as the retention card beside it — and, until your
+   predictions spread across two deciles, it should show the sentence rather than
+   a single dot. The workload legend should have two visible coloured squares,
+   and "already overdue" should now include what came due this morning.
+7. **Fail two cards at the end of a session.** The empty state should tell you to
+   stay on the page; the cards come back on their own about a minute later, with
+   nothing to press and no reload.

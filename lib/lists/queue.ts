@@ -6,8 +6,8 @@
  *
  * 1. FSRS never sees lists — the queue builder decides what is offered, the
  *    scheduler only decides when a card comes back.
- * 2. An explicitly added card (lookup, ask, reader) is *always* in today's
- *    queue; `newPerDay` caps the spine auto-draw only.
+ * 2. An explicitly added card (lookup, ask, reader, and Phase 8's reverse) is
+ *    *always* in today's queue; `newPerDay` caps the spine auto-draw only.
  *
  * The daily cap counts **introductions**, not offers: `settings.introduced[day]`
  * goes up when a non-explicit card is *created* — the spine draw, a list's "Add
@@ -26,6 +26,7 @@
 import { DEFAULT_SETTINGS, type CardRow, type SettingsRow } from '@/lib/db/schema';
 import type { DrawCandidate } from '@/lib/lists/draw';
 import { startOfDay, todayKey } from '@/lib/srs/day';
+import { isProduction } from '@/lib/srs/direction';
 
 export interface QueueInput {
   now: number;
@@ -46,6 +47,12 @@ export interface QueueInput {
   newPerDay?: number;
   introducedToday?: number;
   dayRollover?: number;
+  /**
+   * Whether meaning → hanzi cards are offered at all. Defaults to
+   * `settings.productionDirection`, and to *true* when there is no settings row
+   * to ask — a caller that has not stated an opinion is not stating "no".
+   */
+  includeProduction?: boolean;
 }
 
 export interface Queue {
@@ -75,10 +82,18 @@ export interface Queue {
   newAvailable: number;
 }
 
-/** True when the card was added by hand rather than drawn from the spine. */
+/**
+ * True when the card was added by hand rather than drawn from the spine.
+ *
+ * `reverse` is here for the same reason the other three are: it is a card the
+ * learner asked for, one press at a time, on a word already on screen. The cap
+ * exists to stop the *spine* introducing more than was asked for, not to
+ * overrule what was asked for by hand. The bulk per-list production toggle is
+ * deliberately **not** in this list — it writes `list`, and it charges.
+ */
 export function isExplicitAdd(card: CardRow): boolean {
   const source = card.context?.source;
-  return source === 'lookup' || source === 'ask' || source === 'reader';
+  return source === 'lookup' || source === 'ask' || source === 'reader' || source === 'reverse';
 }
 
 const alive = (card: CardRow): boolean => card.deletedAt === null;
@@ -102,7 +117,21 @@ export function buildQueue(input: QueueInput): Queue {
     input.introducedToday ?? input.settings?.introduced?.[key] ?? 0;
   const newRemaining = Math.max(0, newPerDay - introducedToday);
 
-  const all = unique([input.cards ?? [], input.due ?? [], input.candidates ?? []]).filter(alive);
+  // "Also practise the other direction", off.
+  //
+  // The setting used to *reveal* the two ways of making a production card and
+  // do nothing else, so turning it off changed nothing a learner could see: the
+  // twins they had already made kept being served, Today kept counting them,
+  // and with no way to delete a card there was no way out of the experiment.
+  // Its label promises a study switch, so it is one. The rows are untouched —
+  // this hides them from the queue and the counts that come off it, and turning
+  // the setting back on brings each card back with the schedule it earned.
+  const includeProduction =
+    input.includeProduction ?? input.settings?.productionDirection ?? true;
+
+  const all = unique([input.cards ?? [], input.due ?? [], input.candidates ?? []])
+    .filter(alive)
+    .filter((card) => includeProduction || !isProduction(card));
 
   // A New card is never due, whatever its `due` column says (§3.3).
   //

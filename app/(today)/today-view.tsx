@@ -10,7 +10,7 @@ import { getRepository } from '@/lib/db/get-db';
 import { isPhraseSnapshot, type CardRow } from '@/lib/db/schema';
 import { loadDemo } from '@/lib/dev/seed';
 import { loadToday, type TodaySummary } from '@/lib/lists/today';
-import { countByDirection } from '@/lib/srs/direction';
+import { countByDirection, isProduction } from '@/lib/srs/direction';
 
 /** `?seed=demo` runs once per page load, not once per effect (StrictMode). */
 let seeding: Promise<unknown> | undefined;
@@ -162,19 +162,30 @@ export function TodayView() {
           <ul data-testid="today-new-list" className="flex flex-col divide-y divide-border">
             {summary.newCards.map((card) => {
               const { simp, pinyin, gloss } = front(card);
+              // A word and its reverse are two rows here, and they used to be
+              // two *identical* rows — same hanzi, same pinyin, same gloss, same
+              // badge — which reads as the app having added the word twice. They
+              // are two different questions, so they say so: the reverse leads
+              // with what it asks of you and drops the reading, which is half of
+              // its own answer.
+              const reverse = isProduction(card);
               return (
                 <li
                   key={card.id}
                   data-testid="today-new-word"
                   data-entry-id={card.entryId ?? ''}
+                  data-direction={reverse ? 'production' : 'recognition'}
                   className="flex items-baseline justify-between gap-3 py-2"
                 >
                   <span className="min-w-0">
+                    {reverse ? <span className="text-sm text-muted">write </span> : null}
                     <span className="hanzi text-lg">{simp}</span>{' '}
-                    <span className="text-sm text-muted">{pinyin}</span>
+                    {reverse ? null : <span className="text-sm text-muted">{pinyin}</span>}
                     <span className="block truncate text-sm text-muted">{gloss}</span>
                   </span>
-                  {card.context ? (
+                  {reverse ? (
+                    <Badge tone="accent">reverse</Badge>
+                  ) : card.context ? (
                     <Badge tone={card.context.source === 'list' ? 'neutral' : 'accent'}>
                       {card.context.source}
                     </Badge>

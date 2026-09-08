@@ -111,8 +111,15 @@ export interface Token {
   via: 'entry' | 'fallback';
 }
 
-/** Where a card's provenance came from. */
-export type ContextSource = 'lookup' | 'ask' | 'reader' | 'list' | 'seed';
+/**
+ * Where a card's provenance came from.
+ *
+ * `reverse` is the single-card "add the reverse" press (Phase 8): an explicit
+ * add like `lookup`/`ask`/`reader`, and marked as one so it does not spend the
+ * day's new-card allowance. Without it a twin inherited its parent's `list`
+ * and quietly charged the spine for a card the learner asked for by hand.
+ */
+export type ContextSource = 'lookup' | 'ask' | 'reader' | 'reverse' | 'list' | 'seed';
 
 /**
  * Provenance: the sentence a word was met in, or the question that produced it.

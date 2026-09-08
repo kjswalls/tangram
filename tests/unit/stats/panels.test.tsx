@@ -95,6 +95,34 @@ describe('the calibration chart', () => {
     // The thin bucket is in the table even though it is not on the chart.
     expect(screen.getByTestId('stats-calibration-table')).toHaveTextContent('60–70%');
   });
+
+  /**
+   * The card beside this one is badged "last 30 days" and this one was badged
+   * nothing, while being computed over the *whole* log (`summary.ts` passes the
+   * windowed rows to retention and the unwindowed ones to calibration). An
+   * unbadged neighbour reads as the same window, and after an optimizer run the
+   * two panels move on different timescales for that reason alone.
+   */
+  it('names its own window, which is every review there is', () => {
+    const reviews = [
+      ...Array.from({ length: 60 }, () => review({ stability: 10, elapsedDays: 10, rating: 3 })),
+      ...Array.from({ length: 45 }, () => review({ stability: 1, elapsedDays: 1000, rating: 3 })),
+    ];
+    render(<CalibrationChart summary={calibration(reviews, W)} parameters="FSRS defaults" />);
+    expect(screen.getByTestId('stats-calibration')).toHaveTextContent('all time');
+    expect(screen.getByTestId('stats-calibration-note')).toHaveTextContent(
+      'reviews of cards in the Review state, all time',
+    );
+  });
+
+  it('says the one sentence that communicates, with or without a curve', () => {
+    // One decile: no curve to draw, and the overall bias still leads the card.
+    const oneDecile = Array.from({ length: 205 }, () => review({ stability: 100, elapsedDays: 1 }));
+    render(<CalibrationChart summary={calibration(oneDecile, W)} parameters="FSRS defaults" />);
+    expect(screen.getByTestId('stats-calibration-empty')).toBeInTheDocument();
+    expect(screen.queryAllByTestId('stats-calibration-dot')).toHaveLength(0);
+    expect(screen.getByTestId('stats-calibration-bias')).toBeInTheDocument();
+  });
 });
 
 describe('the workload chart', () => {
@@ -125,6 +153,26 @@ describe('the workload chart', () => {
     expect(bars).toHaveLength(4);
     expect(bars.filter((bar) => bar.getAttribute('data-series') === 'past')).toHaveLength(2);
     expect(screen.getByTestId('stats-workload-note')).toHaveTextContent('already overdue');
+  });
+
+  /**
+   * The legend is the only thing that says which colour is which series, and
+   * its swatches were painted with `var(--viz-s1)` — a custom property declared
+   * on `.viz` alone, which `ChartFrame` carries and the legend, mounted one line
+   * above it, did not. Measured in a browser the swatches were
+   * `10px x 10px bg=rgba(0, 0, 0, 0)`: two grey labels and no marks.
+   */
+  it('gives its legend the token scope its swatches are painted in', () => {
+    const past = reviewsPerDay([review({ reviewedAt: NOW })], window30(NOW));
+    const forecast = dueForecast([dueCard(NOW + 3 * DAY)], window30(NOW));
+    const { container } = render(
+      <WorkloadChart past={past} forecast={forecast} peak={2} windowDays={30} />,
+    );
+    const legend = container.querySelector('ul');
+    expect(legend).not.toBeNull();
+    expect(legend!.classList.contains('viz')).toBe(true);
+    const swatch = legend!.querySelector('span[aria-hidden]') as HTMLElement;
+    expect(swatch.style.background).toContain('--viz-s1');
   });
 });
 

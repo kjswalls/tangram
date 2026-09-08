@@ -6,8 +6,11 @@ import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/cn';
 import type { CardRow, ScriptPreference } from '@/lib/db/schema';
 import { maskedContext, resolveContext } from '@/lib/srs/context';
-import { maskTargets, revealsTarget, wordSnapshot } from '@/lib/srs/direction';
+import { maskTargets, promptGloss, revealsTarget, wordSnapshot } from '@/lib/srs/direction';
 import { cardBack, cardFace } from '@/lib/srs/presentation';
+
+/** Senses on the front before the rest fold into "also:". */
+const PROMPT_SENSES = 3;
 
 export interface ProductionCardProps {
   card: CardRow;
@@ -63,11 +66,20 @@ export function ProductionCard({
     : [];
 
   // The prompt: the sense the card is about, then the rest of the entry. Both
-  // are masked — the headword can appear in any gloss, not only the chosen one.
-  const prompt = (back.en ? [back.en] : back.glosses.chosen).map((gloss) =>
-    maskTargets(gloss, forms),
-  );
-  const alsoMeans = back.glosses.others.map((gloss) => maskTargets(gloss, forms));
+  // are masked — the headword can appear in any gloss, not only the chosen one —
+  // and then display-formatted for the front (`promptGloss`: no bracketed
+  // readings, no trad|simp alternates), which is a rendering decision and never
+  // an unmasking one.
+  const shown = (gloss: string): string => promptGloss(maskTargets(gloss, forms), script);
+  const chosen = (back.en ? [back.en] : back.glosses.chosen).map(shown);
+  // A card with no chosen sense carries the whole entry, and CC-CEDICT entries
+  // run to eight senses. Three lead; the rest join the "also:" line, which is
+  // what that line is for. The question must not be longer than the answer.
+  const prompt = chosen.slice(0, PROMPT_SENSES);
+  const alsoMeans = [
+    ...chosen.slice(PROMPT_SENSES),
+    ...back.glosses.others.map(shown),
+  ];
 
   const context = resolveContext(card.context, forms);
   const masked = context ? maskedContext(context.parts) : null;
@@ -107,7 +119,15 @@ export function ProductionCard({
       >
         <p className="text-xs tracking-wide text-muted uppercase">Write this in Chinese</p>
 
-        <ol data-testid="production-prompt" className="space-y-1 text-2xl leading-snug font-medium">
+        <ol
+          data-testid="production-prompt"
+          className={cn(
+            'space-y-1 leading-snug font-medium',
+            // One sense can carry the card; three at 2xl on a 390px phone is a
+            // wall of type that outweighs the hanzi it is asking for.
+            prompt.length > 1 ? 'text-lg' : 'text-xl',
+          )}
+        >
           {prompt.map((gloss, index) => (
             <li key={`${gloss}-${index}`}>{gloss}</li>
           ))}

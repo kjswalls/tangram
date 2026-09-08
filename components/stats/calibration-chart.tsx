@@ -24,6 +24,7 @@
 
 import { ChartFrame, ChartTooltip, TableView, formatCount, useTooltip } from '@/components/stats/primitives';
 import { SERIES_1 } from '@/components/stats/chart-tokens';
+import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { NotEnough } from '@/components/stats/primitives';
 import type { CalibrationBucket, CalibrationSummary } from '@/lib/stats/calibration';
@@ -110,8 +111,35 @@ export function CalibrationChart({
     ],
   }));
 
+  /**
+   * The one sentence here a non-statistician can act on, so it leads rather
+   * than sitting under the plot — and it is rendered whether or not there is a
+   * curve, because a log too clustered to draw still has an overall bias.
+   */
+  const bias =
+    summary.bias === null ? null : (
+      <p data-testid="stats-calibration-bias" className="mb-3 text-sm text-muted">
+        Overall it predicted {formatRate(summary.predictedMean)} and you recalled{' '}
+        {formatRate(summary.observedMean)} —{' '}
+        {Math.abs(summary.bias) < 0.02
+          ? 'as close as this many reviews can show.'
+          : summary.bias > 0
+            ? 'the schedule is more cautious than it needs to be.'
+            : 'the schedule is more optimistic than your answers.'}
+      </p>
+    );
+
   return (
-    <Card title="Calibration" data-testid="stats-calibration">
+    <Card
+      title="Calibration"
+      // The retention card next to this one is badged "last 30 days", and an
+      // unbadged neighbour reads as the same window. This one is every review
+      // there is — deliberately, because calibration wants all of them — so it
+      // says so, here and in the note under the chart.
+      aside={<Badge tone="neutral">all time</Badge>}
+      data-testid="stats-calibration"
+    >
+      {bias}
       {summary.enough ? (
         <>
           {/* Capped: the SVG scales with its box, so a full-width card would
@@ -301,8 +329,8 @@ export function CalibrationChart({
           </ChartFrame>
 
           <p data-testid="stats-calibration-note" className="mt-2 text-sm text-muted">
-            {formatCount(summary.used)} reviews of cards in the Review state, in {drawn.length} of 10
-            deciles. Dot size is the reviews behind it.
+            {formatCount(summary.used)} reviews of cards in the Review state, all time, in{' '}
+            {drawn.length} of 10 deciles. Dot size is the reviews behind it.
             {summary.thin > 0 ? (
               <>
                 {' '}
@@ -311,17 +339,6 @@ export function CalibrationChart({
               </>
             ) : null}
           </p>
-          {summary.bias !== null ? (
-            <p data-testid="stats-calibration-bias" className="mt-1 text-sm text-muted">
-              Overall it predicted {formatRate(summary.predictedMean)} and you recalled{' '}
-              {formatRate(summary.observedMean)} —{' '}
-              {Math.abs(summary.bias) < 0.02
-                ? 'as close as this many reviews can show.'
-                : summary.bias > 0
-                  ? 'the schedule is more cautious than it needs to be.'
-                  : 'the schedule is more optimistic than your answers.'}
-            </p>
-          ) : null}
         </>
       ) : (
         <NotEnough
@@ -330,8 +347,11 @@ export function CalibrationChart({
           have={summary.used}
           needed={summary.needed}
         >
-          A calibration curve is ten rates, not one, so it needs the reviews to spread out before
-          any decile holds enough to plot.
+          {summary.used >= summary.needed
+            ? `A calibration curve is ten rates, not one. Your predictions all land in ${
+                drawn.length === 1 ? 'a single decile' : 'deciles'
+              } with enough reviews to plot — which is what a well-scheduled log looks like, nearly everything predicted above 90% — so there is no curve to draw yet. The line above is the finding.`
+            : 'A calibration curve is ten rates, not one, so it needs the reviews to spread out before any decile holds enough to plot.'}
         </NotEnough>
       )}
 

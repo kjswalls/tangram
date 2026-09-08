@@ -10,24 +10,24 @@ const LN2 = Math.log(2);
 describe('logLoss', () => {
   it('is the mean binary cross-entropy', () => {
     const half = logLoss([
-      { reviewedAt: 1, p: 0.5, recalled: true },
-      { reviewedAt: 2, p: 0.5, recalled: false },
+      { cardId: 'c1', index: 1, reviewedAt: 1, p: 0.5, recalled: true },
+      { cardId: 'c2', index: 2, reviewedAt: 2, p: 0.5, recalled: false },
     ]);
     expect(half.count).toBe(2);
     expect(half.loss).toBeCloseTo(LN2, 12);
 
     const confident = logLoss([
-      { reviewedAt: 1, p: 0.9, recalled: true },
-      { reviewedAt: 2, p: 0.9, recalled: false },
+      { cardId: 'c1', index: 1, reviewedAt: 1, p: 0.9, recalled: true },
+      { cardId: 'c2', index: 2, reviewedAt: 2, p: 0.9, recalled: false },
     ]);
     expect(confident.loss).toBeCloseTo((-Math.log(0.9) - Math.log(0.1)) / 2, 12);
   });
 
   it('scores a window half-open, so consecutive windows tile', () => {
     const predictions = [
-      { reviewedAt: 10, p: 0.5, recalled: true },
-      { reviewedAt: 20, p: 0.5, recalled: true },
-      { reviewedAt: 30, p: 0.5, recalled: true },
+      { cardId: 'c10', index: 10, reviewedAt: 10, p: 0.5, recalled: true },
+      { cardId: 'c20', index: 20, reviewedAt: 20, p: 0.5, recalled: true },
+      { cardId: 'c30', index: 30, reviewedAt: 30, p: 0.5, recalled: true },
     ];
     expect(logLoss(predictions, 10, 20).count).toBe(1);
     expect(logLoss(predictions, 20, Number.POSITIVE_INFINITY).count).toBe(2);
@@ -41,7 +41,7 @@ describe('logLoss', () => {
     // `Infinity` loses every comparison, which is what a candidate that
     // predicted nothing deserves. `NaN` would win every one of them silently.
     expect(logLoss([]).loss).toBe(Number.POSITIVE_INFINITY);
-    expect(logLoss([{ reviewedAt: 1, p: 0.5, recalled: true }], 100, 200).count).toBe(0);
+    expect(logLoss([{ cardId: 'c1', index: 1, reviewedAt: 1, p: 0.5, recalled: true }], 100, 200).count).toBe(0);
   });
 });
 

@@ -48,7 +48,7 @@ import type {
 } from '@/lib/db/schema';
 import { isPhraseSnapshot } from '@/lib/db/schema';
 import { buildQueue } from '@/lib/lists/queue';
-import { maskFor } from '@/lib/srs/context';
+import { maskFor, MASK_CHAR } from '@/lib/srs/context';
 import { todayKey } from '@/lib/srs/day';
 import type { CardContext, Entry, EntryId } from '@/lib/types';
 
@@ -205,7 +205,11 @@ export function wordSnapshot(snapshot: CardSnapshot): EntrySnapshot | null {
  * commitment 2). What can change is the *source*, and it decides who pays for
  * the card: the bulk list path passes `'list'`, so its twins are counted
  * against the day exactly as a list's "Add to queue" is, while a single "add
- * the reverse" keeps the original source and is an explicit add like any other.
+ * the reverse" passes `'reverse'`, which `isExplicitAdd` reads as a hand add
+ * and the day's cap therefore ignores. Inheriting the parent's source is what
+ * this argument must **not** do: nearly every recognition card comes off the
+ * spine carrying `'list'`, so a twin that inherited it charged the learner a
+ * new spine word for a card they asked for by hand.
  */
 export function twinContext(
   card: Pick<CardRow, 'context'>,
@@ -407,6 +411,42 @@ export function maskTargets(text: string, forms: readonly string[]): string {
   return masked;
 }
 
+/**
+ * A gloss as the production **front** should print it.
+ *
+ * The back shows CC-CEDICT verbatim, which is right: the brackets and the
+ * `trad|simp` alternates are information once the answer is known. On the front
+ * they are the loudest thing on the card and none of them is the question — a
+ * multi-sense entry rendered raw put the hanzi of 得, 不, 無, 无 and 忘 at
+ * headline size on a card whose question is "which characters?".
+ *
+ * Two removals, in this order and no others:
+ *
+ *  - a bracketed reading, `得[de2]` → `得`;
+ *  - an alternate pair, `無|无` → the one script the learner reads.
+ *
+ * Masking has already run (`maskTargets`), and this can never undo it: where
+ * either side of a pair is masked the **masked** side is the one kept, so a
+ * collapse cannot reinstate a form the mask removed.
+ */
+export function promptGloss(text: string, script: ScriptPreference): string {
+  const withoutReadings = text.replace(/\[[^\]]*\]/g, '');
+  const collapsed = withoutReadings.replace(
+    /([^\s|(),;·]+)\|([^\s|(),;·]+)/g,
+    (_whole, trad: string, simp: string) => {
+      if (trad.includes(MASK_CHAR) || simp.includes(MASK_CHAR)) {
+        return trad.includes(MASK_CHAR) ? trad : simp;
+      }
+      return script === 'trad' ? trad : simp;
+    },
+  );
+  return collapsed
+    .replace(/\s+/g, ' ')
+    .replace(/\s+([,;.)\]])/g, '$1')
+    .replace(/\(\s+/g, '(')
+    .trim();
+}
+
 /** True when the line still contains an answer, so the front must not show it. */
 export function revealsTarget(text: string, forms: readonly string[]): boolean {
   return forms.some((form) => form.length > 0 && text.includes(form));
@@ -561,14 +601,36 @@ export function localSuggestion(judgement: ProductionJudgement): RecallSuggestio
 }
 
 /**
+ * How much of a near miss the provider may be asked about: none, for now.
+ *
+ * `/api/recall` is the **meaning** grader. It compares an English answer with
+ * the entry's glosses, and its contract carries no notion of direction
+ * (HANDOFF, "Open after Phase 8", item 3), so handing it 打祘 asks the wrong
+ * question and takes the answer seriously. What that costs is not theoretical:
+ * against the shipped no-key build, a genuine one-character miss on 打算 came
+ * back `{"suggested":1,"why":"…there was nothing typed to compare against this
+ * card, so it reads as a blank."}` — the local reading (Hard, "One character
+ * off.") replaced by Again, with a reason that is false about what the learner
+ * did, both rendered on screen.
+ *
+ * So the near-miss branch keeps `askProvider: true` as the statement of intent
+ * it always was, and this flag is what actually opens the valve. It flips when
+ * the provider contract carries `direction` and a prompt written for hanzi —
+ * one line here, and the seam below is already built for it.
+ */
+const PROVIDER_GRADES_PRODUCTION: boolean = false;
+
+/**
  * The recall box's network seam, for a production card.
  *
  * `RecallInput` (Phase 7) takes a `request` and knows nothing else about
  * grading — so the production direction reuses the box whole and swaps what
  * happens when it is submitted. An exact answer is settled here, in the
  * browser, with no request at all: a match against the headword is not a
- * judgement call and a model cannot make it any truer. Only a near miss is
- * asked about, and if that answer never comes the local reading stands.
+ * judgement call and a model cannot make it any truer. A near miss is settled
+ * here too until there is a grader that has been asked the right question
+ * (`PROVIDER_GRADES_PRODUCTION` above); the local "One character off." is the
+ * right answer, and it is offline, instant and free.
  *
  * It cannot grade the card either. Like everything else on this path it returns
  * a suggestion, and the learner still presses the button.
@@ -582,7 +644,7 @@ export function productionRecallRequest(
     const snapshot = wordSnapshot(card.snapshot);
     if (!snapshot) return null;
     const judgement = gradeProduction({ typed: requestInput.answer, snapshot, script });
-    if (!judgement.askProvider) return localSuggestion(judgement);
+    if (!judgement.askProvider || !PROVIDER_GRADES_PRODUCTION) return localSuggestion(judgement);
     try {
       const judged = await fallback(requestInput, options);
       return judged ?? localSuggestion(judgement);

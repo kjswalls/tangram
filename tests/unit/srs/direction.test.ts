@@ -24,6 +24,7 @@ import {
   gradeProduction,
   hasProductionTwin,
   maskTargets,
+  promptGloss,
   normalizeProduced,
   planProductionTwins,
   preferRecognition,
@@ -185,6 +186,33 @@ describe('what a production front may show', () => {
     expect(revealsTarget('我打算去', ['打算'])).toBe(true);
     expect(revealsTarget('我＿＿去', ['打算'])).toBe(false);
   });
+
+  /**
+   * The front is a *question*, and CC-CEDICT's apparatus is not part of it. A
+   * multi-sense entry rendered raw put the hanzi of 得, 不, 無, 无 and 忘 at
+   * headline size on a card whose question is "which characters?", with the
+   * prompt longer than its own answer.
+   */
+  it('drops the bracketed readings and the trad|simp alternates', () => {
+    expect(
+      promptGloss('to finish (used with 得[de2] or 不[bu4] after a verb)', 'simp'),
+    ).toBe('to finish (used with 得 or 不 after a verb)');
+    expect(promptGloss('usually followed by 無|无[wu2]', 'simp')).toBe('usually followed by 无');
+    expect(promptGloss('usually followed by 無|无[wu2]', 'trad')).toBe('usually followed by 無');
+  });
+
+  it('can never put back a form the mask took out', () => {
+    // `瞭|了` with the simplified side masked: collapsing to "the script the
+    // learner reads" must not choose the unmasked side and print the answer.
+    const masked = maskTargets('variant of 瞭|了', ['了']);
+    expect(promptGloss(masked, 'simp')).not.toContain('了');
+    expect(promptGloss(masked, 'trad')).not.toContain('了');
+    expect(revealsTarget(promptGloss(masked, 'trad'), ['了'])).toBe(false);
+  });
+
+  it('leaves an ordinary gloss exactly as it is', () => {
+    expect(promptGloss('to plan; to intend', 'simp')).toBe('to plan; to intend');
+  });
 });
 
 describe('counting and ordering', () => {
@@ -317,26 +345,50 @@ describe('productionRecallRequest', () => {
     expect(provider).not.toHaveBeenCalled();
   });
 
-  it('asks the provider about a near miss, and stands on its own reading if it fails', async () => {
-    const answered = vi.fn(async () => ({ suggested: 2 as const, why: 'a judgement' }));
-    const request = productionRecallRequest(card(), 'simp', answered);
+  /**
+   * The near miss does **not** go to the provider, and this is the test that
+   * says so. `/api/recall` is the meaning grader: it compares an English answer
+   * with the entry's glosses and its contract carries no direction. Asked about
+   * 打祘 by the shipped no-key build it answered
+   * `{"suggested":1,"why":"…there was nothing typed to compare against this
+   * card, so it reads as a blank."}` — the correct local reading (Hard, "One
+   * character off.") replaced by Again, with a reason that is false about what
+   * the learner did, and both of them rendered on the card.
+   *
+   * The previous version of this test passed because it stubbed the provider
+   * with a plausible `{suggested: 2}` and never exercised a real one. So this
+   * one stubs a provider that throws if it is touched at all.
+   */
+  it('does not hand a near miss to the meaning grader', async () => {
+    const provider = vi.fn(async () => {
+      throw new Error('the meaning grader must not be asked about a produced word');
+    });
+    const request = productionRecallRequest(card(), 'simp', provider);
     await expect(request({ ...input, answer: '打筭' })).resolves.toEqual({
-      suggested: 2,
-      why: 'a judgement',
-    });
-    expect(answered).toHaveBeenCalledTimes(1);
-
-    const failed = vi.fn(async () => {
-      throw new Error('offline');
-    });
-    const fallback = productionRecallRequest(card(), 'simp', failed);
-    await expect(fallback({ ...input, answer: '打筭' })).resolves.toMatchObject({
       suggested: 2,
       why: 'One character off.',
     });
+    expect(provider).not.toHaveBeenCalled();
 
-    const empty = productionRecallRequest(card(), 'simp', vi.fn(async () => null));
-    await expect(empty({ ...input, answer: '打筭' })).resolves.toMatchObject({ suggested: 2 });
+    // Even a provider that would answer well is not consulted: the local
+    // reading is the right one until the contract carries `direction`.
+    const answered = vi.fn(async () => ({ suggested: 4 as const, why: 'a judgement' }));
+    const second = productionRecallRequest(card(), 'simp', answered);
+    await expect(second({ ...input, answer: '打筭' })).resolves.toMatchObject({
+      suggested: 2,
+      why: 'One character off.',
+    });
+    expect(answered).not.toHaveBeenCalled();
+  });
+
+  it('still marks the near miss as one the provider was meant to judge', () => {
+    // `askProvider` stays true — it is the statement of intent, and the flag in
+    // `direction.ts` is what actually opens the valve when a production-aware
+    // prompt lands (HANDOFF, "Open after Phase 8", item 3).
+    const judgement = gradeProduction({ typed: '打筭', snapshot: DASUAN, script: 'simp' });
+    expect(judgement.outcome).toBe('near');
+    expect(judgement.askProvider).toBe(true);
+    expect(judgement.suggested).toBe(2);
   });
 
   it('has nothing to say about a phrase card', async () => {

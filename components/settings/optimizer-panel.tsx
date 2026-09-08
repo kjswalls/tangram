@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { getRepository } from '@/lib/db/get-db';
@@ -10,9 +10,13 @@ import {
   forgetPrevious,
   MIN_REVIEWS_FOR_FIT,
   optimizeWeights,
-  readPrevious,
+  parsePrevious,
+  previousServerSnapshot,
+  previousSnapshot,
   rememberPrevious,
+  subscribePrevious,
   type OptimizeResult,
+  type PairedImprovement,
   type PreviousWeights,
 } from '@/lib/fsrs-optimize';
 import { describeParameters } from '@/lib/srs/params';
@@ -50,6 +54,27 @@ const loss = (value: number | null): string =>
   value === null || !Number.isFinite(value) ? '—' : value.toFixed(4);
 
 /**
+ * The margin, said with its uncertainty.
+ *
+ * Two four-decimal losses side by side read as a measurement, and at these
+ * sample sizes the difference between them is often smaller than the error on
+ * it — which is exactly the case the learner cannot see and the gate exists to
+ * refuse. So the panel quotes the difference *and* the standard error of that
+ * difference, and says which side of its own noise it fell on.
+ */
+function margin(improvement: PairedImprovement | null): string {
+  if (!improvement || improvement.count === 0 || !Number.isFinite(improvement.mean)) return '';
+  const size = Math.abs(improvement.mean).toFixed(4);
+  if (improvement.mean <= 0) return ` — worse by ${size} per review.`;
+  const error = Number.isFinite(improvement.standardError)
+    ? `, give or take ${improvement.standardError.toFixed(4)} (one standard error)`
+    : '';
+  return improvement.lowerBound > 0
+    ? ` — better by ${size} per review${error}, which is clear of its own noise.`
+    : ` — better by ${size} per review${error}, so the difference is inside the noise of the measurement and is not offered as a fit.`;
+}
+
+/**
  * A Review-state card with the given stability, for the "what would change"
  * table. Not a real card: it is a worked example, and it is labelled as one.
  */
@@ -85,7 +110,25 @@ export function OptimizerPanel({ settings, onSettings }: OptimizerPanelProps) {
    *  a re-render does not redraw the same table from a different clock. */
   const [resultAt, setResultAt] = useState(0);
   const [status, setStatus] = useState<string>();
-  const [previous, setPrevious] = useState<PreviousWeights | undefined>();
+  /**
+   * The undo slot, subscribed to rather than copied into state: it is a
+   * `localStorage` value that this panel writes (Apply, Revert) and that the
+   * Reset and Load-demo buttons further down this same page wipe, through
+   * `lib/dev/seed.ts`. A snapshot held in state would still be offering "Revert
+   * to the previous fit" over a database with no reviews in it.
+   *
+   * Whether it is an undo *of anything* is a second question, and
+   * `parsePrevious` answers it against the fit actually in force.
+   */
+  const slot = useSyncExternalStore(
+    subscribePrevious,
+    previousSnapshot,
+    previousServerSnapshot,
+  );
+  const previous: PreviousWeights | undefined = useMemo(
+    () => parsePrevious(slot, settings.fsrsWeights),
+    [slot, settings.fsrsWeights],
+  );
   const [busy, setBusy] = useState(false);
   const reviews = useRef<ReviewRow[]>([]);
   const abort = useRef<AbortController>(undefined);
@@ -111,7 +154,6 @@ export function OptimizerPanel({ settings, onSettings }: OptimizerPanelProps) {
         const set = buildTrainingSet(rows);
         setScorable(set.scorableReviews);
         setTotal(set.totalReviews);
-        setPrevious(readPrevious());
       })
       .catch((error: unknown) =>
         setStatus(error instanceof Error ? error.message : String(error)),
@@ -153,10 +195,9 @@ export function OptimizerPanel({ settings, onSettings }: OptimizerPanelProps) {
     setBusy(true);
     try {
       // Parked *before* the write, so Revert has somewhere to go back to.
-      rememberPrevious(settings.fsrsWeights ?? null);
+      rememberPrevious(settings.fsrsWeights ?? null, result.fit.fittedAt);
       const next = await getRepository().setSettings({ fsrsWeights: result.fit });
       onSettings(next);
-      setPrevious(readPrevious());
       setResult(undefined);
       setStatus('Your parameters are in force. Every card is scheduled by them from now on.');
     } catch (error) {
@@ -173,7 +214,6 @@ export function OptimizerPanel({ settings, onSettings }: OptimizerPanelProps) {
       const next = await getRepository().setSettings({ fsrsWeights: target });
       onSettings(next);
       forgetPrevious();
-      setPrevious(undefined);
       setStatus(
         target === null
           ? 'Back to the FSRS defaults.'
@@ -215,9 +255,10 @@ export function OptimizerPanel({ settings, onSettings }: OptimizerPanelProps) {
       {scorable !== undefined && !enough ? (
         <p data-testid="optimizer-floor" className="text-xs text-warning">
           The fit needs at least {grouped(MIN_REVIEWS_FOR_FIT)} scorable reviews before it will run
-          at all, and that number is a floor for signal rather than a guarantee of one: real FSRS
-          optimization wants well over a thousand. Until then the population defaults are the
-          better bet, and reviewing is the only thing that changes it.
+          at all, and that number is a floor for signal rather than a guarantee of one: below it a
+          fit that beats the defaults on the reviews it was kept away from is usually the small
+          slice talking, not you being different. Until then the population defaults are the better
+          bet, and reviewing is the only thing that changes it.
         </p>
       ) : null}
 
@@ -308,7 +349,8 @@ function OptimizerResult({
       of your history, kept back on purpose. Log-loss, lower is better:{' '}
       <strong data-testid="optimizer-loss-fitted">{loss(result.fittedLoss)}</strong> for the fit
       against <strong data-testid="optimizer-loss-current">{loss(result.currentLoss)}</strong> for
-      what you are running now.
+      what you are running now
+      <span data-testid="optimizer-margin">{margin(result.improvementOverCurrent)}</span>
     </p>
   );
 
@@ -317,9 +359,10 @@ function OptimizerResult({
       <div data-testid="optimizer-result" className="flex flex-col gap-2">
         {scores}
         <p className="text-xs text-warning">
-          The fit did not beat the parameters you already have, so there is nothing to apply. That
-          is the check doing its job, not a failure: a fit that only looks better on the reviews it
-          was trained on would make your schedule worse for months before you noticed.
+          The fit did not beat the parameters you already have by more than the measurement&rsquo;s own
+          noise, so there is nothing to apply. That is the check doing its job, not a failure: on a
+          held-out slice this size a fit can come out ahead by a hair through luck alone, and
+          applying that would make your schedule worse for months before you noticed.
         </p>
       </div>
     );

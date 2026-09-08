@@ -93,6 +93,40 @@ describe('the due forecast', () => {
     );
   });
 
+  /**
+   * "Already overdue" means what it says.
+   *
+   * The panel prints this number verbatim — "…, of which N are already overdue
+   * and sit on today" — and it was computed as `due < todayStart`, the 04:00
+   * study-day boundary. At midday that hides every card that came due this
+   * morning: a card three hours overdue was reported as not overdue at all, and
+   * a learner with a real morning backlog was told there was none.
+   */
+  it('counts a card that came due earlier today as overdue', () => {
+    const forecast = dueForecast([dueCard(NOW - 3 * 3_600_000)], {
+      now: NOW,
+      days: 30,
+      rollover: ROLLOVER,
+    });
+    expect(forecast.days[0].count).toBe(1);
+    expect(forecast.counted).toBe(1);
+    expect(forecast.beyond).toBe(0);
+    expect(forecast.overdue).toBe(1);
+  });
+
+  it('counts nothing due later today as overdue, and never more than it counted', () => {
+    const cards = [
+      dueCard(NOW - 3 * 3_600_000), // this morning: overdue
+      dueCard(NOW - 2 * DAY), // an older backlog card: overdue
+      dueCard(NOW + 3 * 3_600_000), // this evening: due today, not yet overdue
+      dueCard(NOW + 5 * DAY),
+    ];
+    const forecast = dueForecast(cards, { now: NOW, days: 30, rollover: ROLLOVER });
+    expect(forecast.overdue).toBe(2);
+    expect(forecast.days[0].count).toBe(3);
+    expect(forecast.overdue).toBeLessThanOrEqual(forecast.counted);
+  });
+
   it('never double-counts however the dues fall', () => {
     // A card every six hours for 40 days, plus a backlog: the arithmetic that
     // would count a boundary card twice has 160 chances to show itself.

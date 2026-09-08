@@ -523,10 +523,21 @@ export function recallEcho(entry: Entry, answer: string, senseIndex?: number): P
     }
   }
 
-  if (said.size === 0) {
+  if (answer.trim().length === 0) {
     return {
       suggested: 1,
       why: 'Offline check: there was nothing typed to compare against this card, so it reads as a blank.',
+    };
+  }
+  // Something *was* typed, and none of it is an English word this counter can
+  // weigh: hanzi, pinyin, punctuation. Saying "nothing typed" here was a
+  // statement about the learner that was simply false — it is what a
+  // production card's near miss used to be told before that direction stopped
+  // being routed here at all (lib/srs/direction.ts).
+  if (said.size === 0) {
+    return {
+      suggested: 1,
+      why: 'Offline check: none of what you typed is English the offline grader can weigh against this card, and it only counts word overlap. Grade it yourself.',
     };
   }
   if (bestTotal === 0 || bestMatched === 0) {

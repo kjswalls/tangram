@@ -85,9 +85,34 @@ describe('calibration', () => {
   });
 
   it('draws nothing until there are enough reviews overall', () => {
-    const reviews = Array.from({ length: 50 }, () => review({ stability: 10, elapsedDays: 10 }));
+    // 50 reviews spread across two deciles: over the count floor, and with two
+    // dots there is a line to read.
+    const reviews = [
+      ...Array.from({ length: 25 }, () => review({ stability: 10, elapsedDays: 10 })),
+      ...Array.from({ length: 25 }, () => review({ stability: 10, elapsedDays: 30 })),
+    ];
     expect(calibration(reviews, W, { needed: 100 }).enough).toBe(false);
     expect(calibration(reviews, W, { needed: 50 }).enough).toBe(true);
+  });
+
+  /**
+   * One dot is not a curve.
+   *
+   * With 205 Review-state reviews of a well-scheduled log every prediction sits
+   * in the top decile, and the panel used to pass its floor and render a single
+   * mark in the corner of a diagonal, captioned "in 1 of 10 deciles". That is
+   * the normal shape of a healthy log, not a seed artefact, so it is what Kirby
+   * would usually see. Below two drawn deciles the panel falls through to its
+   * empty state, which still carries the overall bias sentence.
+   */
+  it('needs two drawn deciles before it will call itself a curve', () => {
+    const oneDecile = Array.from({ length: 205 }, () => review({ stability: 100, elapsedDays: 1 }));
+    const summary = calibration(oneDecile, W, { needed: 100 });
+    expect(summary.used).toBe(205);
+    expect(summary.drawn).toHaveLength(1);
+    expect(summary.enough).toBe(false);
+    // And the sentence that does communicate is still computable.
+    expect(summary.bias).not.toBeNull();
   });
 
   it('draws nothing when every bucket is too thin, however many reviews there are', () => {

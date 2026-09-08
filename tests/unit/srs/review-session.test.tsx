@@ -214,6 +214,9 @@ describe('the review session', () => {
     const empty = await screen.findByTestId('review-empty');
     expect(empty).toHaveTextContent(/Nothing due — next card in \d+ (hours?|days?)\./);
     expect(screen.queryByTestId('review-card')).toBeNull();
+    // Nothing is coming back inside the horizon, so no timer is armed and the
+    // page does not ask the learner to wait for one: the links are the answer.
+    expect(screen.queryByTestId('review-empty-stay')).toBeNull();
   });
 
   it('says the card is coming back in minutes rather than declaring the session over', async () => {
@@ -228,6 +231,13 @@ describe('the review session', () => {
     render(<ReviewSession />);
     const empty = await screen.findByTestId('review-empty');
     expect(empty).toHaveTextContent(/^Nothing due — 1 card comes back in \d+ minutes?\.$/);
+    // The refresh timer is armed, so the page will refill itself — and it says
+    // so. Both links in this state unmount the session (leaving the route
+    // resets it), so a learner who took one walked away from a page that was
+    // about to bring the card back on its own.
+    expect(screen.getByTestId('review-empty-stay')).toHaveTextContent(
+      /Stay on this page/,
+    );
   });
 
   it('sets aside a card the learner keeps failing, and says it did', async () => {

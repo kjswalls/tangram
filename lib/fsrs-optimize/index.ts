@@ -19,10 +19,13 @@ export {
   type TrainingSet,
 } from '@/lib/fsrs-optimize/dataset';
 export {
+  IMPROVEMENT_Z,
   logLoss,
+  pairedImprovement,
   predict,
   scoreWeights,
   trainLoss,
+  type PairedImprovement,
   type Prediction,
   type Score,
   type SplitScore,
@@ -37,7 +40,11 @@ export {
 } from '@/lib/fsrs-optimize/optimize';
 export {
   forgetPrevious,
+  parsePrevious,
+  previousServerSnapshot,
+  previousSnapshot,
   readPrevious,
   rememberPrevious,
+  subscribePrevious,
   type PreviousWeights,
 } from '@/lib/fsrs-optimize/previous';

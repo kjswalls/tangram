@@ -13,6 +13,8 @@ import {
   sentenceAround,
 } from '@/lib/dev/seed';
 import { askCacheKey } from '@/lib/ai/cache-key';
+import { readPrevious, rememberPrevious } from '@/lib/fsrs-optimize';
+import { DEFAULT_WEIGHTS } from '@/lib/srs/params';
 import { addPhraseCardChecked } from '@/lib/lists/looked-up';
 import { todayKey } from '@/lib/srs/day';
 import { wordState } from '@/lib/srs/states';
@@ -223,6 +225,35 @@ describe('loadDemo', () => {
     expect(await repo.lists()).toEqual([]);
     expect(await repo.texts()).toEqual([]);
     expect(await repo.knownEntryIds()).toEqual([]);
+  });
+
+  /**
+   * The optimizer's undo is not a Dexie table — it is `localStorage`
+   * (`lib/fsrs-optimize/previous.ts`), so it survived every wipe. The button
+   * sat there on the same settings page as the Reset that had just emptied the
+   * database, labelled "Revert to the previous fit", and one click put weights
+   * fitted to 4,321 reviews that no longer existed back in force.
+   */
+  it('clears the optimizer’s undo slot, which is not a table', async () => {
+    const repo = setup();
+    const applied = {
+      w: [...DEFAULT_WEIGHTS],
+      fittedAt: NOW,
+      reviewCount: 4321,
+      heldOutLogLoss: 0.31,
+      baselineLogLoss: 0.34,
+    };
+    rememberPrevious(null, applied.fittedAt);
+    expect(readPrevious(applied)).toBeNull();
+
+    await resetAll(repo);
+    expect(readPrevious(applied)).toBeUndefined();
+    expect(localStorage.getItem('tangram.fsrs.previous')).toBeNull();
+
+    // And the demo, which wipes through the same door.
+    rememberPrevious(null, applied.fittedAt);
+    await loadDemo({ repo, now: NOW, source: dictEntrySource() });
+    expect(localStorage.getItem('tangram.fsrs.previous')).toBeNull();
   });
 });
 

@@ -12,17 +12,30 @@
  *
  * Two rules that are not obvious and are load-bearing:
  *
- * 1. **A card's first review is not scorable, and neither is a same-day one.**
- *    The first has no memory state to predict recall from — FSRS *initialises*
- *    the state from that grade. A review at `elapsed_days === 0` is a learning
- *    step taken minutes after the last one, where the forgetting curve says
- *    "certainly remembered" by construction, so scoring it charges the model
- *    ~13.8 nats for every within-session lapse and measures nothing but how
- *    badly the session went. FSRS's own optimizer excludes them for the same
- *    reason. Both kinds are **replayed** — the state has to come from
+ * 1. **A card's first review is not scorable, and neither is one taken less
+ *    than a day after the last.** The first has no memory state to predict
+ *    recall from — FSRS *initialises* the state from that grade. A review a few
+ *    minutes after the previous one is a learning step, where the forgetting
+ *    curve says "certainly remembered" by construction, so scoring it charges
+ *    the model ~13.8 nats for every within-session lapse and measures nothing
+ *    but how badly the session went. FSRS's own optimizer excludes them for the
+ *    same reason. Both kinds are **replayed** — the state has to come from
  *    somewhere, and the short-term path is part of how it moves — and neither
  *    is scored. Since `shortTermSteps` defaults on (Phase 8) this is most of
  *    the difference between a signal and a mood.
+ *
+ *    **The gap that decides this is the real one, not `log.elapsed_days`.**
+ *    That field is `dateDiffInDays` — whole *UTC calendar days* — so a ten
+ *    minute step taken at 23:55 → 00:05 is recorded as a full day apart. Gating
+ *    on it made scorability depend on what hour of the day the learner studies:
+ *    the same simulated learner, same seed, shifted from 09:50 to 23:50 UTC,
+ *    handed the objective 120 within-session steps (11% of it) and moved the
+ *    fitted weights by up to 28%. Scorability now asks
+ *    `before.last_review → reviewedAt` in real time (the same source
+ *    `lib/stats/calibration.ts` measures elapsed time from), and a gap under a
+ *    day is never scored whatever the calendar says. Replay still uses
+ *    `log.elapsed_days`, because that is the delta-t the scheduler itself
+ *    measured and the state has to move the way the scheduler moved it.
  * 2. **The train/held-out split is chronological, never random.** A random
  *    split leaks the future: a card's later review sits in train while its
  *    earlier one sits in held-out, and the fit is scored on reviews it has
@@ -42,7 +55,13 @@ export interface TrainingReview {
   rating: StoredRating;
   /** Days since this card's previous review, as the scheduler measured them. */
   elapsedDays: number;
-  /** False for a first or same-day review — replayed, never scored. */
+  /**
+   * The real gap since the previous review, in fractional days, or null for a
+   * card's first. This is what scorability is decided on; `elapsedDays` is what
+   * the replay is driven with.
+   */
+  gapDays: number | null;
+  /** False for a first review or one under a day old — replayed, never scored. */
   scorable: boolean;
 }
 
@@ -80,6 +99,23 @@ function utcDayDiff(from: number, to: number): number {
  * calculation from `before.last_review`, and to zero when there is no previous
  * review to measure from.
  */
+/**
+ * The true gap since the previous review, in fractional days — `null` when
+ * there is no previous review to measure from.
+ *
+ * `before.last_review` first (it is what the scheduler recorded for *this*
+ * card at *this* grade), falling back to the previous row's own instant.
+ * Never `log.elapsed_days`: that is the rounded calendar-day number, and
+ * rounding is what let a session that straddles UTC midnight look like a day.
+ */
+function gapDaysFor(row: ReviewRow, previousAt: number | null): number | null {
+  const last = row.before?.last_review;
+  const from =
+    typeof last === 'number' && Number.isFinite(last) ? last : previousAt;
+  if (from === null || from === undefined || !Number.isFinite(from)) return null;
+  return Math.max(0, (row.reviewedAt - from) / DAY_MS);
+}
+
 function elapsedDaysFor(row: ReviewRow, previousAt: number | null): number {
   const logged = row.log?.elapsed_days;
   if (typeof logged === 'number' && Number.isFinite(logged) && logged >= 0) return logged;
@@ -114,12 +150,18 @@ export function buildTrainingSet(
     let previousAt: number | null = null;
     for (const row of ordered) {
       const elapsedDays = elapsedDaysFor(row, previousAt);
-      const scorable = previousAt !== null && elapsedDays > 0;
+      const gapDays = gapDaysFor(row, previousAt);
+      // A day of real time, not a day on the calendar. `elapsedDays > 0` is
+      // kept as well so a row whose `before` is missing — an import, a
+      // hand-written fixture — is judged by the scheduler's own number rather
+      // than by a gap nobody recorded.
+      const scorable = previousAt !== null && elapsedDays > 0 && gapDays !== null && gapDays >= 1;
       sequence.push({
         cardId,
         reviewedAt: row.reviewedAt,
         rating: row.rating,
         elapsedDays,
+        gapDays,
         scorable,
       });
       if (scorable) scorableAt.push(row.reviewedAt);

@@ -186,7 +186,13 @@ export function calibration(
     predictedMean,
     observedMean,
     bias: predictedMean === null || observedMean === null ? null : observedMean - predictedMean,
-    enough: used >= needed && drawn.length > 0,
+    // Two dots, not one: a single drawn decile is a dot in a corner, not a
+    // curve — and it is the *normal* shape of a well-scheduled log, where
+    // nearly every prediction is above 90%. One mark against a diagonal
+    // invites a reader to draw the line themselves. Below this the panel falls
+    // through to its honest empty state, which still carries the overall
+    // predicted-against-observed sentence — the part a non-statistician can act on.
+    enough: used >= needed && drawn.length >= 2,
     needed,
     minBucketReviews,
   };

@@ -74,7 +74,9 @@ describe('buildTrainingSet', () => {
     // since `shortTermSteps` defaults on there are a lot of them.
     const base = review({ cardId: 'a', reviewedAt: START });
     const sameDay = review({ cardId: 'a', reviewedAt: START + 600_000 });
-    const nextDay = review({ cardId: 'a', reviewedAt: START + DAY });
+    // A day after the *step*, which is where the scheduler would put it: the
+    // queue never offers a card before its due instant.
+    const nextDay = review({ cardId: 'a', reviewedAt: START + 600_000 + DAY });
     const set = buildTrainingSet([
       base,
       { ...sameDay, log: { ...sameDay.log, elapsed_days: 0 } },
@@ -84,6 +86,80 @@ describe('buildTrainingSet', () => {
     expect(set.totalReviews).toBe(3);
     expect(set.cards[0].map((entry) => entry.scorable)).toEqual([false, false, true]);
     expect(set.scorableReviews).toBe(1);
+  });
+
+  /**
+   * The reviewer's case, kept permanently.
+   *
+   * `log.elapsed_days` is `dateDiffInDays` — whole **UTC calendar days** — so a
+   * ten-minute learning step at 23:55 → 00:05 is recorded as `1` and used to be
+   * scored, against a stability minutes old. That made scorability depend on
+   * the hour the learner studies: the same simulated learner at 09:50 handed
+   * the objective no within-session steps, and at 23:50 handed it 120 of them
+   * (11% of it), moving fitted weights by up to 28%. Scorability is decided
+   * from the real gap now, so both learners get the same objective.
+   */
+  it('does not score a ten-minute step that straddles UTC midnight', () => {
+    const midnight = Date.UTC(2026, 0, 2);
+    const before = midnight - 5 * 60_000; // 23:55
+    const after = midnight + 5 * 60_000; // 00:05, ten minutes later
+    const first = review({ cardId: 'a', reviewedAt: before - DAY });
+    const step = review({ cardId: 'a', reviewedAt: before });
+    const acrossMidnight = review({ cardId: 'a', reviewedAt: after });
+
+    const set = buildTrainingSet([
+      { ...first, log: { ...first.log, elapsed_days: 1 } },
+      { ...step, log: { ...step.log, elapsed_days: 1 } },
+      // What ts-fsrs really writes for 23:55 → 00:05: one calendar day.
+      {
+        ...acrossMidnight,
+        before: { ...acrossMidnight.before, last_review: before },
+        log: { ...acrossMidnight.log, elapsed_days: 1 },
+      },
+    ]);
+
+    const sequence = set.cards[0];
+    expect(sequence.map((entry) => entry.elapsedDays)).toEqual([1, 1, 1]);
+    // The scheduler's own number says a day; ten minutes of real time say no.
+    expect(sequence[2].gapDays).toBeCloseTo(10 / (60 * 24), 6);
+    expect(sequence.map((entry) => entry.scorable)).toEqual([false, true, false]);
+    expect(set.scorableReviews).toBe(1);
+  });
+
+  it('scores from the same clock whatever hour the session runs at', () => {
+    // Two identical sessions, one at 09:50 UTC and one at 23:50 UTC: first
+    // grade, +1m, +10m, then a real day. The only difference is the wall clock,
+    // so the two must produce the same objective.
+    const session = (hour: number): ReviewRow[] => {
+      const start = Date.UTC(2026, 0, 1, hour, 50);
+      const at = [start, start + 60_000, start + 600_000, start + 600_000 + DAY];
+      return at.map((reviewedAt, index) => {
+        const row = review({ cardId: `h${hour}`, reviewedAt });
+        return {
+          ...row,
+          before: {
+            ...row.before,
+            ...(index === 0 ? {} : { last_review: at[index - 1] }),
+          },
+          // The rounded calendar-day difference, exactly as ts-fsrs records it.
+          log: {
+            ...row.log,
+            elapsed_days:
+              index === 0
+                ? 0
+                : Math.floor(at[index] / DAY) - Math.floor(at[index - 1] / DAY),
+          },
+        };
+      });
+    };
+
+    const morning = buildTrainingSet(session(9));
+    const night = buildTrainingSet(session(23));
+    expect(morning.scorableReviews).toBe(1);
+    expect(night.scorableReviews).toBe(1);
+    expect(night.cards[0].map((entry) => entry.scorable)).toEqual(
+      morning.cards[0].map((entry) => entry.scorable),
+    );
   });
 
   it('takes the elapsed days the scheduler recorded, not one it re-derives', () => {

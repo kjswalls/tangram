@@ -89,6 +89,8 @@ export function ReviewSession() {
     const timer = setTimeout(() => void load(), delay);
     return () => clearTimeout(timer);
   }, [loaded, empty, nextDue, load]);
+  /** Whether that timer is running — the empty state says so when it is. */
+  const armed = empty && sessionRefreshDelay(nextDue, now) !== null;
 
   const [suggestion, setSuggestion] = useState<{ cardId: string; value: RecallSuggestion } | null>(
     null,
@@ -198,6 +200,17 @@ export function ReviewSession() {
         </p>
         {drawError ? (
           <p className="mt-2 text-sm text-warning">No new words could be drawn: {drawError}</p>
+        ) : null}
+        {/* The timer above is armed, so the cards come back here on their own —
+            and nothing on screen used to say so. Both links below unmount the
+            session (leaving the route calls `reset()`), so a learner who took
+            one at "2 cards come back in 1 minute" walked away from a page that
+            was about to refill itself. Said only when the timer is actually
+            armed; when the next card is hours away the links are the answer. */}
+        {armed ? (
+          <p data-testid="review-empty-stay" className="mt-2 text-sm text-muted">
+            Stay on this page — they come back on their own, with nothing to press.
+          </p>
         ) : null}
         {/* Never a dead end: the one place that says what there is to do today. */}
         <p className="mt-3 text-sm text-muted">

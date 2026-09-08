@@ -17,6 +17,7 @@
 
 import { askCacheKey } from '@/lib/ai/cache-key';
 import type { CardRow, Repository, SettingsRow } from '@/lib/db';
+import { forgetPrevious } from '@/lib/fsrs-optimize';
 import { getEntrySource, type EntrySource } from '@/lib/lists/entry-source';
 import { chargeIntroduced } from '@/lib/lists/introduce';
 import { addCardTracked, isExplicitSource } from '@/lib/lists/looked-up';
@@ -190,7 +191,12 @@ export async function loadDemo(options: DemoOptions = {}): Promise<DemoSummary> 
   const now = options.now ?? Date.now();
   const source = options.source ?? getEntrySource();
 
-  if (options.reset !== false) await repo.resetAll();
+  if (options.reset !== false) {
+    await repo.resetAll();
+    // The demo is a different learner with a different history; an undo parked
+    // against the wiped one must not be offered over it (see `resetAll` below).
+    forgetPrevious();
+  }
   await ensureSystemLists(repo);
 
   // 1. HSK 1–2 are known: the demo learner did not start from zero.
@@ -308,7 +314,15 @@ function demoContext(spec: DemoCardSpec, entry: Entry, now: number): CardContext
   return base;
 }
 
-/** The `/settings` reset. Wipes every table, including the settings row. */
+/**
+ * The `/settings` reset. Wipes every table, including the settings row.
+ *
+ * And the optimizer's undo slot, which is not a table: it lives in
+ * `localStorage` (`lib/fsrs-optimize/previous.ts`) and would otherwise survive
+ * the wipe, leaving a "Revert to the previous fit" button that reinstates
+ * weights fitted to a review log this database no longer has.
+ */
 export async function resetAll(repo?: Repository): Promise<void> {
   await (await repository(repo)).resetAll();
+  forgetPrevious();
 }

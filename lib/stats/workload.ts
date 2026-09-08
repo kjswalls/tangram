@@ -129,9 +129,15 @@ export function dueForecast(
     if (card.fsrs.state === 0) continue;
     const due = card.due;
     if (!Number.isFinite(due)) continue;
+    // Overdue is measured against *now*, which is what the word means and what
+    // the docstring says. Measuring it against the day's 04:00 rollover instead
+    // told a learner at midday that the morning's backlog — every card whose
+    // due instant has already gone past — was not overdue at all. A card due
+    // before now is always inside today's column or earlier, so this can never
+    // count a card the bar does not.
+    if (due < now) overdue += 1;
     if (due < todayStart) {
       columns[0].count += 1;
-      overdue += 1;
       counted += 1;
       continue;
     }

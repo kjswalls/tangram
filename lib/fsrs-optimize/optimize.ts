@@ -18,12 +18,25 @@
  * 2. The search sees the **train half only**. Held-out reviews are scored, never
  *    fitted.
  * 3. A fit is **offered only if it beats what is already in force on the
- *    held-out half**, and only if it also beats the population defaults. Both,
- *    because "better than my last fit" and "better than stock FSRS" are
- *    different claims and the learner is entitled to both.
+ *    held-out half by more than the noise in that measurement**, and only if it
+ *    also beats the population defaults by the same standard. Both, because
+ *    "better than my last fit" and "better than stock FSRS" are different
+ *    claims and the learner is entitled to both.
+ *
+ *    The measurement is a *paired* per-review comparison with a standard error
+ *    (`pairedImprovement`, loss.ts), and the gate is `mean − 1.645 × SE > 0` —
+ *    a one-sided 95% margin. The bare `<` this used to be was close to a coin
+ *    flip: twenty-four review logs generated **from the population defaults
+ *    themselves**, where the only correct answer is "nothing to find", got a
+ *    fit offered in nine of them, each one an improvement inside one and a bit
+ *    standard errors of zero and some of them as far from the true weights as
+ *    a different learner's. Under this gate the same twenty-four logs offer
+ *    one, at the nominal 5% rate; a log from a genuinely different learner is
+ *    still accepted and still lands closer to the truth than the defaults.
+ *    `tests/unit/fsrs-optimize/noise-gate.test.ts` runs both.
  * 4. Below `MIN_REVIEWS_FOR_FIT` scorable reviews nothing is offered at all.
- *    The number is a floor for *signal*, not a promise: real FSRS optimization
- *    wants well over a thousand reviews, and the UI says so.
+ *    The number is a floor for *signal*, not a promise, and it is measured
+ *    rather than chosen: see the constant.
  * 5. Nothing is ever applied here. This function returns a result; a person
  *    presses a button.
  */
@@ -36,7 +49,13 @@ import {
   DEFAULT_HOLD_OUT_FRACTION,
   type TrainingSet,
 } from '@/lib/fsrs-optimize/dataset';
-import { scoreWeights, trainLoss } from '@/lib/fsrs-optimize/loss';
+import {
+  logLoss,
+  pairedImprovement,
+  predict,
+  trainLoss,
+  type PairedImprovement,
+} from '@/lib/fsrs-optimize/loss';
 import {
   clipWeights,
   DEFAULT_WEIGHTS,
@@ -45,11 +64,20 @@ import {
 } from '@/lib/srs/params';
 
 /**
- * The floor, in scorable reviews. Chosen to be roughly a month of honest daily
- * study rather than to be a threshold the maths blesses — below it the
- * held-out half is a few dozen answers and "it beat the defaults" is noise.
+ * The floor, in scorable reviews.
+ *
+ * It was 400 — roughly a month of honest daily study, chosen for being a
+ * recognisable amount of work rather than for anything the maths said. At 400
+ * the held-out half is 80-odd answers, and that is where the old gate offered
+ * noise as a personal fit in 9 of 24 runs on logs generated from the defaults.
+ * The significance gate above does most of the work now (1 of 24 on the same
+ * logs, which is the 5% it advertises), but the floor was raised with it,
+ * measured the same way: at ~1,000 scorable reviews a null log was offered a
+ * fit in 0 of 18 runs, while a genuinely different learner was still recovered
+ * — accepted in 5 of 18 and landing ~0.4 from the truth where the defaults sit
+ * ~0.63 away. Below a thousand this feature has nothing honest to say.
  */
-export const MIN_REVIEWS_FOR_FIT = 400;
+export const MIN_REVIEWS_FOR_FIT = 1000;
 
 /**
  * The step sizes tried, as a fraction of each weight's own *magnitude* — never
@@ -127,6 +155,14 @@ export interface OptimizeResult {
   currentLoss: number | null;
   /** Held-out loss of the population defaults. */
   defaultLoss: number | null;
+  /**
+   * The fit against the weights in force, and against the defaults: the mean
+   * per-review improvement on the held-out half with the standard error of that
+   * mean. `lowerBound > 0` on both is the gate; the panel quotes the margin and
+   * its uncertainty rather than two bare four-decimal losses.
+   */
+  improvementOverCurrent: PairedImprovement | null;
+  improvementOverDefaults: PairedImprovement | null;
   /** The fitted vector, clipped. Present whenever a search ran. */
   w: number[] | null;
   /** Ready to be written to `settings.fsrsWeights` — only when `status` is 'ok'. */
@@ -162,6 +198,8 @@ function empty(
     fittedLoss: null,
     currentLoss: null,
     defaultLoss: null,
+    improvementOverCurrent: null,
+    improvementOverDefaults: null,
     w: null,
     fit: null,
     evaluations,
@@ -262,15 +300,27 @@ export async function optimizeWeights(input: OptimizeInput): Promise<OptimizeRes
   input.onProgress?.({ done: total, total, trainLoss: bestLoss });
   if (input.signal?.aborted) return empty('cancelled', set, currentIsOptimized, evaluations);
 
-  // Scored once, on the half the search never saw.
-  const fitted = scoreWeights(set, best, settings).heldOut;
-  const currentScore = scoreWeights(set, current.w, settings).heldOut;
-  const defaults = currentIsOptimized
-    ? scoreWeights(set, DEFAULT_WEIGHTS, settings).heldOut
-    : currentScore;
+  // Scored once, on the half the search never saw — and scored *paired*, review
+  // by review against each baseline, because the sign of a difference between
+  // two means is not evidence that there is a difference (see `pairedImprovement`).
+  const heldOut = [set.splitAt, Number.POSITIVE_INFINITY] as const;
+  const fittedPredictions = predict(set, best, settings);
+  const currentPredictions = predict(set, current.w, settings);
+  const defaultPredictions = currentIsOptimized
+    ? predict(set, DEFAULT_WEIGHTS, settings)
+    : currentPredictions;
 
-  const beatsCurrent = Number.isFinite(fitted.loss) && fitted.loss < currentScore.loss;
-  const beatsDefaults = Number.isFinite(fitted.loss) && fitted.loss < defaults.loss;
+  const fitted = logLoss(fittedPredictions, ...heldOut);
+  const currentScore = logLoss(currentPredictions, ...heldOut);
+  const defaults = logLoss(defaultPredictions, ...heldOut);
+
+  const overCurrent = pairedImprovement(fittedPredictions, currentPredictions, ...heldOut);
+  const overDefaults = currentIsOptimized
+    ? pairedImprovement(fittedPredictions, defaultPredictions, ...heldOut)
+    : overCurrent;
+
+  const beatsCurrent = Number.isFinite(fitted.loss) && overCurrent.lowerBound > 0;
+  const beatsDefaults = Number.isFinite(fitted.loss) && overDefaults.lowerBound > 0;
   const usable = beatsCurrent && beatsDefaults;
 
   const base: OptimizeResult = {
@@ -282,6 +332,8 @@ export async function optimizeWeights(input: OptimizeInput): Promise<OptimizeRes
     fittedLoss: fitted.loss,
     currentLoss: currentScore.loss,
     defaultLoss: defaults.loss,
+    improvementOverCurrent: overCurrent,
+    improvementOverDefaults: overDefaults,
     w: best,
     fit: null,
     evaluations,

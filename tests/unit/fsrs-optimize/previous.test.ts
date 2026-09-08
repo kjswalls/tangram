@@ -15,6 +15,9 @@ const fit = (patch: Partial<FsrsWeights> = {}): FsrsWeights => ({
   ...patch,
 });
 
+/** The fit that would be in force after applying `applied`. */
+const inForce = (applied: FsrsWeights): FsrsWeights => applied;
+
 describe('the revert slot', () => {
   beforeEach(() => {
     localStorage.clear();
@@ -22,32 +25,65 @@ describe('the revert slot', () => {
   });
 
   it('is empty until something is parked in it', () => {
-    expect(readPrevious()).toBeUndefined();
+    expect(readPrevious(fit())).toBeUndefined();
   });
 
   it('tells "the defaults were in force" apart from "there is nothing to revert to"', () => {
     // `null` is a real answer — before this fit, stock FSRS was running — and
     // `undefined` is the absence of one. A Revert button that cannot tell them
     // apart either offers an undo that does nothing or hides one that works.
-    rememberPrevious(null);
-    expect(readPrevious()).toBeNull();
+    const applied = fit();
+    rememberPrevious(null, applied.fittedAt);
+    expect(readPrevious(inForce(applied))).toBeNull();
     forgetPrevious();
-    expect(readPrevious()).toBeUndefined();
+    expect(readPrevious(inForce(applied))).toBeUndefined();
   });
 
   it('round-trips a stored fit', () => {
-    const previous = fit();
-    rememberPrevious(previous);
-    expect(readPrevious()).toEqual(previous);
+    const previous = fit({ fittedAt: Date.UTC(2026, 1, 1) });
+    const applied = fit();
+    rememberPrevious(previous, applied.fittedAt);
+    expect(readPrevious(inForce(applied))).toEqual(previous);
   });
 
   it('refuses to restore something this build cannot use', () => {
-    localStorage.setItem(KEY, JSON.stringify({ saved: true, previous: { w: [1, 2, 3] } }));
-    expect(readPrevious()).toBeUndefined();
+    const applied = fit();
+    const stamp = applied.fittedAt;
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({ saved: true, appliedAt: stamp, previous: { w: [1, 2, 3] } }),
+    );
+    expect(readPrevious(inForce(applied))).toBeUndefined();
     localStorage.setItem(KEY, 'not json at all');
-    expect(readPrevious()).toBeUndefined();
+    expect(readPrevious(inForce(applied))).toBeUndefined();
     localStorage.setItem(KEY, JSON.stringify({ nothing: true }));
-    expect(readPrevious()).toBeUndefined();
+    expect(readPrevious(inForce(applied))).toBeUndefined();
+  });
+
+  /**
+   * The reviewer's case, kept: `resetAll()` and `loadDemo()` clear every Dexie
+   * table, and this slot is not a Dexie table. Two things now stop it being
+   * offered as an undo of a fit that no longer exists — the seed calls
+   * `forgetPrevious()`, and the slot is stamped with the `fittedAt` of the fit
+   * it was the undo *of*, so it is refused whenever that fit is not in force.
+   */
+  it('is not offered once the fit it undoes is gone', () => {
+    const applied = fit();
+    rememberPrevious(null, applied.fittedAt);
+
+    // The wipe: settings comes back with no weights at all.
+    expect(readPrevious(null)).toBeUndefined();
+
+    // A different fit — another device, another build — is not this slot's.
+    expect(readPrevious(fit({ fittedAt: applied.fittedAt + 1 }))).toBeUndefined();
+
+    // And the fit it was actually parked against still gets its undo.
+    expect(readPrevious(inForce(applied))).toBeNull();
+  });
+
+  it('refuses a slot parked by a build that did not stamp it', () => {
+    localStorage.setItem(KEY, JSON.stringify({ saved: true, previous: null }));
+    expect(readPrevious(fit())).toBeUndefined();
   });
 
   it('survives a browser that refuses storage entirely', () => {
@@ -57,8 +93,8 @@ describe('the revert slot', () => {
         throw new Error('denied');
       },
     });
-    expect(() => rememberPrevious(fit())).not.toThrow();
-    expect(readPrevious()).toBeUndefined();
+    expect(() => rememberPrevious(fit(), Date.now())).not.toThrow();
+    expect(readPrevious(fit())).toBeUndefined();
     expect(() => forgetPrevious()).not.toThrow();
   });
 });

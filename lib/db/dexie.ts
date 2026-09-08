@@ -130,8 +130,8 @@ export class TangramDb extends Dexie {
 
 const alive = <T extends { deletedAt: number | null }>(row: T): boolean => row.deletedAt === null;
 
-/** The three sources that mean "the learner chose this word" (§3.3). */
-const EXPLICIT_SOURCES = new Set<CardContext['source']>(['lookup', 'ask', 'reader']);
+/** The sources that mean "the learner chose this card" (§3.3, plus Phase 8's `reverse`). */
+const EXPLICIT_SOURCES = new Set<CardContext['source']>(['lookup', 'ask', 'reader', 'reverse']);
 
 /** The provenance fields a later Add can fill in; `source`/`addedAt` are handled apart. */
 const CONTEXT_FIELDS = ['sentence', 'question', 'query', 'offset', 'length'] as const;
@@ -481,7 +481,18 @@ export function createDexieRepository(db: TangramDb): Repository {
         .map((entryId) => ({ id: newId(), entryId, createdAt: now }));
       if (rows.length > 0) await db.known_words.bulkAdd(rows);
 
-      const cards = (await db.cards.where('entryId').anyOf(unique).toArray()).filter(alive);
+      // Recognition only. "Mark known" is a *reading* judgement — it is offered
+      // from the reader's token panel and the list row, where the learner is
+      // saying "I can read this" — and the plain `entryId` index spans both
+      // directions, so it used to push a deliberately-created meaning → hanzi
+      // twin to Review with a year's stability as a side effect. Being able to
+      // read a word is not being able to write it, PLAN §3.3 says nothing
+      // coordinates the two schedules, and `unmarkKnown` does not undo the
+      // re-dating, so there was no way back. `known_words` still gets its row:
+      // the reader's "known" painting is about reading and is correct.
+      const cards = (await db.cards.where('entryId').anyOf(unique).toArray())
+        .filter(alive)
+        .filter((card) => card.direction !== 'production');
       if (cards.length > 0) {
         await db.cards.bulkPut(
           cards.map((card) => {

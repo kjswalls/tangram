@@ -259,11 +259,17 @@ reloading, no further spine cards are offered today; an explicitly added word st
 the meaning on the front, the hanzi to be written. It is a separate `cards` row with its own
 FSRS state, because the two directions are different memories learned at different rates and
 one schedule cannot serve both; nothing coordinates them, and grading one cannot move the
-other. `settings.productionDirection` only *reveals* the two ways of making one — "add the
-reverse" on a recognition card's back (one card, explicit, uncapped like every explicit add)
-and a per-list bulk toggle (capped at `drawLimit` and charged to `introduced`). Turning the
-setting on creates nothing. An exact answer is graded in the browser against the headword,
-either script, with no model call; only a one-character miss reaches `/api/recall`.
+other (nor does "mark known", which is a reading judgement and re-dates the recognition card
+alone). `settings.productionDirection` reveals the two ways of making one — "add the
+reverse" on a recognition card's back (one card, explicit, `source:'reverse'`, uncapped
+like every explicit add) and a per-list bulk toggle (capped at `drawLimit` and charged to
+`introduced`). Turning the setting on creates nothing; turning it **off** stops the twins already made from being
+offered (`buildQueue` drops them) without deleting a row, so the switch means what its
+label says and is reversible — a card turned back on returns with the schedule it earned.
+An exact answer is graded in the browser against the headword, either script, with no model
+call; a one-character miss is graded there too ("One character off.", a suggested Hard) and
+stays there until the recall provider's contract carries a `direction` — `/api/recall` is
+the *meaning* grader, and asking it about hanzi got a confident wrong answer.
 
 **Reader/known states (`lib/srs/states.ts`, unit-tested).** No card and not known → `new`;
 card in New/Learning/Relearning, or Review with `stability < 21` → `learning`; Review with
@@ -448,7 +454,7 @@ default flipped to ts-fsrs's own `true`).
 
 | Builder | Shipped |
 |---|---|
-| **A** | The session honours the short steps — minutes in the empty state, a refresh timer, a per-session repeat cap that makes it terminate, learning steps ahead of the overdue pile. `lib/fsrs-optimize/`: a coordinate-descent fit of FSRS's weights to this learner's own log, gated on a chronological split and a held-out log loss that must beat both the weights in force and the population defaults, over ≥ 400 scorable reviews — and it never applies anything. `components/settings/optimizer-panel.tsx` is the affordance. |
+| **A** | The session honours the short steps — minutes in the empty state, a refresh timer, a per-session repeat cap that makes it terminate, learning steps ahead of the overdue pile. `lib/fsrs-optimize/`: a coordinate-descent fit of FSRS's weights to this learner's own log, gated on a chronological split and a held-out log loss that must beat both the weights in force and the population defaults by more than the noise on that measurement (paired per review, one-sided 95%), over ≥ 1,000 scorable reviews — and it never applies anything. `components/settings/optimizer-panel.tsx` is the affordance. |
 | **B** | The production direction: a word may carry a second card asked meaning → hanzi, its own row, its own FSRS state, nothing coordinating the two. Exact answers are graded in the browser; the front never leaks the answer, glosses and mined sentences included. |
 | **C** | `/stats`: true retention over a stated Review-state denominator, calibration by decile recomputed from the weights in force, a workload panel, and maturity — each with an empty state that draws nothing below its floor. |
 | **D** | Deploy hardening: an access gate on the three routes that spend money (off entirely when `TANGRAM_ACCESS_SECRET` is unset), a cold start cut from ~4 s to ~1 s by building the dictionary indexes lazily, `pnpm smoke` against a built server with coverage guards, and [docs/deploy.md](docs/deploy.md). |

@@ -97,7 +97,9 @@ test.describe('/settings — fitting FSRS to this learner', () => {
 
   test('runs without locking the tab, and applies nothing on its own', async ({ page }) => {
     await resetApp(page);
-    await seedLog(page, 150);
+    // Over `MIN_REVIEWS_FOR_FIT` (1,000 scorable since the Phase 8 review; the
+    // first review of each card is replayed and not scored, so this is 1,250).
+    await seedLog(page, 250);
     await page.reload();
     await ready(page);
 

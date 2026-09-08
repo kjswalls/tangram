@@ -34,7 +34,7 @@ describe('the Today counts', () => {
 
   it('counts the directions separately once a word is being produced too', async () => {
     const repo = getRepository();
-    await repo.setSettings({ newPerDay: 0 });
+    await repo.setSettings({ newPerDay: 0, productionDirection: true });
     const first = await repo.addCardFromEntry(
       DASUAN,
       context({ source: 'lookup' }),
@@ -57,5 +57,55 @@ describe('the Today counts', () => {
     expect(screen.getByTestId('today-production-count')).toHaveTextContent('1');
     // Three cards on offer, and the page still says three.
     expect(screen.getByTestId('today-new-count')).toHaveTextContent('3');
+
+    // A word and its reverse are two rows, and they must not be the same row
+    // twice: the reverse leads with what it asks for and carries its own badge.
+    const rows = screen.getAllByTestId('today-new-word');
+    expect(rows).toHaveLength(3);
+    const reverse = rows.filter((row) => row.dataset.direction === 'production');
+    expect(reverse).toHaveLength(1);
+    expect(reverse[0]).toHaveTextContent(/write/);
+    expect(reverse[0]).toHaveTextContent(/reverse/);
+    const recognition = rows.filter((row) => row.dataset.direction === 'recognition');
+    expect(recognition).toHaveLength(2);
+    for (const row of recognition) expect(row).not.toHaveTextContent(/write/);
+  });
+
+  /**
+   * "Also practise the other direction", turned off, used to change nothing a
+   * learner could see: the twins they had already made kept being served, Today
+   * kept counting them, and with no way to delete a card there was no way out.
+   * The label promises a study switch, so it is one — and the row survives, so
+   * turning it back on restores the schedule the card earned.
+   */
+  it('stops offering production cards when the setting is off, without deleting them', async () => {
+    const repo = getRepository();
+    await repo.setSettings({ newPerDay: 0, productionDirection: true });
+    const first = await repo.addCardFromEntry(
+      DASUAN,
+      context({ source: 'lookup' }),
+      undefined,
+      'test',
+    );
+    const twin = await repo.addCardFromEntry(
+      entryFromSnapshot(first.entryId!, wordSnapshot(first.snapshot)!),
+      context({ source: 'lookup' }),
+      undefined,
+      'test',
+      'production',
+    );
+
+    await repo.setSettings({ productionDirection: false });
+    render(<TodayView />);
+    await waitFor(() => expect(screen.getByTestId('today-new-count')).toHaveTextContent('1'));
+    expect(screen.queryByTestId('today-direction-split')).toBeNull();
+    expect(
+      screen.getAllByTestId('today-new-word').filter((row) => row.dataset.direction === 'production'),
+    ).toHaveLength(0);
+
+    // The card itself is untouched — hidden, not deleted.
+    const stored = await repo.cardForEntry(first.entryId!, undefined, 'production');
+    expect(stored?.id).toBe(twin.id);
+    expect(stored?.deletedAt).toBeNull();
   });
 });

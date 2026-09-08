@@ -123,6 +123,57 @@ describe('a word asked both ways round', () => {
   });
 });
 
+/**
+ * "Mark known" is a reading judgement, and it must stay one.
+ *
+ * `markKnown` reads `db.cards.where('entryId')` — the plain index, which spans
+ * both directions — and bulk-writes `knownCardState` over every match, pushing
+ * each card to Review with a year's stability. That retired a deliberately
+ * created meaning → hanzi twin as a side effect of pressing "I can read this"
+ * in the reader's token panel or a list row, and `unmarkKnown` does not undo
+ * the re-dating, so there was no way back. PLAN §3.3 says nothing coordinates
+ * the two schedules; this is the test that says so about this path.
+ */
+describe('marking a word known', () => {
+  it('retires the recognition card and leaves the production twin alone', async () => {
+    const repo = setup();
+    const { recognition, production } = await pair(repo);
+    await repo.grade(production.id, 3, NOW);
+    const graded = (await repo.allCards()).find((row) => row.id === production.id)!;
+
+    const rows = await repo.markKnown([recognition.entryId!]);
+    expect(rows.map((row) => row.entryId)).toEqual([recognition.entryId]);
+
+    const after = await repo.allCards();
+    const storedRecognition = after.find((row) => row.id === recognition.id)!;
+    const storedProduction = after.find((row) => row.id === production.id)!;
+
+    // The reading card is retired: Review state, a year out.
+    expect(storedRecognition.fsrs.state).toBe(2);
+    expect(storedRecognition.fsrs.stability).toBeGreaterThanOrEqual(365);
+    expect(storedRecognition.due).toBeGreaterThan(NOW + 300 * DAY);
+
+    // The writing card keeps every field of the schedule it earned.
+    expect(storedProduction.fsrs).toEqual(graded.fsrs);
+    expect(storedProduction.due).toBe(graded.due);
+    expect(storedProduction.updatedAt).toBe(graded.updatedAt);
+  });
+
+  it('still marks the word known when the only card is a production one', async () => {
+    // The reader's "known" painting is about reading and is correct either way:
+    // `known_words` gets its row whatever cards exist.
+    const repo = setup();
+    const { production } = await pair(repo);
+    const before = await repo.allCards();
+    const stored = before.find((row) => row.id === production.id)!;
+
+    await repo.markKnown([production.entryId!]);
+    expect(await repo.knownEntryIds()).toContain(production.entryId);
+    const after = (await repo.allCards()).find((row) => row.id === production.id)!;
+    expect(after.fsrs).toEqual(stored.fsrs);
+  });
+});
+
 describe('the daily cap', () => {
   it('adds nothing to today just because the setting was turned on', async () => {
     const repo = setup();

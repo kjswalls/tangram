@@ -14,7 +14,8 @@ import { default_w } from 'ts-fsrs';
 import { OptimizerPanel } from '@/components/settings/optimizer-panel';
 import { closeDb, getDb, getRepository } from '@/lib/db/get-db';
 import type { SettingsRow } from '@/lib/db/schema';
-import { MIN_REVIEWS_FOR_FIT } from '@/lib/fsrs-optimize';
+import { resetAll } from '@/lib/dev/seed';
+import { MIN_REVIEWS_FOR_FIT, rememberPrevious } from '@/lib/fsrs-optimize';
 import { clipWeights } from '@/lib/srs/params';
 import { syntheticReviews } from './synthetic';
 
@@ -95,6 +96,12 @@ describe('the optimizer panel', () => {
     expect(Number.isFinite(fitted)).toBe(true);
     expect(fitted).toBeLessThan(current);
     expect(screen.getByTestId('optimizer-scores')).toHaveTextContent(/it never saw/);
+    // Two four-decimal losses side by side read as a measurement; the margin
+    // between them is often smaller than the error on it, and that is the case
+    // the learner cannot see. So the panel quotes the margin *and* its error.
+    expect(screen.getByTestId('optimizer-margin')).toHaveTextContent(
+      /better by 0\.\d{4} per review, give or take 0\.\d{4} \(one standard error\), which is clear of its own noise/,
+    );
 
     // A run is a proposal. Nothing has been written.
     expect((await getRepository().getSettings()).fsrsWeights).toBeNull();
@@ -137,6 +144,10 @@ describe('the optimizer panel', () => {
     const result = await screen.findByTestId('optimizer-result', undefined, { timeout: 60_000 });
     expect(result).toHaveTextContent(/did not beat the parameters you already have/);
     expect(result).toHaveTextContent(/the check doing its job/);
+    // And it says which way it fell: worse, or better by less than the noise.
+    expect(screen.getByTestId('optimizer-margin').textContent ?? '').toMatch(
+      /(worse by 0\.\d{4} per review|inside the noise of the measurement)/,
+    );
     // No Apply button at all — there is nothing to apply.
     expect(screen.queryByTestId('optimizer-apply')).toBeNull();
     expect((await getRepository().getSettings()).fsrsWeights).toBeNull();
@@ -168,7 +179,41 @@ describe('the optimizer panel', () => {
     );
   });
 
+  /**
+   * The reviewer's reproduction, at the panel.
+   *
+   * Park a fit in the slot, wipe the database from the Reset button two
+   * sections down the same page, and the panel used to keep offering "Revert to
+   * the previous fit" — one click, and `describeParameters` said "Optimized
+   * from your 4,321 reviews" over a database holding none.
+   */
+  it('offers no undo of a fit the database no longer has', async () => {
+    const applied = {
+      w: [...KNOWN],
+      fittedAt: Date.UTC(2026, 2, 3),
+      reviewCount: 4321,
+      heldOutLogLoss: 0.31,
+      baselineLogLoss: 0.34,
+    };
+    rememberPrevious(null, applied.fittedAt);
+    // The wipe: every table cleared, and the settings row back to its defaults.
+    await resetAll(getRepository());
+
+    const settings = await getRepository().getSettings();
+    expect(settings.fsrsWeights).toBeNull();
+    render(<Harness initial={settings} />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId('optimizer-review-count')).toHaveTextContent(/0 of your 0/),
+    );
+    expect(screen.queryByTestId('optimizer-revert')).toBeNull();
+  });
+
   it('names the floor it enforces', () => {
-    expect(MIN_REVIEWS_FOR_FIT).toBe(400);
+    // Raised from 400 with the significance gate (see optimize.ts): at 400 the
+    // held-out half is 80-odd answers and a null log was offered a fit in 9 of
+    // 24 runs. If this number ever comes back down, the measurements in
+    // `noise-gate.test.ts` are what has to move first.
+    expect(MIN_REVIEWS_FOR_FIT).toBe(1000);
   });
 });

@@ -20,6 +20,13 @@
  * It is an explicit add, and §3.3's rule for those has always been that they
  * bypass the cap: the cap exists to stop the *spine* introducing more than the
  * learner asked for, not to overrule what they asked for by hand.
+ *
+ * That is a claim about **provenance**, and it has to be written down to be
+ * true: the twin is created with `source: 'reverse'`, which `isExplicitAdd`
+ * (lib/lists/queue.ts) counts as a hand add. Inheriting the parent's source
+ * instead — and every spine-drawn card carries `list` — made each press quietly
+ * take one of the day's ten new words, on this day and again on the next while
+ * the twin sat ungraded.
  */
 
 import { useEffect, useState } from 'react';
@@ -73,7 +80,7 @@ export function AddReverse({ card, repo }: AddReverseProps) {
       const now = Date.now();
       await (repo ?? getRepository()).addCardFromEntry(
         entryFromSnapshot(entryId, snapshot),
-        twinContext(card, now),
+        twinContext(card, now, 'reverse'),
         card.senseIndex,
         snapshot.dictVersion,
         PRODUCTION,

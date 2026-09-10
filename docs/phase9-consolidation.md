@@ -220,3 +220,27 @@ carries it and not only the handoff:
 
 Still owed, and only a real deployment can settle it: `pnpm coldstart` against the
 deployment beside an `--allow-unstamped` run against the previous deploy.
+
+## Amendment — the gate: what is met, and what only a deployment can settle
+
+The phase is built and re-measured end to end; the ledger with every acceptance
+line's status, the gate's numbers and the after-deploy list is HANDOFF.md,
+**"Phase 9 — the phase, end to end"**. In summary, against the Acceptance list
+above as amended:
+
+- **Met, re-measured on a fresh process at the gate**: the < 300 ms / < 20 ms
+  first-request line (worst 17.3 ms over HTTP, 3.97 ms in-process), the 150 ms
+  concurrent-GET regression check (worst −40.8 ms, i.e. faster than solo), the
+  amendment's < 100 ms line for a request landing 50 ms after the HEAD resolves
+  (`/lookup` 89.6 / 91.1 / 90.3 ms), the 503 and 400 error paths over HTTP, the
+  unit-test stall bound, the no-config guard, and every existing smoke case and
+  e2e spec (108 e2e, 21 smoke routes).
+- **Not met, and only a deployment can settle it**: the last bullet — `pnpm
+  coldstart` against the app beside an `--allow-unstamped` run against the
+  previous deploy — plus `pnpm smoke` against the deployment and the note of the
+  project's plan tier / Fluid compute state that Design item 5 asks for.
+- **Not re-verified here**: `vercel build` showing one real `.func`. The CLI
+  contacts Vercel before it builds and this container has no route to it; the
+  claim stands on the reviewer's `npx vercel@59 build` on a copy of the repo. What
+  *was* re-verified is the artefact that produced the wrong model: all eight
+  `.nft.json` traces still list `data/dict.json` twice.

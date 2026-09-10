@@ -258,6 +258,14 @@ one. Session-to-session spread on this container is ~±20% on the sub-second
 rows — wider than the ~10% the incremental rewrite cost the warm-up itself — so
 read the cold column as a band, and do not attribute a 60 ms move to a commit.
 
+A third run of the same harness, at the Phase 9 gate (HANDOFF.md, "Phase 9 — the
+phase, end to end"), lands inside that band: 767 / 709 ms `entries`,
+718 / 764 / 756 ms `hsk`, 932 / 1013 ms `segment`, 1628 / 1719 ms pinyin search
+cold. Its warm column is not directly comparable to the one above — it measured
+all three requests in *one* warmed process rather than each alone — and reads
+9.5 / 7.8 / 9.6 ms `entries`, 15.5 / 13.2 / 16.6 ms `segment`,
+17.2 / 15.6 / 17.3 ms search.
+
 The rows no harness since Phase 8 has re-run — hanzi and English search,
 `/api/ask`, `/api/dict/decomp` — stand on the Phase 8 table alone.
 

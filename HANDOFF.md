@@ -3978,3 +3978,240 @@ beside it with the instruction to read the cold column as a band.
   Vercel". It rests on absence — no `.vercel/`, no deployment URL anywhere in the repo,
   and line 2909's own caveat — which is weaker evidence than a positive record would be.
   If a deployment does exist somewhere, that sentence is the one to delete.
+
+## Phase 9 — the phase, end to end (the gate)
+
+The five sections above are the working record, cycle by cycle. This one is the
+phase read start to finish: what shipped, the numbers as re-measured at the gate,
+the acceptance list item by item, and what is still owed. It rewrites nothing —
+`HANDOFF.md` is append-only — so where a cycle section and this one differ on a
+measured number, this one is the later run and says so.
+
+Plan of record: [docs/phase9-consolidation.md](docs/phase9-consolidation.md), **v2**
+plus its four amendments.
+
+### The premise, and how it changed
+
+v1 of the plan said each `app/api/**/route.ts` becomes its own Vercel function, so
+a session touching four routes paid four cold starts and four 33.5 MB `dict.json`
+parses; the fix was to consolidate the eight routes behind one catch-all handler.
+An adversarial review ran the real builder (`npx vercel@59 build`) on a copy of
+this repo and found **one** real `.func` directory with the other seven routes as
+symlinks to it — `@vercel/next` already groups route handlers whose function
+configuration matches. The consolidation was cancelled before a line of it was
+written.
+
+What survived is the effect v1 was actually chasing, which is real and is a
+*process* event: lazy index building inside one instance. The first lookup on a
+fresh instance cost ~1.6 s. Phase 9 makes the app pay that bill unattended, and
+then makes the payment visible from outside the process.
+
+### What shipped
+
+**1. The warm-up** (`lib/dict/warm.ts`, `lib/dict/incremental.ts`).
+`warmDictionary()` walks `DICT_INDEX_PARTS` in order and then the two caches that
+are *not* index parts — `HEADWORDS` (lib/dict/search.ts) and `STATS`
+(lib/dict/segment.ts) — memoised on a `WeakMap` keyed on the index object, so
+`resetDictCache()` invalidates it the way it already invalidates those two. Every
+builder is a generator that yields every ~2048 entries (`SLICE`), including a
+stable bottom-up merge sort in place of a 120k-string `Array#sort`, and the lazy
+getters `drain()` the *same* generator the warm-up drives — there is no
+eager/incremental pair to keep in step. Yielding *between* parts was the first
+implementation and it was wrong: six yields across a 1.2 s warm-up left a worst
+stall of 400 ms and cost a concurrent `GET /lookup` 1.30 s.
+
+**2. The trigger** (`app/api/dict/hsk/route.ts`). `HEAD` is exported explicitly,
+replacing Next's auto-implemented one on that route only. It validates `?band`
+through the same `parseBand()` as `GET`, builds only what `hsk` needs inside the
+same `try`/`dictErrorResponse`, answers bodiless, and schedules the rest with
+`after()` from `next/server` — which Vercel backs with `waitUntil`, so the work
+outlives the response. The caller is unchanged: `components/shell/data-banner.tsx`
+has always fired that HEAD on mount and read only `response.status === 503`.
+
+**3. The headers** (`lib/dict/diagnostics.ts`). `withDictDiagnostics(handler)`
+wraps every handler on the five dictionary routes and stamps
+`x-tangram-instance` (one `randomUUID()` per process), `x-tangram-index-parts`
+(`builtIndexParts()` at response time) and `x-tangram-dict-warm`
+(`dictionaryWarm()`). The third exists because the second cannot see the two
+caches by construction: a process can report all six parts while a first reader
+paste still pays ~145 ms.
+
+**4. The probe** (`scripts/coldstart-probe.ts`, `pnpm coldstart`). Replays a
+session's opening against a deployment — the banner's HEAD, a 2 s wait, then the
+first `entries`, `search` and `segment` and a repeat of each — and prints latency,
+instance id, parts and warm flag per response. Its verdict is the instance id, not
+a latency band. It refuses a run against an instance something has already touched
+(all six parts on the HEAD, or a HEAD under 100 ms), refuses a gated deployment
+with no key, and treats any non-2xx as an invalid sample rather than a slow one.
+
+**5. The guard** (`tests/unit/server/route-config.test.ts`). No `app/api/**/route.ts`
+may export `maxDuration`, `memory`, `runtime` or `preferredRegion` — a differing
+value on one route is exactly what splits it out of the shared function, and
+`preferredRegion` is the one that does it silently.
+
+**6. The record.** `docs/deploy.md` §5, `next.config.ts`, `scripts/smoke.ts`,
+`lib/server/route-inventory.ts`, `lib/dict/pinyin.ts`,
+`components/shell/data-banner.tsx`, `tests/unit/server/routes.test.ts` and
+`tests/e2e/d/smoke.spec.ts` no longer assert one function per route, and §5 now
+carries the `vercel build` recipe together with a warning against the `.nft.json`
+reading that produced the wrong model. Re-verified at the gate: all eight
+`.next/server/app/api/**/route.js.nft.json` files list `data/dict.json` twice —
+sixteen mentions of one file — which is the artefact the wrong inference was drawn
+from, and it is unchanged by anything in this phase.
+
+### The numbers, re-measured at the gate
+
+This container, 4 CPUs, `pnpm build` then **one fresh `next start` per sample**,
+killed by process group between samples. Every response in a run carried the same
+`x-tangram-instance` and every run a different one, which is the proof each
+process really was new.
+
+**Acceptance line 1 — the first request of each kind, after the HEAD.** `HEAD
+/api/dict/hsk?band=1`, wait 3 s for `after()` to settle, then the three requests
+in order, three fresh processes. The cold column is the same request against a
+process that never got the probe, that endpoint alone in its own process:
+
+| First request of its kind | cold, no probe | after the warm-up | budget |
+|---|---|---|---|
+| `GET /api/dict/search?q=dasuan` | 1628 / 1719 ms | **17.2 / 15.6 / 17.3 ms** | < 300 ms |
+| `POST /api/dict/segment` | 932 / 1013 ms | **15.5 / 13.2 / 16.6 ms** | < 300 ms |
+| `GET /api/dict/entries?ids=…` | 767 / 709 ms | **9.5 / 7.8 / 9.6 ms** | < 300 ms |
+| `HEAD /api/dict/hsk?band=1` (the probe itself) | — | 745.8 / 710.1 / 746.0 ms | not budgeted |
+
+Worst case **17.3 ms against a 300 ms line**. The HEAD carries
+`sorted,entries,hsk` `warm=no`; every request after the wait carries all six parts
+and `warm=yes`.
+
+**Acceptance line 1, in-process** (`tsx`, one process, after `await
+warmDictionary()`): `search('dasuan')` **1.44 ms**, `search('plan')` **3.97 ms**,
+`search('打算')` **0.37 ms**, `segment(44 hanzi)` **1.39 ms** — all against a 20 ms
+line. The warm-up itself reported `built=[sorted,entries,hanzi,pinyin,gloss,hsk]`,
+`caches=[headwords,segment-stats]`, `dictionaryWarm()` true, in **2071 ms** total
+including the ~650 ms `JSON.parse`.
+
+**Acceptance line 2 — HEAD and `GET /api/dict/hsk?band=1` fired in the same tick at
+a fresh process.** Solo cold GET, three fresh processes: 718.4 / 764.3 / 756.4 ms
+(median **756.4**). Concurrent:
+
+| Run | HEAD | GET (concurrent) | Δ vs solo median |
+|---|---|---|---|
+| 1 | 747.7 ms | 715.1 ms | **−41.3 ms** |
+| 2 | 743.7 ms | 699.2 ms | **−57.2 ms** |
+| 3 | 748.1 ms | 715.6 ms | **−40.8 ms** |
+
+Worst case **−40.8 ms** against a +150 ms budget: the concurrent GET is not queued
+behind anything, it is marginally *faster* than solo because it rides the same
+index build. Read that as "met, and it cannot fail" — see the acceptance ledger
+below, where cycle A withdrew this line as *proof* of the warm-up's cost and kept
+it only as a regression check.
+
+**The line that replaced it — a request issued ~50 ms after the HEAD *resolves***,
+which is when a user's first tap actually lands, while `after()` is still running:
+
+| Request, 50 ms after the HEAD returned | run 1 | run 2 | run 3 | baseline (no probe) |
+|---|---|---|---|---|
+| `GET /lookup` (reads no dictionary) | 89.6 ms | 91.1 ms | 90.3 ms | 87.8 / 74.4 ms |
+| `GET /api/dict/entries?ids=…` | 13.2 ms | 13.1 ms | 14.2 ms | 767 / 709 ms cold |
+
+Both under the 100 ms line, and `/lookup` is within noise of a process that was
+never probed at all. (Those `entries` samples carry `warm=no` and three parts —
+honestly mid-warm-up, and still 13 ms.)
+
+**`pnpm coldstart` against a fresh local `next start`:** HEAD 670 ms
+`sorted,entries,hsk` `warm=no`; after the 2 s wait, first entries 14 ms, first
+search 11 ms, first segment 14 ms, repeats 5 / 6 / 7 ms, **one instance id across
+all seven responses**, `warm-up: settled`, exit 0.
+
+**The error paths, over HTTP, not just in unit tests:** `?band=99` → 400
+`{"error":"bad-band",…}` on `GET` *and* on `HEAD` (which also sends
+`content-type: application/json`, and whose body Node drops on the wire);
+`TANGRAM_DATA_DIR` at an empty directory → 503 `{"error":"dict-data-missing"}` on
+`GET` and 503 on `HEAD`, both stamped with the instance id, an empty parts list
+and `warm=no`.
+
+**Green at the gate:** `npx tsc --noEmit` clean, `pnpm lint` clean, `pnpm test`
+**946 in 94 files**, `pnpm build` exit 0, `PORT=3000 pnpm e2e` **108 passed**,
+`pnpm smoke` against the built server **21 routes ok** (its slowest case is the
+1011 ms first search, because smoke opens on a cold process and is not the probe).
+No dependency added; `pnpm-lock.yaml` untouched. No live model call — there is
+still no key in this container.
+
+### The acceptance list, item by item
+
+| # | Acceptance line (plan v2 + amendments) | Status |
+|---|---|---|
+| 1 | first `search`/`segment`/`entries` after the HEAD: < 20 ms in-process, < 300 ms over HTTP | **met** — 1.4–4.0 ms in-process, 7.8–17.3 ms over HTTP |
+| 2 | concurrent `HEAD`+`GET /api/dict/hsk`: GET within 150 ms of solo cold | **met** — worst −40.8 ms. Kept as a regression check only; cycle A withdrew it as proof (a concurrent GET is answered off the HEAD's own synchronous build, before `after()` fires) |
+| 2a | *(amendment)* a request ~50 ms after the HEAD resolves completes < 100 ms | **met** — `/lookup` 89.6 / 91.1 / 90.3 ms, `/api/dict/entries` 13.2 / 13.1 / 14.2 ms |
+| 2b | *(amendment)* unit test bounds the longest gap between 1 ms ticks (p99 < 30 ms, worst < 150 ms) | **met** — `tests/unit/dict/warm.test.ts`, in the green suite |
+| 3 | `HEAD` with empty `TANGRAM_DATA_DIR` → 503 `dict-data-missing`; `?band=99` → GET's 400 | **met** — verified over HTTP above, and in `tests/unit/dict/routes.test.ts` |
+| 4 | every existing smoke case and e2e spec passes unchanged | **met** — 108 e2e, 21 smoke routes |
+| 4a | `pnpm smoke --base-url https://<app>.vercel.app` passes after deploy, timings in HANDOFF | **deferred — needs the deployment** |
+| 5 | `pnpm coldstart` against the deployment: one instance id, full parts after the HEAD, beside a run against the previous deploy | **not met — needs the deployment.** The local equivalent passes (above); this is the phase's stated *result* and the one thing nobody could produce from this container |
+| 6 | the no-config unit test exists | **met** — `tests/unit/server/route-config.test.ts`, guarding `maxDuration`, `memory`, `runtime`, `preferredRegion` |
+| 6a | `vercel build` locally shows one real `.func` under `api` | **not re-verified here.** `npx vercel@59 build` contacts Vercel before it builds (`Loading teams… Error: fetch failed`) and this container's network reaches only the npm registry. The claim stands on the reviewer's run on a copy of the repo; the `.nft.json` artefact behind the *wrong* model was re-verified (16 mentions of one file) |
+| — | plan item 5's "HANDOFF records the project's plan tier and whether Fluid compute is on" | **not done — unknowable from here.** Fluid defaults are 2 GB / 300 s; otherwise `docs/deploy.md` §5's figures apply. Warm RSS is 311 MiB, so either sizing is comfortable |
+
+### What to check after deploy
+
+In this order — the first one is destroyed by any other request.
+
+1. **`pnpm coldstart` first, before anything else touches the deployment.**
+
+   ```bash
+   export TANGRAM_ACCESS_SECRET=…        # once, if the gate is on
+   pnpm coldstart --base-url https://<your-app>.vercel.app
+   ```
+
+   Expect: one instance id on all seven responses; the HEAD carrying
+   `sorted,entries,hsk` and `warm=no`; everything after the 2 s wait carrying all
+   six parts and `warm=yes`; `warm-up: settled`; exit 0. If it says *this instance
+   was already warm before the probe ran*, the run measured nothing — wait for the
+   deployment to scale to zero, or redeploy, and run it first.
+
+2. **The comparison run against the previous deployment's immutable URL**, which is
+   the other half of acceptance line 5:
+
+   ```bash
+   pnpm coldstart --base-url https://<previous-deployment>.vercel.app --allow-unstamped
+   ```
+
+   A `predates the diagnostic headers` verdict and exit 0 is the *expected* answer
+   for any pre-Phase-9 build. Those two runs side by side are the phase's result.
+
+3. **`pnpm smoke --base-url https://<your-app>.vercel.app`** → 21 routes ok. Paste
+   the timings into a new HANDOFF section.
+
+4. **`GET /api/dict/hsk?band=1` returns 200 with entries, not a 503.** This is the
+   only proof `outputFileTracingIncludes` did its job; file tracing is a build
+   artefact and `pnpm start` reads `data/` off the disk either way.
+
+5. **`curl -i https://<app>/api/ask` → 401** if `TANGRAM_ACCESS_SECRET` reached the
+   environment.
+
+6. **Note the plan tier and whether Fluid compute is on**, which closes the last
+   open line of plan item 5.
+
+7. **The PWA:** open it on the phone, pull to refresh once, check `/settings`
+   renders. And once, on the first deploy: install to the home screen, airplane
+   mode, one review.
+
+`docs/deploy.md` §7 is the standing version of 1 and 3–7; 2 is specific to this
+phase.
+
+### Still open
+
+- **Acceptance line 5** and the plan-tier note, above. Everything else in the plan
+  is built and measured.
+- **The ~650 ms `JSON.parse` floor.** It is the one block the incremental builder
+  cannot slice, and it is still paid inside the HEAD's own response — where it was
+  before this phase. Removing it needs a different on-disk format
+  (`docs/deploy.md` §5, "What was measured and *not* done").
+- **Concurrent traffic can still start a second instance nobody warmed.** A
+  single-user premise; the probe's seven sequential requests cannot see it, and the
+  verdict says so.
+- **The three model routes carry no diagnostic headers**, by decision — they are
+  not sampled. The success verdict names the gap rather than the headers closing it.
+- **`preWarmReason`'s 100 ms cold-HEAD floor is calibrated, not derived.** A
+  far-enough deployment could put a warm HEAD over it; the failure direction is a
+  false "cold", never a false "warm", and the parts tell backstops it.

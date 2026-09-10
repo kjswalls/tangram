@@ -351,8 +351,9 @@ export function normalizePinyin(query: string): NormalizedPinyin {
  * space-separated `<letters><tone digit>` token per syllable, so the same keys
  * fall out of a single pass with no searching at all. Building the two pinyin
  * indexes over 124k entries costs 1.3 s through the parser and about 0.2 s
- * through this — a second off the cold start of every route that searches
- * (docs/deploy.md).
+ * through this — a second off the first pinyin search on a cold instance, which
+ * is a per-*process* bill and not a per-route one: all eight routes share one
+ * function and one set of indexes (docs/deploy.md §5).
  *
  * It returns `null` for anything that is not that shape — a Latin run like
  * `A quan1 r5` or `san1 C`, 742 entries in the current snapshot — and the

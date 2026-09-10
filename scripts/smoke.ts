@@ -9,9 +9,9 @@
  *     separately — even though Vercel then bundles them into one shared
  *     function, whose file list is the union of those traces (docs/deploy.md
  *     §5) — so a route that reads `data/dict.json` and is not listed in
- *     `next.config.ts` works in dev and 500s in the deployment.
- *     `/api/examples` and `/api/recall` shipped that way and were found by
- *     hand. The coverage half of this script (`checkRouteCoverage`) refuses to
+ *     `next.config.ts` ships with no claim on the file of its own, and is only
+ *     served by the group it landed in. `/api/examples` and `/api/recall`
+ *     shipped that way and were found by hand. The coverage half of this script (`checkRouteCoverage`) refuses to
  *     let a route exist without a case, and `tests/unit/server/tracing.test.ts`
  *     refuses to let a dictionary-reading route exist without a tracing entry.
  *  2. **Anything that only appears once the server is real**: a route that

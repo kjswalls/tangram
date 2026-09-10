@@ -8,9 +8,10 @@
  * function, whose file list is the union of those traces (docs/deploy.md §5). A
  * route that reaches `lib/dict/load.ts` but is missing from
  * `outputFileTracingIncludes` in `next.config.ts` works perfectly under
- * `next dev` and under `pnpm start` — the file is simply on disk in both — and
- * 500s in the deployment, on that route only. `/api/examples` and `/api/recall`
- * were exactly that, and it took someone opening the page to notice.
+ * `next dev` and under `pnpm start` — the file is simply on disk in both — and in
+ * the deployment it is leaning on a route it happens to be grouped with having
+ * declared the same files. `/api/examples` and `/api/recall` were exactly that,
+ * and it took someone opening the page to notice.
  *
  * So the question "which routes read the dictionary" is answered here by
  * walking the import graph, rather than by remembering. `tests/unit/server/`

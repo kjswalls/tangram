@@ -6,8 +6,9 @@ const nextConfig: NextConfig = {
   // Tracing is declared PER ROUTE — Vercel then bundles the routes into one
   // shared function whose files are the union of their traces (docs/deploy.md
   // §5), so a route that calls getDict() and is missing from this map works
-  // perfectly under `next dev` (the file is just on disk) and 500s in
-  // production. Every new dictionary-reading route needs an entry.
+  // perfectly under `next dev` (the file is just on disk) and ships to
+  // production with no claim on data/ of its own, living off whichever routes
+  // it was grouped with. Every new dictionary-reading route needs an entry.
   //
   // This is no longer only a comment. `tests/unit/server/routes.test.ts` walks
   // each route's import graph and fails if one reaches lib/dict/load.ts without

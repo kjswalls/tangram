@@ -3739,3 +3739,129 @@ id, exit 0. `pnpm smoke` against the built server: 21 routes ok.
 - Still owed from the plan: the same last acceptance bullet. `pnpm coldstart` against the
   Vercel deployment beside a `--allow-unstamped` run against the previous deploy needs a
   real deployment and cannot be run from this container.
+
+## Phase 9 — cycle C: correcting the record
+
+Plan of record: [docs/phase9-consolidation.md](docs/phase9-consolidation.md), **v2**,
+Design item **6** — the last item that did not need a real deployment. No behaviour
+changes in this cycle: it is documentation and comments, plus one sentence of reasoning
+that was wrong in five places and had survived cycles A and B.
+
+Green on this commit: `pnpm lint`, `pnpm test`, `pnpm build`. No dependency added;
+`package.json` and `pnpm-lock.yaml` untouched. No live model call — there is still no key
+in this container.
+
+### The correction, stated once
+
+**Wrong (v1's premise):** each `app/api/**/route.ts` becomes its own Vercel serverless
+function, so a session that touches four routes pays four cold starts and four
+`dict.json` parses.
+
+**How it was disproved:** a reviewer ran the real builder — `npx vercel@59 build`, Next
+16.3.4 — on a copy of this repo. `.vercel/output/functions/api/ask.func` is the only real
+directory; `api/examples.func`, `api/recall.func` and
+`api/dict/{hsk,search,segment,entries,decomp}.func` are symlinks to it, and its
+`.vc-config.json` names `data/dict.json` once. `@vercel/next` groups route handlers whose
+*function configuration* matches (`maxDuration`, `memory`, `runtime`, `preferredRegion` —
+this app sets none) into one function, up to a 225 MiB budget, and Vercel documents the
+intent: "bundled into the fewest number of Vercel Functions possible, to help reduce cold
+starts."
+
+**Where the inference went wrong:** `.next/server/app/api/**/route.js.nft.json`. All eight
+exist and all eight list `data/dict.json` — re-counted on this container after `pnpm
+build`, and each names it *twice*, so sixteen mentions of one 33.5 MB file. That is what
+tracing being declared per route looks like, not eight copies in the output: the group's
+file list is the union of its members' traces, deduplicated. Only
+`.vercel/output/functions` says how many functions there are.
+
+**What is still true, and why the tracing rule is unchanged:** tracing is declared per
+route because the union is assembled from per-route traces. The guard
+(`untracedDictRoutes()`, `tests/unit/server/routes.test.ts`, `pnpm smoke`'s coverage check)
+is untouched — only its stated *reason* was wrong. What a missing entry costs is now
+stated honestly: the route ships with no claim on `data/` of its own and is served only by
+the group it landed in, which is a thing to fix rather than a thing to rely on.
+
+**What shipped instead of v1:** Design items **1–5** — `warmDictionary()` and the
+incremental builder, the explicit `HEAD` on `/api/dict/hsk` scheduling it through
+`after()`, the three diagnostic headers, `scripts/coldstart-probe.ts`, and the
+no-function-config unit test. Item 6 is this cycle. Nothing was consolidated, because
+there was nothing to consolidate.
+
+### Every place the wrong model was stated
+
+Grepped the whole repo for `own function`, `per function`, `per-function`, `each route`,
+`own serverless`, `own process`, `eight functions`, `cold start`, `serverless`, `lambda`,
+`bundle`, `own copy`. Nine live sites, three historical ones.
+
+| Where | What it said | Now |
+|---|---|---|
+| `docs/deploy.md` §5 opening | one function per route | corrected in cycle A; **restructured here** — the model is now stated first, under its own heading, with the `vercel build` recipe and the `.nft.json` warning |
+| `docs/deploy.md` §5, tracing subsection | a missing tracing entry "500s in the deployment, on that route alone" | **new find.** That consequence follows from the *wrong* model; under the real one the union covers it until the group is split. Rewritten to say what is actually true |
+| `next.config.ts` | one function per route | corrected in cycle B; the "500s in production" consequence corrected here |
+| `scripts/smoke.ts` | Vercel bundles each route separately | corrected in cycle B; same consequence corrected here |
+| `tests/unit/server/routes.test.ts` | same | corrected in cycle B; same consequence corrected here |
+| `lib/server/route-inventory.ts` | same | corrected in cycle A; same consequence corrected here |
+| `lib/dict/index.ts` (`DICT_INDEX_PARTS`) | laziness is about one process per route | corrected in cycle A; verified still right |
+| `lib/dict/pinyin.ts` (`readingKeys`) | "a second off the cold start of **every route that searches**" | **new find.** Now: a second off the first pinyin search on a cold *instance* — a per-process bill, not a per-route one |
+| `components/shell/data-banner.tsx` | a GET "on every cold load of **every route**" | **new find**, and the ambiguous one: it meant page loads, not functions, but it reads like the wrong model. Now "every time the shell mounts, which is every cold page load" |
+
+Checked and clean: `PLAN.md` (its cold-start line is a Phase 8 result about the first
+request, still true), `README.md`, `MORNING.md`, `docs/data-sources.md`,
+`tests/unit/server/route-config.test.ts` (written after the correction and correct),
+`lib/dict/diagnostics.ts`, `scripts/coldstart-probe.ts`.
+
+### The three historical sites, left standing on purpose
+
+`HANDOFF.md` is append-only (CLAUDE.md), and these are inside other builders' sections:
+
+- **line 1652** (Phase 8 merge): "Tracing is **per function**". Wrong twice over — tracing
+  is per *route*, and the consequence drawn from it does not follow. Correct reading is
+  the row above.
+- **lines 2906–2908** (Phase 8, builder D): "Each of the 8 functions carries its own
+  ~34.4 MB copy of `data/` (verified in the `.nft.json` files)." **This is the sentence
+  that became v1's premise.** The `.nft.json` files say what it says; they do not mean
+  what it concluded. The same section's own caveat at line 2909 — "Nothing here was
+  verified against Vercel. Serverless claims are inference from build artefacts plus
+  documented Next behaviour" — was accurate, and was the part nobody carried forward.
+- **line 3177** (Phase 9 cycle A): "the honest per-route cold cost" as the label on a
+  table of one-endpoint-per-fresh-process measurements. The measurements are right; the
+  label reinforces the wrong model. Read it as "the cost of that endpoint being the first
+  thing a process is asked for".
+
+Rewriting them in place would have been the clearer artefact and is not allowed here. If
+that rule is ever relaxed, these three are the edits to make.
+
+### Decisions this cycle made
+
+1. **The `.nft.json` warning goes in `docs/deploy.md`, not only in HANDOFF.** The mistake
+   is reproducible — anyone can run `pnpm build`, see eight traces naming `dict.json`, and
+   draw v1's conclusion — so the correction belongs next to the artefact, in the doc
+   someone reads before deploying.
+2. **`npx vercel build` is written unpinned in the recipe with the pin beside it.** The
+   recipe is for whoever runs it next; `vercel@59` is what was actually used and is
+   recorded so a differing result can be attributed.
+3. **`docs/deploy.md` §5's Phase 8 table is kept, relabelled, not deleted.** It is the only
+   measurement of hanzi search, English search, `/api/ask` and `/api/dict/decomp` that
+   exists. The four endpoints cycle A re-measured over HTTP now sit in their own table
+   beside it with both harnesses named, rather than one set of numbers being silently
+   swapped for another taken a different way.
+4. **No test was added for any of this.** A comment cannot be asserted on, and the two
+   guards that *can* fail — `tests/unit/server/route-config.test.ts` (no function config
+   exported) and `tests/unit/server/routes.test.ts` (no untraced dictionary route) — were
+   already there and are deliberately unchanged.
+
+### For the reviewer
+
+- The claim to attack is the one this cycle *softened* rather than corrected: whether a
+  route missing from `outputFileTracingIncludes` actually 500s in a deployment where its
+  group-mates trace `data/**`. Under the union model it should not, which is why the text
+  no longer promises it does. Nobody has observed either outcome on a real deployment —
+  the `/api/examples` + `/api/recall` story predates any Vercel deploy of this repo. The
+  guard stays regardless; a route with no claim of its own is a latent failure whatever it
+  does today.
+- `vercel build` was **not** re-run here: this container reaches only the npm registry and
+  `raw.githubusercontent.com`. The build-output evidence is the reviewer's, quoted; the
+  `.nft.json` half was re-verified locally and is the one number this cycle measured.
+- Everything in §5 above "Function memory" moved. A diff of that section will look larger
+  than the correction is — the numbers in the Phase 8 table are byte-identical, only their
+  caption and their position changed.

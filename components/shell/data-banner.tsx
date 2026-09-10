@@ -15,8 +15,8 @@ export function DataBanner() {
     let cancelled = false;
     // HEAD, not GET: the route exports its own HEAD (app/api/dict/hsk/route.ts)
     // which answers with the same status and no body — the banner only ever reads
-    // the status, and a GET would pull the whole 160 KB band-1 payload on every
-    // cold load of every route.
+    // the status, and a GET would pull the whole 160 KB band-1 payload every time
+    // the shell mounts, which is every cold page load of the app.
     //
     // This one line is also the trigger for the dictionary warm-up: that HEAD is
     // what schedules `warmDictionary()` (lib/dict/warm.ts) through `after()`, and

@@ -138,49 +138,74 @@ local behaviour would be switched off within a week.
 
 ## 5. Cold start, function memory, and why tracing is per route
 
-### The dictionary is 33.5 MB of JSON, read at request time
+### Vercel does not give each route its own function
 
-Each function instance parses `data/dict.json` once and builds its indexes once,
-memoised on `globalThis` for the life of that instance.
+`@vercel/next` groups route handlers **whose function configuration matches** —
+`maxDuration`, `memory`, `runtime`, `preferredRegion`, none of which this app
+sets — into one Vercel Function, and documents the intent as "bundled into the
+fewest number of Vercel Functions possible, to help reduce cold starts". For this
+app that is **one function for all eight routes**: one container, one
+`dict.json` parse, one set of lazy indexes, one warm-up.
 
-**Vercel does not give each route its own function.** `@vercel/next` groups route
-handlers whose config matches — `maxDuration`, `memory`, regions, none of which
-this app sets — into one Vercel Function, "to help reduce cold starts". Verified
-rather than assumed: `npx vercel@59 build` on this repo produces exactly one real
-directory, `.vercel/output/functions/api/ask.func`, and `api/examples.func`,
-`api/recall.func` and `api/dict/{hsk,search,segment,entries,decomp}.func` are all
-symlinks to it. To see the layout for yourself without deploying:
+That is load-bearing, not trivia. Everything in this section is a claim about
+*one process*, and the Phase 9 warm-up (`lib/dict/warm.ts`) only pays off because
+the instance the banner's `HEAD /api/dict/hsk` warms is the same instance that
+answers the first lookup. Split one route out of the group and it gets its own
+cold start and its own unwarmed indexes, with every test still green —
+`tests/unit/server/route-config.test.ts` is what stops that shipping, and
+`pnpm coldstart` (below) is what would catch it in production.
+
+**How to see the layout without deploying.** The build output is the evidence, so
+run the real builder and read what it emitted:
 
 ```bash
-npx vercel@59 build
-find .vercel/output/functions -maxdepth 3 -name '*.func'        # what exists
-find .vercel/output/functions -maxdepth 3 -type l               # which are aliases
+npx vercel build                                       # pinned: npx vercel@59 build
+find .vercel/output/functions -name '*.func' | head    # what exists
+find .vercel/output/functions -type l                  # which of those are aliases
 ```
 
-So all eight routes share one process and one set of indexes, and this section's
-earlier claim that each pays its own cold start was wrong. What is still true is
-that a *cold instance* pays for the parse, and that the first request of each kind
-pays for the indexes it reads — which is what laziness is for, and why one route
-being slow to answer first is normal.
+A `.func` directory that is a **symlink** is not a function; it is another route
+pointing at the one function they share. On this repo the only real directory is
+`.vercel/output/functions/api/ask.func`, and `api/examples.func`,
+`api/recall.func` and `api/dict/{hsk,search,segment,entries,decomp}.func` are all
+symlinks to it; its `.vc-config.json` names `data/dict.json` once.
 
-> **These numbers are superseded.** The table below was measured after Phase 8 by
-> importing a route module in a freshly spawned `node` process. HANDOFF.md's
-> "Phase 9 — cycle A" section measures the same thing over HTTP against a fresh
-> `next start` per sample, which is the harness to trust for anything a browser
-> sees; its figures run 25–40% lower than these. The two are not reconcilable
-> sample by sample and this table has not been re-run with the newer harness. What
-> is unchanged is the *shape*: the parse dominates, a pinyin query is the
-> expensive one, and laziness is what keeps the cheap routes cheap.
->
-> Since Phase 9 the far more important change is that a real session does not take
-> this path at all: the app-open probe (`HEAD /api/dict/hsk`) schedules
-> `warmDictionary()`, so an instance builds *everything* once, unattended, and the
-> first lookup costs ~15 ms rather than ~1.5 s. The figures below describe an
-> instance that never got the probe.
+**`.next/server/app/api/**/route.js.nft.json` is not evidence about functions.**
+Each of the eight routes emits one, and each lists `data/dict.json` — twice, as
+it happens: sixteen mentions of one 33.5 MB file, counted on this container after
+`pnpm build` — because tracing is declared and computed **per route** (see
+"Tracing is declared per route" below). Reading those eight traces as eight
+copies of the dictionary — and therefore eight functions, each with its own cold
+start — is exactly the inference that produced Phase 9 v1's cancelled premise.
+A group's file list is the *union* of its members' traces, deduplicated, so eight
+traces naming one file still ship one file. Only `.vercel/output/functions` says how many functions there are.
 
-Measured (median of three runs, one fresh Node process each — the closest honest
-stand-in for a cold lambda, since `pnpm start` serves every route from one warm
-process):
+### The dictionary is 33.5 MB of JSON, read at request time
+
+A cold start is therefore a *process* event, not a route event. The first request
+to reach a new instance pays the `dict.json` parse; the first request of each
+*kind* then pays for the indexes it reads, which is what laziness is for and why
+one route being slow to answer first is normal. Each instance memoises both on
+`globalThis` for its own lifetime, and shares neither with any other instance.
+
+Since Phase 9 a real session pays neither bill in front of the user: the app-open
+probe (`HEAD /api/dict/hsk`) schedules `warmDictionary()`, so an instance builds
+*everything* once, unattended, and the first lookup costs ~15 ms rather than
+~1.5 s. Every figure in the two tables below describes an instance that never got
+the probe.
+
+> **The table immediately below is superseded as a set of numbers.** It was
+> measured after Phase 8 by importing a route module in a freshly spawned `node`
+> process. Phase 9 cycle A measured the same thing over HTTP against a fresh
+> `next start` per sample — the harness to trust for anything a browser sees —
+> and its figures run 25–40% lower. The two are not reconcilable sample by
+> sample, and only four of these rows have been re-run; those four are the second
+> table. What is unchanged is the *shape*: the parse dominates, a pinyin query is
+> the expensive one, and laziness is what keeps the cheap routes cheap.
+
+Measured by importing the route module in a fresh Node process, median of three
+runs. "before" is eager index building; "after" is the lazy indexes Phase 8
+shipped. Neither column has a warm-up in it:
 
 | First request on a cold instance | before | after |
 |---|---|---|
@@ -193,9 +218,26 @@ process):
 | `/api/dict/search`, pinyin query | 3909 ms | **2429 ms** |
 | everything (`/api/ask` after a few queries) | 4052 ms | **2348 ms** |
 
-Resident memory after that first request fell with it: 280–292 MB before, and
-now 171–177 MB for `entries`/`hsk`, ~205 MB for `segment` and hanzi search,
-~235 MB for English search, ~265 MB once the pinyin indexes are up.
+Four of those rows re-measured over HTTP in cycle A, one fresh `next start` per
+sample, each endpoint alone in its own process. The middle column is the same
+world as "after" above — lazy indexes, no warm-up — and the right-hand column is
+that request once the banner's probe has settled (HANDOFF.md, "Phase 9 —
+cycle A"):
+
+| Endpoint, alone in a fresh process | lazy, no warm-up | after the warm-up |
+|---|---|---|
+| `GET /api/dict/entries?ids=…` | 615 ms | **14 ms** |
+| `GET /api/dict/hsk?band=1` | 675 ms | **17 ms** |
+| `POST /api/dict/segment` | 953 ms | **21 ms** |
+| `GET /api/dict/search?q=dasuan` (pinyin) | 1777 ms | **16 ms** |
+
+The rows the newer harness has not re-run — hanzi and English search, `/api/ask`,
+`/api/dict/decomp` — stand on the Phase 8 table alone.
+
+Resident memory after that first request fell with the same change: 280–292 MB
+before, and 171–177 MB for `entries`/`hsk`, ~205 MB for `segment` and hanzi
+search, ~235 MB for English search, ~265 MB once the pinyin indexes are up (the
+Phase 8 harness, one route per process).
 
 Those per-route figures are also the "no probe" world. With the Phase 9 warm-up,
 every instance ends up holding every index: measured on a built server, RSS is
@@ -350,9 +392,10 @@ outputFileTracingIncludes: {
 ```
 
 A route that calls `getDict()` and is **not** listed here works perfectly under
-`next dev` and under `pnpm start` — the file is simply on disk in both — and
-500s in the deployment, on that route alone. `/api/examples` and `/api/recall`
-shipped exactly that way; nothing caught it but a person opening the page.
+`next dev` and under `pnpm start` — the file is simply on disk in both — and in
+the deployment it is relying on a route it happens to be grouped with having
+asked for the same files. `/api/examples` and `/api/recall` shipped exactly that
+way; nothing caught it but a person opening the page.
 
 So it is no longer left to memory:
 
@@ -361,12 +404,15 @@ So it is no longer left to memory:
 - `pnpm smoke` refuses to run at all if a handler in `app/api/**` has no case.
 
 Each of the eight routes therefore *traces* its own ~34.4 MB copy of `data/`
-(each route's `.nft.json` lists it). They are not eight copies in the output: the
-routes share one function, whose file list is the union of its members' traces,
-and `.vercel/output/functions/api/ask.func/.vc-config.json` names `data/dict.json`
-once. That is well inside the 250 MB unzipped per-function limit — and it is the
-group's 225 MiB budget, not the per-route trace, that would decide if the app ever
-grew enough to be split.
+(each route's `.nft.json` lists it), and that is still the right shape to declare
+even though there is one function — because what ships is the **union** of the
+group's traces, deduplicated. A per-route entry is how a route states its own
+requirement instead of inheriting someone else's, and the day the group is ever
+split — a stray `maxDuration`, or growth past the 225 MiB budget — the route that
+never declared its files is the one that 500s, in the deployment only.
+`.vercel/output/functions/api/ask.func/.vc-config.json` names `data/dict.json`
+once: one copy, well inside the 250 MB unzipped per-function limit, and it is that
+group budget rather than the per-route trace that decides when a split happens.
 
 ## 6. Function timeout vs the ask deadline
 

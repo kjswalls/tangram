@@ -189,3 +189,34 @@ and 4 above say, so the design items are corrected here rather than left standin
 
 The last acceptance bullet is unchanged and still owed: `pnpm coldstart` against the
 deployment, beside an `--allow-unstamped` run against the previous deploy.
+
+## Amendment — after cycle C: the record, corrected
+
+Design item **6** is built (HANDOFF.md, "Phase 9 — cycle C"). Every Design item now
+stands built. The correction the item exists for, recorded here so the plan document
+carries it and not only the handoff:
+
+- **v1's premise** was that each `app/api/**/route.ts` becomes its own Vercel serverless
+  function, so a session touching four routes paid four cold starts and four `dict.json`
+  parses. That premise was the entire justification for consolidating the eight routes
+  behind one catch-all handler.
+- **It was disproved by the build output.** `npx vercel@59 build` on this repo emits one
+  real `.func` directory (`.vercel/output/functions/api/ask.func`) with the other seven
+  routes as symlinks to it, and one `data/dict.json` in its config. `@vercel/next` groups
+  route handlers whose function configuration matches into the fewest functions it can,
+  and this app sets no `maxDuration`, `memory`, `runtime` or `preferredRegion` anywhere.
+- **The inference that failed** was reading the eight per-route `.nft.json` traces — each
+  of which lists `data/dict.json` — as eight copies in the output, and therefore eight
+  functions. Traces are declared and computed per route; the group ships their union,
+  deduplicated. That is why `docs/deploy.md` §5 now carries both the `vercel build` recipe
+  and an explicit warning against the `.nft.json` reading.
+- **What shipped is Design items 1–5**: `warmDictionary()` with the incremental builder,
+  the explicit `HEAD` on `/api/dict/hsk` scheduling it through `after()`, the three
+  diagnostic headers, `scripts/coldstart-probe.ts`, and the no-function-config unit test.
+  No route was consolidated, no URL changed, and no function was added.
+- **The tracing rule is unchanged.** It is declared per route because the union is
+  assembled from per-route traces; only the reason stated in the comments was wrong, and
+  the guards that enforce it are untouched.
+
+Still owed, and only a real deployment can settle it: `pnpm coldstart` against the
+deployment beside an `--allow-unstamped` run against the previous deploy.

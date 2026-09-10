@@ -5,8 +5,9 @@
  *     then bundles the routes into one shared function, whose file list is the
  *     union of those traces (docs/deploy.md §5). So a route that reads
  *     `data/dict.json` and is not listed in `next.config.ts` works under
- *     `next dev` and under `pnpm start` — the file is on disk in both — and 500s
- *     in the deployment, on that route alone.
+ *     `next dev` and under `pnpm start` — the file is on disk in both — and in
+ *     the deployment it carries no claim of its own on that file, surviving only
+ *     as long as it shares a function with a route that does declare it.
  *     `/api/examples` and `/api/recall` shipped exactly that way and were found
  *     by hand.
  *  2. **A route nobody exercises.** `pnpm smoke` is only as good as its case

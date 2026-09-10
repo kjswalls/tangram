@@ -159,3 +159,33 @@ Two things the plan implied and this cycle had to decide:
 Every Design item now stands built except the last acceptance bullet, which needs a real
 Vercel deployment: `pnpm coldstart` against the app, beside the same run against the
 previous deploy.
+
+## Amendment — after the cycle B review
+
+Five majors and six minors, all confirmed on the build box before being applied
+(HANDOFF.md, "Phase 9 — cycle B review fixes"). Three of them change what Design items 3
+and 4 above say, so the design items are corrected here rather than left standing:
+
+- **Item 3 lists two headers; there are three.** `x-tangram-index-parts` is
+  `builtIndexParts()`, which by construction cannot see the two caches `warmDictionary()`
+  also builds (`HEADWORDS`, `STATS`) — so a process can report all six parts while a first
+  reader paste still pays ~145 ms. `x-tangram-dict-warm` (`dictionaryWarm()`, `yes|no`) is
+  the header that answers the question the probe was asking the parts list, and
+  "warm-up: settled" is now read off it.
+- **Item 4's "refuses to run against a gated deployment without `--key`" is overstated.**
+  The key also comes from `$TANGRAM_ACCESS_SECRET`, deliberately and in common with
+  `pnpm smoke`; the environment is the form to prefer, since an argv value is readable
+  from the process list. And the gate check is itself a request, so a refusal issues one
+  `GET /api/ask` — what it never issues is a dictionary sample.
+- **Item 4 needs one more refusal.** The probe only measures anything against an instance
+  nothing has touched, and an already-warm process produced byte-identical closing lines
+  to a genuine cold run. It now detects that (a HEAD carrying all six parts, or answering
+  under 100 ms) and exits non-zero, and `docs/deploy.md` §7 runs `pnpm coldstart` *before*
+  `pnpm smoke` rather than after it.
+- **Item 5's unit test should have named four exports, not two.** `preferredRegion` on a
+  Node route runs, reads the dictionary, passes every test and still splits the route out
+  of the shared function. `GROUPING_CONFIG` is `maxDuration`, `memory`, `runtime`,
+  `preferredRegion`.
+
+The last acceptance bullet is unchanged and still owed: `pnpm coldstart` against the
+deployment, beside an `--allow-unstamped` run against the previous deploy.

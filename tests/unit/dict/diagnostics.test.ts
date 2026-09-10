@@ -1,5 +1,5 @@
 /**
- * The two diagnostic headers, and the promise that every dictionary route sends
+ * The three diagnostic headers, and the promise that every dictionary route sends
  * them.
  *
  * The point of `x-tangram-instance` is that two responses can be compared, so a
@@ -20,12 +20,14 @@ import { GET as hskGet, HEAD as hskHead } from '@/app/api/dict/hsk/route';
 import { GET as searchGet } from '@/app/api/dict/search/route';
 import { POST as segmentPost } from '@/app/api/dict/segment/route';
 import {
+  DICT_WARM_HEADER,
   INDEX_PARTS_HEADER,
   INSTANCE_HEADER,
   INSTANCE_ID,
   stampDictDiagnostics,
 } from '@/lib/dict/diagnostics';
-import { builtIndexParts } from '@/lib/dict/index';
+import { buildPartInSlices, builtIndexParts, DICT_INDEX_PARTS, getDictIndex } from '@/lib/dict/index';
+import { dictionaryWarm, warmDictionary } from '@/lib/dict/warm';
 import { resetDictCache } from '@/lib/dict/load';
 import { discoverApiRoutes } from '@/lib/server/route-inventory';
 import { requireDictData } from './data-required';
@@ -69,6 +71,7 @@ describe('the diagnostic headers', () => {
       const response = call();
       expect(response.headers.get(INSTANCE_HEADER), name).toBe(INSTANCE_ID);
       expect(response.headers.get(INDEX_PARTS_HEADER), name).toBe(builtIndexParts().join(','));
+      expect(response.headers.get(DICT_WARM_HEADER), name).toBe(dictionaryWarm() ? 'yes' : 'no');
     }
   });
 
@@ -129,6 +132,8 @@ describe('the diagnostic headers', () => {
     const value = response.headers.get(INDEX_PARTS_HEADER) as string;
     expect(value.split(',').filter(Boolean).every((part) => /^[a-z]+$/.test(part))).toBe(true);
     expect(value).not.toContain('secret');
+    // The warm flag is a two-word vocabulary, and that is the whole of it.
+    expect(response.headers.get(DICT_WARM_HEADER)).toMatch(/^(?:yes|no)$/);
   });
 });
 
@@ -153,6 +158,9 @@ describe('when data/ has not been built', () => {
     expect(response.status).toBe(503);
     expect(response.headers.get(INSTANCE_HEADER)).toBe(INSTANCE_ID);
     expect(response.headers.get(INDEX_PARTS_HEADER)).toBe('');
+    // `no` rather than a crash: the flag reads the module cache behind a length
+    // check, so it never reaches the dictionary it is reporting missing.
+    expect(response.headers.get(DICT_WARM_HEADER)).toBe('no');
   });
 
   it('never turns a 503 into a 500 by reading the index it is reporting on', () => {
@@ -177,5 +185,46 @@ describe('every dictionary route', () => {
         ).toMatch(new RegExp(`^export const ${method} = withDictDiagnostics\\(`, 'm'));
       }
     }
+  });
+});
+
+/**
+ * The header that exists because the parts list structurally cannot answer the
+ * question the probe asks it.
+ *
+ * `warmDictionary()` builds the six index parts *and* two caches keyed off the
+ * index object — search's headword prefix indexes and the segmenter's DAG
+ * statistics — so `builtIndexParts()` cannot see them however warm they are. This
+ * is the state a warm-up frozen after the parts loop leaves behind (an exhausted
+ * `waitUntil` budget, or a regression that drops the two cache passes), and it is
+ * the state in which the probe used to print "warm-up: settled".
+ */
+describe('the warm flag, which the parts list cannot stand in for', () => {
+  beforeAll(() => {
+    requireDictData();
+    // The describe above restores TANGRAM_DATA_DIR and resets the cache, so this
+    // starts from a process that has built nothing — which is the only way to
+    // reach "all six parts, both caches cold" on purpose.
+    resetDictCache();
+  });
+
+  it('says no while every index part is built and both caches are cold', async () => {
+    getDictIndex();
+    // Drained rather than awaited: the point is the finished parts, and this is
+    // the same slice-wise builder the warm-up drives.
+    for (const part of DICT_INDEX_PARTS) {
+      const steps = buildPartInSlices(part);
+      while (!steps.next().done) {
+        /* every slice, as fast as the loop can turn */
+      }
+    }
+    const stamped = stampDictDiagnostics(new Response(null, { status: 200 }));
+    expect(stamped.headers.get(INDEX_PARTS_HEADER)).toBe(DICT_INDEX_PARTS.join(','));
+    expect(stamped.headers.get(DICT_WARM_HEADER)).toBe('no');
+
+    await warmDictionary();
+    expect(stampDictDiagnostics(new Response(null, { status: 200 })).headers.get(DICT_WARM_HEADER)).toBe(
+      'yes',
+    );
   });
 });

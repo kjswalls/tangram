@@ -3540,13 +3540,15 @@ Verified end to end, each against its own fresh server:
    be the first dictionary request after the probe. If a snapshot ever stops containing it the
    route still answers 200 and does the same index work, and the run prints a note saying the
    list came back empty.
-9. **The guard forbids exactly `maxDuration` and `memory`.** `runtime` and `preferredRegion`
+9. **The guard forbids exactly `maxDuration` and `memory`.** ~~`runtime` and `preferredRegion`
    also change a function's configuration, but neither is a *silent* regression — an edge
-   route cannot read `data/dict.json` at all, so it fails loudly and immediately. The two in
-   the list are the ones that keep every test green while quietly reintroducing a second cold
-   start. The test enumerates routes through `lib/server/route-inventory.ts`, so a route added
-   anywhere under `app/api` is covered the day it is written; it was verified to fail by
-   adding `export const maxDuration = 30` to `/api/dict/decomp` and re-running.
+   route cannot read `data/dict.json` at all, so it fails loudly and immediately.~~
+   **Corrected in the cycle B review fixes below: that reasoning holds for `runtime: 'edge'`
+   and is false for `preferredRegion`, which is silent in exactly the way this guard exists
+   to catch. `GROUPING_CONFIG` is now all four.** The test enumerates routes through
+   `lib/server/route-inventory.ts`, so a route added anywhere under `app/api` is covered the
+   day it is written; it was verified to fail by adding `export const maxDuration = 30` to
+   `/api/dict/decomp` and re-running.
 10. **`package.json` (frozen) gained one line**: `"coldstart": "tsx scripts/coldstart-probe.ts"`,
     the same deviation Phase 8 took for `"smoke"`. No dependency, no lockfile change.
 
@@ -3566,3 +3568,174 @@ Verified end to end, each against its own fresh server:
   bullet that needs a real deployment — `pnpm coldstart` against Vercel, beside a run against
   the previous deploy — cannot be run from this container and is the one line of the phase
   that is still unmeasured.
+
+## Phase 9 — cycle B review fixes: what the headers could not see, and what the probe could not tell
+
+Five majors from the cycle B review (two of them the same finding seen from two angles)
+plus all six minors. Every one was reproduced on this box with the reviewer's own command
+before anything was touched; none was refuted. Green on this commit: `pnpm lint`,
+`pnpm test` (**946 unit in 94 files** — 926 in 93 before), `pnpm build`, and `pnpm smoke`
+against the built server (21 routes). No dependency added; `package.json` and
+`pnpm-lock.yaml` untouched. No live model call — there is still no key in this container.
+
+### The two that mattered
+
+**1. "Warm-up: settled" was decided from a header that cannot see the caches the warm-up
+exists for.** `x-tangram-index-parts` is `builtIndexParts()`, which covers only
+`DICT_INDEX_PARTS`; `warmDictionary()` also builds `HEADWORDS` (lib/dict/search.ts) and
+`STATS` (lib/dict/segment.ts), which are keyed off the index object and are therefore
+invisible to it by construction. Reproduced exactly as the reviewer did — drive all six
+`buildPartInSlices(part)` generators to completion and the stamped header reads
+`sorted,entries,hanzi,pinyin,gloss,hsk` while `headwordsWarm`, `segmentStatsWarm` and
+`dictionaryWarm()` are all false — and that reproduction is now a permanent case in
+`tests/unit/dict/diagnostics.test.ts` rather than a scratch file.
+
+The fix is a third header, **`x-tangram-dict-warm: yes|no`**, fed by `dictionaryWarm()`,
+which until now was referenced only by tests. `warmUpLine` says `settled` only when that
+flag is `yes`; the parts list stays on the line as the partial picture. A build with no
+such header gets `warm-up: unknown`, never `settled`. Two guards on the stamp: it is
+wrapped in `try/catch`, and `dictionaryWarm()` checks the parts count *before* it touches
+`getDictIndex()`, so stamping a 400 or a 503 can neither load the dictionary nor turn a
+`dict-data-missing` 503 into a 500 (a unit case asserts the 503 is stamped `no`).
+
+**2. The probe read an already-warm process exactly like a cold one.** Reproduced: two
+`pnpm coldstart` runs against the same `next start`, the second printing `banner HEAD hsk
+9ms … sorted,entries,hanzi,pinyin,gloss,hsk` and then the byte-identical closing lines
+`warm-up: settled …` / `VERDICT one process answered every request …`, exit 0. And
+docs/deploy.md §7 told the operator to run `pnpm smoke` — which pays the whole cold cost —
+*first*. `preWarmReason()` now refuses such a run on either of two tells, and `verdict`
+exits 1:
+
+- the banner's HEAD already listed all six parts (a cold HEAD builds three and schedules
+  the rest), or
+- the HEAD answered in under `COLD_HEAD_FLOOR_MS` (100 ms), which no cold `dict.json`
+  parse can do. This is the tell that catches the partial case the parts list cannot:
+  measured here, one prior `GET /api/dict/entries` leaves a 38 ms HEAD still reporting
+  three parts.
+
+§7 is reversed: `pnpm coldstart` first, against a URL nothing has touched since the
+deploy, then `pnpm smoke`.
+
+### The rest of the majors
+
+**3. `preferredRegion` was missing from the no-config guard, and the stated reason for
+leaving it out was wrong.** Confirmed: `export const preferredRegion = "sfo1"` appended to
+`app/api/dict/search/route.ts` left `tests/unit/server/route-config.test.ts` at "3 passed",
+exit 0. `GROUPING_CONFIG` is now `['maxDuration', 'memory', 'runtime', 'preferredRegion']`
+(re-verified: the same experiment now fails the `preferredRegion` case), and decision 9 of
+the cycle B section above is struck through and corrected in place. The reason on record
+was "they fail loudly — an edge route cannot read `data/dict.json`", which is true of
+`runtime: 'edge'` and false of `preferredRegion`: a Node route carrying one runs, reads the
+dictionary, passes every test, and leaves the shared function anyway.
+
+**4. The probe printed the access secret verbatim for a key `undici` rejects.** Confirmed:
+`--key "$(printf 'bad\nsecret-XYZ')"` printed `cannot reach …: Headers.append:
+"tangram_access=bad\nsecret-XYZ" is an invalid header value.` — and `pnpm smoke` leaked it
+once per failing case. This is the one malformed-secret case the gate itself anticipates
+(`lib/server/access.ts` trims the secret because Vercel's UI will store a value that is a
+stray newline) and both scripts default their key from that variable. Three layers now:
+
+- `accessHeaders()` tests the (already trimmed) secret against `COOKIE_SAFE_SECRET` and
+  throws a message that names the rule and never the value;
+- both `main()`s call it once up front, so the failure is one clean line rather than 21;
+- `scrubSecret(message, secret)` runs over every error message either script prints.
+
+Re-verified with the reviewer's command: the probe now prints `the key given is not usable
+as a cookie value (COOKIE_SAFE_SECRET, lib/server/access.ts) — check for a trailing newline
+or a space`, exit 1, and `secret-XYZ` appears nowhere. `tests/unit/server/smoke-args.test.ts`
+(8 cases) asserts the absence rather than the header comment asserting it.
+
+### The minors, all taken
+
+- **An unstamped run now exits 1** and needs `--allow-unstamped` for the one deliberate use
+  (the comparison run against the previous deploy). Total absence of the headers is the
+  likelier shape of a regression — a proxy stripping `x-tangram-*`, the wrapper dropped from
+  a route — and it used to be the one shape that stayed green.
+- **"Refuses without `--key`" was overstated** in both docs/deploy.md and the script header:
+  the key also comes from `$TANGRAM_ACCESS_SECRET`, deliberately and in common with
+  `pnpm smoke`. Both now say so. Cycle B's report line "gated + no key → refuses, exit 1, no
+  request issued" was wrong in the same way: `gateCheck` issues `GET /api/ask` before it can
+  know the deployment is gated, so the accurate claim is **no dictionary sample issued**.
+- **docs/deploy.md no longer puts the secret in argv.** All three command lines are
+  `export TANGRAM_ACCESS_SECRET=…` once, then the bare command; §5 says `--key` exists for
+  the unexported case and that passing it puts the secret in the process list and in shell
+  history, and the probe's header says the same.
+- **A `--base-url` carrying `?key=` is disarmed.** `parseArgs` parses with `new URL()`,
+  lifts a `key` param out into the secret, and returns `url.origin`; a base URL with a path,
+  query or fragment is refused rather than concatenated onto. Confirmed the leak first
+  (`coldstart: http://127.0.0.1:3000/?key=LEAKYSECRET` printed as the run's first line, from
+  the committed script at HEAD);
+  now the printed line and every request URL are key-free by construction.
+- **The success verdict names its blind spots**: 4 of the 8 routes were not observed
+  (`/api/ask`, `/api/examples` and `/api/recall` carry no header, `/api/dict/decomp` is
+  stamped but unsampled) and a second instance serving concurrent traffic cannot appear in
+  seven sequential requests. The module comment claims only the dictionary routes. The three
+  model routes were **not** stamped — see the decision below.
+- **docs/deploy.md §5 documents the comparison run** the plan calls the phase's result: once
+  against the previous deployment's immutable URL, once against the alias, and a
+  `predates the diagnostic headers` verdict is the expected answer for any pre-Phase-9 build
+  rather than a failure.
+
+### The numbers (this container, 4 CPUs, `pnpm build` then one fresh `next start` per run)
+
+| step | fresh instance | second run against the same process |
+|---|---|---|
+| banner `HEAD /api/dict/hsk?band=1` | **659 ms**, `sorted,entries,hsk` `warm=no` | 9 ms, all six, `warm=yes` |
+| first `entries` / `search` / `segment` after the 2 s wait | 12 / 9 / 14 ms, all six, `warm=yes` | 10 / 6 / 7 ms |
+| closing lines | `warm-up: settled — x-tangram-dict-warm: yes` · `VERDICT one process …`, exit 0 | `VERDICT this instance was already warm before the probe ran …`, **exit 1** |
+
+Partially-warm case (one `GET /api/dict/entries` before the probe): HEAD **38 ms** carrying
+three parts — caught by the latency tell, invisible to the parts tell.
+
+**Three headers cost 1.30–1.35 µs per response** (200k stamps, `Response` construction of
+0.56–0.60 µs subtracted), against 1.1 µs for two in cycle B. The extra ~0.2 µs is
+`dictionaryWarm()`: a length check plus, when it passes, a cached `getDictIndex()` and two
+WeakMap lookups.
+
+Gated server (`TANGRAM_ACCESS_SECRET=s3cret-review-key`): no key → `refusing to run — this
+deployment is gated — export TANGRAM_ACCESS_SECRET, or pass --key`, exit 1, no dictionary
+sample; key from the environment with no flag → the full sequence, HEAD 662 ms, one instance
+id, exit 0. `pnpm smoke` against the built server: 21 routes ok.
+
+### Decisions this cycle made
+
+1. **`x-tangram-dict-warm`, not `x-tangram-warm`.** The two reviewers suggested each; the
+   longer one matches `x-tangram-index-parts` in saying which subsystem it is about, and
+   this app will plausibly want to say something about a *different* warm-up one day.
+2. **A yes/no flag, not the cache names appended to the parts header.** Widening the parts
+   vocabulary would break the property that the parts value is exactly `DICT_INDEX_PARTS`,
+   which is what the "nothing sensitive, nothing reflected" test asserts, and it would make
+   "all six parts" mean two different things depending on build. The `NOT settled` line
+   names both caches from `DICT_WARM_CACHES` instead of the header naming one.
+3. **The three model routes are still unstamped.** Stamping them is a one-line import each,
+   but they are not sampled and stamping them would not change what the probe observes —
+   only the verdict's disclaimer would get shorter. Naming the gap is the honest fix; the
+   import is available whenever `/api/ask` becomes worth sampling.
+4. **`--allow-unstamped` is parsed in the probe, not in `parseArgs`.** `parseArgs` is shared
+   with `pnpm smoke` so that the key is handled in exactly one place; a flag only one script
+   understands does not belong in it.
+5. **100 ms is the cold-HEAD floor.** An order of magnitude above the warm figure (8–12 ms)
+   and an order below the cold one (620–740 ms here, slower on a real instance). A network
+   adding ~100 ms of its own pushes a reading towards "cold", which is the safe direction:
+   a genuine cold run is never suppressed, and an already-warm instance behind a slow link
+   is still caught by the parts tell.
+6. **A `?key=` in `--base-url` overrides `--key` and the environment.** Whoever pasted the
+   authorisation URL meant that key; silently preferring a stale environment value while
+   discarding the pasted one is the confusing half of either choice.
+7. **`gateCheck`'s success line no longer says "gated, key accepted".** A 200 to a request
+   carrying a cookie means the key was not *refused*, which is also what an ungated
+   deployment answers. It now says `a key was sent and not refused`.
+
+### For the reviewer
+
+- The claim to attack first is `preWarmReason`'s latency floor: it is the only number in
+  this cycle that is calibrated rather than derived, and a deployment far enough away could
+  in principle put a warm HEAD over 100 ms. The parts tell backstops it, and the failure
+  direction is a false "cold", never a false "warm".
+- `dictionaryWarm()` is now on the response path of every dictionary request. It is a length
+  comparison in the cold case and two WeakMap lookups in the warm one, and it cannot load the
+  dictionary — but it is the first thing in `lib/dict` that a *header* calls, so if the
+  warm-up ever grows an expensive predicate, this is the caller that would pay for it.
+- Still owed from the plan: the same last acceptance bullet. `pnpm coldstart` against the
+  Vercel deployment beside a `--allow-unstamped` run against the previous deploy needs a
+  real deployment and cannot be run from this container.

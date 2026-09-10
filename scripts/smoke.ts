@@ -25,13 +25,18 @@
  * provider.
  *
  * Run it against production too:
- *   pnpm smoke --base-url https://tangram.example.com --key "$TANGRAM_ACCESS_SECRET"
+ *   export TANGRAM_ACCESS_SECRET=…      # once, if the deployment is gated
+ *   pnpm smoke --base-url https://tangram.example.com
+ *
+ * The key can also be passed as `--key`, for the case where the variable is not
+ * exported — but an argv value is readable from the process list and is recorded
+ * in shell history, so the environment is the one to prefer.
  */
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { NAV_ITEMS } from '../components/shell/nav';
-import { ACCESS_COOKIE } from '../lib/server/access';
+import { ACCESS_COOKIE, COOKIE_SAFE_SECRET } from '../lib/server/access';
 import { discoverApiRoutes, type HttpMethod } from '../lib/server/route-inventory';
 
 const REPO_ROOT = resolve(fileURLToPath(import.meta.url), '../..');
@@ -328,17 +333,57 @@ export interface CliArgs {
  * Exported because `scripts/coldstart-probe.ts` takes the same two arguments,
  * and two parsers for one pair of flags is two places for `--key` to be handled
  * differently — which for a credential is not a cosmetic difference.
+ *
+ * The key may come from `--key` or from `$TANGRAM_ACCESS_SECRET`; the environment
+ * is the one to prefer, because an argv value is readable from the process list
+ * and is recorded in shell history.
+ *
+ * **A `--base-url` carrying `?key=` is disarmed, not passed through.** That URL is
+ * exactly what `docs/deploy.md` tells the owner to visit to authorise a phone, so
+ * it is the paste to expect — and `middleware.ts` goes to the trouble of
+ * redirecting the key back out of the URL precisely so that it does not end up in
+ * a history file or an access log. Concatenating it onto every request path would
+ * put it in both. So the key is lifted out and used as the secret, and only the
+ * origin survives. Throws for a base URL that is not a URL, or that carries a
+ * path, query or fragment this script would otherwise silently mangle.
  */
 export function parseArgs(argv: readonly string[]): CliArgs {
-  let baseURL =
+  let rawBaseURL =
     process.env.SMOKE_BASE_URL ?? `http://127.0.0.1:${process.env.PORT ?? '3000'}`;
   let secret = process.env.TANGRAM_ACCESS_SECRET;
   for (let i = 0; i < argv.length; i += 1) {
-    if (argv[i] === '--base-url' && argv[i + 1]) baseURL = argv[(i += 1)];
+    if (argv[i] === '--base-url' && argv[i + 1]) rawBaseURL = argv[(i += 1)];
     else if (argv[i] === '--key' && argv[i + 1]) secret = argv[(i += 1)];
   }
-  return { baseURL, ...(secret ? { secret } : {}) };
+
+  let url: URL;
+  try {
+    url = new URL(rawBaseURL);
+  } catch {
+    throw new Error(`--base-url is not a URL: ${rawBaseURL}`);
+  }
+  const embedded = url.searchParams.get('key');
+  if (embedded) {
+    // Deliberately overrides `--key`/the environment: whoever pasted the
+    // authorisation URL meant that key, and this is the one place it is read.
+    secret = embedded;
+    url.searchParams.delete('key');
+  }
+  if (url.hash || url.search || (url.pathname !== '/' && url.pathname !== '')) {
+    // Every caller builds `${base}${path}`, so a base with a path of its own
+    // produces `/prefix/api/...` — or worse, `/?key=x/api/...`. Refuse rather
+    // than guess.
+    throw new Error(
+      `--base-url must be an origin with no path, query or fragment — use ${url.origin}`,
+    );
+  }
+
+  return { baseURL: url.origin, ...(secret ? { secret } : {}) };
 }
+
+/** What a key must be to be usable, and what to say when it is not. */
+const UNUSABLE_KEY =
+  'the key given is not usable as a cookie value (COOKIE_SAFE_SECRET, lib/server/access.ts) — check for a trailing newline or a space';
 
 /**
  * The headers that authorise a request against a gated deployment, or none.
@@ -349,13 +394,45 @@ export function parseArgs(argv: readonly string[]): CliArgs {
  * given. The secret goes into the request and nowhere else — never into a log
  * line, never into a URL, which is the whole reason the gate strips `?key=` in
  * the first place.
+ *
+ * **The shape is checked here, before `fetch` sees it.** `undici` rejects a header
+ * value containing a newline by throwing `Headers.append: "tangram_access=…" is
+ * an invalid header value` — with the value in the message, which both scripts then
+ * print. That is not a hypothetical: `lib/server/access.ts` trims the secret
+ * precisely because "Vercel's UI happily stores a variable whose value is a stray
+ * newline", and that variable is where both scripts get their default key. So an
+ * unusable key fails here, with a message that names the rule and never the value.
  */
 export function accessHeaders(secret?: string): Record<string, string> {
-  return secret ? { cookie: `${ACCESS_COOKIE}=${secret}` } : {};
+  if (!secret) return {};
+  if (!COOKIE_SAFE_SECRET.test(secret)) throw new Error(UNUSABLE_KEY);
+  return { cookie: `${ACCESS_COOKIE}=${secret}` };
+}
+
+/**
+ * Take the secret back out of a message before it is printed.
+ *
+ * Belt and braces behind `accessHeaders`: any message that reaches a console may
+ * have been built by code that saw the key — a `fetch` rejection, a server echoing
+ * a header back — and a CI log is forever. Costs one `split`/`join` on a failure
+ * path.
+ */
+export function scrubSecret(message: string, secret?: string): string {
+  return secret ? message.split(secret).join('<key>') : message;
 }
 
 async function main(): Promise<void> {
-  const { baseURL, secret } = parseArgs(process.argv.slice(2));
+  let baseURL: string;
+  let secret: string | undefined;
+  try {
+    ({ baseURL, secret } = parseArgs(process.argv.slice(2)));
+    // Fail on an unusable key here, once, rather than 21 times inside the loop.
+    accessHeaders(secret);
+  } catch (error) {
+    console.error(`smoke: ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 1;
+    return;
+  }
 
   const uncovered = checkRouteCoverage();
   if (uncovered.length > 0) {
@@ -373,7 +450,9 @@ async function main(): Promise<void> {
 
   if (result.failures.length > 0) {
     console.error(`smoke: ${result.failures.length} failed, ${result.passed} passed`);
-    for (const failure of result.failures) console.error(`  FAIL ${failure}`);
+    // Scrubbed: a failure line carries a thrown message, and a message about a
+    // header can contain the header's value. Once per case, into CI logs.
+    for (const failure of result.failures) console.error(`  FAIL ${scrubSecret(failure, secret)}`);
     process.exitCode = 1;
     return;
   }

@@ -1,5 +1,5 @@
 /**
- * No route handler may export `maxDuration` or `memory`.
+ * No route handler may export anything that changes its function configuration.
  *
  * This is not a style rule. `@vercel/next` bundles route handlers **whose
  * function configuration matches** into one Vercel Function — Vercel documents
@@ -11,12 +11,21 @@
  * `HEAD /api/dict/hsk` warms the *same* instance that will answer the first
  * lookup (lib/dict/warm.ts).
  *
- * A `maxDuration` or `memory` on a single route is precisely what makes its
- * configuration differ, so that route is split into a function of its own. The
- * failure is silent: every test still passes, every route still answers, and the
- * only symptom is that one route pays a second cold start — a ~1 s first lookup
- * that comes back after somebody spent a phase removing it, with nothing in the
- * diff that looks like a performance change.
+ * Any of `maxDuration`, `memory`, `runtime` or `preferredRegion` on a single route
+ * is precisely what makes its configuration differ, so that route is split into a
+ * function of its own. The failure is silent: every test still passes, every route
+ * still answers, and the only symptom is that one route pays a second cold start —
+ * a ~1 s first lookup that comes back after somebody spent a phase removing it,
+ * with nothing in the diff that looks like a performance change.
+ *
+ * The list is not trimmed to the ones that would fail quietly. An earlier version
+ * of this guard left `runtime` and `preferredRegion` out on the grounds that they
+ * fail loudly — an edge route cannot read `data/dict.json` at all. That reasoning
+ * holds for `runtime: 'edge'` and is simply false for `preferredRegion`: a Node
+ * route carrying one runs, reads the dictionary, passes every test, and quietly
+ * leaves the shared function with its own cold start and its own unwarmed indexes,
+ * which is the exact failure this guard exists for. Naming all four costs nothing
+ * and removes the need to reason about which misconfiguration happens to be loud.
  *
  * If a ceiling is genuinely needed, it goes in `vercel.json` against
  * `app/api/**` so that every route keeps the same configuration, and
@@ -39,7 +48,7 @@ const ROOT = resolve(__dirname, '../../..');
  * `fetchCache`…) do not — every route here exports `dynamic` and they still
  * share one function.
  */
-const GROUPING_CONFIG = ['maxDuration', 'memory'] as const;
+const GROUPING_CONFIG = ['maxDuration', 'memory', 'runtime', 'preferredRegion'] as const;
 
 describe('function configuration', () => {
   // Enumerated from the shared inventory rather than a second directory walk, so
@@ -60,7 +69,7 @@ describe('function configuration', () => {
     );
     expect(
       offenders.map((route) => route.relativeFile),
-      `exporting \`${name}\` splits these routes out of Vercel's shared function; put the ceiling in vercel.json for app/api/** instead`,
+      `exporting \`${name}\` splits these routes out of Vercel's shared function; if a ceiling is genuinely needed put it in vercel.json for app/api/** instead, so every route keeps one configuration`,
     ).toEqual([]);
   });
 });

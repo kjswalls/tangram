@@ -252,45 +252,89 @@ the parse directly. If a
 route ever 502s with no log line, out-of-memory during the dictionary load is
 the first thing to check.
 
-### Seeing it from outside: two headers and `pnpm coldstart`
+### Seeing it from outside: three headers and `pnpm coldstart`
 
 Everything above is a claim about *one process*: one parse, one set of indexes,
 one warm-up. From outside, that is invisible — a fast response and a slow one
 look the same whether they came from the same instance or from two. So every
-dictionary response carries two headers (`lib/dict/diagnostics.ts`):
+dictionary response carries three headers (`lib/dict/diagnostics.ts`):
 
 | Header | What it is |
 |---|---|
 | `x-tangram-instance` | a `randomUUID()` minted once at module load — the same value on every response from one process, a different one from any other |
-| `x-tangram-index-parts` | `builtIndexParts()` at response time: empty on a 503, `sorted,entries,hsk` on a process that has only answered the banner's probe, all six once the warm-up has settled |
+| `x-tangram-index-parts` | `builtIndexParts()` at response time: empty on a 503, `sorted,entries,hsk` on a process that has only answered the banner's probe, all six once every *index part* is built |
+| `x-tangram-dict-warm` | `dictionaryWarm()` — `yes` only when the six parts **and** the two caches outside that vocabulary (search's headword indexes, the segmenter's DAG statistics) are built |
+
+The third is not a restatement of the second. `warmDictionary()` builds two caches
+that are keyed off the index object rather than stored in it, so
+`builtIndexParts()` cannot see them by construction: a process can report all six
+parts while a first reader paste still pays ~145 ms to build the DAG statistics.
+That is exactly what a warm-up frozen half-way leaves behind, so "settled" is read
+off `x-tangram-dict-warm` and the parts list is the partial picture beside it.
 
 They are on the 400s and the 503s too, which is where they are worth the most,
-and they carry nothing else — a random id and a fixed six-word vocabulary.
+and they carry nothing else — a random id, a fixed six-word vocabulary, and a
+two-word flag.
 
 `pnpm coldstart` replays the opening of a session against a deployment and reads
 them back:
 
 ```bash
-pnpm coldstart --base-url https://<your-app>.vercel.app --key "$TANGRAM_ACCESS_SECRET"
+export TANGRAM_ACCESS_SECRET=…      # once, if the deployment is gated
+pnpm coldstart --base-url https://<your-app>.vercel.app
 ```
+
+**Run it against an instance nothing has touched yet.** The subject is a *cold*
+start, so any earlier request — `pnpm smoke`, a browser opening the app, a health
+check, or a previous run of this script — has already paid the bill the run exists
+to watch being paid, and every number would then be a warm number under a cold
+run's labels. The probe detects that (a HEAD that already lists all six parts, or
+one that answers in under 100 ms — far under a cold `dict.json` parse), says `this
+instance was already warm before the probe ran`, and exits non-zero so the run
+cannot be quoted. That is also why §7 runs it *before* `pnpm smoke`.
 
 It issues the banner's `HEAD /api/dict/hsk?band=1`, waits two seconds for
 `after()` to settle, then a first `entries`, `search` and `segment`, then each
-again — printing latency, instance id and built parts per response. **Its verdict
-is the instance id, not a latency band:** one id across the sequence means one
-process answered everything and the numbers are a like-for-like series; more than
-one means more than one function or instance and the numbers are not comparable.
-A non-2xx is an invalid sample rather than a slow one, and it refuses to run at
-all against a gated deployment without `--key`. `GET /api/ask` is not sampled —
-it reads no dictionary — it is only the gate check.
+again — printing latency, instance id, built parts and the warm flag per response.
+**Its verdict is the instance id, not a latency band:** one id across the sequence
+means one process answered everything and the numbers are a like-for-like series;
+more than one means more than one function or instance and the numbers are not
+comparable. The success line also names what it did *not* see: four of the eight
+routes (`/api/ask`, `/api/examples` and `/api/recall` carry no header, and
+`/api/dict/decomp` is stamped but never sampled), and any second instance serving
+concurrent traffic, which seven sequential requests cannot reveal. A non-2xx is an
+invalid sample rather than a slow one, and against a gated deployment it refuses to
+run without a key — from `--key` or from `$TANGRAM_ACCESS_SECRET`, the same
+fallback `pnpm smoke` uses. `GET /api/ask` is not sampled — it reads no dictionary
+— it is only the gate check, so a refusal still issues that one request; what it
+never issues is a dictionary sample.
+
+Prefer the environment variable to `--key`. `--key` exists for the case where the
+variable is not exported, and passing it puts the secret in the process list
+(`/proc/<pid>/cmdline`, `ps`) and in shell history. A `--base-url` carrying
+`?key=…` — the URL the device-authorisation flow above tells you to visit — is
+disarmed rather than used: the key is lifted out into the cookie and only the
+origin is printed and requested.
+
+**The comparison run.** The phase's result is this probe against the new
+deployment *beside* the same run against the one before it, so run it once against
+the previous deployment's immutable URL (`https://<project>-<hash>.vercel.app`,
+from `vercel ls` or the dashboard — the alias always points at the newest build)
+and once against the alias. Any build from before Phase 9 carries no headers at
+all, and the probe's `no x-tangram-instance on any response … predates the
+diagnostic headers` verdict is the *expected* answer there, not a failure. It
+still exits 1 by default, because a deployment that lost the headers for any other
+reason (the wrapper dropped from a route, a proxy stripping `x-tangram-*`) looks
+identical; pass `--allow-unstamped` for that one deliberate run.
 
 If the ids ever differ, the first thing to look at is whether a route has grown a
-`maxDuration` or `memory` export: that is exactly what makes one route's function
-configuration differ from the rest and splits it into its own function, with its
-own cold start and its own unwarmed indexes. If a ceiling is genuinely needed it
-belongs in a `vercel.json` covering `app/api/**`, so every route keeps the same
-configuration. `tests/unit/server/route-config.test.ts` fails the build before
-that can ship by accident.
+`maxDuration`, `memory`, `runtime` or `preferredRegion` export: that is exactly
+what makes one route's function configuration differ from the rest and splits it
+into its own function, with its own cold start and its own unwarmed indexes. If a
+ceiling is genuinely needed it belongs in a `vercel.json` covering `app/api/**`, so
+every route keeps the same configuration.
+`tests/unit/server/route-config.test.ts` fails the build before that can ship by
+accident.
 
 ### Tracing is declared per route — every new dictionary-reading route needs an entry
 
@@ -337,23 +381,31 @@ exactly this, and take effect without a rebuild.
 
 ## 7. After a deploy: what to check
 
-Run the smoke script against the deployment. It hits every API route, every nav
-page, and the three files the PWA needs, and fails on any non-2xx:
+**`pnpm coldstart` goes first, before anything else touches the deployment.** It
+is the check that the deployment is still one warm process rather than several
+cold ones, and it can only see that on an instance whose first request is its own
+— `pnpm smoke` warms the process it runs against, and so does a browser opening
+the app (§5). Run it against a URL nothing has touched since the deploy:
 
 ```bash
-pnpm smoke --base-url https://<your-app>.vercel.app --key "$TANGRAM_ACCESS_SECRET"
+export TANGRAM_ACCESS_SECRET=…      # once, if the deployment is gated
+pnpm coldstart --base-url https://<your-app>.vercel.app
+```
+
+If it reports `this instance was already warm before the probe ran`, the run
+measured nothing: wait for the deployment to scale back to nothing, or redeploy,
+and run it again first.
+
+Then the smoke script against the same deployment. It hits every API route, every
+nav page, and the three files the PWA needs, and fails on any non-2xx:
+
+```bash
+pnpm smoke --base-url https://<your-app>.vercel.app
 ```
 
 It also runs inside `pnpm e2e` (`tests/e2e/d/smoke.spec.ts`) against the local
 built server, so a route that forgets its tracing entry fails there rather than
 in production.
-
-Then `pnpm coldstart` against the same URL (§5), which is the check that the
-deployment is still one warm process rather than several cold ones:
-
-```bash
-pnpm coldstart --base-url https://<your-app>.vercel.app --key "$TANGRAM_ACCESS_SECRET"
-```
 
 Then, by hand, the three things a script cannot tell you:
 

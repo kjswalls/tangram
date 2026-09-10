@@ -11,9 +11,12 @@
  * `HEAD /api/dict/hsk` warms the *same* instance that will answer the first
  * lookup (lib/dict/warm.ts).
  *
- * Any of `maxDuration`, `memory`, `runtime` or `preferredRegion` on a single route
- * is precisely what makes its configuration differ, so that route is split into a
- * function of its own. The failure is silent: every test still passes, every route
+ * Any of `maxDuration`, `runtime` or `preferredRegion` on a single route is
+ * precisely what makes its configuration differ, so that route is split into a
+ * function of its own. (`memory` is in the forbidden list too, and is the one
+ * name Next does not read as a segment export — it is a `vercel.json` `functions`
+ * field. Forbidding it costs nothing and keeps the list matching the vocabulary
+ * people reach for.) The failure is silent: every test still passes, every route
  * still answers, and the only symptom is that one route pays a second cold start —
  * a ~1 s first lookup that comes back after somebody spent a phase removing it,
  * with nothing in the diff that looks like a performance change.

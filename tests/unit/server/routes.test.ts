@@ -1,5 +1,5 @@
 /**
- * Two things a route can forget, both of which only fail in production.
+ * Two things a route can forget, neither of which any local run can see.
  *
  *  1. **`outputFileTracingIncludes`.** Vercel traces every route separately and
  *     then bundles the routes into one shared function, whose file list is the
@@ -7,9 +7,14 @@
  *     `data/dict.json` and is not listed in `next.config.ts` works under
  *     `next dev` and under `pnpm start` — the file is on disk in both — and in
  *     the deployment it carries no claim of its own on that file, surviving only
- *     as long as it shares a function with a route that does declare it.
- *     `/api/examples` and `/api/recall` shipped exactly that way and were found
- *     by hand.
+ *     as long as it shares a function with a route that does declare it. That
+ *     makes the assertion below a latent-failure guard rather than a promised
+ *     500: what it keeps out is a route living off a neighbour's claim on a file
+ *     it reads itself. `/api/examples` and
+ *     `/api/recall` reached the Phase 8 merge that way — neither builder could
+ *     edit the frozen `next.config.ts`, so the orchestrator added the keys by
+ *     hand, and nothing automated noticed (HANDOFF.md, Phase 8 merge). No
+ *     deployment has ever exercised it.
  *  2. **A route nobody exercises.** `pnpm smoke` is only as good as its case
  *     list, so a new route with no case has to fail *here*, cheaply, rather
  *     than being silently skipped by the thing that was supposed to catch (1).

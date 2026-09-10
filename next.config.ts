@@ -13,8 +13,11 @@ const nextConfig: NextConfig = {
   // This is no longer only a comment. `tests/unit/server/routes.test.ts` walks
   // each route's import graph and fails if one reaches lib/dict/load.ts without
   // a key here, and `pnpm smoke` hits every route on a built server. Both were
-  // added because /api/examples and /api/recall shipped without their entries
-  // and nothing but a person opening the page noticed (docs/deploy.md).
+  // added because /api/examples and /api/recall reached the Phase 8 merge with no
+  // entry of their own — neither builder could edit this frozen file, so the
+  // orchestrator added the two keys by hand — and nothing automated noticed
+  // (HANDOFF.md, Phase 8 merge; docs/deploy.md §5). No deployment has ever
+  // exercised the failure; this repo has never been deployed to Vercel.
   outputFileTracingIncludes: {
     '/api/dict/**': ['./data/**'],
     '/api/ask/**': ['./data/**'],

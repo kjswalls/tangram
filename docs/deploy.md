@@ -140,12 +140,25 @@ local behaviour would be switched off within a week.
 
 ### Vercel does not give each route its own function
 
-`@vercel/next` groups route handlers **whose function configuration matches** —
-`maxDuration`, `memory`, `runtime`, `preferredRegion`, none of which this app
-sets — into one Vercel Function, and documents the intent as "bundled into the
-fewest number of Vercel Functions possible, to help reduce cold starts". For this
-app that is **one function for all eight routes**: one container, one
-`dict.json` parse, one set of lazy indexes, one warm-up.
+`@vercel/next` groups route handlers **whose function configuration matches**
+into one Vercel Function, and documents the intent as "bundled into the fewest
+number of Vercel Functions possible, to help reduce cold starts". Only three
+Next route-segment exports change that configuration — `maxDuration`, `runtime`
+and `preferredRegion` — and this app sets none of them. `memory` is *not* one of
+them: the segment-config schema in the installed Next 16.3.4 is `revalidate,
+dynamicParams, dynamic, fetchCache, instant, prefetch,
+unstable_dynamicStaleTime, preferredRegion, runtime, maxDuration`, which you can
+read off the installed copy:
+
+```bash
+node -e "console.log(require('next/dist/build/segment-config/app/app-segment-config.js').AppSegmentConfigSchemaKeys)"
+```
+
+`memory` and `maxConcurrency` are `vercel.json` `functions` fields, so
+`export const memory` in a route is inert — the guard forbids it anyway, because
+it is the name people reach for and forbidding it costs nothing. For this app
+the grouping comes out as **one function for all eight routes**: one container,
+one `dict.json` parse, one set of lazy indexes, one warm-up.
 
 That is load-bearing, not trivia. Everything in this section is a claim about
 *one process*, and the Phase 9 warm-up (`lib/dict/warm.ts`) only pays off because
@@ -153,7 +166,10 @@ the instance the banner's `HEAD /api/dict/hsk` warms is the same instance that
 answers the first lookup. Split one route out of the group and it gets its own
 cold start and its own unwarmed indexes, with every test still green —
 `tests/unit/server/route-config.test.ts` is what stops that shipping, and
-`pnpm coldstart` (below) is what would catch it in production.
+`pnpm coldstart` (below) is what would catch it in production — for the four
+routes it samples. The other four are out of its reach: `/api/ask`,
+`/api/examples` and `/api/recall` carry no instance header at all, and
+`/api/dict/decomp` is stamped but never sampled.
 
 **How to see the layout without deploying.** The build output is the evidence, so
 run the real builder and read what it emitted:
@@ -218,21 +234,32 @@ shipped. Neither column has a warm-up in it:
 | `/api/dict/search`, pinyin query | 3909 ms | **2429 ms** |
 | everything (`/api/ask` after a few queries) | 4052 ms | **2348 ms** |
 
-Four of those rows re-measured over HTTP in cycle A, one fresh `next start` per
-sample, each endpoint alone in its own process. The middle column is the same
-world as "after" above — lazy indexes, no warm-up — and the right-hand column is
-that request once the banner's probe has settled (HANDOFF.md, "Phase 9 —
-cycle A"):
+Four of those rows re-measured over HTTP, two samples each, one fresh
+`next start` per sample and each endpoint alone in its own process — every
+sample carried a different `x-tangram-instance`, which is the proof the process
+really was new. The middle column is the same world as "after" above — lazy
+indexes, no warm-up — and the right-hand column is that request 3 s after the
+banner's `HEAD /api/dict/hsk` has settled. Measured in cycle C on `c3bc80d`,
+which is the incremental (generator/`drain()`) warm-up that actually ships:
 
 | Endpoint, alone in a fresh process | lazy, no warm-up | after the warm-up |
 |---|---|---|
-| `GET /api/dict/entries?ids=…` | 615 ms | **14 ms** |
-| `GET /api/dict/hsk?band=1` | 675 ms | **17 ms** |
-| `POST /api/dict/segment` | 953 ms | **21 ms** |
-| `GET /api/dict/search?q=dasuan` (pinyin) | 1777 ms | **16 ms** |
+| `GET /api/dict/entries?ids=…` | 682 / 648 ms | **9 / 9 ms** |
+| `GET /api/dict/hsk?band=1` | 658 / 676 ms | **12 / 11 ms** |
+| `POST /api/dict/segment` | 932 / 981 ms | **15 / 15 ms** |
+| `GET /api/dict/search?q=dasuan` (pinyin) | 1648 / 1698 ms | **11 / 11 ms** |
 
-The rows the newer harness has not re-run — hanzi and English search, `/api/ask`,
-`/api/dict/decomp` — stand on the Phase 8 table alone.
+Two earlier runs of the same harness are recorded in HANDOFF.md and belong
+beside these, because the difference between them is the box and not the code:
+cycle A measured 615 / 675 / 953 / 1777 ms cold and 14 / 17 / 21 / 16 ms warm on
+the part-at-a-time builder that `a9d7c4d` replaced, and the cycle-A fixes run
+measured 724 / 763, 774 / 751, 933 / 1023 and 1634 / 1721 ms cold on the shipped
+one. Session-to-session spread on this container is ~±20% on the sub-second
+rows — wider than the ~10% the incremental rewrite cost the warm-up itself — so
+read the cold column as a band, and do not attribute a 60 ms move to a commit.
+
+The rows no harness since Phase 8 has re-run — hanzi and English search,
+`/api/ask`, `/api/dict/decomp` — stand on the Phase 8 table alone.
 
 Resident memory after that first request fell with the same change: 280–292 MB
 before, and 171–177 MB for `entries`/`hsk`, ~205 MB for `segment` and hanzi
@@ -370,11 +397,11 @@ reason (the wrapper dropped from a route, a proxy stripping `x-tangram-*`) looks
 identical; pass `--allow-unstamped` for that one deliberate run.
 
 If the ids ever differ, the first thing to look at is whether a route has grown a
-`maxDuration`, `memory`, `runtime` or `preferredRegion` export: that is exactly
-what makes one route's function configuration differ from the rest and splits it
-into its own function, with its own cold start and its own unwarmed indexes. If a
-ceiling is genuinely needed it belongs in a `vercel.json` covering `app/api/**`, so
-every route keeps the same configuration.
+`maxDuration`, `runtime` or `preferredRegion` export — the three Next reads, and
+exactly what makes one route's function configuration differ from the rest and
+splits it into its own function, with its own cold start and its own unwarmed
+indexes. If a ceiling is genuinely needed it belongs in a `vercel.json` covering
+`app/api/**`, so every route keeps the same configuration.
 `tests/unit/server/route-config.test.ts` fails the build before that can ship by
 accident.
 
@@ -394,8 +421,11 @@ outputFileTracingIncludes: {
 A route that calls `getDict()` and is **not** listed here works perfectly under
 `next dev` and under `pnpm start` — the file is simply on disk in both — and in
 the deployment it is relying on a route it happens to be grouped with having
-asked for the same files. `/api/examples` and `/api/recall` shipped exactly that
-way; nothing caught it but a person opening the page.
+asked for the same files. `/api/examples` and `/api/recall` reached the Phase 8
+merge with no entry of their own — neither builder could edit the frozen
+`next.config.ts` — and the orchestrator added the two keys by hand; nothing
+automated noticed (HANDOFF.md, Phase 8 merge). No deployment has ever exercised
+the failure: this repo has never been deployed to Vercel.
 
 So it is no longer left to memory:
 
@@ -407,9 +437,13 @@ Each of the eight routes therefore *traces* its own ~34.4 MB copy of `data/`
 (each route's `.nft.json` lists it), and that is still the right shape to declare
 even though there is one function — because what ships is the **union** of the
 group's traces, deduplicated. A per-route entry is how a route states its own
-requirement instead of inheriting someone else's, and the day the group is ever
-split — a stray `maxDuration`, or growth past the 225 MiB budget — the route that
-never declared its files is the one that 500s, in the deployment only.
+requirement instead of inheriting someone else's. The day the group is ever split
+— a stray `maxDuration`, or growth past the 225 MiB budget — a split can leave the
+untraced route in a group where nothing declared `data/**`, and then it 500s, in
+the deployment only. Which route ends up where is not predictable from the diff
+(a stray config splits out the route carrying it; a budget overflow starts a new
+group at whichever page crosses the line), which is why the entry is declared per
+route rather than reasoned about per split.
 `.vercel/output/functions/api/ask.func/.vc-config.json` names `data/dict.json`
 once: one copy, well inside the 250 MB unzipped per-function limit, and it is that
 group budget rather than the per-route trace that decides when a split happens.
@@ -450,8 +484,11 @@ pnpm smoke --base-url https://<your-app>.vercel.app
 ```
 
 It also runs inside `pnpm e2e` (`tests/e2e/d/smoke.spec.ts`) against the local
-built server, so a route that forgets its tracing entry fails there rather than
-in production.
+built server, which is what proves the built server answers every route at all: a
+module-scope throw, a middleware refusing something it should not, or a page that
+will not render all surface there. It says nothing about tracing — that run reads
+`data/` off the disk like any `pnpm start` — and the tracing entry is checked
+statically instead, by `tests/unit/server/routes.test.ts`.
 
 Then, by hand, the three things a script cannot tell you:
 
@@ -459,8 +496,10 @@ Then, by hand, the three things a script cannot tell you:
    with entries, not `503 {"error":"dict-data-missing"}`. This is the one thing
    that can only be confirmed against a real deployment: file tracing is a build
    artefact and `pnpm start` reads `data/` off the disk either way. A 503 here
-   means `pnpm build` was not the build command, or a route is missing its
-   `outputFileTracingIncludes` entry.
+   means `pnpm build` was not the build command — it is what runs `data:ensure`,
+   which produces `data/` in the first place. A missing `outputFileTracingIncludes`
+   entry does *not* show up as a 503 while the route shares a function with one
+   that declares `data/**` (§5).
 2. **The gate is on.** `curl -i https://<app>/api/ask` → `401
    {"error":"unauthorized"}`. If it answers 200, `TANGRAM_ACCESS_SECRET` did not
    reach that environment.

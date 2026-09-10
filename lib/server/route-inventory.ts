@@ -2,16 +2,20 @@
  * What routes this app has, what they import, and whether the build is
  * configured to ship them the files they read.
  *
- * This exists because of one production-only failure mode. `data/dict.json` is
- * read from disk at request time, and on Vercel every route's files are traced
- * **separately** — even though the routes are then bundled into one shared
- * function, whose file list is the union of those traces (docs/deploy.md §5). A
+ * This exists because of one latent, deployment-only dependency no local run can
+ * check. `data/dict.json` is read from disk at request time, and on Vercel every
+ * route's files are traced **separately** — even though the routes are then
+ * bundled into one shared function, whose file list is the union of those traces
+ * (docs/deploy.md §5). A
  * route that reaches `lib/dict/load.ts` but is missing from
  * `outputFileTracingIncludes` in `next.config.ts` works perfectly under
  * `next dev` and under `pnpm start` — the file is simply on disk in both — and in
  * the deployment it is leaning on a route it happens to be grouped with having
- * declared the same files. `/api/examples` and `/api/recall` were exactly that,
- * and it took someone opening the page to notice.
+ * declared the same files. `/api/examples` and `/api/recall` were exactly that:
+ * they reached the Phase 8 merge with no entry of their own — neither builder
+ * could edit the frozen `next.config.ts` — and the orchestrator added the keys by
+ * hand, with nothing automated noticing (HANDOFF.md, Phase 8 merge). No
+ * deployment has ever exercised it; this repo has never been deployed to Vercel.
  *
  * So the question "which routes read the dictionary" is answered here by
  * walking the import graph, rather than by remembering. `tests/unit/server/`

@@ -3865,3 +3865,116 @@ that rule is ever relaxed, these three are the edits to make.
 - Everything in §5 above "Function memory" moved. A diff of that section will look larger
   than the correction is — the numbers in the Phase 8 table are byte-identical, only their
   caption and their position changed.
+
+## Phase 9 — cycle C review fixes: the anecdote, the numbers, and the two sites the grep missed
+
+Six verified findings from the cycle-C review, all of them about *what the prose
+claims*, plus four minors. Every one was re-checked against the reviewer's own
+evidence before it was applied; none of them turned out to be wrong.
+
+### 1. The eyewitness that never existed (5 files)
+
+Cycle C rewrote the *consequence* of a missing `outputFileTracingIncludes` entry and
+left the *observation* standing inside the same sentences: "nothing caught it but a
+person opening the page". There is no such person. `ls -a` shows no `.vercel/`, the
+section that coined the story says in its own next line "Nothing here was verified
+against Vercel" (line 2909), and under `next dev`/`pnpm start` the file is on disk, so
+no page-opener could have seen a 500 either.
+
+What actually happened is on line 1651-1656: `/api/examples` and `/api/recall` reached
+the Phase 8 **merge** with no entry, because neither builder could edit the frozen
+`next.config.ts`, and the orchestrator added the two keys by hand. Nothing automated
+noticed. That is now the sentence in all five places — `docs/deploy.md` §5,
+`next.config.ts`, `lib/server/route-inventory.ts`, `scripts/smoke.ts`,
+`tests/unit/server/routes.test.ts` — with "no deployment has ever exercised the
+failure" said out loud rather than left to be inferred.
+
+### 2. Two more live sites the "nine live sites" grep missed
+
+The cycle-C table asserts a complete list. It is not complete; these two were outside
+its grep terms and are fixed here:
+
+| Where | What it said | Now |
+|---|---|---|
+| `tests/e2e/d/smoke.spec.ts:6-9` | the missing tracing entry "is invisible to a unit test and invisible in dev" — contradicted by its *own next paragraph*, which points at the unit test that checks it | says what the spec actually catches (module-scope throws, middleware refusals, an unrendered page) and that the tracing entry is guarded statically |
+| `docs/deploy.md` §7, two places | "a route that forgets its tracing entry fails there rather than in production", and a 503 meaning "a route is missing its `outputFileTracingIncludes` entry" | both corrected; §7 is the checklist someone reads *before* deploying, so it was the worst place for the old model to survive |
+
+Three topic sentences also survived edits to the bodies underneath them, and now match:
+`tests/unit/server/routes.test.ts:2` ("both of which only fail in production" → "neither
+of which any local run can see"), `lib/server/route-inventory.ts:5` ("one production-only
+failure mode" → "one latent, deployment-only dependency no local run can check"), and
+`scripts/smoke.ts:5-6`, whose header claimed the script catches the tracing failure while
+the file contains no such check (`grep -n untracedDictRoutes scripts/smoke.ts` → nothing;
+the guard is `tests/unit/server/routes.test.ts:71`). Its rewritten header now says what
+the script is for and names the static guard; the reference to a
+`tests/unit/server/tracing.test.ts` — a file that has never existed in this repo — is
+gone, and the 114-column line went with it.
+
+### 3. The HTTP table: re-measured rather than re-labelled
+
+The table published cycle A's pre-incremental figures (615 / 675 / 953 / 1777 ms) as the
+shipped build's cold cost, when the cycle-A-fixes run re-measured the same four higher
+(724 / 763, 774 / 751, 933 / 1023, 1634 / 1721 ms). Rather than pick one of the two, the
+four endpoints were **re-measured here** on `c3bc80d`, same harness — one fresh
+`next start` per sample, one endpoint per process, two samples each, warm = `HEAD
+/api/dict/hsk?band=1` then 3 s:
+
+| Endpoint, alone in a fresh process | lazy, no warm-up | after the warm-up |
+|---|---|---|
+| `GET /api/dict/entries?ids=…` | 682 / 648 ms | 9 / 9 ms |
+| `GET /api/dict/hsk?band=1` | 658 / 676 ms | 12 / 11 ms |
+| `POST /api/dict/segment` | 932 / 981 ms | 15 / 15 ms |
+| `GET /api/dict/search?q=dasuan` | 1648 / 1698 ms | 11 / 11 ms |
+
+Every one of the sixteen samples carried a **different `x-tangram-instance`**, which is
+the evidence the process really was fresh — the first attempt at this harness silently
+measured a *warm* leftover server (entries 7 ms "cold") because `pkill` had matched and
+killed the wrong shell, and the instance id is what caught it.
+
+The conclusion is that the ±20% here is the container, not the commit: `segment` and
+`search` reproduce the cycle-A-fixes numbers, `entries` and `hsk` land back near cycle
+A's. The reviewer's "+24% on `entries`" is session noise, not the incremental rewrite's
+~10%. `docs/deploy.md` now prints this run with the commit named, and both earlier runs
+beside it with the instruction to read the cold column as a band.
+
+### 4. Minors applied
+
+- **`memory` is not a Next route-segment export.** `AppSegmentConfigSchemaKeys` in the
+  installed Next 16.3.4 is `revalidate, dynamicParams, dynamic, fetchCache, instant,
+  prefetch, unstable_dynamicStaleTime, preferredRegion, runtime, maxDuration` — no
+  `memory`. `docs/deploy.md` (twice) and `tests/unit/server/route-config.test.ts` now say
+  the three exports Next actually reads, note that `memory`/`maxConcurrency` are
+  `vercel.json` `functions` fields, and record that the guard keeps forbidding `memory`
+  anyway because it is the name people reach for and forbidding it is free. **The guard's
+  four names are unchanged** and no test was touched.
+- **The split consequence is no longer over-determined.** "the route that never declared
+  its files is the one that 500s" replaced by what the mechanism supports: a split can
+  leave the untraced route in a group where nothing declared `data/**`, and which route
+  ends up where is not predictable from the diff — which is the argument for declaring the
+  entry per route.
+- **`pnpm coldstart` covers four of eight routes**, and §5's summary sentence now says so
+  the way its own probe subsection already did.
+
+### Decisions
+
+1. **Re-measure rather than choose between two recorded runs.** Two numbers taken months
+   apart on a shared container are not a regression; publishing either one as *the* cold
+   cost is what created this finding. The doc now carries one measured run, its commit,
+   and the spread.
+2. **`pnpm build`, not `pnpm data`, in the §7 503 explanation.** The reviewer's suggested
+   text named `pnpm data`; `build` is `pnpm data:ensure && next build && pnpm sw`, so the
+   data step is *inside* the build command and naming it separately would have been a
+   second small inaccuracy.
+3. **The cycle-C "nine live sites" table is corrected here, not edited in place** —
+   `HANDOFF.md` is append-only. Section 2 above is the amendment: eleven sites, not nine.
+4. **Still no test added.** A comment cannot be asserted on. The two guards that can fail
+   (`route-config.test.ts`, `routes.test.ts`) are unchanged, deliberately.
+
+### For the reviewer
+
+- `pnpm lint`, `pnpm test` (946 tests, 94 files) and `pnpm build` are green. No source
+  behaviour changed in this cycle: the diff is comments, docs and one measured table.
+- The one claim worth attacking is §5's new sentence "this repo has never been deployed to
+  Vercel". It rests on absence — no `.vercel/`, no deployment URL anywhere in the repo,
+  and line 2909's own caveat — which is weaker evidence than a positive record would be.
+  If a deployment does exist somewhere, that sentence is the one to delete.

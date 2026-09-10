@@ -3,13 +3,17 @@
  * suite is already running (`playwright.config.ts` → `pnpm build && pnpm start`).
  *
  * This is the same `runSmoke` that `pnpm smoke` runs, wired in here so it is
- * not a script somebody has to remember. The failure it exists for —
- * a dictionary-reading route missing its `outputFileTracingIncludes` entry —
- * is invisible to a unit test and invisible in dev, and `/api/examples` and
- * `/api/recall` both shipped with it.
+ * not a script somebody has to remember. What it catches is what only exists
+ * once the server is real: a route that throws at module scope, a middleware
+ * that refuses something it should not, a page that fails to render.
  *
- * `tests/unit/server/routes.test.ts` checks the tracing config statically and
- * that every handler has a case; this checks the server actually answers.
+ * It does *not* see tracing. This run reads `data/` off the disk like any
+ * `pnpm start` (docs/deploy.md §7), so a missing `outputFileTracingIncludes`
+ * entry is invisible here; that is guarded statically by
+ * `tests/unit/server/routes.test.ts`, which also checks every handler has a
+ * case. `/api/examples` and `/api/recall` are why that guard exists: they reached
+ * the Phase 8 merge with no entry of their own and the keys were added by hand,
+ * with nothing automated noticing.
  */
 import { expect, test } from '@playwright/test';
 

@@ -2,21 +2,24 @@
  * `pnpm smoke` — hit every API route of a **built, running** server over HTTP
  * and fail loudly on anything that is not 2xx.
  *
- * Why this exists rather than a unit test that calls the handlers: the two
- * failures this catches cannot be seen from inside the process.
+ * Why this exists rather than a unit test that calls the handlers: it catches
+ * what only appears once the server is real — a route that throws at module
+ * scope, a middleware that 401s something it should not, a page that fails to
+ * render. None of that is visible from inside a handler call.
  *
- *  1. **Missing `outputFileTracingIncludes`.** Every route is traced
- *     separately — even though Vercel then bundles them into one shared
- *     function, whose file list is the union of those traces (docs/deploy.md
- *     §5) — so a route that reads `data/dict.json` and is not listed in
- *     `next.config.ts` ships with no claim on the file of its own, and is only
- *     served by the group it landed in. `/api/examples` and `/api/recall`
- *     shipped that way and were found by hand. The coverage half of this script (`checkRouteCoverage`) refuses to
- *     let a route exist without a case, and `tests/unit/server/tracing.test.ts`
- *     refuses to let a dictionary-reading route exist without a tracing entry.
- *  2. **Anything that only appears once the server is real**: a route that
- *     throws at module scope, a middleware that 401s something it should not, a
- *     page that fails to render.
+ * What it does **not** catch is a missing `outputFileTracingIncludes` entry.
+ * Every route is traced separately — even though Vercel then bundles them into
+ * one shared function, whose file list is the union of those traces
+ * (docs/deploy.md §5) — so a route that reads `data/dict.json` and is not listed
+ * in `next.config.ts` ships with no claim on the file of its own, and is only
+ * served by the group it landed in. No HTTP run can see that, here or against a
+ * deployment: a local server reads `data/` off the disk either way. The guard is
+ * static and lives in `tests/unit/server/routes.test.ts`, off the import graph.
+ * `/api/examples` and `/api/recall` are the case in point — their keys were
+ * added by hand at the Phase 8 merge, with nothing automated noticing.
+ *
+ * The coverage half of this script (`checkRouteCoverage`) is that guard's other
+ * half: it refuses to let a route exist without a case here.
  *
  * It is a *smoke* test, not an assertion suite: every case sends a request a
  * healthy deployment must answer 2xx to. What the body says is

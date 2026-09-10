@@ -141,3 +141,21 @@ and the two in-repo comments that asserted one function per route now say what
 harness, and the warm-instance memory figure (311 MiB) is recorded beside the
 per-route ones. `scripts/coldstart-probe.ts`, the diagnostic headers and the
 no-`maxDuration` test (items 3–5) are still not built.
+
+## Amendment — after cycle B
+
+Design items **3, 4, 5 and the rest of 6** are built (HANDOFF.md, "Phase 9 — cycle B").
+Two things the plan implied and this cycle had to decide:
+
+- **The probe's gate check is `GET /api/ask`.** Item 4 says that route is not in the
+  sequence because it reads no dictionary; that is also what makes it the safe preflight,
+  since it cannot warm anything the samples measure. It is a gate check, not a sample.
+- **A deployment with no diagnostic headers is a legitimate run.** The acceptance line
+  asks for the probe's numbers "beside a run against the previous deploy", and the
+  previous deploy has no headers at all — so the verdict says the latencies cannot be
+  shown to come from one process, and exits 0. Only a *mix* of stamped and unstamped
+  responses is an error.
+
+Every Design item now stands built except the last acceptance bullet, which needs a real
+Vercel deployment: `pnpm coldstart` against the app, beside the same run against the
+previous deploy.

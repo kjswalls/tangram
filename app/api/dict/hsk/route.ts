@@ -11,6 +11,7 @@
  */
 import { after } from 'next/server';
 
+import { withDictDiagnostics } from '@/lib/dict/diagnostics';
 import { dictErrorResponse } from '@/lib/dict/load';
 import { dictVersion, getDictIndex, hskBand } from '@/lib/dict/index';
 import type { HskBand, HskResponse } from '@/lib/dict/types';
@@ -38,7 +39,7 @@ function parseBand(request: Request): HskBand | Response {
   return band as HskBand;
 }
 
-export function GET(request: Request): Response {
+export const GET = withDictDiagnostics(function handleGet(request: Request): Response {
   const band = parseBand(request);
   if (band instanceof Response) return band;
 
@@ -54,7 +55,7 @@ export function GET(request: Request): Response {
     if (missing) return missing;
     throw error;
   }
-}
+});
 
 /**
  * Schedule the rest of the warm-up so it outlives this response.
@@ -86,7 +87,7 @@ function scheduleWarmUp(): void {
   }
 }
 
-export function HEAD(request: Request): Response {
+export const HEAD = withDictDiagnostics(function handleHead(request: Request): Response {
   const band = parseBand(request);
   // The 400 body rides along rather than being stripped here. A HEAD response
   // carries no body over the wire — Node drops it — and writing a second,
@@ -112,4 +113,4 @@ export function HEAD(request: Request): Response {
   // HEAD ran GET and stripped the body, so it carried `content-type`; a bodiless
   // 200 that quietly drops it is this route disagreeing with every other one.
   return new Response(null, { status: 200, headers: { 'content-type': 'application/json' } });
-}
+});

@@ -5,6 +5,7 @@
  * other dictionary routes it answers a missing `data/` build with 503 rather than
  * a stack trace, so the shell can show one banner.
  */
+import { withDictDiagnostics } from '@/lib/dict/diagnostics';
 import { dictErrorResponse } from '@/lib/dict/load';
 import { search, SEARCH_PAGE_SIZE, type SearchResult } from '@/lib/dict/search';
 
@@ -13,7 +14,7 @@ export const dynamic = 'force-dynamic';
 
 const MAX_QUERY_CHARS = 200;
 
-export function GET(request: Request): Response {
+export const GET = withDictDiagnostics(function handleGet(request: Request): Response {
   const params = new URL(request.url).searchParams;
   const q = params.get('q');
   if (q === null || q.trim() === '') {
@@ -41,4 +42,4 @@ export function GET(request: Request): Response {
     if (missing) return missing;
     throw error;
   }
-}
+});

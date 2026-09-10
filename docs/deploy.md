@@ -136,7 +136,7 @@ and the failure mode of a gate that quietly stopped running is an invoice.
 `pnpm e2e` run in exactly that state, which is deliberate: a gate that changed
 local behaviour would be switched off within a week.
 
-## 5. Cold start, function memory, and why tracing is per-function
+## 5. Cold start, function memory, and why tracing is per route
 
 ### The dictionary is 33.5 MB of JSON, read at request time
 
@@ -252,6 +252,46 @@ the parse directly. If a
 route ever 502s with no log line, out-of-memory during the dictionary load is
 the first thing to check.
 
+### Seeing it from outside: two headers and `pnpm coldstart`
+
+Everything above is a claim about *one process*: one parse, one set of indexes,
+one warm-up. From outside, that is invisible — a fast response and a slow one
+look the same whether they came from the same instance or from two. So every
+dictionary response carries two headers (`lib/dict/diagnostics.ts`):
+
+| Header | What it is |
+|---|---|
+| `x-tangram-instance` | a `randomUUID()` minted once at module load — the same value on every response from one process, a different one from any other |
+| `x-tangram-index-parts` | `builtIndexParts()` at response time: empty on a 503, `sorted,entries,hsk` on a process that has only answered the banner's probe, all six once the warm-up has settled |
+
+They are on the 400s and the 503s too, which is where they are worth the most,
+and they carry nothing else — a random id and a fixed six-word vocabulary.
+
+`pnpm coldstart` replays the opening of a session against a deployment and reads
+them back:
+
+```bash
+pnpm coldstart --base-url https://<your-app>.vercel.app --key "$TANGRAM_ACCESS_SECRET"
+```
+
+It issues the banner's `HEAD /api/dict/hsk?band=1`, waits two seconds for
+`after()` to settle, then a first `entries`, `search` and `segment`, then each
+again — printing latency, instance id and built parts per response. **Its verdict
+is the instance id, not a latency band:** one id across the sequence means one
+process answered everything and the numbers are a like-for-like series; more than
+one means more than one function or instance and the numbers are not comparable.
+A non-2xx is an invalid sample rather than a slow one, and it refuses to run at
+all against a gated deployment without `--key`. `GET /api/ask` is not sampled —
+it reads no dictionary — it is only the gate check.
+
+If the ids ever differ, the first thing to look at is whether a route has grown a
+`maxDuration` or `memory` export: that is exactly what makes one route's function
+configuration differ from the rest and splits it into its own function, with its
+own cold start and its own unwarmed indexes. If a ceiling is genuinely needed it
+belongs in a `vercel.json` covering `app/api/**`, so every route keeps the same
+configuration. `tests/unit/server/route-config.test.ts` fails the build before
+that can ship by accident.
+
 ### Tracing is declared per route — every new dictionary-reading route needs an entry
 
 `next.config.ts`:
@@ -307,6 +347,13 @@ pnpm smoke --base-url https://<your-app>.vercel.app --key "$TANGRAM_ACCESS_SECRE
 It also runs inside `pnpm e2e` (`tests/e2e/d/smoke.spec.ts`) against the local
 built server, so a route that forgets its tracing entry fails there rather than
 in production.
+
+Then `pnpm coldstart` against the same URL (§5), which is the check that the
+deployment is still one warm process rather than several cold ones:
+
+```bash
+pnpm coldstart --base-url https://<your-app>.vercel.app --key "$TANGRAM_ACCESS_SECRET"
+```
 
 Then, by hand, the three things a script cannot tell you:
 

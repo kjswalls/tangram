@@ -6,6 +6,7 @@
  * the dictionary's (CLAUDE.md). Nothing here is ever written into a card.
  */
 import { decomposeChars, type DecompResponse } from '@/lib/dict/decomp';
+import { withDictDiagnostics } from '@/lib/dict/diagnostics';
 import { dictErrorResponse } from '@/lib/dict/load';
 
 // The decomposition file is read from disk per process; never prerender.
@@ -13,7 +14,7 @@ export const dynamic = 'force-dynamic';
 
 const MAX_CHARS = 64;
 
-export function GET(request: Request): Response {
+export const GET = withDictDiagnostics(function handleGet(request: Request): Response {
   const chars = new URL(request.url).searchParams.get('chars');
   if (!chars) {
     return Response.json({ error: 'bad-request', hint: 'pass ?chars=<hanzi>' }, { status: 400 });
@@ -33,4 +34,4 @@ export function GET(request: Request): Response {
     if (missing) return missing;
     throw error;
   }
-}
+});

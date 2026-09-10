@@ -4,6 +4,7 @@
  * POST rather than GET because the reader posts whole paragraphs, which do not
  * belong in a URL or in a server log. The algorithm is `lib/dict/segment.ts`.
  */
+import { withDictDiagnostics } from '@/lib/dict/diagnostics';
 import { dictErrorResponse } from '@/lib/dict/load';
 import { segment, type SegmentResult, type SegmentScript } from '@/lib/dict/segment';
 
@@ -12,7 +13,7 @@ export const dynamic = 'force-dynamic';
 
 const MAX_TEXT_CHARS = 20_000;
 
-export async function POST(request: Request): Promise<Response> {
+export const POST = withDictDiagnostics(async function handlePost(request: Request): Promise<Response> {
   let payload: unknown;
   try {
     payload = await request.json();
@@ -41,4 +42,4 @@ export async function POST(request: Request): Promise<Response> {
     if (missing) return missing;
     throw error;
   }
-}
+});

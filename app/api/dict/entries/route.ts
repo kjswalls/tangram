@@ -5,6 +5,7 @@
  * asked for; ids that are not in the dictionary are dropped rather than erroring, so
  * a stale card snapshot degrades to "not found" instead of failing the whole batch.
  */
+import { withDictDiagnostics } from '@/lib/dict/diagnostics';
 import { dictErrorResponse } from '@/lib/dict/load';
 import { dictVersion, getEntries, parseIdList } from '@/lib/dict/index';
 import type { EntriesResponse } from '@/lib/dict/types';
@@ -14,7 +15,7 @@ export const dynamic = 'force-dynamic';
 
 const MAX_IDS = 200;
 
-export function GET(request: Request): Response {
+export const GET = withDictDiagnostics(function handleGet(request: Request): Response {
   const params = new URL(request.url).searchParams;
   const ids = params.getAll('ids').flatMap(parseIdList);
 
@@ -39,4 +40,4 @@ export function GET(request: Request): Response {
     if (missing) return missing;
     throw error;
   }
-}
+});

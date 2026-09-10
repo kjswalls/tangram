@@ -16,7 +16,8 @@
     "data": "tsx scripts/build-data.ts",
     "data:ensure": "tsx scripts/build-data.ts --ensure",
     "sw": "tsx scripts/build-sw.ts",
-    "smoke": "tsx scripts/smoke.ts"
+    "smoke": "tsx scripts/smoke.ts",
+    "coldstart": "tsx scripts/coldstart-probe.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.124.0",

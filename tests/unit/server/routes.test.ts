@@ -1,10 +1,12 @@
 /**
  * Two things a route can forget, both of which only fail in production.
  *
- *  1. **`outputFileTracingIncludes`.** Vercel traces and bundles every route
- *     separately, so a route that reads `data/dict.json` and is not listed in
- *     `next.config.ts` works under `next dev` and under `pnpm start` — the file
- *     is on disk in both — and 500s in the deployment, on that route alone.
+ *  1. **`outputFileTracingIncludes`.** Vercel traces every route separately and
+ *     then bundles the routes into one shared function, whose file list is the
+ *     union of those traces (docs/deploy.md §5). So a route that reads
+ *     `data/dict.json` and is not listed in `next.config.ts` works under
+ *     `next dev` and under `pnpm start` — the file is on disk in both — and 500s
+ *     in the deployment, on that route alone.
  *     `/api/examples` and `/api/recall` shipped exactly that way and were found
  *     by hand.
  *  2. **A route nobody exercises.** `pnpm smoke` is only as good as its case

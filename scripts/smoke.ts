@@ -5,9 +5,11 @@
  * Why this exists rather than a unit test that calls the handlers: the two
  * failures this catches cannot be seen from inside the process.
  *
- *  1. **Missing `outputFileTracingIncludes`.** Every route is traced and
- *     bundled separately, so a route that reads `data/dict.json` and is not
- *     listed in `next.config.ts` works in dev and 500s in the deployment.
+ *  1. **Missing `outputFileTracingIncludes`.** Every route is traced
+ *     separately — even though Vercel then bundles them into one shared
+ *     function, whose file list is the union of those traces (docs/deploy.md
+ *     §5) — so a route that reads `data/dict.json` and is not listed in
+ *     `next.config.ts` works in dev and 500s in the deployment.
  *     `/api/examples` and `/api/recall` shipped that way and were found by
  *     hand. The coverage half of this script (`checkRouteCoverage`) refuses to
  *     let a route exist without a case, and `tests/unit/server/tracing.test.ts`
@@ -266,8 +268,10 @@ export async function runSmoke(options: SmokeOptions): Promise<SmokeResult> {
     let url = '';
     try {
       url = `${base}${smokeCase.url(context)}`;
-      const headers: Record<string, string> = { accept: 'application/json, text/html' };
-      if (options.secret) headers.cookie = `${ACCESS_COOKIE}=${options.secret}`;
+      const headers: Record<string, string> = {
+        accept: 'application/json, text/html',
+        ...accessHeaders(options.secret),
+      };
       let payload: BodyInit | undefined;
       if (smokeCase.body) {
         headers['content-type'] = 'application/json';
@@ -311,7 +315,21 @@ export async function runSmoke(options: SmokeOptions): Promise<SmokeResult> {
   return { passed, failures, timings };
 }
 
-function parseArgs(argv: readonly string[]): { baseURL: string; secret?: string } {
+export interface CliArgs {
+  baseURL: string;
+  /** The access secret, when one was given. Never logged, never echoed. */
+  secret?: string;
+}
+
+/**
+ * `--base-url` and `--key`, with the same environment fallbacks, for every
+ * script that talks to a running server.
+ *
+ * Exported because `scripts/coldstart-probe.ts` takes the same two arguments,
+ * and two parsers for one pair of flags is two places for `--key` to be handled
+ * differently — which for a credential is not a cosmetic difference.
+ */
+export function parseArgs(argv: readonly string[]): CliArgs {
   let baseURL =
     process.env.SMOKE_BASE_URL ?? `http://127.0.0.1:${process.env.PORT ?? '3000'}`;
   let secret = process.env.TANGRAM_ACCESS_SECRET;
@@ -320,6 +338,20 @@ function parseArgs(argv: readonly string[]): { baseURL: string; secret?: string 
     else if (argv[i] === '--key' && argv[i + 1]) secret = argv[(i += 1)];
   }
   return { baseURL, ...(secret ? { secret } : {}) };
+}
+
+/**
+ * The headers that authorise a request against a gated deployment, or none.
+ *
+ * The gate takes a cookie rather than a header (`lib/server/access.ts`): the
+ * owner authorises a phone by visiting `?key=…` once, and a script has no
+ * browser to do that in, so it sends the cookie the browser would have been
+ * given. The secret goes into the request and nowhere else — never into a log
+ * line, never into a URL, which is the whole reason the gate strips `?key=` in
+ * the first place.
+ */
+export function accessHeaders(secret?: string): Record<string, string> {
+  return secret ? { cookie: `${ACCESS_COOKIE}=${secret}` } : {};
 }
 
 async function main(): Promise<void> {

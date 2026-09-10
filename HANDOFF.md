@@ -3436,3 +3436,133 @@ entries 724 / 763 ms, hsk 774 / 751 ms.
 - Still not built, and still owed: `scripts/coldstart-probe.ts`, the
   `x-tangram-instance` / `x-tangram-index-parts` diagnostic headers, and the unit test
   that forbids `maxDuration`/`memory` exports under `app/api/**` (plan items 3–5).
+
+## Phase 9 — cycle B: the diagnostic headers, `pnpm coldstart`, the no-config guard
+
+Plan of record: [docs/phase9-consolidation.md](docs/phase9-consolidation.md) v2, Design
+items **3, 4 and 5** — the three cycle A left owed. Cycle A's warm-up is unchanged by
+this commit; what is new is that its effect can be *seen* from outside the process, and
+that the configuration invariant it depends on is now enforced by a test.
+
+Green on this commit: `pnpm lint`, `pnpm test` (**926 unit in 93 files** — 902 in 90
+before), `pnpm build`, `pnpm e2e` (108 passed), and `pnpm smoke` against the built server
+(21 routes). No dependency added; `pnpm-lock.yaml` untouched. No live model call — there
+is still no key in this container.
+
+### What was built
+
+- **`lib/dict/diagnostics.ts`** — `INSTANCE_ID` (one `randomUUID()` at module load),
+  `stampDictDiagnostics(response)` and the `withDictDiagnostics(handler)` wrapper that
+  puts `x-tangram-instance` and `x-tangram-index-parts` on every dictionary response.
+- **All five dictionary routes** (`hsk` GET + HEAD, `entries`, `search`, `segment`,
+  `decomp`) now export `const GET/HEAD/POST = withDictDiagnostics(function handle…)`.
+  Handler bodies are untouched; nothing else about them changed.
+- **`scripts/coldstart-probe.ts`** + `"coldstart": "tsx scripts/coldstart-probe.ts"`.
+- **`scripts/smoke.ts`** — `parseArgs()` and a new `accessHeaders()` are exported and the
+  probe imports both, so `--base-url`/`--key` are parsed and the access cookie is built in
+  exactly one place.
+- **`tests/unit/server/route-config.test.ts`** (3 cases) — no `app/api/**/route.ts` may
+  export `maxDuration` or `memory`.
+- **`tests/unit/dict/diagnostics.test.ts`** (8) and **`tests/unit/server/coldstart-probe.test.ts`**
+  (13).
+- **`docs/deploy.md` §5** gained "Seeing it from outside: two headers and `pnpm coldstart`",
+  and §7's after-deploy list now runs the probe. The last two in-repo comments that said
+  Vercel bundles each route separately (`scripts/smoke.ts`, `tests/unit/server/routes.test.ts`)
+  and the same claim in `next.config.ts` are corrected — that finishes plan item 6.
+
+### The numbers (this container, 4 CPUs, `pnpm build` then one fresh `next start`)
+
+`pnpm coldstart --base-url http://127.0.0.1:3000`, against a process that had served
+nothing:
+
+| step | latency | status | index parts on that response |
+|---|---|---|---|
+| banner `HEAD /api/dict/hsk?band=1` | **622 ms** | 200 | `sorted,entries,hsk` |
+| *(wait 2000 ms)* | | | |
+| first `GET /api/dict/entries` | **12 ms** | 200 | all six |
+| first `GET /api/dict/search?q=dasuan` | **10 ms** | 200 | all six |
+| first `POST /api/dict/segment` | **14 ms** | 200 | all six |
+| repeat entries / search / segment | 5 / 7 / 7 ms | 200 | all six |
+
+Verdict: one instance id across all seven responses. That table is the whole phase in one
+screen — the probe's 622 ms HEAD carries a three-part list, and every request after the
+wait carries six, which is `after()` doing what cycle A claimed without anybody timing it.
+
+**The headers cost 1.1 µs per response** (200k stamps, `Response` construction subtracted;
+a set of two headers plus a join over ≤ 6 short strings). Over HTTP the repeats are 5–8 ms,
+indistinguishable from cycle A's 8 ms.
+
+Verified end to end, each against its own fresh server:
+
+- **gated, no `--key`** → `refusing to run — this deployment is gated`, exit 1, no request
+  issued; **gated, wrong key** → `refused the key given with --key (401)`, exit 1; **gated,
+  right key** → the same table as above (HEAD 673 ms, everything after ≤ 12 ms). The key
+  appears nowhere in the output — the run header says `(with access cookie)` and no more.
+- **`TANGRAM_DATA_DIR` empty** → every response 503, each stamped with the instance id and
+  an empty parts list, and the probe reports `invalid run — 7 of 7 responses were not 2xx …
+  Nothing here is a measurement`, exit 1.
+- The headers survive Next's response pipeline over real HTTP on the 200, the 400
+  (`?band=99`), the 503 and the bodiless HEAD.
+
+### Decisions the plan left open
+
+1. **One wrapper per handler, not a stamp at each `return`.** The five routes have twenty-odd
+   return sites; a header on nineteen of them is worse than a header on none, because the
+   probe would read the gap as a second process. `withDictDiagnostics` preserves the
+   handler's own return type, so the synchronous routes stay synchronous and the existing
+   unit tests keep reading `.status` off a `Response` rather than a promise. A test walks
+   `app/api/dict/**` from `discoverApiRoutes()` and fails if any handler is not wrapped.
+2. **The headers are on the five dictionary routes only**, `decomp` included — it reads
+   `decomp.json` rather than an index, but it runs in the same process, so its instance id
+   is as much evidence as any other. `/api/ask`, `/api/examples` and `/api/recall` do not
+   carry them: they are not sampled, and the probe's question is about the dictionary. Adding
+   them later is a one-line import per route.
+3. **`randomUUID` from `node:crypto`, not the global.** These routes are Node-only (they read
+   the disk), and the explicit import says so.
+4. **The gate check is one `GET /api/ask` before the sequence.** The plan excludes `/api/ask`
+   from the *samples* because it reads no dictionary — which is exactly what makes it the
+   right preflight: it is the cheapest of the three gated routes and it cannot warm anything
+   the samples are about to measure. It lands before the HEAD, so the HEAD's number is the
+   dictionary build rather than the function's first module load.
+5. **A deployment with no diagnostic headers is reported, not failed.** Running the probe
+   against the *previous* deploy is half of what the plan asks for, and that build has no
+   headers: the verdict then says so in as many words ("this build predates the diagnostic
+   headers … they cannot be shown to come from one process") and exits 0. A *mix* of stamped
+   and unstamped responses exits 1 — that is two builds behind one URL.
+6. **Differing instance ids exit 1.** They may be ordinary scale-out rather than a config
+   regression, so the line says both causes; but silence would let the number this phase
+   exists to protect drift with nothing going red.
+7. **The wait is a constant (2000 ms), not a flag.** Measured settling on this box is ~1.3 s
+   after the HEAD resolves, so two seconds has margin and still reports `NOT settled` if the
+   warm-up regresses — a flag would mostly be a way to make any implementation look fine.
+8. **The `entries` sample uses a fixed id** (`打算|打算[da3 suan4]`) rather than chaining off a
+   search the way `pnpm smoke` does, because the *order* is the measurement: `entries` has to
+   be the first dictionary request after the probe. If a snapshot ever stops containing it the
+   route still answers 200 and does the same index work, and the run prints a note saying the
+   list came back empty.
+9. **The guard forbids exactly `maxDuration` and `memory`.** `runtime` and `preferredRegion`
+   also change a function's configuration, but neither is a *silent* regression — an edge
+   route cannot read `data/dict.json` at all, so it fails loudly and immediately. The two in
+   the list are the ones that keep every test green while quietly reintroducing a second cold
+   start. The test enumerates routes through `lib/server/route-inventory.ts`, so a route added
+   anywhere under `app/api` is covered the day it is written; it was verified to fail by
+   adding `export const maxDuration = 30` to `/api/dict/decomp` and re-running.
+10. **`package.json` (frozen) gained one line**: `"coldstart": "tsx scripts/coldstart-probe.ts"`,
+    the same deviation Phase 8 took for `"smoke"`. No dependency, no lockfile change.
+
+### For the reviewer
+
+- The interesting failure to try is a *fake* split: add `export const maxDuration = 30` to one
+  dictionary route and watch `pnpm test` go red — that is the only cheap signal, since seeing
+  the real split needs `vercel build` (`find .vercel/output/functions -type l`) or a deploy.
+- `x-tangram-index-parts` is read at *response* time, inside the wrapper, which is why the
+  HEAD reports `sorted,entries,hsk`: the rest is built by `after()`, after the response.
+- `builtIndexParts()` reads the module cache and never touches the disk, so stamping cannot
+  turn the 503 it is reporting on into a 500. There is a unit case for exactly that.
+- Nothing in the probe prints the key, and nothing in the headers is derived from a request:
+  a unit case asserts the parts value is only ever lowercase words from the fixed vocabulary,
+  so no query can be reflected into a header that ships on every response.
+- Still owed from the plan after this cycle: nothing in Design items 1–6. The acceptance
+  bullet that needs a real deployment — `pnpm coldstart` against Vercel, beside a run against
+  the previous deploy — cannot be run from this container and is the one line of the phase
+  that is still unmeasured.

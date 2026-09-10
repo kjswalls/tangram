@@ -14,7 +14,7 @@ import { after } from 'next/server';
 import { dictErrorResponse } from '@/lib/dict/load';
 import { dictVersion, getDictIndex, hskBand } from '@/lib/dict/index';
 import type { HskBand, HskResponse } from '@/lib/dict/types';
-import { warmDictionary } from '@/lib/dict/warm';
+import { warmDictionary, WARM_UP_NOT_SCHEDULED } from '@/lib/dict/warm';
 
 // The dictionary is read from disk per process; never prerender this at build time.
 export const dynamic = 'force-dynamic';
@@ -66,17 +66,23 @@ export function GET(request: Request): Response {
  * it settles. (Under `next start` Next supplies its own awaiter, so this is the
  * same code path locally, which is what makes it measurable here.)
  *
- * `after()` throws when there is no request scope, which happens only when the
- * handler is called directly — the unit tests do exactly that. There is no live
- * instance to keep warm in that case, so skipping is the right answer.
+ * `after()` throws when there is no request scope, which is what happens when the
+ * handler is called directly — the unit tests do exactly that, and there is no
+ * live instance to keep warm in that case, so skipping is right. It is *not* right
+ * to be silent about any other reason: a runtime that supplies no `waitUntil`
+ * would degrade to "the warm-up never happens", and the only symptom is a ~1.5 s
+ * first lookup that nobody is measuring. Vercel captures `console.warn` per
+ * invocation, so one line is the difference between a diagnosable regression and
+ * an invisible one. (The message lives in lib/dict/warm.ts because a route module
+ * may export only handlers and route config — Next type-checks that.)
  */
 function scheduleWarmUp(): void {
   try {
     after(async () => {
       await warmDictionary();
     });
-  } catch {
-    // No request scope: not a real request, so there is nothing to warm.
+  } catch (error) {
+    console.warn(WARM_UP_NOT_SCHEDULED, error);
   }
 }
 
@@ -89,11 +95,11 @@ export function HEAD(request: Request): Response {
   if (band instanceof Response) return band;
 
   try {
-    // Only what GET's own answer needs: `sorted`, `entries`, `hsk`. Building the
-    // rest here would make the probe slower than the GET it stands in for — and
-    // Today's own `GET /api/dict/hsk` races this probe on a cold open, so that GET
-    // would then queue behind ~2.3 s of index building. This read is also what
-    // raises `DictDataMissingError`, which is the 503 the banner keys on.
+    // Only what GET's own answer needs: `sorted`, `entries`, `hsk`. The probe must
+    // not become slower than the answer it stands in for, and neither this route's
+    // own client wrapper (`fetchHskBand`, lib/dict/client.ts) nor anything outside
+    // the app should have to queue behind ~2.3 s of index building for a 200. This
+    // read is also what raises `DictDataMissingError`, the 503 the banner keys on.
     void getDictIndex().byHsk;
   } catch (error) {
     const missing = dictErrorResponse(error);
@@ -102,5 +108,8 @@ export function HEAD(request: Request): Response {
   }
 
   scheduleWarmUp();
-  return new Response(null, { status: 200 });
+  // The header set GET would have sent, minus the body. Next's auto-implemented
+  // HEAD ran GET and stripped the body, so it carried `content-type`; a bodiless
+  // 200 that quietly drops it is this route disagreeing with every other one.
+  return new Response(null, { status: 200, headers: { 'content-type': 'application/json' } });
 }

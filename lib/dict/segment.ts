@@ -20,6 +20,7 @@
  * and never truncated: 了 is one token with `le` and `liǎo` on it, and the panel
  * that opens from a tap is the thing that decides between them.
  */
+import { drain, SLICE } from './incremental';
 import { getDictIndex, type DictIndex } from './index';
 import { hasCjk } from './search';
 import type { DictEntry, EntryId } from './types';
@@ -62,34 +63,52 @@ function headwordFreq(index: DictIndex, ids: readonly EntryId[]): number {
   return first?.freq ?? 1;
 }
 
-function statsFor(index: DictIndex, map: Map<string, EntryId[]>): ScriptStats {
+function* statsForInSlices(
+  index: DictIndex,
+  map: Map<string, EntryId[]>,
+): Generator<void, ScriptStats> {
   let total = 0;
   let maxLen = 1;
+  let seen = 0;
   for (const [word, ids] of map) {
     total += headwordFreq(index, ids);
     const length = [...word].length;
     if (length > maxLen && length <= MAX_WORD_CHARS) maxLen = length;
+    seen += 1;
+    if (seen % SLICE === 0) yield;
   }
   return { logTotal: Math.log(total || 1), maxLen };
+}
+
+/**
+ * Build the DAG statistics in bounded steps — two walks of a 120k-key map, ~110 ms
+ * together, which the warm-up must not do in one go. One implementation, two
+ * drivers: see `lib/dict/incremental.ts`.
+ */
+export function* warmSegmentStatsInSlices(index: DictIndex): Generator<void> {
+  if (STATS.has(index)) return;
+  const simp = yield* statsForInSlices(index, index.bySimp);
+  const trad = yield* statsForInSlices(index, index.byTrad);
+  STATS.set(index, { simp, trad });
 }
 
 function segmentIndex(index: DictIndex): SegmentIndex {
   let cached = STATS.get(index);
   if (!cached) {
-    cached = { simp: statsFor(index, index.bySimp), trad: statsFor(index, index.byTrad) };
-    STATS.set(index, cached);
+    drain(warmSegmentStatsInSlices(index));
+    cached = STATS.get(index) as SegmentIndex;
   }
   return cached;
 }
 
 /**
- * Build the DAG's per-script statistics now, if this process has not already.
+ * Build the DAG's per-script statistics now, in one go, if this process has not
+ * already — the eager sibling of `warmSegmentStatsInSlices`.
  *
  * Same reason as `warmHeadwords` in search.ts: `STATS` is not one of
  * `DICT_INDEX_PARTS`, so a warm-up that walks the index parts leaves the first
- * reader paste of a session paying for it. `lib/dict/warm.ts` forces it through
- * this hook rather than reaching into the WeakMap, so the cache keeps one owner.
- * Returns whether this call is the one that did the building.
+ * reader paste of a session paying for it, and both spellings live here so the
+ * WeakMap keeps one owner. Returns whether this call did the building.
  */
 export function warmSegmentStats(index: DictIndex): boolean {
   if (STATS.has(index)) return false;

@@ -13,9 +13,17 @@ export function DataBanner() {
 
   useEffect(() => {
     let cancelled = false;
-    // HEAD, not GET: Next answers it from the same route handler with the same
-    // status, and the banner only ever reads the status — a GET would pull the
-    // whole 160 KB band-1 payload on every cold load of every route.
+    // HEAD, not GET: the route exports its own HEAD (app/api/dict/hsk/route.ts)
+    // which answers with the same status and no body — the banner only ever reads
+    // the status, and a GET would pull the whole 160 KB band-1 payload on every
+    // cold load of every route.
+    //
+    // This one line is also the trigger for the dictionary warm-up: that HEAD is
+    // what schedules `warmDictionary()` (lib/dict/warm.ts) through `after()`, and
+    // it is the only caller that does. Switching it to GET, or dropping it because
+    // the banner "usually shows nothing", puts ~1.5 s back on the first lookup of
+    // every session with every test still green — so the method is pinned by
+    // tests/unit/shell/data-banner.test.tsx.
     fetch('/api/dict/hsk?band=1', { method: 'HEAD' })
       .then((response) => {
         if (!cancelled) setMissing(response.status === 503);

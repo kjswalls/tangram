@@ -141,14 +141,46 @@ local behaviour would be switched off within a week.
 ### The dictionary is 33.5 MB of JSON, read at request time
 
 Each function instance parses `data/dict.json` once and builds its indexes once,
-memoised on `globalThis` for the life of that instance. On Vercel **every route
-is its own function with its own process**, so each pays its own cold start —
-and before Phase 8 each one built *all seven* indexes, including the ones it
-never reads.
+memoised on `globalThis` for the life of that instance.
 
-They are now built one at a time, on first use. Measured (median of three runs,
-one fresh Node process each — the closest honest stand-in for a cold lambda,
-since `pnpm start` serves every route from one warm process):
+**Vercel does not give each route its own function.** `@vercel/next` groups route
+handlers whose config matches — `maxDuration`, `memory`, regions, none of which
+this app sets — into one Vercel Function, "to help reduce cold starts". Verified
+rather than assumed: `npx vercel@59 build` on this repo produces exactly one real
+directory, `.vercel/output/functions/api/ask.func`, and `api/examples.func`,
+`api/recall.func` and `api/dict/{hsk,search,segment,entries,decomp}.func` are all
+symlinks to it. To see the layout for yourself without deploying:
+
+```bash
+npx vercel@59 build
+find .vercel/output/functions -maxdepth 3 -name '*.func'        # what exists
+find .vercel/output/functions -maxdepth 3 -type l               # which are aliases
+```
+
+So all eight routes share one process and one set of indexes, and this section's
+earlier claim that each pays its own cold start was wrong. What is still true is
+that a *cold instance* pays for the parse, and that the first request of each kind
+pays for the indexes it reads — which is what laziness is for, and why one route
+being slow to answer first is normal.
+
+> **These numbers are superseded.** The table below was measured after Phase 8 by
+> importing a route module in a freshly spawned `node` process. HANDOFF.md's
+> "Phase 9 — cycle A" section measures the same thing over HTTP against a fresh
+> `next start` per sample, which is the harness to trust for anything a browser
+> sees; its figures run 25–40% lower than these. The two are not reconcilable
+> sample by sample and this table has not been re-run with the newer harness. What
+> is unchanged is the *shape*: the parse dominates, a pinyin query is the
+> expensive one, and laziness is what keeps the cheap routes cheap.
+>
+> Since Phase 9 the far more important change is that a real session does not take
+> this path at all: the app-open probe (`HEAD /api/dict/hsk`) schedules
+> `warmDictionary()`, so an instance builds *everything* once, unattended, and the
+> first lookup costs ~15 ms rather than ~1.5 s. The figures below describe an
+> instance that never got the probe.
+
+Measured (median of three runs, one fresh Node process each — the closest honest
+stand-in for a cold lambda, since `pnpm start` serves every route from one warm
+process):
 
 | First request on a cold instance | before | after |
 |---|---|---|
@@ -164,6 +196,12 @@ since `pnpm start` serves every route from one warm process):
 Resident memory after that first request fell with it: 280–292 MB before, and
 now 171–177 MB for `entries`/`hsk`, ~205 MB for `segment` and hanzi search,
 ~235 MB for English search, ~265 MB once the pinyin indexes are up.
+
+Those per-route figures are also the "no probe" world. With the Phase 9 warm-up,
+every instance ends up holding every index: measured on a built server, RSS is
+126 MiB idle, 215 MiB after a lone `GET /api/dict/hsk?band=1`, and **311 MiB**
+once the warm-up has settled — whatever the session goes on to do. That is the
+honest number to size against now.
 
 Three changes, in order of what they bought:
 
@@ -206,13 +244,15 @@ everything.
 
 ### Function memory
 
-Give the functions **at least 1 GB**. Peak RSS is ~180–290 MB depending on the
-route, plus the Next runtime, so 1 GB is comfortable; on Vercel memory and CPU
-are allocated together, so a larger size also shortens the parse directly. If a
+Give the functions **at least 1 GB**. Peak RSS is ~310 MiB once an instance is
+warm (it used to be ~180–290 MB, per route, before the warm-up made every
+instance build everything), plus the Next runtime, so 1 GB is still comfortable;
+on Vercel memory and CPU are allocated together, so a larger size also shortens
+the parse directly. If a
 route ever 502s with no log line, out-of-memory during the dictionary load is
 the first thing to check.
 
-### Tracing is per function — every new dictionary-reading route needs an entry
+### Tracing is declared per route — every new dictionary-reading route needs an entry
 
 `next.config.ts`:
 
@@ -236,9 +276,13 @@ So it is no longer left to memory:
   if one reaches `lib/dict/load.ts` without a key covering it, and
 - `pnpm smoke` refuses to run at all if a handler in `app/api/**` has no case.
 
-Each of the eight routes therefore carries its own ~34.4 MB copy of `data/`
-(verified in the build's `.nft.json` files). That is well inside the 250 MB
-unzipped per-function limit, but it is why the deployment upload is large.
+Each of the eight routes therefore *traces* its own ~34.4 MB copy of `data/`
+(each route's `.nft.json` lists it). They are not eight copies in the output: the
+routes share one function, whose file list is the union of its members' traces,
+and `.vercel/output/functions/api/ask.func/.vc-config.json` names `data/dict.json`
+once. That is well inside the 250 MB unzipped per-function limit — and it is the
+group's 225 MiB budget, not the per-route trace, that would decide if the app ever
+grew enough to be split.
 
 ## 6. Function timeout vs the ask deadline
 

@@ -17,6 +17,7 @@
  * Everything here reads the indexes built in `lib/dict/index.ts`; nothing re-reads
  * `data/dict.json`.
  */
+import { drain, toSortedInSlices } from './incremental';
 import { exactIds, getDictIndex, prefixIds, stemToken, type DictIndex, type SortedIndex } from './index';
 import { normalizePinyin, type NormalizedPinyin } from './pinyin';
 import type { DictEntry, EntryId, HskBand } from './types';
@@ -118,31 +119,40 @@ interface HeadwordIndexes {
  */
 const HEADWORDS = new WeakMap<DictIndex, HeadwordIndexes>();
 
-function toSorted(groups: Map<string, EntryId[]>): SortedIndex {
-  const keys = [...groups.keys()].sort();
-  return { keys, ids: keys.map((key) => groups.get(key) as EntryId[]) };
+/**
+ * Build the prefix indexes in bounded steps — sorting 120k headwords is ~130 ms of
+ * uninterruptible work, which is why the warm-up drives this generator rather than
+ * calling `warmHeadwords()`. One implementation, two drivers: see
+ * `lib/dict/incremental.ts`.
+ */
+export function* warmHeadwordsInSlices(index: DictIndex): Generator<void> {
+  if (HEADWORDS.has(index)) return;
+  const simp = yield* toSortedInSlices(index.bySimp);
+  const trad = yield* toSortedInSlices(index.byTrad);
+  HEADWORDS.set(index, { simp, trad });
 }
 
 function headwords(index: DictIndex): HeadwordIndexes {
   let cached = HEADWORDS.get(index);
   if (!cached) {
-    cached = { simp: toSorted(index.bySimp), trad: toSorted(index.byTrad) };
-    HEADWORDS.set(index, cached);
+    drain(warmHeadwordsInSlices(index));
+    cached = HEADWORDS.get(index) as HeadwordIndexes;
   }
   return cached;
 }
 
 /**
- * Build the headword prefix indexes now, if this process has not already.
+ * Build the headword prefix indexes now, in one go, if this process has not
+ * already — the eager sibling of `warmHeadwordsInSlices`.
  *
  * `HEADWORDS` lives outside the `DICT_INDEX_PARTS` vocabulary, so a warm-up that
  * walks the index parts does not touch it and the first search of a session still
- * pays for it. `lib/dict/warm.ts` needs to force it, and a cache with a second
- * owner reaching into it from outside is a cache that quietly grows two
- * invalidation rules — so it asks here instead.
+ * pays for it. Both spellings live here because a cache with a second owner
+ * reaching into it from outside is a cache that quietly grows two invalidation
+ * rules. `lib/dict/warm.ts` drives the sliced one; this one is for a caller that
+ * wants the indexes now and is willing to wait ~130 ms for them.
  *
- * Returns whether this call is the one that built it, which is what lets the
- * warm-up report work done rather than work intended.
+ * Returns whether this call is the one that built it.
  */
 export function warmHeadwords(index: DictIndex): boolean {
   if (HEADWORDS.has(index)) return false;

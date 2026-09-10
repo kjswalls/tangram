@@ -4,12 +4,13 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { GET as entriesGet } from '@/app/api/dict/entries/route';
 import { GET as hskGet, HEAD as hskHead } from '@/app/api/dict/hsk/route';
 import { dictVersion, parseIdList } from '@/lib/dict/index';
 import { resetDictCache } from '@/lib/dict/load';
+import { WARM_UP_NOT_SCHEDULED } from '@/lib/dict/warm';
 import type { DictEntry } from '@/lib/dict/types';
 import { requireDictData } from './data-required';
 
@@ -113,7 +114,7 @@ describe('GET /api/dict/hsk', () => {
 describe('HEAD /api/dict/hsk', () => {
   beforeAll(requireDictData);
 
-  it('answers 200 with no body', async () => {
+  it('answers 200 with no body, and with the headers GET sends', async () => {
     const res = hskHead(hskRequest('?band=1'));
     expect(res.status).toBe(200);
     // A HEAD response carries no body over the wire, and this one does not build
@@ -121,6 +122,26 @@ describe('HEAD /api/dict/hsk', () => {
     // banner probes HEAD to avoid.
     expect(res.body).toBeNull();
     expect(await res.text()).toBe('');
+    // No body is not the same as no headers. Next's auto-implemented HEAD ran GET
+    // and stripped the body, so it answered with GET's `content-type`; asserting
+    // the two agree is what stops the explicit one drifting the way `parseBand()`
+    // already stops the statuses drifting.
+    expect(res.headers.get('content-type')).toBe(
+      hskGet(hskRequest('?band=1')).headers.get('content-type'),
+    );
+  });
+
+  it('warns rather than going quiet when the warm-up cannot be scheduled', () => {
+    // Calling the handler directly is exactly the case `after()` throws on, so
+    // this is the one place the fallback path can be observed. In production the
+    // same line is the only signal that an instance stopped warming itself.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      expect(hskHead(hskRequest('?band=1')).status).toBe(200);
+      expect(warn).toHaveBeenCalledWith(WARM_UP_NOT_SCHEDULED, expect.anything());
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('rejects a bad band with the same status GET gives', async () => {

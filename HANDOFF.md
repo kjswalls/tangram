@@ -3264,3 +3264,175 @@ work already done instead of repeating it. That row is the yielding, visible.
   `builtIndexParts()` rather than by counting rows in the table.
 - Still to do in this phase: diagnostic headers, `pnpm coldstart`, the
   no-`maxDuration` test, and the `docs/deploy.md` §5 correction (plan items 3–6).
+
+## Phase 9 — cycle A review fixes: yielding that is actually yielding
+
+Three findings from the cycle A review, all confirmed by re-running the reviewer's
+own commands on this box before touching anything, plus the minors. Green on this
+commit: `pnpm lint`, `pnpm test` (**902 unit in 90 files** — 886 in 88 before),
+`pnpm build`, `pnpm e2e`, and `pnpm smoke` against the built server (21 routes).
+No dependency added; `package.json` and `pnpm-lock.yaml` untouched.
+
+### What was wrong
+
+The warm-up yielded **between** the six index parts. The parts are 150–450 ms of
+uninterruptible synchronous work each, so on this box `warmDictionary()` handed the
+event loop back **6 times in 1209 ms, worst stall 400 ms** — and since Node is
+single-threaded, a request arriving in that window waited for the *rest of the
+warm-up*, not for "the part in flight" as `warm.ts` claimed. Reproduced over HTTP
+with a build of exactly the shipped behaviour (`SLICE` set high enough that each
+part is one step again, so this is an A/B of one variable):
+
+| Issued the instant `HEAD /api/dict/hsk` answers | part-at-a-time | in slices | never probed |
+|---|---|---|---|
+| `GET /lookup` (reads no dictionary) | **1298 / 1253 ms** | **53 / 53 / 54 ms** | 82 / 80 / 75 ms |
+| `GET /offline.html` (a static file) | 2 ms* | 10 / 10 / 9 ms | 2.4 / 2.6 / 2.8 ms |
+| `GET /api/dict/entries` | 11 ms* | 27 / 40 / 38 ms | — |
+| Playwright: cold-open Today → tap "Lookup" (390px) | 1368 / 1363 ms (reviewer) | **103 / 108 ms** | 83 / 78 ms (reviewer) |
+
+\* the two starred cells are cheap only because `/lookup` ahead of them had already
+absorbed the whole stall; issued first, they were the reviewer's 1.145 s and 1.32 s.
+
+### The fix
+
+**`lib/dict/incremental.ts` (new).** Slice-wise building primitives: `SLICE` (2048
+entries per step), `drain()` (run a builder to completion, the eager path),
+`sortInSlices()` (a bottom-up merge sort that yields per block and per merge — a
+120k-string `Array#sort` is 51–77 ms of atomic work, which is exactly the kind of
+block the fix is about), and `toSortedInSlices()`.
+
+**Every index builder is now a generator, written once.** `lib/dict/index.ts` keeps
+its lazy getters, but each getter `drain()`s the same generator `warmDictionary()`
+drives — so there is no eager/incremental pair to keep in step, and a direct caller
+pays only ~60 generator resumptions per part. `buildPartInSlices(part)` is the
+export the warm-up drives; it reads the cache the way `builtIndexParts()` does.
+`search.ts` and `segment.ts` got the same treatment for the two out-of-band caches
+(`warmHeadwordsInSlices`, `warmSegmentStatsInSlices`), and their old whole-cache
+`warmHeadwords`/`warmSegmentStats` hooks are now thin eager wrappers on the same
+generators.
+
+**Measured after** (same in-process harness the reviewer used, from the state
+`after()` actually fires in — probe done, `hanzi`/`pinyin`/`gloss` and both caches
+left):
+
+| | before | after |
+|---|---|---|
+| yields | 6 | **937** |
+| worst stall | **400 ms** | **23–25 ms** |
+| stalls > 50 ms | 142, 400, 371, 172 | none |
+| p99 stall | ~400 ms | ~10 ms |
+| total warm-up | 1209 ms | 1326 ms (+10%) |
+
+The +10% is the trade, and it is the right way round: the work is unattended, the
+stall is not. Inside a full `pnpm test` (eight workers, four cores) the same run
+measures p99 11–16 ms, worst 28–45 ms.
+
+`WarmResult` gained `steps` — how many times it handed the loop back — which is the
+one honest "it ran in slices" signal that is not a stopwatch.
+
+### The acceptance line the plan was missing
+
+The plan's concurrent-HEAD+GET line **cannot fail**: that GET is answered off the
+HEAD's own synchronous build and returns ~20 ms after it, before `after()` fires.
+It is kept as a regression check (HEAD 770/778/748 ms, concurrent GET 791/797/767
+ms — +21/+19/+20 ms, inside the 150 ms budget), and the line that actually covers
+the failure is new:
+
+> **A request issued ~50 ms after the HEAD response resolves completes in under
+> 100 ms.** Measured: `GET /lookup` 84 / 63 / 83 ms, `GET /api/dict/entries` 19 /
+> 26 / 14 ms, against a never-probed baseline of `/lookup` 75–82 ms.
+
+And in the unit suite, `tests/unit/dict/warm.test.ts` now bounds the **longest** gap
+between 1 ms timer ticks (p99 < 30 ms, worst < 150 ms) instead of asserting
+`ticks > 0`. Verified as a regression test: with `SLICE` raised so each part is one
+step again, it fails.
+
+### The headline is unchanged
+
+`HEAD`, wait 3 s, then the first of each request, one fresh `next start` per sample:
+`search?q=dasuan` **15 / 15 ms**, `POST segment` **13 / 11 ms**, `entries` **8 / 8
+ms**. Solo cold on this box, no probe: search 1634 / 1721 ms, segment 933 / 1023 ms,
+entries 724 / 763 ms, hsk 774 / 751 ms.
+
+### Minors, all applied
+
+1. **`HEAD /api/dict/hsk` 200 now carries `content-type: application/json`**, which
+   Next's auto-implemented HEAD sent and the explicit one had dropped. Verified over
+   HTTP against GET on the same server and against `/api/dict/entries`'s
+   auto-implemented HEAD. The unit case asserts the two handlers' headers agree, the
+   way `parseBand()` already keeps their statuses agreeing.
+2. **`components/shell/data-banner.tsx` is pinned by a test.** New
+   `tests/unit/shell/data-banner.test.tsx` (4 cases) asserts the probe is
+   `('/api/dict/hsk?band=1', { method: 'HEAD' })` — that one line is the only trigger
+   for the whole warm-up — plus the 503/200/404/offline behaviour. Its comment now
+   says the HEAD is explicit and what it starts, instead of describing the
+   auto-implemented HEAD this phase replaced.
+3. **`after()` failures are audible.** `scheduleWarmUp()` logs
+   `WARM_UP_NOT_SCHEDULED` (`console.warn`, captured per invocation on Vercel) rather
+   than swallowing every cause; a unit case asserts the warning. The message lives in
+   `lib/dict/warm.ts` because a route module may export only handlers and route
+   config — Next type-checks that, and a stray `export const` in `route.ts` fails
+   `pnpm build`.
+4. **The falsehood is corrected, not cross-referenced.** `lib/dict/index.ts`'s
+   `DICT_INDEX_PARTS` comment no longer says every route is its own function; it says
+   what `vercel build` shows and what laziness still buys inside one shared process.
+   `lib/server/route-inventory.ts` likewise (tracing is per route, the function's file
+   list is the union). `lib/dict/warm.ts` states its own reason instead of citing that
+   comment.
+5. **The route comment names a caller that exists.** The "Today's own `GET
+   /api/dict/hsk` races this probe" claim is gone — nothing in the shipped UI issues
+   that GET (`fetchHskBand` in `lib/dict/client.ts` has no caller). The reason given
+   is the true one: the probe must not become slower than the answer it stands in for.
+6. **`docs/deploy.md` §5.** The one-function-per-route claim is replaced with the
+   `vercel build` evidence and the two commands that show the layout; the cold-start
+   table is marked superseded, with each table's harness named (route-module import in
+   a spawned `node` process vs. HTTP against a fresh `next start`); the `.nft.json`
+   paragraph now says traces are per route but the output is one shared function.
+7. **Memory is stated for the world we now live in.** Measured RSS of `next-server`
+   on fresh servers: **126 MiB idle → 215 MiB after a lone `GET /api/dict/hsk` → 311
+   MiB once the warm-up settles**, every instance, whatever the session does. §5's
+   per-route figures are labelled as describing an instance that never got the probe.
+   The 1 GB recommendation still holds (Vercel default 1769 MB) and is restated
+   against the warm number.
+8. **`docs/phase9-consolidation.md` carries an amendment**: the "yielding between
+   parts is the mitigation" tradeoff and the concurrent-GET acceptance line are
+   withdrawn in place, with the replacements above.
+
+### Decisions the plan left open
+
+1. **`SLICE = 2048`, entries per step, not a millisecond budget.** A wall-clock
+   budget makes the shape of the work depend on how loaded the box is. 4096 was
+   measured too: 45 stalls over 10 ms instead of 5, for 5% less total work. The
+   remaining worst stall is reproducibly ~90 ms into the `hanzi` build, where two
+   120k-key Maps are growing, with a ~10 ms GC pause inside it — allocation, not a
+   slice that is too big.
+2. **The `dict.json` parse (~440 ms) is not sliced and cannot be.** It is atomic
+   inside `JSON.parse`, and in the real path it is paid by the HEAD handler inside its
+   own response — where it already was. `warmDictionary()` therefore still starts with
+   one unsliceable block *if* it is called on a completely cold cache (the unit tests
+   do that); the measurements above start from the state `after()` really fires in.
+3. **A hand-written merge sort is worth it.** `sortInSlices` is ~2× slower end to end
+   than `Array#sort` on 120k strings, and it is the only way the 51–77 ms sorts inside
+   `pinyin` and the headword cache stop being atomic. It is stable and produces the
+   *identical* array `Array#sort` would; `tests/unit/dict/incremental.test.ts` proves
+   that against the real headword index and against the shapes that break merge sorts
+   (odd tails, non-multiples of the slice, duplicates, sub-slice inputs).
+4. **The unit test asserts p99 and worst, not the mean or the count.** A count is
+   what the last version asserted and it certified 400 ms stalls. p99 (< 30 ms) is the
+   property; the worst-case bound (< 150 ms) is the ceiling that fails loudly on a
+   regression without going red because one vitest worker was descheduled.
+
+### For the reviewer
+
+- The A/B in the first table is one variable: the same commit built twice, with
+  `SLICE` raised to 10,000,000 for the "part-at-a-time" column, which reduces every
+  builder to one step and `sortInSlices` to a plain `Array#sort` — i.e. exactly the
+  shipped cycle A behaviour.
+- The harness is `test-results/review/{run.sh,gaps.ts,parts.ts,gc.ts,nav.mjs}`
+  (gitignored). `run.sh <scenario> <repeats>` starts one fresh `next start` per
+  sample via `setsid` and kills the process group afterwards — killing by name is
+  what corrupted an early run here, since `pkill -f` also matches the shell that
+  spawned it.
+- Still not built, and still owed: `scripts/coldstart-probe.ts`, the
+  `x-tangram-instance` / `x-tangram-index-parts` diagnostic headers, and the unit test
+  that forbids `maxDuration`/`memory` exports under `app/api/**` (plan items 3–5).

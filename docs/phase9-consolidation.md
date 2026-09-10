@@ -105,3 +105,39 @@ Finishing the warm-up can.
 - Exporting `HEAD` replaces Next's auto-implemented HEAD on that one route only; every other
   GET route keeps the automatic one.
 - Rollback is one `git revert`; no data, schema or URL changes.
+
+## Amendment — after the cycle A review
+
+Two lines above did not survive contact with a stopwatch, and are replaced rather
+than quietly left standing.
+
+**"Yielding between parts is the mitigation" (Tradeoffs) was wrong.** The parts are
+150–450 ms of uninterruptible synchronous work each, so six yields across a 1.2 s
+warm-up hand the loop back six times: measured worst stall 400 ms, and a `GET
+/lookup` issued the instant the probe answered cost **1.30 s** against a 80 ms
+baseline — the whole process, static files included, not just the dictionary
+routes. The mitigation is now **yielding inside each part**: `lib/dict/incremental.ts`
+builds every index in ~2k-entry slices and `warmDictionary()` hands the loop back
+between them (937 steps, worst stall 23–25 ms, same `GET /lookup` 53 ms).
+
+**"the concurrent-GET acceptance line is the proof" was wrong too**, and the
+acceptance line it names is kept only as a regression check. A GET issued
+*concurrently* with the HEAD is parsed and answered off the HEAD's own synchronous
+build, before `after()` ever fires, so that measurement cannot observe the
+warm-up's cost no matter how badly the warm-up behaves. The line that can:
+
+- **A request issued ~50 ms after the HEAD *response resolves*** — which is when a
+  user's first tap actually lands — completes in **under 100 ms**, measured for a
+  route that reads no dictionary (`GET /lookup`) as well as for a cheap dictionary
+  route (`GET /api/dict/entries`). Cycle A's numbers: `/lookup` 84 / 63 / 83 ms,
+  `/entries` 19 / 26 / 14 ms, against a no-probe baseline of `/lookup` 75–82 ms.
+- **The unit test** `tests/unit/dict/warm.test.ts` bounds the *longest* gap between
+  1 ms timer ticks across a warm-up (p99 < 30 ms, worst < 150 ms). Its predecessor
+  asserted `ticks > 0`, which 400 ms stalls satisfy.
+
+Item 6 ("correct the record") is partly landed with this cycle: `docs/deploy.md` §5
+and the two in-repo comments that asserted one function per route now say what
+`vercel build` shows, §5's cold-start table is marked as superseded and names its
+harness, and the warm-instance memory figure (311 MiB) is recorded beside the
+per-route ones. `scripts/coldstart-probe.ts`, the diagnostic headers and the
+no-`maxDuration` test (items 3–5) are still not built.

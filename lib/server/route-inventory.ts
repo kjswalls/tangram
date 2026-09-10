@@ -3,9 +3,11 @@
  * configured to ship them the files they read.
  *
  * This exists because of one production-only failure mode. `data/dict.json` is
- * read from disk at request time, and on Vercel every route is traced and
- * bundled **separately**: a route that reaches `lib/dict/load.ts` but is missing
- * from `outputFileTracingIncludes` in `next.config.ts` works perfectly under
+ * read from disk at request time, and on Vercel every route's files are traced
+ * **separately** — even though the routes are then bundled into one shared
+ * function, whose file list is the union of those traces (docs/deploy.md §5). A
+ * route that reaches `lib/dict/load.ts` but is missing from
+ * `outputFileTracingIncludes` in `next.config.ts` works perfectly under
  * `next dev` and under `pnpm start` — the file is simply on disk in both — and
  * 500s in the deployment, on that route only. `/api/examples` and `/api/recall`
  * were exactly that, and it took someone opening the page to notice.

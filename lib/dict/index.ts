@@ -6,6 +6,7 @@
  * ranking the results is `lib/dict/search.ts` (Phase 1). The indexes hold entry ids
  * pointing into the single parsed copy of the dictionary, never copies of entries.
  */
+import { drain, SLICE, sortInSlices, toSortedInSlices } from './incremental';
 import { dictCache, getDict } from './load';
 import { hasUnknownReading, normalizePinyin, readingKeys } from './pinyin';
 import type { DictEntry, DictMeta, EntryId, HskBand } from './types';
@@ -100,26 +101,31 @@ export function glossTokens(gloss: string): string[] {
   return out;
 }
 
-function toSorted(groups: Map<string, EntryId[]>): SortedIndex {
-  const keys = [...groups.keys()].sort();
-  return { keys, ids: keys.map((key) => groups.get(key) as EntryId[]) };
-}
-
 /**
  * The indexes, each built the first time something asks for it.
  *
- * Laziness is here for one reason: on Vercel every route is its own function
- * with its own process, so each one pays its own cold start, and the eager
- * build made all of them pay for all seven indexes. `/api/dict/hsk` — the very
- * first request the app makes, behind the Today page — was building the
- * 47,000-key English inverted index it will never read. Measured on the build
- * box: 3.9 s eager for every route; 1.0 s for `hsk` and `entries`, 1.3 s for
- * `segment`, 2.1 s for `search`, now that each pays only for what it touches
- * (docs/deploy.md carries the table).
+ * Laziness is here so that a request pays only for the indexes it reads. It is
+ * **not** about one process per route: Vercel groups route handlers whose config
+ * matches into a single function (verified with `vercel build` — see
+ * docs/deploy.md §5), so all eight of this app's routes share one process and one
+ * set of indexes. What laziness buys inside that shared process is still real, and
+ * it is the *first* request of each kind that collects: `/api/dict/hsk` — the very
+ * first request the app makes, behind the Today page — does not build the
+ * 47,000-key English inverted index it will never read. Measured on the build box:
+ * 3.9 s eager for the first request whatever it was; 1.0 s for `hsk` and
+ * `entries`, 1.3 s for `segment`, 2.1 s for `search`, now that each pays only for
+ * what it touches.
+ *
+ * Since Phase 9 the bill mostly arrives earlier still and unattended — the banner's
+ * probe schedules `lib/dict/warm.ts`, which builds everything in slices — so
+ * laziness is what keeps *that* work off the probe's own response, not what decides
+ * whether a lookup waits.
  *
  * The getters are the whole mechanism, and they are why nothing above this file
  * changed: `index.byGloss` still reads like a field. `#ordered` is shared
- * because every other index is derived from it in the same order.
+ * because every other index is derived from it in the same order. Each getter
+ * drives the same slice-wise builder the warm-up drives (`drain`), so there is one
+ * implementation per index and no eager/incremental pair to keep in step.
  *
  * It is memoised per process by `dictCache()`, so within one warm process this
  * is paid at most once per index.
@@ -158,49 +164,108 @@ class LazyDictIndex implements DictIndex {
     ];
   }
 
-  /** Every entry in the order every index wants: frequency first. */
+  /**
+   * Build one part in bounded steps — the shared implementation behind both the
+   * getters below and `lib/dict/warm.ts`. Already-built parts are a no-op, so a
+   * warm-up can drive every part without checking first.
+   *
+   * `sorted` is the one step that cannot be bounded further than it already is:
+   * it is `JSON.parse` (in `getDict()`) plus one 120k-element sort. The parse is
+   * atomic, and the sort is sliced like the rest.
+   */
+  *buildInSlices(part: DictIndexPart): Generator<void> {
+    switch (part) {
+      case 'sorted':
+        yield* this.#sortedSteps();
+        return;
+      case 'entries':
+        if (!this.#entries) yield* this.#entriesSteps();
+        return;
+      case 'hanzi':
+        if (!this.#bySimp) yield* this.#hanziSteps();
+        return;
+      case 'pinyin':
+        if (!this.#byPinyinToneless) yield* this.#pinyinSteps();
+        return;
+      case 'gloss':
+        if (!this.#byGloss) yield* this.#glossSteps();
+        return;
+      case 'hsk':
+        if (!this.#byHsk) yield* this.#hskSteps();
+        return;
+    }
+  }
+
+  *#sortedSteps(): Generator<void> {
+    if (this.#ordered) return;
+    const ordered = [...getDict().entries];
+    yield* sortInSlices(ordered, compareEntries);
+    this.#ordered = ordered;
+  }
+
+  /**
+   * Every entry in the order every index wants: frequency first.
+   *
+   * The eager spelling of `#sortedSteps`, for the getters — a direct caller is
+   * already waiting, so slicing it would only add turns.
+   */
   get #sorted(): DictEntry[] {
-    return (this.#ordered ??= [...getDict().entries].sort(compareEntries));
+    if (!this.#ordered) drain(this.#sortedSteps());
+    return this.#ordered as DictEntry[];
   }
 
   get meta(): DictMeta {
     return getDict().meta;
   }
 
-  get entries(): Map<EntryId, DictEntry> {
-    if (!this.#entries) {
-      const entries = new Map<EntryId, DictEntry>();
-      for (const entry of this.#sorted) entries.set(entry.id, entry);
-      this.#entries = entries;
+  *#entriesSteps(): Generator<void> {
+    const sorted = this.#sorted;
+    const entries = new Map<EntryId, DictEntry>();
+    for (let i = 0; i < sorted.length; i += 1) {
+      entries.set(sorted[i].id, sorted[i]);
+      if ((i + 1) % SLICE === 0) yield;
     }
-    return this.#entries;
+    this.#entries = entries;
   }
 
-  #buildHanzi(): void {
+  get entries(): Map<EntryId, DictEntry> {
+    if (!this.#entries) drain(this.#entriesSteps());
+    return this.#entries as Map<EntryId, DictEntry>;
+  }
+
+  *#hanziSteps(): Generator<void> {
+    const sorted = this.#sorted;
     const bySimp = new Map<string, EntryId[]>();
     const byTrad = new Map<string, EntryId[]>();
-    for (const entry of this.#sorted) {
+    for (let i = 0; i < sorted.length; i += 1) {
+      const entry = sorted[i];
       push(bySimp, entry.simp, entry.id);
       push(byTrad, entry.trad, entry.id);
+      if ((i + 1) % SLICE === 0) yield;
     }
+    // Published together and only at the end: a half-filled map handed to a
+    // request that arrives mid-slice would be wrong answers, not slow ones.
     this.#bySimp = bySimp;
     this.#byTrad = byTrad;
   }
 
   get bySimp(): Map<string, EntryId[]> {
-    if (!this.#bySimp) this.#buildHanzi();
+    if (!this.#bySimp) drain(this.#hanziSteps());
     return this.#bySimp as Map<string, EntryId[]>;
   }
 
   get byTrad(): Map<string, EntryId[]> {
-    if (!this.#byTrad) this.#buildHanzi();
+    if (!this.#byTrad) drain(this.#hanziSteps());
     return this.#byTrad as Map<string, EntryId[]>;
   }
 
-  #buildPinyin(): void {
+  *#pinyinSteps(): Generator<void> {
+    const sorted = this.#sorted;
     const toneless = new Map<string, EntryId[]>();
     const toned = new Map<string, EntryId[]>();
-    for (const entry of this.#sorted) {
+    for (let i = 0; i < sorted.length; i += 1) {
+      const entry = sorted[i];
+      if ((i + 1) % SLICE === 0) yield;
       // `xx5` is CC-CEDICT declaring it has no reading for this headword (々, ㍻).
       // Indexing it would answer a search for "xx" with 34 unrelated characters.
       if (hasUnknownReading(entry.pinyinNum)) continue;
@@ -212,60 +277,88 @@ class LazyDictIndex implements DictIndex {
       if (pinyin.toneless) push(toneless, pinyin.toneless, entry.id);
       if (pinyin.toned) push(toned, pinyin.toned, entry.id);
     }
-    this.#byPinyinToneless = toSorted(toneless);
-    this.#byPinyinToned = toSorted(toned);
+    const sortedToneless = yield* toSortedInSlices(toneless);
+    const sortedToned = yield* toSortedInSlices(toned);
+    this.#byPinyinToneless = sortedToneless;
+    this.#byPinyinToned = sortedToned;
   }
 
   get byPinyinToneless(): SortedIndex {
-    if (!this.#byPinyinToneless) this.#buildPinyin();
+    if (!this.#byPinyinToneless) drain(this.#pinyinSteps());
     return this.#byPinyinToneless as SortedIndex;
   }
 
   get byPinyinToned(): SortedIndex {
-    if (!this.#byPinyinToned) this.#buildPinyin();
+    if (!this.#byPinyinToned) drain(this.#pinyinSteps());
     return this.#byPinyinToned as SortedIndex;
   }
 
-  get byGloss(): Map<string, EntryId[]> {
-    if (!this.#byGloss) {
-      const byGloss = new Map<string, EntryId[]>();
-      for (const entry of this.#sorted) {
-        // Variants carry no meaning of their own ("old variant of X"); indexing
-        // them under X's words would put a dead headword in front of the live one.
-        if (entry.isVariant) continue;
-        for (const gloss of entry.glosses) {
-          for (const token of glossTokens(gloss)) push(byGloss, token, entry.id);
-        }
+  *#glossSteps(): Generator<void> {
+    const sorted = this.#sorted;
+    const byGloss = new Map<string, EntryId[]>();
+    for (let i = 0; i < sorted.length; i += 1) {
+      const entry = sorted[i];
+      if ((i + 1) % SLICE === 0) yield;
+      // Variants carry no meaning of their own ("old variant of X"); indexing
+      // them under X's words would put a dead headword in front of the live one.
+      if (entry.isVariant) continue;
+      for (const gloss of entry.glosses) {
+        for (const token of glossTokens(gloss)) push(byGloss, token, entry.id);
       }
-      this.#byGloss = byGloss;
     }
-    return this.#byGloss;
+    this.#byGloss = byGloss;
+  }
+
+  get byGloss(): Map<string, EntryId[]> {
+    if (!this.#byGloss) drain(this.#glossSteps());
+    return this.#byGloss as Map<string, EntryId[]>;
+  }
+
+  *#hskSteps(): Generator<void> {
+    const sorted = this.#sorted;
+    const byHsk = new Map<HskBand, EntryId[]>();
+    for (let i = 0; i < sorted.length; i += 1) {
+      const entry = sorted[i];
+      if ((i + 1) % SLICE === 0) yield;
+      if (entry.hskBand === undefined) continue;
+      const band = byHsk.get(entry.hskBand);
+      if (band) band.push(entry.id);
+      else byHsk.set(entry.hskBand, [entry.id]);
+    }
+    // Within a band the plan orders by frequency rank; `#sorted` is already by
+    // raw frequency, which is the same ordering, but sort explicitly on what
+    // it promises. A band is a few thousand ids, so these sorts are steps in
+    // their own right without being sliced further.
+    const entries = this.entries;
+    for (const ids of byHsk.values()) {
+      ids.sort(
+        (a, b) =>
+          ((entries.get(a) as DictEntry).freqRank ?? Number.MAX_SAFE_INTEGER) -
+          ((entries.get(b) as DictEntry).freqRank ?? Number.MAX_SAFE_INTEGER),
+      );
+      yield;
+    }
+    this.#byHsk = byHsk;
   }
 
   get byHsk(): Map<HskBand, EntryId[]> {
-    if (!this.#byHsk) {
-      const byHsk = new Map<HskBand, EntryId[]>();
-      for (const entry of this.#sorted) {
-        if (entry.hskBand === undefined) continue;
-        const band = byHsk.get(entry.hskBand);
-        if (band) band.push(entry.id);
-        else byHsk.set(entry.hskBand, [entry.id]);
-      }
-      // Within a band the plan orders by frequency rank; `#sorted` is already by
-      // raw frequency, which is the same ordering, but sort explicitly on what
-      // it promises.
-      const entries = this.entries;
-      for (const ids of byHsk.values()) {
-        ids.sort(
-          (a, b) =>
-            ((entries.get(a) as DictEntry).freqRank ?? Number.MAX_SAFE_INTEGER) -
-            ((entries.get(b) as DictEntry).freqRank ?? Number.MAX_SAFE_INTEGER),
-        );
-      }
-      this.#byHsk = byHsk;
-    }
-    return this.#byHsk;
+    if (!this.#byHsk) drain(this.#hskSteps());
+    return this.#byHsk as Map<HskBand, EntryId[]>;
   }
+}
+
+/**
+ * Build one index part in bounded steps: `next()` does a slice, the caller decides
+ * whether to hand the event loop back between them. `lib/dict/warm.ts` is the
+ * caller that does; every getter above drives the same generators to completion.
+ *
+ * It reads the cache the way `builtIndexParts()` does rather than taking a
+ * `DictIndex`, so there is no second way for a caller to name the index and no
+ * unreachable branch for an index this module did not build.
+ */
+export function* buildPartInSlices(part: DictIndexPart): Generator<void> {
+  const index = dictCache().index;
+  if (index instanceof LazyDictIndex) yield* index.buildInSlices(part);
 }
 
 /**

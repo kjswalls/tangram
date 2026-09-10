@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { GET as entriesGet } from '@/app/api/dict/entries/route';
-import { GET as hskGet } from '@/app/api/dict/hsk/route';
+import { GET as hskGet, HEAD as hskHead } from '@/app/api/dict/hsk/route';
 import { dictVersion, parseIdList } from '@/lib/dict/index';
 import { resetDictCache } from '@/lib/dict/load';
 import type { DictEntry } from '@/lib/dict/types';
@@ -105,6 +105,34 @@ describe('GET /api/dict/hsk', () => {
   });
 });
 
+/**
+ * The data banner probes this route with HEAD and reads nothing but the status
+ * (`components/shell/data-banner.tsx`). Next used to auto-implement it from GET;
+ * it is now explicit, so the two can drift, and these are the ways that shows up.
+ */
+describe('HEAD /api/dict/hsk', () => {
+  beforeAll(requireDictData);
+
+  it('answers 200 with no body', async () => {
+    const res = hskHead(hskRequest('?band=1'));
+    expect(res.status).toBe(200);
+    // A HEAD response carries no body over the wire, and this one does not build
+    // one in the first place: the 160 KB band-1 payload is exactly what the
+    // banner probes HEAD to avoid.
+    expect(res.body).toBeNull();
+    expect(await res.text()).toBe('');
+  });
+
+  it('rejects a bad band with the same status GET gives', async () => {
+    for (const query of ['', '?band=0', '?band=99', '?band=two', '?band=1.5']) {
+      const head = hskHead(hskRequest(query));
+      expect(head.status).toBe(hskGet(hskRequest(query)).status);
+      expect(head.status).toBe(400);
+      expect(((await head.json()) as { error: string }).error).toBe('bad-band');
+    }
+  });
+});
+
 describe('when data/ has not been built', () => {
   const previous = process.env.TANGRAM_DATA_DIR;
 
@@ -124,6 +152,9 @@ describe('when data/ has not been built', () => {
     for (const res of [
       entriesGet(entriesRequest(`?ids=${encodeURIComponent(DASUAN)}`)),
       hskGet(hskRequest('?band=1')),
+      // The banner keys the "run pnpm data" message off exactly this status, so
+      // the explicit HEAD has to reach the same `dictErrorResponse` GET does.
+      hskHead(hskRequest('?band=1')),
     ]) {
       expect(res.status).toBe(503);
       expect(await res.json()).toEqual({ error: 'dict-data-missing', hint: 'run pnpm data' });

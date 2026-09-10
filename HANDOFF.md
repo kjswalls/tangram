@@ -3126,3 +3126,141 @@ list below.
 7. **Fail two cards at the end of a session.** The empty state should tell you to
    stay on the page; the cards come back on their own about a minute later, with
    nothing to press and no reload.
+
+## Phase 9 — cycle A: the dictionary warm-up
+
+Plan of record: [docs/phase9-consolidation.md](docs/phase9-consolidation.md), **v2**.
+v1's route consolidation is cancelled and is not built here — Vercel already groups
+all eight route handlers into one function. This cycle is Design items **1 and 2**
+only: `warmDictionary()` and an explicit `HEAD` on `/api/dict/hsk`. Items 3–6
+(diagnostic headers, `scripts/coldstart-probe.ts`, the no-config unit test, the
+`docs/deploy.md` §5 correction) are **not** in this commit.
+
+Green on this commit: `pnpm lint`, `pnpm test` (**886 unit in 88 files** — 880 in 87
+before this cycle; the Phase 8 merge was 852), `pnpm build`. No dependency added;
+`package.json` and `pnpm-lock.yaml` untouched. No live model call was made — there is
+still no key in this container.
+
+### What was built
+
+- **`lib/dict/warm.ts`** — `warmDictionary()`, plus `dictionaryWarm()` and the
+  `DICT_WARM_CACHES` vocabulary. It walks `DICT_INDEX_PARTS` in order through a
+  `TOUCH` table of public getters, then the two caches that are *not* index parts,
+  and yields with `setImmediate` before each step.
+- **`lib/dict/search.ts`** — `warmHeadwords(index)` / `headwordsWarm(index)`, the
+  hook for the `HEADWORDS` WeakMap. Nothing outside search.ts touches that WeakMap.
+- **`lib/dict/segment.ts`** — `warmSegmentStats(index)` / `segmentStatsWarm(index)`,
+  the same for the DAG's `STATS`.
+- **`app/api/dict/hsk/route.ts`** — explicit `HEAD`, sharing GET's `parseBand()`,
+  building only `sorted`/`entries`/`hsk` inside the same `try`/`dictErrorResponse`,
+  answering with no body, and scheduling the rest through `after()` from
+  `next/server`.
+- **`tests/unit/dict/warm.test.ts`** (4 cases) and three new `HEAD` cases in
+  `tests/unit/dict/routes.test.ts`.
+
+### The numbers (this container, 4 CPUs, `pnpm build` then `next start`)
+
+Every sample is its own fresh `next start` process, since the whole subject is
+per-process lazy index building. "AFTER" means: `HEAD /api/dict/hsk?band=1`, then
+wait for `after()` to settle, then the request.
+
+One fresh process, the three first-of-their-kind requests in order:
+
+| Request | BEFORE (no HEAD) | AFTER (HEAD first) |
+|---|---|---|
+| `GET /api/dict/search?q=dasuan` | **1644 ms** | **16 ms** |
+| `POST /api/dict/segment` | 149 ms | 15 ms |
+| `GET /api/dict/entries?ids=…` | 10 ms | 8 ms |
+
+The BEFORE column understates two of the three, because in that order the search
+pays for everything the other two would have paid for. One endpoint alone per fresh
+process is the honest per-route cold cost:
+
+| Endpoint, alone in a fresh process | BEFORE | AFTER |
+|---|---|---|
+| `GET /api/dict/search?q=dasuan` | 1777 ms | 16 ms |
+| `POST /api/dict/segment` | 953 ms | 21 ms |
+| `GET /api/dict/entries?ids=…` | 615 ms | 14 ms |
+| `GET /api/dict/hsk?band=1` | 675 ms | 17 ms |
+
+All four are under the 300 ms acceptance line, by a factor of fourteen.
+
+**In-process, after `await warmDictionary()`** (`tsx`, one process): `search('dasuan')`
+1.79 ms, `search('plan')` 4.40 ms, `search('打算')` 0.36 ms, `segment(44 hanzi)` 1.08 ms.
+All under the 20 ms line. The warm-up itself reported
+`built: [sorted, entries, hanzi, pinyin, gloss, hsk]`, `caches: [headwords,
+segment-stats]`, `ms: 1436` — on top of the ~650 ms `dict.json` parse that
+`getDictIndex()` pays before the walk starts, so ~2.1 s of work in total.
+
+**The acceptance line — HEAD and `GET /api/dict/hsk?band=1` fired concurrently at a
+fresh process.** Solo cold GET, three fresh processes: 714 / 672 / 759 ms (median
+714). Concurrent, three fresh processes:
+
+| Run | HEAD | GET (concurrent) | Δ vs solo median |
+|---|---|---|---|
+| 1 | 676 ms | 688 ms | −26 ms |
+| 2 | 717 ms | 730 ms | +16 ms |
+| 3 | 726 ms | 741 ms | +27 ms |
+
+Worst case **+27 ms** against a 150 ms budget. `after()` plus the yields do what the
+design claims: the GET is not queued behind the warm-up.
+
+**How long the warm-up takes to settle**, measured as HEAD → wait *n* → first search:
+
+| wait after HEAD returns | first `GET /api/dict/search` |
+|---|---|
+| 0 ms | 910 ms |
+| 500 ms | 519 ms |
+| 1000 ms | 71 ms |
+| 1500 ms | 15 ms |
+| 3000 ms | 15 ms |
+
+So the window in which a lookup can still be slow is ~1.3 s after the banner's probe
+answers, and even a lookup landing at the very start of that window costs 910 ms
+rather than the 1644 ms it costs with no warm-up at all — it interleaves with the
+work already done instead of repeating it. That row is the yielding, visible.
+
+### Decisions the plan left open
+
+1. **No re-export of `warmDictionary()` from `lib/dict/index.ts`.** There is no
+   barrel in `lib/dict` — `index.ts` *is* the index-building module — and
+   re-exporting from it would make the cycle `index → warm → search → index`.
+   Callers import `@/lib/dict/warm`. If a barrel is ever added, it belongs there.
+2. **The settled promise is kept, not cleared.** A second `warmDictionary()` in a
+   warm process returns the *identical* `WarmResult` object for one WeakMap lookup.
+   `built` therefore means "what this process's warm-up built", not "what this call
+   built"; `dictionaryWarm()` is the predicate for current state. The unit test
+   asserts object identity, which is a stronger claim than a millisecond threshold.
+3. **The memo is a `WeakMap` keyed on the index object**, so `resetDictCache()`
+   invalidates it exactly the way it already invalidates `HEADWORDS` and `STATS`.
+   A rejected warm-up is deleted from it, so a half-dead one can be retried rather
+   than being remembered as done.
+4. **HEAD's 400 and 503 carry GET's JSON body.** A HEAD response has no body over
+   the wire — Node drops it — so writing a second bodiless spelling of those two
+   answers would only create a way for the statuses to disagree. Only the 200 is
+   constructed bodiless (`new Response(null)`), which is what the unit test checks.
+   `parseBand()` is shared by both handlers for the same reason.
+5. **HEAD builds through `getDictIndex().byHsk`, not `hskBand(band)`.** Identical
+   index work, without materialising the 160 KB band array nobody will read.
+6. **`after()` outside a request scope is swallowed, not logged.** It throws only
+   when the handler is called directly — which is what the unit tests do — and there
+   is no live instance to keep warm in that case. This also keeps the test suite from
+   kicking off a real ~2 s background build.
+7. **`export const dynamic = 'force-dynamic'` stays and nothing else is exported.**
+   No `maxDuration`, no `memory`: a differing value on one route is exactly what
+   splits it out of Vercel's shared lambda group. (The unit test that enforces this
+   across `app/api/**` is Design item 5 and is not in this commit.)
+
+### For the reviewer
+
+- `after()` is genuinely exercised locally: `next start` is not minimal mode, so Next
+  supplies its own awaiter (`getInternalWaitUntil`) and the callback runs on request
+  close. The numbers above are therefore real, not a stand-in.
+- `warmDictionary()` throws synchronously on missing data (it calls `getDictIndex()`
+  before creating the promise), so a route calling it inside its `try` still gets the
+  usual 503. The HEAD path never reaches it in that case — it returns the 503 first.
+- The `TOUCH` table has the same expression for `sorted` and `entries` on purpose:
+  `#sorted` has no getter of its own, and `built` is computed by diffing
+  `builtIndexParts()` rather than by counting rows in the table.
+- Still to do in this phase: diagnostic headers, `pnpm coldstart`, the
+  no-`maxDuration` test, and the `docs/deploy.md` §5 correction (plan items 3–6).

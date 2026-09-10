@@ -83,6 +83,26 @@ function segmentIndex(index: DictIndex): SegmentIndex {
 }
 
 /**
+ * Build the DAG's per-script statistics now, if this process has not already.
+ *
+ * Same reason as `warmHeadwords` in search.ts: `STATS` is not one of
+ * `DICT_INDEX_PARTS`, so a warm-up that walks the index parts leaves the first
+ * reader paste of a session paying for it. `lib/dict/warm.ts` forces it through
+ * this hook rather than reaching into the WeakMap, so the cache keeps one owner.
+ * Returns whether this call is the one that did the building.
+ */
+export function warmSegmentStats(index: DictIndex): boolean {
+  if (STATS.has(index)) return false;
+  segmentIndex(index);
+  return true;
+}
+
+/** Whether this process has the segmenter statistics for `index`. Diagnostic. */
+export function segmentStatsWarm(index: DictIndex): boolean {
+  return STATS.has(index);
+}
+
+/**
  * Which script the text is written in. A character counts as evidence only when
  * the two scripts disagree about it — 我 and 的 are the same in both and say
  * nothing, 學 and 学 each say a great deal. Ties go to simplified, the app default.

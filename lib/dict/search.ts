@@ -132,6 +132,29 @@ function headwords(index: DictIndex): HeadwordIndexes {
   return cached;
 }
 
+/**
+ * Build the headword prefix indexes now, if this process has not already.
+ *
+ * `HEADWORDS` lives outside the `DICT_INDEX_PARTS` vocabulary, so a warm-up that
+ * walks the index parts does not touch it and the first search of a session still
+ * pays for it. `lib/dict/warm.ts` needs to force it, and a cache with a second
+ * owner reaching into it from outside is a cache that quietly grows two
+ * invalidation rules — so it asks here instead.
+ *
+ * Returns whether this call is the one that built it, which is what lets the
+ * warm-up report work done rather than work intended.
+ */
+export function warmHeadwords(index: DictIndex): boolean {
+  if (HEADWORDS.has(index)) return false;
+  headwords(index);
+  return true;
+}
+
+/** Whether this process has the headword prefix indexes for `index`. Diagnostic. */
+export function headwordsWarm(index: DictIndex): boolean {
+  return HEADWORDS.has(index);
+}
+
 // ---------------------------------------------------------------------------
 // English glosses
 // ---------------------------------------------------------------------------

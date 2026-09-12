@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
+import { ImportList } from '@/components/lists/import-list';
 import { ProductionListToggle } from '@/components/lists/production-list-toggle';
 import { WordSearch } from '@/components/lists/word-search';
 import { WordStateBadge } from '@/components/lists/word-state';
@@ -169,6 +170,12 @@ export function ListDetail({ listId }: { listId: string }) {
               setReload((value) => value + 1);
             }}
           />
+        </Card>
+      ) : null}
+
+      {list && list.kind !== 'hsk' ? (
+        <Card title="Import words">
+          <ImportList target={list} onImported={() => setReload((value) => value + 1)} />
         </Card>
       ) : null}
 

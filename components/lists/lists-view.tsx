@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 
 import { CreateListForm } from '@/components/lists/create-list-form';
+import { ImportList } from '@/components/lists/import-list';
 import { ListCard } from '@/components/lists/list-card';
 import { Card } from '@/components/ui/card';
 import { useListsStore } from '@/lib/stores/lists';
@@ -13,8 +14,19 @@ import { useListsStore } from '@/lib/stores/lists';
  * the counts arrive band by band rather than after a three-megabyte wait.
  */
 export function ListsView() {
-  const { views, loading, error, busy, filling, load, fillMembers, setActive, markAllKnown, createCustomList } =
-    useListsStore();
+  const {
+    lists,
+    views,
+    loading,
+    error,
+    busy,
+    filling,
+    load,
+    fillMembers,
+    setActive,
+    markAllKnown,
+    createCustomList,
+  } = useListsStore();
 
   useEffect(() => {
     void load().then(() => fillMembers());
@@ -24,6 +36,10 @@ export function ListsView() {
     <div className="flex flex-col gap-4">
       <Card title="New list">
         <CreateListForm onCreate={createCustomList} />
+      </Card>
+
+      <Card title="Import a list">
+        <ImportList lists={lists} onImported={() => void load()} />
       </Card>
 
       {error ? (

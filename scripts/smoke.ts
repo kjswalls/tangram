@@ -137,6 +137,18 @@ export const SMOKE_CASES: SmokeCase[] = [
     },
   },
   {
+    name: 'resolving pasted words (the list importer)',
+    method: 'POST',
+    route: '/api/dict/resolve',
+    url: () => '/api/dict/resolve',
+    body: () => ({ words: ['你好', 'le'] }),
+    expect: (payload) => {
+      const result = payload as { results?: { entries?: unknown[] }[] };
+      must(result.results?.length === 2, 'resolve did not answer for every word');
+      must((result.results?.[0]?.entries?.length ?? 0) > 0, 'resolve found nothing for 你好');
+    },
+  },
+  {
     name: 'ask handshake',
     method: 'GET',
     route: '/api/ask',

@@ -4215,3 +4215,60 @@ phase.
 - **`preWarmReason`'s 100 ms cold-HEAD floor is calibrated, not derived.** A
   far-enough deployment could put a warm HEAD over it; the failure direction is a
   false "cold", never a false "warm", and the parts tell backstops it.
+
+## List importer — paste, Pleco, Anki
+
+**What it is.** "Import a list" on `/lists` (a card under "New list", opened by a button)
+and "Import words" on every non-HSK list's own page. Paste text, press *Preview*, read what
+the dictionary made of it, press *Import*. One `addListMembers` call at the end; no model
+is ever involved, and nothing is written before the preview has been shown.
+
+**Shapes accepted** (`lib/lists/import/parse.ts`, detected by shape, pure):
+
+- *plain* — one word per line, hanzi in either script or pinyin; a comma-, `，`-, `、`- or
+  tab-separated line contributes its first cell. A second cell that parses as pinyin is
+  kept as a reading hint.
+- *pleco* — the flashcard text export: `headword<TAB>pinyin<TAB>definition`, headword
+  possibly `simp[trad]`, `//Category` lines skipped. The pinyin column picks the reading.
+- *anki* — "Notes in plain text": the `#separator/#html/#guid column…` header block, the
+  guid/notetype/deck columns it declares, the tags column, Anki's `"…"` quoting (a field
+  may span lines), HTML tags, `[sound:…]` and entities are all handled; the first note
+  field is the hanzi. `.apkg` is out of scope and the UI says so.
+
+**Resolution** is a new dictionary route, `POST /api/dict/resolve { words: string[] }`
+(`lib/dict/resolve.ts`, ≤ 1,000 words per call, the client chunks at 500): a word with a
+hanzi in it is matched **exactly** against `bySimp` and `byTrad` — never by prefix — and
+anything else that parses as pinyin is matched tone-exact on `byPinyinToned`, then toneless
+on `byPinyinToneless`. Candidates come back in the index's frequency order, so the first
+is the default reading. It is under the frozen `next.config.ts`'s `/api/dict/**` tracing
+key, wrapped in `withDictDiagnostics`, answers a missing build with the 503, and has a
+`pnpm smoke` case (22 routes ok on the build box).
+
+**The preview** (`lib/lists/import/resolve.ts`): candidates fold into one option per
+`simp|toned reading` (CC-CEDICT's traditional-variant and proper-noun rows for the same
+reading collapse into the most frequent one), so 了 offers `le` and `liǎo` and typed `le`
+offers 了 and 乐. A row's own pinyin (Pleco's column, an Anki field) picks the option;
+otherwise the most frequent wins. A `simp[trad]` headword narrows the candidates to the
+ones spelling that other script. `planImport` then decides each row: *add*, *unmatched*,
+*present* (already in the target list), *duplicate* (an earlier row chose the same entry).
+
+**Tests.** `tests/unit/lists/import-parse.test.ts` (the three parsers, the tokenizer, the
+cleaners), `tests/unit/lists/import-resolve.test.ts` (options, hints, chunking, the plan,
+over a hand-built resolver), `tests/unit/dict/resolve.test.ts` (the rule and the route,
+against the real data). `tests/e2e/p3/import-list.spec.ts` pastes `你好 / 了 / xyzzyq`,
+sees the polyphone's picker default to `le` and the non-word marked, and ends with a list
+of two members; a second test imports a Pleco-shaped paste from a list's own page and
+re-pastes to show the *present* skip. `pnpm lint`, `pnpm test` (985 tests) and
+`pnpm build` are green; `tests/e2e/p3/lists.spec.ts` still passes.
+
+**Frozen files: nothing needed.** `addListMembers`, `createList`, `listMembers` and
+`lists()` were enough. Two things a later phase might want, neither blocking:
+
+- `lib/dict/search.ts` exports `hasCjk`/`CJK_PATTERN`, but importing it drags the loader
+  into the client bundle, so `lib/lists/import/parse.ts` restates the CJK range. A
+  browser-safe home for that one regex (`lib/dict/pinyin.ts` is already isomorphic) would
+  let both read one definition.
+- The importer resolves through the route only; unlike `WordSearch` it has no HSK-band
+  fallback for a 503, so with no `data/` build the preview shows the route's hint instead
+  of a partial answer. Deliberate — an importer that silently matched only HSK words
+  would be worse than one that says the dictionary is not built.

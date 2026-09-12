@@ -7,6 +7,7 @@
  * `dataMissing === true` rather than an empty result.
  */
 import type { DecompResponse } from './decomp';
+import type { ResolveResult } from './resolve';
 import type { SearchResult } from './search';
 import type { SegmentResult } from './segment';
 import type { DictEntry, EntriesResponse, EntryId, HskBand, HskResponse } from './types';
@@ -137,4 +138,31 @@ export async function fetchDecomp(
     options,
   );
   return body.characters;
+}
+
+/**
+ * Resolve pasted words to dictionary entries (the list importer). Exact hanzi in
+ * either script, else exact pinyin; each word's candidates come back most
+ * frequent first. Chunk the input at `RESOLVE_MAX_WORDS` (1,000) per call.
+ */
+export async function fetchResolve(
+  words: readonly string[],
+  options: DictFetchOptions = {},
+): Promise<ResolveResult> {
+  if (words.length === 0) return { dictVersion: '', results: [] };
+  const res = await fetch(`${options.baseUrl ?? ''}/api/dict/resolve`, {
+    method: 'POST',
+    signal: options.signal,
+    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify({ words }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string; hint?: string } | null;
+    throw new DictRequestError(
+      res.status,
+      body?.error ?? 'request-failed',
+      body?.hint ?? `/api/dict/resolve returned HTTP ${res.status}`,
+    );
+  }
+  return (await res.json()) as ResolveResult;
 }

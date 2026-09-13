@@ -61,10 +61,10 @@ dependency, no bundled font file in the repo, and no `env(safe-area-inset-*)` in
 
 | Not here | Owner | Where the seam is |
 |---|---|---|
-| The Vite build, `apps/app/index.html`, the router, the service worker, PWA install, web font *delivery*, the API base and the gate's client half | `web.md` | This plan consumes `apps/app/dist/` as a directory of static files and never edits what produces it. The obligation runs the other way in `web.md` §2's scope table — *"a build with no absolute-origin assumption … and a `navigate` boundary they can drive"* — and **W1** discharges it, including the subpath-build criterion. Where this plan needs a change to the web build (the `viewport-fit=cover` meta, a native-platform branch in `register-sw.tsx`), it **names the file and the edit and hands it to `web.md`**, exactly as `ios.md` §2 does; it does not make the edit here. This plan owes `web.md` nothing but the origin string the app actually runs from. |
+| The Vite build, `apps/app/index.html`, the router, the service worker, PWA install, web font *delivery*, the API base and the gate's client half | `web.md` | This plan consumes `apps/app/dist/` as a directory of static files and never edits what produces it. The obligation runs the other way in `web.md` §2's scope table — *"a build with no absolute-origin assumption … and a `navigate` boundary they can drive"* — and **W1** discharges it, including the subpath-build criterion. The two web-build changes this plan's phases depend on — `viewport-fit=cover` on the viewport meta and a native-platform branch in `components/pwa/register-sw.tsx` — are **both in W1's own Files list**, so they arrive with the build rather than being handed over; this plan asserts them on a device and never edits the files. This plan owes `web.md` nothing but the origin string the app actually runs from. |
 | Design tokens, `components/ui/**`, the tab bar, per-character ruby, drag-select, the `TTSProvider` **interface**, the web TTS adapter, the font *families* and the coverage script | `core.md` | `core.md` C0 names the faces and runs `pnpm font:coverage`; this plan puts the chosen file in the package and checks it on real hardware. `core.md` C7 owns the tab bar and the CSS variable it reads; this plan owns the plugin that fills that variable. |
-| The SQLite schema, the `DictStore`/`SqlRunner` interfaces, `lib/dict/runners/capacitor.ts`, the artifact's name and manifest | `data.md` | Exactly as `data.md` §2 states it: that plan owns the file and the runner that opens it, this plan owns getting the file into the app package and the native project that runs it. A5 below is the Android half of `data.md` D5 and shares its acceptance criteria. |
-| The iOS project, Xcode, the App Store, and everything that needs a Mac | `ios.md` | The iOS build itself needs Apple hardware and this plan's phases do not — but see the qualification under the shared-surface note below, because A5's `data.md` gate is not as Mac-free as it looks. |
+| The SQLite schema, the `DictStore`/`SqlRunner` interfaces, `lib/dict/runners/capacitor.ts`, the artifact's name and manifest | `data.md` | Exactly as `data.md` §2 states it: that plan owns the file and the runner that opens it, this plan owns getting the file into the app package and the native project that runs it. A5 below is the Android counterpart of `data.md` **D5a** — the Android-runnable half of the old D5 — and shares its acceptance criteria. |
+| The iOS project, Xcode, the App Store, and everything that needs a Mac | `ios.md` | The iOS build itself needs Apple hardware and no phase in this plan does. `data.md`'s D5/D5a split and A1's independence from `core.md` C7 are what make that true rather than aspirational; both are settled in [`wave-zero.md`](wave-zero.md) §4. |
 | **The shared Capacitor surface**: `apps/app/capacitor.config.ts` and its location, the `@capacitor/*` dependencies and the `cap` scripts in `package.json`, `lib/platform/native.ts`, and the JS-side adapter for any plugin whose JS API is identical on both platforms (today: `lib/tts/capacitor.ts`) | **whichever mobile plan runs first** — `ios.md` **I0** by default | `ios.md` §2 claims these in terms: *"`android.md` consumes these; it must not fork them"*, and offers the reciprocal — *"If `android.md` starts first, the same rule applies in reverse and this plan's I0 collapses to a review."* This plan takes I0's side of that bargain in full, including its location decision (below). Whichever plan lands the surface records the interface in `HANDOFF.md`; the other reviews and extends it. |
 | The server, accounts, sync, BYOK custody, the `/api/ask` contract | `backend.md` | This plan owes `backend.md` one fact — the exact origin the WebView runs from, so CORS and the gate can allow it — and nothing else. |
 | Audio tiers 2 and 3 (cloud voice, the recorded syllable set) | out of scope for v1 (§7), unless A4 forces the question | A4 runs the check that decides it and writes the answer down; it does not build a syllable set. |
@@ -120,12 +120,14 @@ attribute; nothing today sets an inset variable for a tab bar to read.
 `public/manifest.webmanifest` declares `"id": "/"`, `"start_url": "/"`, `"scope": "/"`, `theme_color`
 `#0f766e` and five icons under `/icons/`; `app/layout.tsx` composes
 `components/pwa/register-sw.tsx`, which registers a service worker in production; the dictionary is
-fetched from `/api/dict/*`. It would be convenient to say all three are gone before this plan starts.
-They are not, and pretending otherwise is how a phase gets an acceptance criterion it cannot meet:
+fetched from `/api/dict/*`. One of those three is gone before this plan starts and two are not, and
+pretending otherwise is how a phase gets an acceptance criterion it cannot meet:
 
-- **The service worker still registers.** `web.md` W3 rewrites the worker; nothing in `web.md` turns
-  it off under a local scheme, and `ios.md` I1 is the only phase in any plan that gates registration
-  off `lib/platform/native.ts`. A1 below therefore owns the Android half of that gate — see A1.
+- **The service worker is gated off on native by `web.md` W1.** W3 rewrites the worker; the native
+  branch on `components/pwa/register-sw.tsx` — registration suppressed under `lib/platform/native.ts`
+  — is in **W1's own Files list and acceptance criteria**, so it arrives with the build A1 packages.
+  What is still this plan's is the **assertion on a real device** that no worker registers inside the
+  app — see A1.
 - **The dictionary is still fetched over HTTP.** `data.md` D6 deletes `app/api/dict/**`, and it runs
   **last** in that plan, after `core.md` has re-pointed every consumer at `DictStore`. A1's gate is
   `web.md` W1, whose own acceptance criteria still require `tests/e2e/d/smoke.spec.ts`'s `runSmoke`
@@ -136,7 +138,7 @@ They are not, and pretending otherwise is how a phase gets an acceptance criteri
   serves `dist/` from the root of a local scheme; `web.md` W1's subpath-build criterion is what proves
   the bundle survives that.
 
-The dictionary only works inside the app at **A5**, which is where `data.md` D1's artifact and D5's
+The dictionary only works inside the app at **A5**, which is where `data.md` D1's artifact and D5a's
 runner arrive. §4's gate table is written against that reality.
 
 **TTS is Web Speech only.** `lib/tts/provider.ts` is three members — `name`, `available()`,
@@ -175,34 +177,30 @@ compile-only gate that runs with no phone attached, and if it does not, that fac
 | Phase | Needs |
 |---|---|
 | A0 | **Two halves with different preconditions.** The Play Console visit and the register-#12 docs read need only network access and a payment method, and run first. The device matrix needs **every phone in the hardware table above, in hand** — a WebView version and a UA string are read off a handset, not out of a spec. See A0. |
-| A1 | `web.md` **W1** — a Vite build that emits `dist/` and boots from a non-`/` origin. `web.md` **W0**'s workspace layout, so `dist/` has a stable path. `ios.md` **I0** — the shared Capacitor surface (§2): the config file at `apps/app/capacitor.config.ts`, the `@capacitor/*` dependencies and `lib/platform/native.ts`. Most of I0 runs in the container and needs no Mac, so it is not blocked by Apple hardware even though it lives in the iOS plan. If A1 runs first, A1 creates that surface at I0's paths and I0 becomes a review. `core.md` **C7** — the three-tab shell, without which A1 has no tab model for the back button and no three tabs to assert. |
-| A2 | `core.md` **C1** (the `TabBar` primitive) and **C7** (the phone shell), because an inset with nothing to inset is untestable. `web.md` **W1** must have taken the `viewport-fit=cover` edit A2 hands it (see A2). |
+| A1 | `web.md` **W1** — a Vite build that emits `dist/` and boots from a non-`/` origin. `web.md` **W0**'s workspace layout, so `dist/` has a stable path. `ios.md` **I0** — the shared Capacitor surface (§2): the config file at `apps/app/capacitor.config.ts`, the `@capacitor/*` dependencies and `lib/platform/native.ts`. Most of I0 runs in the container and needs no Mac, so it is not blocked by Apple hardware even though it lives in the iOS plan. If A1 runs first, A1 creates that surface at I0's paths and I0 becomes a review. **Nothing from `core.md`** — A1 boots whatever shell W1 produced and re-baselines its checklist at C7, exactly as `ios.md` I1 does; see A1. |
+| A2 | `core.md` **C1** (the `TabBar` primitive) and **C7** (the phone shell), because an inset with nothing to inset is untestable. `web.md` **W1**, whose Files list carries the `viewport-fit=cover` attribute on `apps/app/index.html`'s viewport meta — without it every `env(safe-area-inset-*)` is zero. |
 | A3 | `core.md` **C0** — the token layer, the `lang="zh-Hans"` root rule, and `pnpm font:coverage`'s output for the faces the visual language actually uses. `web.md` **W6** — the self-hosted subsets and its cmap coverage assertion. A3 measures what W6's files cost in a package; it does not choose a different set of files. |
-| A4 | `core.md` **C2** — `TTSProvider` widened with `stop()`, utterance identity, an event surface and `supportsBoundary`. STACK §7 and `core.md`'s own dependency table both say C2 lands **before any mobile plan starts**. `core.md` **C6** — the hold-to-slow control and `lib/tts/sequence.ts` as a working interaction; C2 creates the sequencer file but C6 is what gives it a hold gesture and a highlight to advance, and A4's slow-mode criterion exercises C6, not C2. `ios.md` **I4** if iOS ran first, because A4 extends `lib/tts/capacitor.ts` rather than creating it. |
-| A5 | `data.md` **D1** (the artifact, its manifest and the `data/*.sqlite` gitignore rule) and the **Android-only subset of D5** — `lib/dict/runners/capacitor.ts`, the `open()`/copy logic and the manifest contract, written and unit-tested against a faked bridge. **Not all of D5.** See the note below, which is a real cross-plan problem and not a caveat. |
+| A4 | `core.md` **C2** — `TTSProvider` widened with `stop()`, utterance identity, an event surface and `supportsBoundary`. **C2 gates A4 and nothing earlier.** An earlier draft of this row quoted `core.md`'s "before any mobile plan starts"; that reading is retired. A1–A3 consume nothing from `TTSProvider`, exactly as `ios.md` says of I0–I3, and `core.md` §4 now says the same. `core.md` **C6** — the hold-to-slow control and `lib/tts/sequence.ts` as a working interaction; C2 creates the sequencer file but C6 is what gives it a hold gesture and a highlight to advance, and A4's slow-mode criterion exercises C6, not C2. `ios.md` **I4** if iOS ran first, because A4 extends `lib/tts/capacitor.ts` rather than creating it. |
+| A5 | `data.md` **D1** (the artifact, its manifest and the `data/*.sqlite` gitignore rule) and **D5a only** — `lib/dict/runners/capacitor.ts`, the `open()`/copy logic and the manifest contract. D5a's hardware precondition is an Android phone; **D5b** is the iOS half and A5 does not wait for it. See the note below. |
 | A6 | `core.md` **C3–C6**, because the floor is decided by which engine features the reader actually ships against *and* by which of them C5 already degrades from. |
 | A6a | A1 (a project to put an icon in) and `core.md` **C0** (the ground colour the launch theme uses). Otherwise independent — the icon set is generated in the container. |
-| A7, A8 | Everything above, plus A0's account in a usable, verified state. |
+| A7, A8 | Everything above, plus A0's account in a usable, verified state. A8 additionally needs `web.md` **W7** — the Astro site's `/privacy` and `/support` pages, live at the apex with their exact URLs in `HANDOFF.md`. Play's listing will not accept a submission without the privacy policy URL, and this plan does not write the page. |
 | — | **Nothing from `backend.md`.** The app is usable offline with the AI answer disabled; `web.md` W4's header-based gate and the API base are what make it reachable when the server exists. A1 and A7 record the origin and prove or defer one real call — see A1 and A7. |
 
-**A5's gate is the one cross-plan problem this plan cannot fix from inside itself.** `data.md` D5
-opens *"This phase cannot start without a Mac with Xcode 26, a physical iOS 26 device and at least one
-Android phone"*, and its acceptance criterion 1 requires the fixed query list to return identical
-results *"on both a real iPhone and a real Android device"*. It also folds registers **#20** (FTS5
-behind the SQLCipher **iOS** pod) and **#6** into the same session. Taken literally, A5 — and
-therefore A7 and A8 — is blocked on Apple hardware, which contradicts the whole premise of shipping
-Android independently.
+**A5's gate is `data.md` D5a, and D5a needs no Apple hardware.** The old D5 opened *"This phase cannot
+start without a Mac with Xcode 26, a physical iOS 26 device and at least one Android phone"* and folded
+registers **#20** (FTS5 behind the SQLCipher **iOS** pod) and **#6** into one session; taken literally
+that blocked A5 — and therefore A7 and A8 — on an iPhone. It has been split. **D5a** is the
+Android-runnable half and states its own precondition: a Capacitor Android project that builds and
+installs, and an Android phone. No Mac, no iOS device. **D5b** is the iOS half, and it consumes D5a's
+`lib/dict/runners/capacitor.ts` unchanged.
 
-The split that makes it work: **what A5 needs from D5 is the Android-runnable half** —
-`lib/dict/runners/capacitor.ts`, the first-launch copy logic, the read-only open, and the manifest
-contract, all written and unit-tested in the container against a faked plugin bridge, plus D5's fixed
-query list as data. What A5 does **not** wait for is D5's AC1 (both devices), register #20 or register
-#6, all three of which are iOS-side. A5 then contributes the Android half of D5's #18 and #11
-measurements and the Android half of AC1.
-
-This plan cannot edit `data.md`. **The orchestrator must raise the split with `data.md`'s owner before
-A5 starts**, because D5 as written cannot be half-completed and a build session will either block on a
-Mac it does not have or quietly declare a criterion met that was not.
+So what A5 consumes is D5a in full: `lib/dict/runners/capacitor.ts`, the first-launch copy logic, the
+read-only open, the manifest contract and the fixed query list, with the Android halves of registers
+**#6**, **#11** and **#18** answered in D5a's own device session — the same session A5's measurements
+run in. What A5 does **not** wait for is D5b: register #20, the iPhone halves of #6 and #18, and the
+iOS side of "identical results on both devices". If D5b happens to land first, D5a reduces to its
+Android checks against the same file; the runner is platform-neutral either way.
 
 ---
 
@@ -313,6 +311,19 @@ disproves — a plan that contradicts a source it cites is worse than no plan).
 
 **Builds.** An installable debug APK of the current app, running on a real phone.
 
+**A note on what "the shell" means at this point, because it is not three tabs yet.** The three-tab
+shell is `core.md` C7, and §4 deliberately does **not** gate this phase on it. C7 sits after C5 in
+`core.md`'s sequence and `ios.md` I2 forbids any C5b production file landing before a physical iOS 26
+device has answered register #1 — so gating A1 on C7 would put Android's first phase behind an iPhone,
+which is the opposite of this plan's premise and of STACK §4's claim that the two mobile tracks are
+independent. A1 therefore puts on a device **whatever shell `web.md` W1 produced**: today's
+`components/shell/nav.ts` declares **seven** routes (Today, Lookup, Review, Read, Lists, Stats,
+Settings) and W1 ports that app to Vite rather than restructuring it. So this phase's criteria and its
+standing device checklist are written against the routes that exist at this commit, and **`core.md` C7
+is the phase that re-baselines the checklist** to three tabs. Say that in `HANDOFF.md` when the
+checklist is written, so the next reader knows a seven-row checklist is correct rather than stale.
+This is exactly what `ios.md` I1 does, and for the same reason.
+
 **The setup, and what it inherits rather than creates.** `ios.md` I0 owns the shared Capacitor
 surface (§2): the `@capacitor/core` and `@capacitor/cli` dependencies at the versions STACK §6 pins
 (8.5.2, 2026-09-11), `apps/app/capacitor.config.ts` with `webDir: 'dist'`, and `lib/platform/native.ts`.
@@ -342,15 +353,15 @@ script so it is one command and nobody does it half-way.
 36 is what Play requires. Assert them rather than accept them: a Gradle property nobody looked at is
 how a target-API rejection happens.
 
-**The service worker must not register inside the app, and no other Android phase owns that.**
-`components/pwa/register-sw.tsx` registers `public/sw.js` in production, and `web.md` W3 rewrites the
-worker without ever turning it off on native. Inside Capacitor the web assets are already local and
-already versioned by the app build, so a worker adds nothing and can serve a previous build's shell
-after an app update. `ios.md` I1 states the deeper problem plainly: *whether a service worker even
-registers under Capacitor's local scheme is not established by any audit* — and Android WebView
-supports service workers, so this is at least as live here. Gate registration off
-`lib/platform/native.ts` and assert it. The one-line edit to `register-sw.tsx` is named and handed to
-`web.md` per §2 if I1 has not already made it; the **assertion** is this phase's either way.
+**The service worker must not register inside the app, and this phase is where that is proved on
+Android.** `components/pwa/register-sw.tsx` registers `public/sw.js` in production. Inside Capacitor
+the web assets are already local and already versioned by the app build, so a worker adds nothing and
+can serve a previous build's shell after an app update. `ios.md` I1 states the deeper problem plainly:
+*whether a service worker even registers under Capacitor's local scheme is not established by any
+audit* — and Android WebView supports service workers, so this is at least as live here. The gate
+itself is **`web.md` W1's**: the native branch off `lib/platform/native.ts` is in W1's Files list and
+its acceptance criteria. What is this phase's is the **device assertion** that no worker registers
+inside the running app.
 
 **Three register checks cost seconds each while a device is in hand.**
 
@@ -369,9 +380,11 @@ supports service workers, so this is at least as live here. Gate registration of
 
 **Also here, because it is the first thing a tester will press:** the **hardware back button**.
 `web.md` §2 assigns it to this plan and nothing else in any plan defines its behaviour — `core.md` C7
-defines three tabs and that tab state survives navigation away and back, but it contains no
-back-button model and no tab history. So this phase writes one, and it is small enough to state in
-full rather than gesture at:
+will define three tabs and tab state that survives navigation away and back, but it contains no
+back-button model and no tab history. So this phase writes one. It is stated below against the
+three-tab shell, because that is what it ultimately has to serve; at A1 it is **wired and exercised
+against whatever routes W1 produced**, and the checklist is re-baselined at C7 along with the rest.
+It is small enough to state in full rather than gesture at:
 
 1. A back press with a sheet, dialog or overlay open closes that and stops.
 2. Otherwise, if the current tab's own history stack is deeper than its root, pop it.
@@ -381,24 +394,26 @@ full rather than gesture at:
 4. At the root of the first tab, or with the tab stack exhausted, **background the app** rather than
    finishing the activity, so resuming returns to where they were mid-session.
 
-Each of those four is a row in the acceptance checklist with that expected result. Wire it through
-whatever plugin A0's docs read named for the hardware back button, against the router history
-`web.md` W1 provides, and put the handler in one module so there are not two competing navigation
-owners — agree its placement with `core.md` C7's shell.
+Each of those four is a row in the acceptance checklist with that expected result — rows 2 to 4 read
+against W1's routes at A1 and against the three tabs after C7. Wire it through whatever plugin A0's
+docs read named for the hardware back button, against the router history `web.md` W1 provides, and put
+the handler in one module so there are not two competing navigation owners; record its placement in
+`HANDOFF.md` so `core.md` C7 adopts it rather than writing a second one.
 
 **Files.** `apps/app/android/**`, `.gitignore`, a root `pnpm android:sync`-style script, the
-back-button handler (one module in the shell layer, co-ordinated with `core.md` C7), a unit test
-asserting the SDK levels and one asserting the native branch of `register-sw.tsx` does not register.
-`package.json`, `apps/app/capacitor.config.ts` and `lib/platform/native.ts` only if this plan is
-running before `ios.md` I0 — otherwise they are I0's and this phase reads them.
+back-button handler (one module in the shell layer, its placement recorded for `core.md` C7 to adopt),
+a unit test asserting the SDK levels. `package.json`, `apps/app/capacitor.config.ts` and
+`lib/platform/native.ts` only if this plan is running before `ios.md` I0 — otherwise they are I0's and
+this phase reads them. `components/pwa/register-sw.tsx` is **`web.md` W1's** and is not edited here.
 
 **Acceptance criteria.**
 
-1. A debug APK builds and installs on a real device, and `core.md` C7's three tabs render and
-   navigate. **What does not work yet, and must be written down rather than discovered:** the
+1. A debug APK builds and installs on a real device, and every route the W1 build ships renders and
+   navigates — the seven of `components/shell/nav.ts` unless C7 has already landed, in which case the
+   three tabs. **What does not work yet, and must be written down rather than discovered:** the
    dictionary. `data.md` D6 has not run, so `/api/dict/*` resolves against the local origin and fails;
    the expected state is `core.md` C4a's dictionary-unavailable screen, not a crash and not a blank
-   tab. Assert that state explicitly. Lookup starts working at A5.
+   screen. Assert that state explicitly. Lookup starts working at A5.
 2. The build is reproducible from a clean checkout with one documented command sequence, written
    into `HANDOFF.md`. "It works on my machine after some fiddling" fails this phase.
 3. `minSdkVersion`, `compileSdkVersion` and `targetSdkVersion` are asserted to be 24/36/36 by a check
@@ -411,11 +426,11 @@ running before `ios.md` I0 — otherwise they are I0's and this phase reads them
    `window.location.origin` is recorded beside A0's documented literal with a note on whether they
    match.
 5. `navigator.serviceWorker.getRegistrations()` returns empty inside the app, read from the WebView
-   inspector on the device, and a unit test asserts the native branch of `register-sw.tsx` does not
-   register.
-6. The hardware back button is exercised by hand down the four-row checklist above — overlay open, tab
-   history non-empty, tab root with a previous tab, first-tab root — with each expected result stated
-   and matched.
+   inspector on the device. The unit test over `register-sw.tsx`'s native branch is `web.md` W1's and
+   is not duplicated here; this criterion is the device half W1 cannot run.
+6. The hardware back button is exercised by hand down the four-row checklist above — overlay open,
+   route history non-empty, tab root with a previous tab, first-tab root — with each expected result
+   stated and matched, and the checklist marked in `HANDOFF.md` as re-baselined at `core.md` C7.
 7. `HANDOFF.md` records whether the container can install an Android SDK through the proxy, and if
    it can, a compile-only `assembleDebug` gate exists that runs without a phone.
 8. `git status` is clean after a full build, including the `cap sync` output directory. This is the
@@ -474,18 +489,18 @@ If the pre-144 behaviour does turn out to be unusable, the mitigation is the one
 comfort floor with a banner asking the user to update Android System WebView, which on a GMS device is
 advice that actually works.
 
-**`viewport-fit=cover` is a `web.md` edit and is handed over, not made here.** `env(safe-area-inset-*)`
-is zero without it, and nothing in the repo sets it today (`app/layout.tsx` exports `viewport` with no
-`viewportFit`). The file is `apps/app/index.html`, which `web.md` W1 creates and owns. `ios.md` §2
-handles the identical need by naming the file and handing the edit to `web.md`; this plan adopts the
-same convention, and it is the right one here because **it is the same one-line edit both mobile plans
-need and it should be made once**. A2's gate is that W1 has taken it.
+**`viewport-fit=cover` arrives with W1.** `env(safe-area-inset-*)` is zero without it, and nothing in
+the repo sets it today (`app/layout.tsx` exports `viewport` with no `viewportFit`). The file is
+`apps/app/index.html`, which `web.md` W1 creates and owns, and the attribute is in **W1's Files list
+and its acceptance criteria** — the same one-line edit both mobile plans need, made once, where the
+file lives. This phase gates on W1 and then builds on top of it; it does not make the edit and does not
+carry a conditional in case W1 did not.
 
 **Files.** `apps/app/capacitor.config.ts` (plugin configuration only — the file is I0's),
 `apps/app/android/app/src/main/**` (theme and manifest entries the plugin requires), the Android
 runtime that fills the inset variables (a module under `apps/app/` branching off
 `lib/platform/native.ts`). The variable *definitions* land in `core.md` C0's token file by agreement;
-`apps/app/index.html` is named for `web.md` and not edited here.
+`apps/app/index.html` is `web.md` W1's and is not edited here.
 
 **Acceptance criteria.**
 
@@ -549,9 +564,9 @@ nothing a full face adds in coverage. What is left is the many-small-requests co
 scheme, which is a **measurement, not an argument** — so A3 measures it (below) and records the
 number. If and only if that number turns out to matter does the full face come back, and then it comes
 back as a **`web.md` W6 change** — a native-only `@font-face` set built by W6 and shipped in `dist/`,
-named and handed over per §2 — not as an Android pipeline built here.
+written into `HANDOFF.md` as a need per §2's scope table — not as an Android pipeline built here.
 
-**Budget the package honestly, with the right number.** `data.md` D5 is explicit and this plan had it
+**Budget the package honestly, with the right number.** `data.md` D5a is explicit and this plan had it
 wrong: use **~19.5 MB packaged + 43.1 MB expanded ≈ 63 MB**, not 57 MB. The packaged half is the
 `gzip -9` figure from D1's size table, because *"neither an AAB/APK nor an IPA compresses bundled
 assets with brotli; the 13.9 MB brotli figure belongs to D4's web transfer budget and nowhere else"*.
@@ -590,7 +605,7 @@ is ever reopened, which would make it a W6 change first.
    the package. Plus the number that decides the closed full-face option: the count and total transfer
    time of font requests over the local scheme on first paint, read from the WebView inspector. The
    dictionary's two costs arrive at A5 and the AAB and Play's reported download size at A7; A3 records
-   `data.md` D5's ~63 MB as the current **estimate** with its register-#16 caveat and does not present
+   `data.md` D5a's ~63 MB as the current **estimate** with its register-#16 caveat and does not present
    it as measured.
 
 ---
@@ -687,19 +702,18 @@ branches off it), `tests/unit/tts/capacitor.test.ts`.
 
 ### A5 — The two data artifacts in the package
 
-**Builds.** The Android half of `data.md` D5: the ~43 MB SQLite dictionary **and `decomp.json`**
+**Builds.** The package side of `data.md` **D5a**: the ~43 MB SQLite dictionary **and `decomp.json`**
 inside the app, copied to app storage on first launch, opened read-only, and answering queries
 through the plugin.
 
-**What this phase needs from `data.md` D5, and what it does not wait for.** D5 owns
+**What this phase needs from `data.md` D5a, and what it does not wait for.** D5a owns
 `lib/dict/runners/capacitor.ts` and the `open()`/copy logic; this phase owns the assets getting into
-the package, the Gradle-side plumbing, and the Android measurements. Per §4, A5 consumes D5's
-**Android-runnable half** — the runner, the copy logic, the read-only open and the manifest contract,
-written and unit-tested in the container against a faked bridge, plus D5's fixed query list — and does
-**not** wait for D5's AC1 (identical results on both an iPhone and an Android device), register #20
-(FTS5 behind the SQLCipher **iOS** pod) or register #6, all of which need Apple hardware. A5 supplies
-the Android half of D5's AC1 and of registers #18 and #11. If D5 has not been split as §4 requires,
-raise it before starting rather than blocking on a Mac.
+the package, the Gradle-side plumbing, and the Android measurements. Per §4, A5 consumes **D5a in
+full** — the runner, the copy logic, the read-only open, the manifest contract and the fixed query
+list — and D5a's own hardware precondition is an Android phone and a Capacitor Android project, both
+of which A1 supplies. A5 does **not** wait for **D5b**: register #20 (FTS5 behind the SQLCipher
+**iOS** pod), the iPhone halves of registers #6 and #18, and the iOS side of "identical results on
+both devices" are all D5b's and all need Apple hardware.
 
 **Two artifacts, two licences, and the second one is the one that gets forgotten.** `data.md` D1 emits
 `data/dict-<SCHEMA_VERSION>-<cedictVersion>.sqlite` beside `data/dict-manifest.json` at the workspace
@@ -737,7 +751,7 @@ the same time, because it answers the underlying question without depending on w
 by `-P`. A0's docs read says which of these Google actually documents; A7's release gate is written
 against that answer.
 
-**Budget the package with `data.md` D5's figure, not this plan's earlier one:** ~19.5 MB packaged +
+**Budget the package with `data.md` D5a's figure, not this plan's earlier one:** ~19.5 MB packaged +
 43.1 MB expanded ≈ **63 MB**, where the packaged half is a `gzip -9` proxy that register #16 has not
 retired. Add `decomp.json`'s 0.92 MB and A3's measured font delta. This phase records the **measured**
 dictionary halves — the APK size delta from adding the assets, and the on-device storage after the
@@ -747,7 +761,7 @@ copy — which is the first time either number exists.
 in A0:
 
 - How long `copyFromAssets()` of a 43 MB file takes, on an empty device and on a device near
-  storage capacity, and what peak storage it costs. `data.md` D5 requires this and requires the copy
+  storage capacity, and what peak storage it costs. `data.md` D5a requires this and requires the copy
   to be a visible one-time progress state with a designed low-storage failure path. `core.md` draws
   those two screens; this phase produces the numbers that say how long the progress state has to be
   tolerable for.
@@ -758,7 +772,7 @@ in A0:
 
 **Files.** `apps/app/android/app/build.gradle` (or a root script — prefer the script, so the same
 copy serves iOS), `.gitignore` (if A1's asset-root rule did not already cover both files),
-`data/ATTRIBUTION.md` (SQLCipher's BSD notice — `data.md` D5 owns the text, this phase confirms it
+`data/ATTRIBUTION.md` (SQLCipher's BSD notice — `data.md` D5a owns the text, this phase confirms it
 renders in the built app alongside the CC BY-SA and LGPL notices that already exist), `HANDOFF.md`.
 
 **Acceptance criteria.**
@@ -783,7 +797,7 @@ renders in the built app alongside the CC BY-SA and LGPL notices that already ex
    and SQLCipher's BSD notice. Not just in the repo — on the device, in the built app.
 7. The measured package numbers are in `HANDOFF.md`: the APK size delta from adding the two assets,
    the on-device storage after the copy, and the running total with A3's font delta — labelled
-   measured, beside `data.md` D5's ~63 MB estimate and its register-#16 caveat.
+   measured, beside `data.md` D5a's ~63 MB estimate and its register-#16 caveat.
 
 ---
 
@@ -1010,12 +1024,20 @@ stated plainly rather than fudged: the app collects
 nothing and transmits nothing until `backend.md` exists (every card, review and setting lives in
 on-device storage — the same fact `docs/deploy.md` already records about the web deployment), and the
 only network calls are to the owner's own AI proxy. Fill the Data safety form to match what the code
-actually does, and revisit it the moment `backend.md` lands accounts — an inaccurate Data safety
-declaration is an enforcement matter, not a formatting one.
+actually does, and **re-answer it the moment `backend.md` lands accounts** — an inaccurate Data safety
+declaration is an enforcement matter, not a formatting one, and accounts change the true answer from
+"nothing leaves the device" to something else.
+
+**The privacy policy URL is `web.md` W7's page, not this phase's writing job.** W7 ships `/privacy`
+and `/support` on the Astro site at the apex and records both exact URLs in `HANDOFF.md`. This phase
+pastes the privacy URL into the listing and checks that what the page says matches the Data safety
+answers filled in above — one form and one page disagreeing is the failure worth catching. If W7 has
+not landed, A8 is **blocked**: Play will not take the submission without the URL, and inventing a
+page here would fork the one the App Store submission also uses.
 
 **Attribution ships in the app, not only in the repo.** PLAN.md §5 and CLAUDE.md require CC-CEDICT's
 CC BY-SA 4.0 attribution plus a modification notice, Make Me a Hanzi's LGPL notice with `COPYING`,
-and now SQLCipher's BSD notice (`data.md` D1/D5). The licences screen already exists at `/settings`;
+and now SQLCipher's BSD notice (`data.md` D1/D5a). The licences screen already exists at `/settings`;
 this phase confirms it renders on the device build and that the store listing does not claim
 authorship of the dictionary data.
 
@@ -1031,11 +1053,14 @@ checklist and not an archaeology exercise.
    recorded. This criterion is met by *starting*, not by finishing; the phase's review happens at the
    start and a short follow-up records the end.
 3. The Data safety form's answers are reproduced in `docs/android-release.md` beside a one-line
-   justification for each, and match the code as of that date. The listing checklist recorded there is
-   what the console actually asked for, with the date — not the remembered list above.
-4. The licences screen renders CC-CEDICT, Make Me a Hanzi and SQLCipher on a device build.
-5. Play's reported download size and any pre-launch report warnings are recorded (register #16).
-6. Production release is a separate, later decision — not part of this phase's completion.
+   justification for each, and match the code as of that date, with a line saying they must be
+   re-answered when `backend.md` lands accounts. The listing checklist recorded there is what the
+   console actually asked for, with the date — not the remembered list above.
+4. The listing's privacy policy URL is `web.md` W7's `/privacy` page, live and reachable, and its
+   text does not contradict the Data safety answers. The URL is recorded in `docs/android-release.md`.
+5. The licences screen renders CC-CEDICT, Make Me a Hanzi and SQLCipher on a device build.
+6. Play's reported download size and any pre-launch report warnings are recorded (register #16).
+7. Production release is a separate, later decision — not part of this phase's completion.
 
 ---
 
@@ -1095,7 +1120,7 @@ corrects it explicitly.
 *Trigger:* first launch hangs, or fails on a near-full device.
 *Check:* A5 times it empty and near-full and records peak storage.
 *Mitigation:* the copy is a visible one-time progress state with a designed low-storage failure path
-(`core.md` draws them, `data.md` D5 specifies them). The on-device footprint is `data.md` D5's
+(`core.md` draws them, `data.md` D5a specifies them). The on-device footprint is `data.md` D5a's
 **~19.5 MB packaged + 43.1 MB expanded ≈ 63 MB**, not the 13.9 MB brotli web-transfer figure and not
 the 57 MB an earlier draft of this plan carried; every size statement must use the doubled figure and
 must carry register #16's caveat on the packaged half.
@@ -1175,7 +1200,7 @@ visible, not absorbed.
 - **Audio tiers 2 and 3** — cloud voice caching and the ~1,300-syllable recorded set — **unless A4's
   register #7 forces tier 3**, which is the one thing in this list that can change during the build.
   Both the "1,300" and the "a few megabytes" are estimates that nobody has measured (STACK §2.7).
-- **Play asset delivery / dynamic feature modules for the dictionary.** At `data.md` D5's ~19.5 MB
+- **Play asset delivery / dynamic feature modules for the dictionary.** At `data.md` D5a's ~19.5 MB
   packaged estimate — a `gzip -9` proxy that register #16 has not yet retired, not the 13.9 MB brotli
   figure, which is D4's web-transfer number and belongs nowhere near a package — the base module is
   nowhere near AUDIT 3's 200 MB cap for a base module. The conclusion survives either figure, so

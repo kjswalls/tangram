@@ -44,8 +44,8 @@ an installed PWA.
   what is generated, the deployment target, and the dependency-manager question the generated project
   answers.
 - The **shared** Capacitor surface — the config file, the platform-detection seam, and the JS-side
-  adapters for plugins whose JS API is identical on both platforms. `android.md` claims two of the three
-  differently, in writing; the note below sets out the conflict and I0 is the arbiter.
+  adapter for plugins whose JS API is identical on both platforms. `android.md` §2 adopts the same
+  three answers and consumes them; I0 lands them, or reviews them if `android.md` A1 ran first.
 - Getting `dict-<schema>-<cedict>.sqlite` and `decomp.json` into the app package and onto the device,
   and the four device checks that prove the file works there (registers #20, #6, #18, #11).
 - The **native** `TTSProvider` adapter over `@capacitor-community/text-to-speech`, the voice
@@ -66,41 +66,31 @@ an installed PWA.
 |---|---|---|
 | The SQLite artifact, the `DictStore` interface, `lib/dict/runners/capacitor.ts`, the query layer | `data.md` | STACK's seam, quoted exactly in `data.md` §2: *that* plan owns the file and the `SqlRunner` that opens it; *this* plan owns getting the file into the app package and the native project that runs it. |
 | Design tokens, `components/ui/**`, screens, per-character ruby, drag-select, the `TTSProvider` **interface**, the block speaker, the slow-mode sequencer | `core.md` | This plan implements C2's interface against a plugin. It does not widen the interface and it does not write `lib/tts/sequence.ts`. |
-| The Vite build, the router, the service worker, PWA install, web font delivery, the Astro site, the configured API base, the gate's client half, and the local export | `web.md` | This plan consumes `apps/app/dist/` and W5's export. Where it needs a change to the web build it names the file and hands the edit to `web.md` — **except where the recipient phase has already run**, which is the case for `viewport-fit=cover` in `apps/app/index.html`: W1 does not carry it and W1 lands long before I5, so I5 makes that one-attribute edit itself, coordinated with `android.md` A2 which claims the same line. |
+| The Vite build, the router, the service worker, PWA install, web font delivery, the Astro site, the configured API base, the gate's client half, and the local export | `web.md` | This plan consumes `apps/app/dist/` and W5's export. Where it needs a change to the web build it names the file and hands the edit to `web.md`, which owns it: `viewport-fit=cover` in `apps/app/index.html` and the native gate on `components/pwa/register-sw.tsx` are both in **W1's Files list**, so this plan gates on W1 rather than editing either file. |
 | The Capacitor **Android** project, `@capacitor-community/safe-area`, Play packaging, the 16 KB alignment check (#5), the no-GMS voice question (#7), the CJK bold regression (#8) | `android.md` | Same plugin set, different native halves. Register #19 (`typeof window.speechSynthesis` in the Android WebView) is Android's; iOS has Web Speech and does not need it. |
 | The server, accounts, sync, BYOK key custody, the new `/api/ask` contract | `backend.md` | This plan points the app at a base URL and proves it reaches it over HTTPS. **`backend.md` does not own reviewer access:** `grep -rn -i 'demo\|App Review\|reviewer' backend.md` returns nothing but CORS and repository text. I8 therefore owns the reviewer-access answer itself, and its default is the degraded dictionary-only state rather than a demo account (see I8 and §4). |
-| Merging the new-word queue into one Practice session; list import | unassigned / its own task | `core.md` §2 flags the first as a gap no sibling plan owns. Noted here so it is not assumed to be mobile work. |
+| Merging the new-word queue into one Practice session | `core.md` **C7** | Assigned by `wave-zero.md` §9: C7's Files list carries `lib/lists/today.ts`, `lib/lists/introduce.ts` and `lib/srs/session.ts`, and its acceptance criteria require one session to serve new words, recognition and writing from one queue. Noted here so it is not assumed to be mobile work. |
+| List import | deferred from v1 | `wave-zero.md` §8 records it as deliberately unscheduled rather than merely unwritten. |
 
-**Three shared surfaces, and `android.md` as written currently disagrees about all three.** Read this
-before I0; it is the one part of this plan that cannot be executed without editing a sibling document.
+**Three shared surfaces, and both mobile plans already give the same three answers.** Read this
+before I0.
 
 STACK §7 is the rule — *"shared surfaces must be settled before parallel work starts"* — and the three
 surfaces are `capacitor.config.ts`, the `Capacitor.isNativePlatform()` gate, and the native TTS adapter.
-The gate is uncontested: no sibling claims `apps/app/lib/platform/native.ts`, and it is this plan's to
-create. The other two are contested, in writing, today:
+None of them is contested. The config is **`apps/app/capacitor.config.ts` with `webDir: 'dist'`**, with
+`apps/app/ios/` and `apps/app/android/` beside it — `android.md` §2's "Location" bullet says exactly
+that, for the same mechanical reason (`webDir` resolves relative to the config, and a config one
+directory away from the build output is one more path to keep in sync). The gate is
+`apps/app/lib/platform/native.ts`; no sibling claims it and it is this plan's to create. The native TTS
+adapter is **one file for both platforms**, `apps/app/lib/tts/capacitor.ts`, created by I4 and
+**extended** — never forked — by `android.md` A4, which says so in terms: *"This is one file for two
+platforms and this phase does not create a second one."*
 
-| Surface | This plan (I0) | `android.md` as written | Where |
-|---|---|---|---|
-| Config and native project location | `apps/app/capacitor.config.ts`, with `apps/app/ios/` and `apps/app/android/` beside it and `webDir: 'dist'` | `capacitor.config.ts` and `android/` at the **workspace root**, with `webDir` pointing at `apps/app/dist` | `android.md` §2 ("The Capacitor Android project: `capacitor.config.*`") and A1's Files list |
-| Number of TTS adapters | One file for both platforms — the plugin's JS API is the same object on both | Two. A4 says *"Port the `isChineseVoice` / `isCantoneseVoice` predicates rather than writing new ones, **so both adapters agree**"* | `android.md` A4 and its Files list |
-| Adapter filename | was `lib/tts/capacitor.ts`; **this document now adopts `android.md`'s spelling** | `lib/tts/capacitor-tts.ts` | `android.md` A4 Files |
-
-**No audit requires one adapter file.** AUDIT 1 and AUDIT 2 each establish only that the same plugin
-(`@capacitor-community/text-to-speech` 8.0.2) exposes a JS API on both platforms; neither says the
-adapter is one module. So the "does not fork it" instruction this plan used to give was an assertion
-about a sibling that the sibling does not accept, and it is withdrawn as an instruction and restated
-as a reconciliation task:
-
-- **I0 is the arbiter and it must edit `android.md`, not merely record a preference.** Its acceptance
-  criteria name the exact lines. If `android.md` A1 runs first, the reverse applies and I0 edits this
-  document instead; either way exactly one of the two layouts survives in both files before either
-  mobile plan's native project is generated.
-- **This plan adopts `android.md`'s filename, `lib/tts/capacitor-tts.ts`, unconditionally.** Changing a
-  filename is free here and it removes one of the three divergences without an argument.
-- **One thing is settled now, because both documents already want it:** the Mandarin voice predicates
-  (`isChineseVoice`, `isCantoneseVoice`) live in exactly one module, whatever the adapter count turns out
-  to be. `android.md` A4 demands they agree and this plan demands the same rule; a shared predicate module
-  is the smallest thing that guarantees it.
+Two consequences worth stating rather than leaving implicit. The Mandarin voice predicates
+(`isChineseVoice`, `isCantoneseVoice`) live in exactly one module, which follows from one adapter and
+which `android.md` A4 requires independently. And whichever mobile plan runs first lands the surface at
+those paths and records the interface in `HANDOFF.md`; the other reviews and extends it. `android.md`
+§2 takes that side of the bargain in full, so if A1 runs before I0, I0 collapses to a review.
 
 ## 3. What exists today
 
@@ -143,7 +133,7 @@ is about to matter a great deal more than it did on the web.
 **The reader is token-granular.** `components/reader/reader-text.tsx` renders one
 `<button data-token-index>` per token with a single delegated `onClick` on the container (deliberate:
 *"a 2,000 character text is ~1,300 tokens"*), and `lib/stores/reader.ts` models a span as
-`selected`/`spanEnd` **token** indexes. `grep -rn 'ruby\|<rt'` returns nothing. `core.md` C3–C5
+`selected`/`spanEnd` **token** indexes. `grep -rn 'ruby\|<rt'` returns nothing. `core.md` C3–C5b
 replaces both; this plan tests the replacement on hardware.
 
 **`app/globals.css`** is `@import "tailwindcss"` plus ten custom properties, a `.hanzi` utility and a
@@ -195,35 +185,39 @@ longer than the check does.
 | The workspace layout (`apps/app/`) | `web.md` W0 | **Before I0.** It decides where `capacitor.config.ts` and `ios/` live, and it relocates every path this plan writes (see the note at the head of §5). |
 | `apps/app/dist/` — a Vite build that works from a non-`/` origin | `web.md` W1 | **Before I1.** `web.md` §2 already owes this: *"Those plans consume this plan's `dist/`. This plan owes them a build that works from a non-`/` origin and a `navigate` boundary they can drive."* |
 | A configured API base URL and the gate's client half | `web.md` W4 | Before I1's network check. A device cannot reach a relative `/api/...` under a local scheme. |
-| **`viewport-fit=cover` in `apps/app/index.html`** | coordinated — see I5 | **Before I5.** `web.md` never accepted this edit: `grep -n -i 'viewport-fit' web.md` returns nothing, and W1 says only that `index.html` carries *"what `metadata` and `viewport` declared"*, which faithfully reproduces today's omission. `android.md` A2's Files list **does** carry it. It is one attribute, it is idempotent, and whichever of I5 and A2 runs first makes it; I5's Files list it for that reason. |
+| **The native gate on `components/pwa/register-sw.tsx`** | `web.md` W1 | **Before I1.** Inside a Capacitor WebView a worker adds nothing and can serve a previous build's shell after an app update. The gate is in **W1's Files list**, with a unit test on its native branch in W1's criteria; I1 asserts the behaviour on the device and does not edit the file. |
+| **`viewport-fit=cover` in `apps/app/index.html`** | `web.md` W1 | **Before I5.** Without it every `env(safe-area-inset-*)` is zero, and I5's whole safe-area criterion rests on it. It is one attribute in `index.html`, it is in **W1's Files list** and in W1's acceptance criteria, and this plan does not make the edit: I5 asserts it and, if it is missing, the phase is blocked on W1 rather than patching a file `web.md` owns. |
 | **The local export** (`lib/db/export.ts` / `import.ts`) | `web.md` W5 | **Before I7.** R9 makes this the v1 durability story on iOS and nothing enforced it. W5 ships and round-trips it, but tests it in Chromium only; whether a browser download path works inside a Capacitor WKWebView, or needs a Filesystem/Share plugin, is established by **no audit** — it is on I0's reading list and it is proved on the device at I7. |
 | `TTSProvider` widened — `stop()`, utterance identity, `start`/`end`/`boundary` events, `supportsBoundary`, voice preference — and recorded verbatim in `HANDOFF.md` | `core.md` C2 | **Before I4.** `core.md`'s own sentence is stronger — *"C2 must land before any mobile plan starts"*, i.e. before I0 — and the two are **not the same constraint**. This plan's reading governs here: I0–I3 consume nothing from `TTSProvider` and can run without it. Do not treat the mismatch as an error to fix by blocking I0; if C2 has landed anyway, nothing changes. |
 | `lib/tts/sequence.ts` (one utterance per character, highlight on `start`) | `core.md` C6 | Before I4's slow-mode check. I4 supplies the provider it runs on; it does not write the sequencer. |
-| **`core.md` C5a** — the per-character ruby + `caretRangeFromPoint` + Custom Highlight API harness in `components/gallery/**`, working in desktop Chromium, **with no production reader file touched** | `core.md` (see the note below) | **Before I2**, and no C5 production file may land before I2 returns. STACK register #1: *"Run it in desktop Chromium first — free, in the container, no hardware — and then on a real iOS 26 device before anything else in the reader is built."* |
+| **`core.md` C5a** — the per-character ruby + `caretRangeFromPoint` + Custom Highlight API harness in `components/gallery/**`, working in desktop Chromium, **with no production reader file touched** | `core.md` (see the note below) | **Before I2**, and no C5b production file may land before I2 returns. STACK register #1: *"Run it in desktop Chromium first — free, in the container, no hardware — and then on a real iOS 26 device before anything else in the reader is built."* |
 | **`core.md` C3, C4 and C5b shipped** — the production `<HanziText>`, `use-span-select.ts` and the character-granular span model — **and C7's three-tab shell** | `core.md` | **Before I5.** Criterion 6 tests a left-edge drag against WKWebView's back-forward gesture, which needs the real interaction and not I2's harness; the tab-bar and status-bar work is C7's shell, and criterion 1 checks "all three tabs". This is the phase where the shipped reader and real hardware meet, so it is also where I1's reader checklist rows first apply. |
 | **`core.md` C4a's `dict-status` components** — the four dictionary states, and the native first-launch copy progress with its low-storage failure path | `core.md` C4a | **Before I3.** C4a part three builds these explicitly for `ios.md` register #18 and `android.md` A5 (*"They are the same two components as `preparing` and `failed{reason:'storage'}` with different copy"*). I3 criterion 1 asserts they appear on the device; without C4a there is nothing to appear. |
-| `dict-<schema>-<cedict>.sqlite` produced by `pnpm data`, plus `lib/dict/runners/capacitor.ts` | `data.md` D1 and D5 | Before I3. D5 and I3 are the **same device session** seen from two plans; run them together with both documents open. |
+| `dict-<schema>-<cedict>.sqlite` produced by `pnpm data`, plus `lib/dict/runners/capacitor.ts` | `data.md` D1, D5a and D5b | Before I3. D5a writes the runner and answers the Android half; **D5b is the iOS half and it and I3 are the same device session** seen from two plans — run those two together with both documents open. |
 | `decomp.json` delivery decided | `data.md` (STACK §2.2 leaves it open) | Before I3. It is 0.92 MB, it must stay a separate artifact for the licence reason, and on native the obvious answer is the app package — but nothing has decided it. |
 | A deployed HTTPS server, or a decision that v1 ships without AI on device | `backend.md` | Before I8. See R13. |
-| **A privacy policy and a support URL, hosted somewhere** | unowned — flagged here | **Before I8.** App Store Connect requires both and `grep -n -i 'privacy policy\|support URL' web.md core.md` returns nothing: no plan writes either. `web.md` W7's Astro site at the apex is the only thing in the plan set that could host them and W7 does not mention them. Either W7 gains the two pages or I8 writes them and names their host; decide it when I8 is scheduled, not on submission day. |
+| **A live privacy policy URL and a live support URL** | `web.md` W7 | **Before I8.** App Store Connect will not take a submission without both. W7 owns the two pages on the Astro site — `/privacy` and `/support` at the apex — and records their exact URLs in `HANDOFF.md`; I8 puts those URLs into the listing. If W7 has not landed, I8 is **blocked**, not improvising two pages of its own. |
 
-### 4.4 The two orderings this plan changes in a sibling
+### 4.4 The two splits this plan's ordering required, both now settled
 
-Both are edits to `core.md`, and both must land before the phases that depend on them. A build session
-executing this document should raise them with the orchestrator at I0 rather than discovering them at I2.
+Both were asked for here and both are settled in [`wave-zero.md`](wave-zero.md) §4, written into the
+documents that own them. They are recorded here because I2 and I3 are the phases that consume them.
 
-**One: `core.md` C5's prototype must be a separable deliverable, and this plan calls it C5a.** As written,
-C5 says *"Build the prototype first, in this phase, before the production component"* and its Files list is
-the production rewrite (`use-span-select.ts`, `hanzi-text.tsx`, `reader-text.tsx`, `lib/stores/reader.ts`).
-So the harness I2 needs only exists once C5 has started — and I2 claims to gate C5. The split is real and
-cheap, because C5 already keeps the harness (`components/gallery/**` — *"the prototype stays, as the
-harness"*): **C5a is the gallery harness alone, desktop Chromium, no production file touched; C5b is
-everything else in C5's Files list, and it does not start until I2 has an answer.**
+**One: `core.md` C5 is split into C5a and C5b.** C5 was one phase whose Files list was the production
+rewrite (`use-span-select.ts`, `hanzi-text.tsx`, `reader-text.tsx`, `lib/stores/reader.ts`) with "build
+the prototype first, in this phase" inside it — so the harness I2 needs would only have existed once C5
+had started, and I2 gates C5's production code. The split was cheap because C5 already kept the harness
+(`components/gallery/**` — *"the prototype stays, as the harness"*): **C5a is the gallery harness alone,
+desktop Chromium, no production reader file touched; C5b is everything else in C5's Files list, and it
+does not start until I2 has an answer.** C5b is therefore the one `core.md` phase that depends on this
+plan; every other one does not, and `core.md` is right to say so.
 
-**Two: `core.md` §4 currently denies depending on this plan at all** — *"Nothing from `ios.md` /
-`android.md` … the mobile plans depend on this one, not the other way round."* That is true of every
-core.md phase except C5b, and the sentence needs the exception written into it, or a fresh session
-working from `core.md` alone will ship the drag-select production code before the crash check exists.
+**Two: `data.md` D5 is split into D5a and D5b.** D5 opened by requiring a Mac, an iOS device *and* an
+Android phone in one session, which blocked Android's native store on Apple hardware. **D5a** is the
+Android-runnable half — `lib/dict/runners/capacitor.ts`, the `open()`/copy logic and the manifest
+contract, with the Android device checks — and **D5b** is the iOS half, which adopts that runner
+unchanged and keeps the Mac-and-iPhone precondition. **I3 pairs with D5b**, and the two are the same
+device session seen from two plans.
 
 **An honesty note on register #1's wording.** It says the device run happens *"before anything else in the
 reader is built"*, and under `core.md`'s ordering that is not literally achievable: C5a needs `<HanziText>`
@@ -231,9 +225,9 @@ to render per-character ruby, which is C3, which is production reader code. Acce
 I2's check 1 crashes, the fault is in the selection CSS, not in the ruby renderer, so C3 survives the bad
 outcome and only C5b is at risk. What must not land before I2 is C5b.
 
-**Nothing in `data.md` or `web.md` depends on this plan, and only `core.md` C5b does.** That is otherwise
-the sequencing advice in STACK §4: everything web and desktop proceeds in the container; the Capacitor
-phases wait for hardware.
+**Nothing in `web.md` depends on this plan, `data.md` depends on it only through D5b's hardware, and in
+`core.md` only C5b does.** That is otherwise the sequencing advice in STACK §4: everything web and
+desktop proceeds in the container; the Capacitor phases wait for hardware.
 
 ## 5. Phases
 
@@ -273,7 +267,7 @@ cluster of facts at once"*. Do it here, before anything is installed.
 | The UIScene adoption in 8.5, and what the generated project contains for it | AUDIT 1 | See below. |
 | The official `@capacitor/*` plugin list | **not enumerated by any audit** | I5 needs keyboard, status-bar, splash and lifecycle behaviour and no audit says which plugin provides what. Write the list down. |
 | `@capacitor-community/text-to-speech` 8.0.2's actual API | AUDIT 1 named `onRangeStart` with `{start, end, spokenWord}` | I4 is built on it. |
-| **Whether the Capacitor CLI requires `ios/` and `android/` to be siblings of `capacitor.config.ts`**, and how `webDir` is resolved | **not established by any audit** | This is what decides the layout argument in §2 rather than taste. If the CLI is indifferent, the argument is about ergonomics and either answer is defensible. |
+| **Whether the Capacitor CLI requires `ios/` and `android/` to be siblings of `capacitor.config.ts`**, and how `webDir` is resolved | **not established by any audit** | §2's layout puts them there anyway, so this is a confirmation rather than a decision — but a CLI that resolves `webDir` from somewhere other than the config would make the settled `'dist'` string wrong, which is a silent empty app. |
 | **Which Safari version ships with which iOS version** | **not established by any audit or by STACK** | The CSS floors below are stated in *Safari* versions and an Xcode deployment target is an *iOS* version. Without this mapping "the floor the ruby CSS requires" is not a number anyone can type into the project settings. |
 | **Whether a free personal team can install a debug build on a registered device** | **not established by any audit** | It decides whether I1 can start before the paid enrolment clears (§4.1). |
 | **Whether a blob / `<a download>` save works inside a Capacitor WKWebView**, and which plugin it needs if not | **not established by any audit** | `web.md` W5's export is the v1 durability story on iOS (R9) and W5 tests it in Chromium only. I7 proves it on the device; this reading tells I7 what to expect. |
@@ -285,7 +279,7 @@ draft of this plan chose:
 | Feature | Floor | What a lower target costs |
 |---|---|---|
 | `ruby-align`, `ruby-overhang`, unprefixed `ruby-position` | **Safari 18.2** (late 2024); further overhang fixes in Safari 26.x | The reader's rendering model is per-character ruby (`core.md` C3, product-decisions §4 rule 1). `core.md` C3 judges the practical risk **cosmetic** — `over` is the engine default for horizontal text, so an engine that ignores the declaration lays it out the same way — but this is the highest floor and it governs the recommendation. |
-| CSS Custom Highlight API | Safari 17.2+ (Baseline 2025) | No painted span highlight. `core.md` C5's feature-detected fallback (tap-then-tap-to-here, painted with a class) covers it, so this is a degrade rather than a break. |
+| CSS Custom Highlight API | Safari 17.2+ (Baseline 2025) | No painted span highlight. `core.md` C5b's feature-detected fallback (tap-then-tap-to-here, painted with a class) covers it, so this is a degrade rather than a break. |
 | `user-select: none` excluded from copy | WebKit since Safari 16.4 (bug 80159) | Pinyin in copied text **wherever native selection is still allowed**. That is not the reader passage — see I2, which explains why — but it is everywhere else `<HanziText>` renders: lookup headwords, card faces, example sentences. `rt { user-select: none }` is `core.md` C3's rule and this floor is what makes it work. |
 
 **Recommendation: set the deployment target at the iOS version corresponding to Safari 18.2, the highest
@@ -300,23 +294,13 @@ do not add the prefix speculatively."* Answer it here with the deployment target
 it — the answer follows from the target, and a prefix added on reflex is how a stylesheet accumulates
 cruft nobody dares delete.
 
-**Decide where Capacitor lives, once, for both platforms, and edit the sibling that disagrees.** §2
-sets out the conflict: `android.md` A1 already specifies a **root-level** `capacitor.config.ts` and
-`android/`, with `webDir` pointing at `apps/app/dist`. This plan's recommendation is unchanged —
-**`apps/app/`**, so `apps/app/capacitor.config.ts` with `webDir: 'dist'` and `apps/app/ios/` and
-`apps/app/android/` beside it — and the reason is mechanical: `webDir` is resolved relative to the
-config, and a config that lives one directory away from the build output is one more path to keep in
-sync. But the recommendation is not what matters; **agreement is**, and the CLI's own constraint (is
-`ios/` required to be a sibling of the config?) is on this phase's reading list precisely because it can
-settle the argument on fact rather than taste.
-
-Whichever layout wins, write the exact `webDir` string for it: `'dist'` for the `apps/app/` layout,
-`'apps/app/dist'` for the root layout. They are not interchangeable and a wrong one is a silent empty app.
-
-The three lines to change in `android.md` if this plan's layout wins are: §2's *"The Capacitor Android
-project: `capacitor.config.*`"* bullet, A1's *"``webDir`` points at `apps/app/dist`"* sentence, and A1's
-Files list (`package.json` (root and `apps/app/`), `capacitor.config.ts`, `android/**`). If `android.md`
-A1 has already run, edit **this** document instead and record which way it went.
+**Write the config where §2 says it goes, with the exact `webDir` string.**
+`apps/app/capacitor.config.ts`, with `apps/app/ios/` and `apps/app/android/` beside it, and
+`webDir: 'dist'` — the location `android.md` §2 already adopts, for the mechanical reason both
+documents give: `webDir` resolves relative to the config, so a config one directory away from the build
+output is one more path to keep in sync. **`'dist'` and `'apps/app/dist'` are not interchangeable and
+the wrong one is a silent empty app**, so write the string that matches the layout and confirm it
+against the CLI's own `webDir` resolution on this phase's reading list.
 
 **Build the platform seam.** One module — `apps/app/lib/platform/native.ts` — exporting whether the app
 is
@@ -345,10 +329,10 @@ adds. Install what this plan is built on rather than letting it arrive by implic
 for keyboard, status bar, splash and lifecycle (I5). All versions are STACK §6's pins, re-checked by the
 reading pass above.
 
-**Files.** `apps/app/capacitor.config.ts` (or the root, per the layout decision above),
-`apps/app/lib/platform/native.ts`, `apps/app/tests/unit/platform/*`, `apps/app/package.json` (the
-Capacitor dependencies and the `cap` scripts), `.gitignore`, `HANDOFF.md`, and **`docs/plans/android.md`**
-(the three lines named above, if this plan's layout and adapter decisions win).
+**Files.** `apps/app/capacitor.config.ts`, `apps/app/lib/platform/native.ts`,
+`apps/app/tests/unit/platform/*`, `apps/app/package.json` (the Capacitor dependencies and the `cap`
+scripts), `.gitignore`, and `HANDOFF.md`. **No sibling document is
+edited by this phase** — `android.md` already states the same three answers (§2).
 
 **Acceptance criteria.**
 
@@ -364,13 +348,8 @@ Capacitor dependencies and the `cap` scripts), `.gitignore`, `HANDOFF.md`, and *
 5. The Apple Developer Program enrolment is submitted, and its state is recorded. Separately, the
    personal-team question is answered from Apple's documentation, so I1's start does not wait on the
    enrolment unless the answer says it must.
-6. **`docs/plans/android.md` and this document agree**, in the files themselves and not only in
-   `HANDOFF.md`, on: the config location, the `webDir` string, and whether there are one or two TTS
-   adapters. A diff on `android.md` (or a recorded note that A1 ran first and this document was the one
-   edited) is the evidence. **A `HANDOFF.md` entry alone does not satisfy this criterion**, because a
-   session executing `android.md` reads `android.md`.
-7. The device matrix is in `HANDOFF.md` with all four roles assigned or explicitly marked unavailable.
-8. `apps/app/package.json` declares every plugin named above at a pinned version, and `pnpm test`'s
+6. The device matrix is in `HANDOFF.md` with all four roles assigned or explicitly marked unavailable.
+7. `apps/app/package.json` declares every plugin named above at a pinned version, and `pnpm test`'s
    dependency-table spec (`tests/unit/deps.test.ts`, which asserts the table equals `dependencies`)
    is updated in the same commit.
 
@@ -399,7 +378,9 @@ the next reader knows a seven-row checklist is correct rather than stale.
    Capacitor the web assets are already local and already versioned by the app build, so a worker adds
    nothing and can serve a previous build's shell after an app update. Whether a service worker even
    registers under Capacitor's local scheme is **not established by any audit** — do not find out by
-   accident. Gate registration off `apps/app/lib/platform/native.ts` and assert it.
+   accident. The gate off `apps/app/lib/platform/native.ts` is **`web.md` W1's edit**, in W1's Files
+   list and its criteria; this phase is where it is proved on a device, and if W1 did not land it, this
+   phase is blocked on W1 rather than editing the file.
 2. **The API base cannot be relative.** Capacitor serves the web assets from a local origin, not from
    the app's own domain, so a relative `/api/ask` resolves to that local origin and fails. Read the
    actual origin off the running app rather than assuming its spelling — no audit records it — and
@@ -461,8 +442,8 @@ applicable" rather than deleted**, so their absence is visible.
 
 *Re-baselined at `core.md` C7*, when seven routes become three tabs.
 
-**Files.** `apps/app/ios/**` (generated, committed), `.gitignore`,
-`apps/app/components/pwa/register-sw.tsx` (native gate), `HANDOFF.md`.
+**Files.** `apps/app/ios/**` (generated, committed), `.gitignore`, `HANDOFF.md`. The native gate on
+`apps/app/components/pwa/register-sw.tsx` is **`web.md` W1's** and is not edited here.
 
 **Acceptance criteria.**
 
@@ -473,8 +454,9 @@ applicable" rather than deleted**, so their absence is visible.
    seven `components/shell/nav.ts` routes, not three tabs (see the note above); a deep route survives a
    reload; no request in the WebView inspector targets the local scheme for `/api/*`.
 3. `navigator.serviceWorker.getRegistrations()` returns empty inside the app, asserted from Safari Web
-   Inspector attached to the device, and a unit test asserts the native branch of
-   `apps/app/components/pwa/register-sw.tsx` does not register.
+   Inspector attached to the device. The unit test on the native branch of
+   `apps/app/components/pwa/register-sw.tsx` is `web.md` W1's criterion; this one is the device half of
+   the same claim, and a failure here is reported to `web.md` rather than patched in this phase.
 4. One authenticated call to the real API base succeeds over HTTPS from the device, and the response
    is rendered. If `backend.md` has not shipped, this criterion is explicitly deferred **in writing** to
    I8 rather than silently skipped.
@@ -490,8 +472,8 @@ applicable" rather than deleted**, so their absence is visible.
 
 **This is the phase the whole iOS decision rests on, and no `core.md` C5b production file may land
 before it returns.** It settles register #1 and register #2. Everything else in this plan is ordinary app
-work; this is the part that could invalidate the stack choice. §4.4 states the two `core.md` edits this
-ordering requires and why the plan cannot simply assert them.
+work; this is the part that could invalidate the stack choice. §4.4 states the C5a/C5b split this
+ordering required and where it is settled.
 
 **What is being tested, precisely.** STACK register #1 states that *neither audit ran the combination
 this record specifies*: one `<ruby>` element per character, `caretRangeFromPoint` on every
@@ -513,11 +495,11 @@ them and the conflation made check 5 unrunnable. Keep them apart:
 
 | Rule | Where | What it does | Whose floor |
 |---|---|---|---|
-| `-webkit-user-select: none` on the **passage** | the reader, `core.md` C5 | Suppresses native selection entirely, so a drag can be hand-rolled. AUDIT 1's own recommendation is *"do NOT use native WKWebView selection over ruby"*. This is the crash risk. | none — it is the interaction design |
+| `-webkit-user-select: none` on the **passage** | the reader, `core.md` C5b | Suppresses native selection entirely, so a drag can be hand-rolled. AUDIT 1's own recommendation is *"do NOT use native WKWebView selection over ruby"*. This is the crash risk. | none — it is the interaction design |
 | `rt { user-select: none }` | every `<HanziText>`, `core.md` C3 | Excludes pinyin from a copy **where native selection still happens** — lookup headwords, card faces, examples. Not the reader passage: there is no native selection there to exclude anything from. | Safari 16.4 (bug 80159), which is why I0's floor table keeps the row |
 
 The consequence for this phase is that **there is no system selection to make and no system copy to
-inspect on the reader passage.** Whatever reaches the clipboard from a span comes from `core.md` C5's own
+inspect on the reader passage.** Whatever reaches the clipboard from a span comes from `core.md` C5b's own
 `copy` handler in `components/hanzi/span-clipboard.ts`, which calls `preventDefault()` and writes
 `spanOf(from, to)` — the app choosing the string rather than the engine deriving it. Safari 16.4's
 behaviour is irrelevant to that path. STACK register #1 still asks the phase to *"confirm copy excludes
@@ -538,7 +520,7 @@ and the timeline.
 | 2 | Hit-test on every `pointermove`. | Median and p95 `pointermove`→highlight-updated latency, recorded as numbers. Nobody has a threshold; record what it is and judge it by feel with the owner. |
 | 3 | Render a realistic pasted passage (a few hundred characters, per-character ruby). | Layout/paint time, recorded. Then scroll it and record whether it stays smooth. |
 | 4 | Feature-detect `caretPositionFromPoint` and log which path is taken (register #2). | Whether the hit test is standards-track on Safari 26 or forks to the WebKit-proprietary `caretRangeFromPoint`. Not fatal either way — the proprietary one is present in every WKWebView — but the code must prefer the standard and fall back, and the log says which ran. |
-| 5 | Drag a span, then invoke whatever copy affordance the harness carries from `core.md` C5 — on touch that is the explicit **Copy** control, since there is no `Cmd+C`. | The string the app writes to the clipboard is exactly the span's base characters, with **no pinyin**. Read the clipboard back and compare it to `spanOf()`'s string; do not infer it from what the selection looks like. If the harness has no copy affordance yet, record that and hand the check to whichever phase ships one — do not substitute a system copy, because there is no system selection on this passage to copy from. |
+| 5 | Drag a span, then invoke whatever copy affordance the harness carries from `core.md` C5a — on touch that is the explicit **Copy** control, since there is no `Cmd+C`. | The string the app writes to the clipboard is exactly the span's base characters, with **no pinyin**. Read the clipboard back and compare it to `spanOf()`'s string; do not infer it from what the selection looks like. If the harness has no copy affordance yet, record that and hand the check to whichever phase ships one — do not substitute a system copy, because there is no system selection on this passage to copy from. |
 | 6 | Confirm highlight ranges land on base characters and never on `<rt>` text. | Visual, plus assert the resolved range's container in the console. |
 | 7 | Repeat 1–3 with VoiceOver on and with Dynamic Type at a large setting. | Neither audit touched accessibility on this interaction and the reader is the app's core screen. Record what happens; do not fix it here. |
 
@@ -585,9 +567,9 @@ C5a's existing gallery harness. **This phase writes no production reader code.**
 3. If check 1 crashed: every workaround variant from the list above is recorded with its result, and
    the phase ends in a written recommendation to the owner. **A crash with no recorded workaround
    attempts is a failed phase, not a blocked one.**
-4. If the checks pass: **`core.md` C5b** — the production files in C5's list — is unblocked, and
-   `HANDOFF.md` says so explicitly, because that phase is waiting on this answer and `core.md`'s own §4
-   does not yet say so (§4.4).
+4. If the checks pass: **`core.md` C5b** — the production half of the split, `use-span-select.ts`,
+   `hanzi-text.tsx`, `reader-text.tsx` and `lib/stores/reader.ts` — is unblocked, and `HANDOFF.md` says
+   so explicitly, because that phase is waiting on this answer (§4.4).
 
 ---
 
@@ -595,9 +577,9 @@ C5a's existing gallery harness. **This phase writes no production reader code.**
 
 **What it builds.** `dict-<schema>-<cedict>.sqlite` and `decomp.json` inside the iOS app bundle, the
 first-launch copy into app storage, and the four device answers that make `data.md`'s "one file, all
-three platforms" claim true on iOS. **Run this as the same device session as `data.md` D5, with both
-documents open** — D5 owns `lib/dict/runners/capacitor.ts`, this phase owns the asset reaching the
-device and the iOS half of the measurements.
+three platforms" claim true on iOS. **Run this as the same device session as `data.md` D5b, with both
+documents open** — D5a owns `lib/dict/runners/capacitor.ts` and D5b adopts it unchanged, this phase
+owns the asset reaching the device and the iOS half of the measurements.
 
 **The asset path is a build-system problem, not a copy.** `data/*.json` is generated and gitignored
 today, and STACK §7 lists the `pnpm data` → artifact path as an **undecided shared surface** that must
@@ -607,8 +589,9 @@ it: the file must land in the bundle from a build step, not from a developer dra
 because a hand-placed asset is the kind of thing that works for a year and then silently ships a stale
 dictionary.
 
-**Budget the file twice, at the number `data.md` D5 actually gives.** The artifact sits compressed in
-the package **and** expanded in app storage after the copy. D5's figure is **~19.5 MB + 43.1 MB ≈ 63 MB**,
+**Budget the file twice, at the number `data.md` D5a actually gives.** The artifact sits compressed in
+the package **and** expanded in app storage after the copy. D5a's figure — the single budget for both
+platforms, which D5b adopts unchanged — is **~19.5 MB + 43.1 MB ≈ 63 MB**,
 and it says so in terms that bind this document: *"Use ~19.5 MB + 43.1 MB ≈ 63 MB, not the 57 MB an
 earlier draft gave … Every size estimate in `ios.md` and `android.md` must use 63 MB and must carry
 that caveat."*
@@ -626,7 +609,7 @@ iOS 13.
 |---|---|---|
 | 20 | **Is FTS5 compiled into the SQLCipher iOS pod?** Verified for the Android artifact only; named in the dictionary audit's own not-verified list. This is the claim that makes one file work on iOS with no per-platform build. | Open the copied asset through the plugin and run `SELECT sqlite_version()` and a gloss query against the FTS5 table. If FTS5 is absent, English gloss search is broken on iOS and `data.md`'s fallbacks are the recourse — say so loudly rather than shipping a silently degraded search. |
 | 6 | Do `ATTACH` and the `immutable=1` URI flag pass through the plugin? | Call both; read the error. Not fatal either way — two connections work — but it decides whether the dictionary and the learner's database can share one. |
-| 18 | **How long does `copyFromAssets()` of a ~43 MB file take, and what does it cost in storage?** Unmeasured by anyone; STACK §2.5 says the audit's *"no failure mode"* phrasing should not survive into a build plan. | Time it on the **primary** and on the **near-full** device state from §4.2's matrix. Record peak storage. Then confirm the one-time progress state and the low-storage failure path actually appear. Those two screens are `core.md` **C4a part three**, which builds them by name for this register entry (*"the same two components as `preparing` and `failed{reason:'storage'}` with different copy"*); `data.md` D5 owns the state model; this phase owns proving they render on the device. §4.3 gates I3 on C4a for exactly this reason. |
+| 18 | **How long does `copyFromAssets()` of a ~43 MB file take, and what does it cost in storage?** Unmeasured by anyone; STACK §2.5 says the audit's *"no failure mode"* phrasing should not survive into a build plan. | Time it on the **primary** and on the **near-full** device state from §4.2's matrix. Record peak storage. Then confirm the one-time progress state and the low-storage failure path actually appear. Those two screens are `core.md` **C4a part three**, which builds them by name for this register entry (*"the same two components as `preparing` and `failed{reason:'storage'}` with different copy"*); `data.md` D5a owns the state model and D5b checks the same two states on iOS; this phase owns proving they render on the device. §4.3 gates I3 on C4a for exactly this reason. |
 | 11 | Cold-start time with the dictionary open, on iOS. | Measure it. AUDIT 1 records practitioner reports of *"under ~2 s on iPhone 11-class hardware"* with **no rigorous benchmark**, so this is a number to establish, not a threshold to pass. Record it against the owner's own bar. |
 
 **The bridge is the performance story, not SQLite.** STACK §2.5 hard part 4: every query is a JSON
@@ -665,7 +648,7 @@ dependency), `data/ATTRIBUTION.md`, `HANDOFF.md`.
    Capacitor runner on the device.
 4. Deleting the app and reinstalling reproduces the copy; changing the dictionary version in the
    manifest triggers exactly one re-copy and no more.
-5. The installed size on device is recorded (both halves) against D5's ~63 MB budget, and the App Store
+5. The installed size on device is recorded (both halves) against D5a's ~63 MB budget, and the App Store
    Connect **download size** is recorded at I7 when there is an upload to read it from.
 6. SQLCipher's BSD notice is in `data/ATTRIBUTION.md` and visible in the app's licences screen.
 7. `npx cap sync ios` re-run after the plugin is present, with the pod or SPM resolution output and the
@@ -675,12 +658,11 @@ dependency), `data/ATTRIBUTION.md`, `HANDOFF.md`.
 
 ### I4 — Native speech, and how the character-by-character highlight is driven
 
-**What it builds.** `apps/app/lib/tts/capacitor-tts.ts` — the `TTSProvider` implementation over
+**What it builds.** `apps/app/lib/tts/capacitor.ts` — the `TTSProvider` implementation over
 `@capacitor-community/text-to-speech` 8.0.2 (MIT, June 2026) — plus the voice selection that reaches
 Apple's enhanced Mandarin voices, and the wiring that lets `core.md` C6's hold-to-slow mode work on a
-device. **The filename is `android.md` A4's, adopted here to remove one of the three divergences §2
-records.** Whether this is one file for both platforms or two is the question I0 settles with
-`android.md`; what is settled regardless is that the Mandarin voice predicates live in one module.
+device. **This is one file for both platforms** (§2): it is created here, `android.md` A4 extends it
+with the Android half rather than forking it, and the Mandarin voice predicates live in one module.
 
 **Why native and not Web Speech, restated because it decides the whole phase.** AUDIT 1: Web Speech
 inside WKWebView *"only exposes compact/pre-installed voices (Apple forum 723503; regressions in iOS
@@ -737,10 +719,10 @@ established.** No audit ran it. Record answers for all of these:
 | Does speech play with the **silent switch** on? Does it duck or stop background audio? Does it survive a phone call, an interruption, and backgrounding? | AUDIT 1 notes `@capgo/capacitor-speech-synthesis` (MPL-2.0) has explicit audio-session control and the community plugin's is unstated. If the community plugin's audio session is wrong and unconfigurable, capgo is the recorded alternative. |
 | Does `onRangeStart` actually fire, and are its offsets character offsets into the string? | Decides `supportsBoundary`. |
 
-**Files.** `apps/app/lib/tts/capacitor-tts.ts`, the shared Mandarin voice predicates,
-`apps/app/tests/unit/tts/capacitor-tts.test.ts` (against a faked plugin), and the provider-selection
-point — **one module, whose location `android.md` A4 says must be agreed with `core.md` C2**, branching on
-`apps/app/lib/platform/native.ts` — plus `HANDOFF.md`.
+**Files.** `apps/app/lib/tts/capacitor.ts`, the shared Mandarin voice predicates,
+`apps/app/tests/unit/tts/capacitor.test.ts` (against a faked plugin), and the provider-selection
+point — **one module**, branching on `apps/app/lib/platform/native.ts`, which `android.md` A4 reads
+rather than rewrites — plus `HANDOFF.md`.
 
 **Acceptance criteria.**
 
@@ -780,14 +762,12 @@ find out rather than to assume iOS is the easy platform.
 
 **The work:**
 
-- **`viewport-fit=cover`, and this phase makes the edit rather than handing it away.** `env(safe-area-
-  inset-*)` is zero without it. Today's `app/layout.tsx` viewport export does not set it, and `web.md` W1
-  ports *"what `metadata` and `viewport` declared"* into `apps/app/index.html` — which faithfully
-  reproduces the omission. `web.md` never accepted the edit (`grep -n -i 'viewport-fit' web.md` returns
-  nothing) and W1 runs long before I5, so handing it over means handing it to a phase that has finished.
-  `android.md` A2's Files list already claims the same one-attribute change. It is idempotent: whichever
-  of I5 and A2 runs first makes it and the other confirms it. It is in this phase's Files for that reason,
-  as a coordinated edit — flag it in the commit message so the sibling's reviewer recognises it.
+- **`viewport-fit=cover`, which `web.md` W1 carries and this phase asserts.** `env(safe-area-inset-*)`
+  is zero without it, so every criterion below rests on it. Today's `app/layout.tsx` viewport export
+  does not set it; the attribute is in **W1's Files list** for `apps/app/index.html` and in W1's
+  acceptance criteria, so this phase neither makes the edit nor hands it anywhere. Confirm it is there
+  before measuring anything — if it is missing, this phase is blocked on W1, and a zero inset with the
+  attribute absent is a `web.md` bug rather than an iOS finding.
 - **The tab bar and the home indicator.** product-decisions §10 puts the phone on *"the three-tab shell"*
   and §1 defines the three tabs, but **neither says the bar is at the bottom** — that is on the design
   canvas, which a fresh session cannot read. The safe-area reasoning here depends entirely on the bar
@@ -823,8 +803,8 @@ find out rather than to assume iOS is the easy platform.
 **Files.** `core.md` C0's token stylesheet — `app/globals.css` today, relocated by `web.md` W0 and
 rewritten by C0, so **C0 fixes its final path and this phase uses whatever that is**; this is `core.md`'s
 file, so the safe-area utilities are proposed here and landed there or by explicit agreement. Plus
-`core.md` C7's shell components (same rule), `apps/app/index.html` (the `viewport-fit=cover` attribute, a
-coordinated edit shared with `android.md` A2), `apps/app/ios/**` configuration, and `HANDOFF.md`.
+`core.md` C7's shell components (same rule), `apps/app/ios/**` configuration, and `HANDOFF.md`.
+`apps/app/index.html` is **`web.md` W1's** and is not edited here.
 
 **Acceptance criteria.**
 
@@ -840,7 +820,7 @@ coordinated edit shared with `android.md` A2), `apps/app/ios/**` configuration, 
 5. Rubber-band overscroll does not detach the tab bar or the header; a long press on hanzi produces
    the app's own sheet and **not** the system callout.
 6. A drag starting at the left edge of the reader selects a span and does not navigate back. This is
-   the **production** interaction — `core.md` C5's `use-span-select.ts` over `<HanziText>`, which §4.3
+   the **production** interaction — `core.md` C5b's `use-span-select.ts` over `<HanziText>`, which §4.3
    gates before this phase — not a second run of I2's harness, and it is the first time the shipped reader
    meets real hardware. Run the reader rows of I1's standing checklist in the same session and record them.
 7. I2's check 1 is re-run after this phase's CSS lands, and the result recorded again.
@@ -933,7 +913,7 @@ signing record).
    asset-bundling mistakes surface.
 3. The dictionary copy runs on that clean install and the app works fully offline afterwards.
 4. The download size App Store Connect reports after the upload, and the installed size, are recorded
-   against `data.md` D5's ~63 MB budget — settling register #16 ("Store compression ratio") for iOS.
+   against `data.md` D5a's ~63 MB budget — settling register #16 ("Store compression ratio") for iOS.
 5. All three compliance questions above have written answers with their sources.
 6. **The local export produces a retrievable file on the device**, not in Chromium: run it from the
    TestFlight build, retrieve the file off the phone, and re-import it into a fresh install. If it needs a
@@ -969,25 +949,25 @@ getting a row into `backend.md` first.
   treats that. **Read the current App Review Guidelines on this specific point before submitting**, and
   record the reading. This is the single most plausible cause of a rejection in this plan.
 
-**The listing, and the two artifacts nobody owns.** Screenshots at the required sizes (take them from a
+**The listing.** Screenshots at the required sizes (take them from a
 real device, on the settled visual language, not from the Simulator's default wallpaper), description,
 keywords, age rating, and the licence attribution — CC-CEDICT is CC BY-SA 4.0 and Make Me a Hanzi is
 LGPL-3.0-or-later, both already rendered in-app from `data/ATTRIBUTION.md`, and the description should
 say the dictionary's provenance rather than leaving a reviewer to wonder where 124k entries came from.
 
-App Store Connect also requires a **support URL** and a **privacy policy URL**, and §4.3 records that no
-plan in the set writes either — `grep -n -i 'privacy policy\|support URL' web.md core.md` returns nothing,
-and `web.md` W7's Astro site at the apex, the only plausible host, does not mention them. Settle it when
-this phase is scheduled: either W7 gains the two pages, or this phase writes them and names where they are
-hosted. Two static pages are an hour's work and a blocked submission is a week.
+App Store Connect also requires a **support URL** and a **privacy policy URL**, and **`web.md` W7 owns
+both pages** — `/privacy` and `/support` on the Astro site at the apex, with their exact URLs recorded in
+`HANDOFF.md`. This phase reads those two URLs and puts them in the listing; it does not write the pages.
+If W7 has not landed, this phase is blocked on it, and a blocked submission is a week — so check the two
+URLs resolve before the listing is started, not on submission day.
 
 **Files.** `HANDOFF.md` (the submission record), screenshot assets, `data/ATTRIBUTION.md` if the
 listing surfaces anything not already there.
 
 **Acceptance criteria.**
 
-1. The listing is complete — including a live support URL and a live privacy policy URL, with whoever
-   wrote and hosted them recorded — and the build is submitted.
+1. The listing is complete — including `web.md` W7's live support URL and live privacy policy URL,
+   both checked to resolve from outside the network they were built on — and the build is submitted.
 2. The review notes paragraph pre-empting Guideline 4.2 exists, quoted in `HANDOFF.md`.
 3. The reviewer-access decision is written down and, since the default is "degrade to dictionary-only",
    that path is demonstrated on a device with the API base unreachable and the demonstration recorded.
@@ -1026,7 +1006,7 @@ together, on any hardware.
 *Trigger:* I2's latency numbers are bad, or a pasted passage of a few hundred characters janks on
 scroll.
 *Check:* I2 checks 2 and 3, recorded as numbers. Desktop Chromium first (free, in the container, and
-`core.md` C3/C5 runs it anyway), then the device.
+`core.md` C3/C5a runs it anyway), then the device.
 *Mitigation:* the usual ones exist and are cheap — throttle the hit-test to animation frames, hit-test
 only when the pointer crosses into a new character, cap the rendered passage length — and all of them
 are `core.md`'s to implement. What this plan owes is the measurement that says which is needed.
@@ -1047,7 +1027,7 @@ twice.
 *Check:* I3, timed on an empty and a nearly-full device, with peak storage recorded.
 *Mitigation:* the one-time progress state and the low-storage failure path, which **do not exist in any
 screen today** and are built by `core.md` **C4a part three**, which names this register entry as its
-reason. `data.md` D5 owns the state model, C4a owns the screens, I3 proves them on the device, and §4.3
+reason. `data.md` D5a owns the state model, C4a owns the screens, I3 proves them on the device, and §4.3
 gates I3 on C4a so the criterion is not left depending on unowned UI.
 
 **R5 — Cold-start time on iOS is unknown (register #11).** AUDIT 1 has practitioner reports of under
@@ -1064,7 +1044,7 @@ the bundle is the thing to look at.
 in late 2024 behind a flag.
 *Trigger:* nothing fatal — `caretRangeFromPoint` is WebKit-proprietary and present in every WKWebView.
 *Check:* I2 check 4, feature-detect and log which path ran.
-*Mitigation:* write the code to prefer the standard and fall back, which is what `core.md` C5 does
+*Mitigation:* write the code to prefer the standard and fall back, which is what `core.md` C5b does
 anyway. The only cost of the wrong answer is a fork the code already contains.
 
 **R7 — Everything about the TTS plugin's runtime behaviour is unverified.** No audit ran
@@ -1153,7 +1133,7 @@ interface. The recorded alternative, Capawesome's, is technically the best fit a
 *Trigger:* a CC-CEDICT correction the owner wants out today.
 *Check:* none; it is a property of the choice.
 *Mitigation:* recorded and cheap to reverse — download-on-first-launch is the same file, the same
-manifest, the same versioning, and only `open()`'s first branch changes (`data.md` D5).
+manifest, the same versioning, and only `open()`'s first branch changes (`data.md` D5a).
 
 **R17 — The hardware gate itself.** Every phase here needs a Mac with Xcode 26, and most need a physical
 iOS 26 device — in practice **more than one**, and in more than one state: §4.2's matrix names a

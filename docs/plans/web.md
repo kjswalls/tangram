@@ -37,7 +37,14 @@ story is a browser tab whose storage Safari's seven-day ITP cap can clear.
 - The router: React Router 8 in data mode, the route table, and every replacement for `next/link`,
   `usePathname`, `useRouter` and the two server-shaped pages.
 - The destinations of the four Next casualties and the fifth (`lib/server/route-inventory.ts` and
-  `pnpm smoke`), listed route by route in §3.
+  `pnpm smoke`), listed route by route in §3. **`scripts/smoke.ts`, `lib/server/route-inventory.ts`
+  and `tests/unit/server/routes.test.ts` are this plan's files and W2 decides their final form** —
+  `data.md` D6 removes the `/api/dict/*` entries from them and nothing else, and `backend.md` B2
+  says the same. None of the three is deleted.
+- The **web delivery of the dictionary artifacts**: copying `dict-<schema>-<cedict>.sqlite`,
+  `dict-manifest.json` and `decomp.json` into the app's build output, and the host rules that serve
+  them (W2). `data.md` D4 owns what they contain and states the requirement; the host is this
+  plan's.
 - The service worker: its generation, its build stamp, its cache policy under hashed Vite assets,
   and `public/offline.html`.
 - The PWA: the manifest, the install affordance, `navigator.storage.persist()`, and the local export
@@ -57,7 +64,7 @@ story is a browser tab whose storage Safari's seven-day ITP cap can clear.
 
 | Not here | Owner | Why the seam is where it is |
 |---|---|---|
-| The SQLite dictionary, `DictStore`, the OPFS worker, the `pnpm data` artifact path, `decomp.json` delivery | `data.md` | This plan makes a build that can ship a large binary asset and a worker; it does not decide what the asset is. The one hard coupling is that the service worker must **not** cache the dictionary (§5, W3). |
+| The SQLite dictionary, `DictStore`, the OPFS worker, the `pnpm data` artifact path, and what `decomp.json` *contains* | `data.md` | This plan makes a build that can ship a large binary asset and a worker; it does not decide what the asset is. Two hard couplings, both W2's and W3's: the artifacts have to be copied into `dist/` and served under the rules `data.md` D4 states, and the service worker must **not** cache the dictionary (§5, W3). |
 | Design tokens, `components/ui/**`, screens, per-character ruby, drag-select, `TTSProvider`, the palette's *components* | `core.md` | This plan routes to screens and hands them a `navigate` boundary; it never renders one. The palette is a mode over `core.md`'s screens; this plan supplies the URL and the keys. |
 | Capacitor projects, native plugins, the Android hardware back button, fonts inside an app package | `ios.md`, `android.md` | Those plans consume this plan's `dist/`. This plan owes them a build with no absolute-origin assumption — it boots from the root of `capacitor://localhost` or `tauri://localhost` as readily as from an apex — and a `navigate` boundary they can drive. |
 | The server itself — framework, host, auth, sync, key custody, the new `/api/ask` request contract | `backend.md` | This plan owns only the *transport*: the configured API base, credentials mode, and the gate's client half. What is behind the base URL is not its business. |
@@ -209,12 +216,12 @@ moment it is free.
 
 | Needs | From | State it must be in |
 |---|---|---|
-| CLAUDE.md rewritten with the new command set and settle-first list | orchestrator, STACK §7 | **Before W0.** Today's CLAUDE.md documents `next dev`, `next build`, `.next/BUILD_ID` and a frozen-file list containing `next.config.ts` and `app/layout.tsx`. It is auto-loaded project instruction and outranks this plan until it changes. |
+| CLAUDE.md rewritten with the new command set and settle-first list | wave 0, specified in [`wave-zero.md`](wave-zero.md) §2 | **Before W0.** Today's CLAUDE.md documents `next dev`, `next build`, `.next/BUILD_ID` and a frozen-file list containing `next.config.ts` and `app/layout.tsx`. It is auto-loaded project instruction and outranks this plan until it changes. |
 | Nothing at all from `data.md`, `core.md`, `ios.md`, `android.md` or `backend.md` | — | W0–W3 are pure build-system work in the Linux container. STACK §4 is explicit that everything web and desktop proceeds without a Mac or a phone. |
-| The dictionary artifact's name and extension | `data.md` | **Before W3 ships.** The service worker must be told, by rule, never to cache it; a 15 MB brotli file in the HTTP cache *and* in OPFS is the same bytes twice. |
+| The dictionary artifact's name, extension and manifest | `data.md` D1 | **Before W2 ships**, because W2 copies the artifacts into the build output and writes their host rules; W3 then needs the name to deny it by rule. The service worker must never cache the dictionary; a 13.9 MB brotli file in the HTTP cache *and* in OPFS is the same bytes twice. |
 | `DictStore` readiness signal replacing the `/api/dict/hsk` HEAD probe | `data.md` (this is `core.md`'s R11) | **Not a blocker for any phase here.** Until it exists, W1's adapter must derive `HEAD` from `GET` or the banner breaks; W2 asserts that (criterion 5). When `data.md` replaces the probe, W2's banner criterion moves with it. |
-| **The static host for `apps/app`** | orchestrator / `backend.md` | **Before W2 starts.** W2 writes and unit-tests that host's config file — its name, schema and SPA-fallback syntax all follow from the choice, and there is nothing to parse until it is made. If the choice is still open when W2 comes up, commit `vercel.json` (what `docs/deploy.md` describes today) as a placeholder, make the parse test host-specific, and write both facts into `HANDOFF.md` so W7's second deployment does not inherit a guess as a decision. |
-| An addition to `lib/db/repository.ts` for whole-database export/import including tombstones | orchestrator (settle-first surface; CLAUDE.md freezes the file) | **Before W5's round trip.** The interface today has no tombstone-visible read and no dump/restore, so the criterion cannot be met through the seam without it. W5 names the exact addition; `backend.md` B5 widens the same file for the change feed, so one of the two goes first and the other rebases. |
+| **The static host for `apps/app`** | **settled: Vercel** ([`wave-zero.md`](wave-zero.md) §10, ruling 14) | **Decided, not pending, and not W2's fallback.** `apps/app` deploys to Vercel, on the same account as the existing deployment `docs/deploy.md` describes. W2 therefore writes and unit-tests `apps/app/vercel.json` against Vercel's schema — `rewrites` for the SPA fallback, `headers` for the rest — and W7's apex Astro site is a second Vercel project on the same account. |
+| The `lib/db/repository.ts` interface diff — `exportAll()` / `importAll(payload)` alongside `backend.md` B5's four sync methods | **wave 0, as a types-only commit** ([`wave-zero.md`](wave-zero.md) §5) | **Before W5's round trip.** The interface today has no tombstone-visible read and no dump/restore, so the criterion cannot be met through the seam without it. The diff carries both plans' additions at once and the file is frozen after it, so there is no rebase: W5 implements against a signature that already exists. |
 | The API base contract: origin, credentials mode, and where `lib/server/access.ts` lives | `backend.md` | **W4 defines the client half against the dev/preview adapter and hands the server half over.** W4 can complete without `backend.md` having started; it cannot be *deleted* until `backend.md` implements the same module. |
 | `core.md` C0's font-coverage numbers | `core.md` | Before W6. The budget cannot be stated without them. |
 | `core.md` C7's shells and screens, and its three-tab collapse of `src/routes.tsx` | `core.md` | Before W8. W8 routes to screens that must already exist and must already be shell-agnostic, and its URL model is the three-tab one. C7's commit re-runs W2's smoke and W3's worker specs against the collapsed table. |
@@ -368,10 +375,30 @@ with a working Vite app with the whole test suite green.
 *1. The build.* `vite` 8 and `react-router` 8 installed (STACK §6 pins 8.3.0 and 8.3.1 as of
 2026-09-13 and says re-check every row before work starts — do that first, it is a `pnpm view` away).
 `apps/app/index.html` as the entry document, carrying what `metadata` and `viewport` declared: the
-title, the description, `<link rel="manifest">`, the Apple web-app meta tags, the theme colour, and
-`lang="zh-Hans"` on `<html>` per `core.md` C0's rule 2. `src/main.tsx` mounts the router;
-`app/layout.tsx`'s composition (`SiteHeader`, `DataBanner`, `TestHooks`, `RegisterServiceWorker`,
-`<main>`) becomes the root route element.
+title, the description, `<link rel="manifest">`, the Apple web-app meta tags, the theme colour,
+`lang="zh-Hans"` on `<html>` per `core.md` C0's rule 2, and — **this phase's, not a mobile plan's** —
+`viewport-fit=cover` on the viewport meta.
+
+**Two one-line edits the mobile plans need and this phase makes, so that neither of them has to hand
+an edit to a plan that has already run** ([`wave-zero.md`](wave-zero.md) §10, ruling 12).
+
+- **`viewport-fit=cover`** in the viewport meta above. Without it every `env(safe-area-inset-*)` a
+  layout reads is zero, so `ios.md` I5's safe-area work and `android.md` A2's inset work are both
+  building against a constant. It costs one attribute here and it is free to carry on the web, where
+  there are no insets to inset.
+- **A native gate on `components/pwa/register-sw.tsx`.** Inside a Capacitor WebView the assets are
+  already local and already versioned by the app build, so a worker adds nothing and can serve a
+  previous build's shell after an app update — and whether one even registers under a local scheme is
+  established by no audit. Register only when `import.meta.env.PROD` **and** the document origin is
+  `https:`; Capacitor serves `capacitor://localhost` on iOS and `http://localhost` on Android, so both
+  are skipped, and the only `http:` origin the web build ever sees is the dev server, where the file
+  already unregisters rather than registers. The predicate is written inline and dependency-free
+  **on purpose**: `apps/app/lib/platform/native.ts` is `ios.md` I0's module to create, and I0 re-points
+  this one call site at it without changing the observable behaviour. A unit test asserts the
+  non-registering branch from this phase onward.
+
+`src/main.tsx` mounts the router; `app/layout.tsx`'s composition (`SiteHeader`, `DataBanner`,
+`TestHooks`, `RegisterServiceWorker`, `<main>`) becomes the root route element.
 
 **`base` is `'/'`, and that is not a placeholder.** Capacitor and Tauri serve `dist/` from the *root*
 of a custom scheme (`capacitor://localhost/`, `tauri://localhost/`) or of `http://localhost`, which a
@@ -400,10 +427,11 @@ text, which is acceptable — the file is committed, not generated — but **say
 CLAUDE.md makes rendering it in `/settings` a licence obligation, not a nicety.
 
 The eleven `next/*` import sites: `next/link` → React Router's `Link`; `usePathname` →
-`useLocation()`; `useRouter().push` in `list-detail.tsx` → `useNavigate()`. `process.env.NODE_ENV` in
-`register-sw.tsx` → `import.meta.env.PROD`. `tests/unit/deps.test.ts`'s loader table drops `next` and
-gains `react-router` and whatever else `package.json` declares — the test asserts the table equals
-`dependencies`, so it fails until it is right, which is the point.
+`useLocation()`; `useRouter().push` in `list-detail.tsx` → `useNavigate()`. `process.env.NODE_ENV`
+in `register-sw.tsx` → `import.meta.env.PROD`, with the native gate above added in the same edit.
+`tests/unit/deps.test.ts`'s loader table drops `next` and gains `react-router` and whatever else
+`package.json` declares — the test asserts the table equals `dependencies`, so it fails until it is
+right, which is the point.
 
 *3. The dev/preview API adapter.* A small Vite plugin, `apps/app/vite-plugins/api.ts`, that mounts the
 existing `app/api/**/route.ts` handlers in the dev server and the preview server (`configureServer`
@@ -469,10 +497,12 @@ not: with the secret unset everything is open, and the five ungated dictionary r
 manifest, `sw.js` and `/offline.html` stay open. **List the removed assertions in the commit message
 and map each to the W4 criterion that restores it**; W4's criteria are written to cover all three.
 
-**Files.** New: `apps/app/index.html`, `vite.config.ts`, `src/main.tsx`, `src/routes.tsx`,
+**Files.** New: `apps/app/index.html` (**with `viewport-fit=cover` on the viewport meta**),
+`vite.config.ts`, `src/main.tsx`, `src/routes.tsx`,
 `vite-plugins/api.ts`, `apps/app/tracing.config.ts`, and `scripts/preview.ts` if the adapter's
 loading mechanism is (a). Rewritten: the eight page modules (into `src/routes/**`), `app/layout.tsx`'s
-composition, the nine files importing `next/*`, `package.json` scripts (including the new
+composition, the nine files importing `next/*` — **`components/pwa/register-sw.tsx` twice over: the
+`import.meta.env.PROD` swap and the native gate** — `package.json` scripts (including the new
 `typecheck`), `eslint.config.mjs` (`eslint-config-next` out; a plain typescript-eslint flat config
 in), `tests/unit/pwa/manifest.test.ts`, `tests/e2e/p6/pwa.spec.ts`,
 `tests/e2e/c/sw-version.spec.ts`, `tests/e2e/d/access-gate.spec.ts`,
@@ -513,6 +543,12 @@ prevent.
 - `pnpm build` produces `apps/app/dist/` containing `index.html`, hashed assets, and no Next runtime.
   `grep -rn "next" apps/app/package.json` returns nothing.
 - `grep -rn "from 'next" apps/app/{src,components,lib,app,tests,scripts}` returns nothing.
+- **`apps/app/index.html`'s viewport meta contains `viewport-fit=cover`**, asserted by
+  `tests/unit/pwa/manifest.test.ts` alongside the two assertions it gains in this phase. It is one
+  attribute and two mobile phases are blocked without it, so it is asserted rather than remembered.
+- **A unit test drives `register-sw.tsx`'s native branch and asserts it does not register** — with a
+  non-`https:` production origin faked, `navigator.serviceWorker.register` is never called; with an
+  `https:` one it is. `ios.md` I1 asserts the same thing on a real device.
 - **`pnpm typecheck` is clean**, and is in the phase gate from this commit onward.
 - `pnpm test` passes. State the before/after test count explicitly in the commit message, itemised:
   the `deps.test.ts` loader-table change, `manifest.test.ts`'s two rewritten assertions,
@@ -536,19 +572,23 @@ prevent.
 
 ---
 
-### W2 — The built server is provably correct: host config, and the smoke machinery rebuilt
+### W2 — The built server is provably correct: host config, dictionary delivery, and smoke rebuilt
 
 **Builds.** The two things a static SPA can get wrong that no unit test sees — the host's routing
-and the host's headers — plus the replacement for the machinery that used to catch exactly this class
-of bug.
+and the host's headers — plus the bytes the dictionary path has nothing to fetch without, plus the
+replacement for the machinery that used to catch exactly this class of bug.
 
 *Host configuration.* **There is no host config file in this repository today** — no `vercel.json`,
 nothing equivalent. `docs/deploy.md:12` says "Vercel's Next.js preset is right out of the box.
-Confirm rather than change", and the three rules below live in `next.config.ts`'s `headers()` block,
+Confirm rather than change", and the rules below live in `next.config.ts`'s `headers()` block,
 which W1 deleted. **W2 creates the first host config file, and until it exists the header rules exist
 nowhere.** That is why the config and its parsing test must land in the same commit as the removal:
-otherwise the rules are lost with no test to notice. The host choice itself is a §4 prerequisite; the
-requirements are not:
+otherwise the rules are lost with no test to notice.
+
+**The host is Vercel**, on the same account as the existing deployment (§4; `wave-zero.md` ruling 14).
+So the file is `apps/app/vercel.json`, the SPA fallback is a `rewrites` entry and the rest are
+`headers` entries, and the parse test is written against that schema rather than against a
+placeholder. Five requirements:
 
 1. **SPA fallback** — every navigation that is not a real file returns `index.html`.
 2. `/manifest.webmanifest` served as `application/manifest+json; charset=utf-8`. Some installability
@@ -556,10 +596,65 @@ requirements are not:
 3. `/sw.js` served as `text/javascript; charset=utf-8` with `Cache-Control: no-cache, no-store,
    must-revalidate` and `Service-Worker-Allowed: /`. A worker at the root must be revalidated or a
    bad one is permanent.
+4. The dictionary artifact's content-addressed path served
+   `Cache-Control: public, max-age=31536000, immutable`.
+5. `dict-manifest.json` served with **no** immutable caching — `no-cache`, revalidated on every
+   load. It is the pointer at rule 4's filename, and an immutable pointer is a dictionary that can
+   never be updated. Rules 4 and 5 are two halves of one decision and are easy to write as one.
+
+*The dictionary's web delivery.* `data.md` D4 states the requirement and says the host is this
+plan's; **this is where the host answers.** Without it the web build ends up with a `DictStore`, an
+OPFS worker and a `fetch`, and no bytes to fetch.
+
+**The copy step.** `pnpm data` writes `data/dict-<schema>-<cedict>.sqlite`, `data/dict-manifest.json`
+and `data/decomp.json` at the workspace root and, per `data.md` D4, does not know about deployables —
+each deployable's build copies out of that directory. So the app's build copies all three into
+`apps/app/public/` before `vite build`, which lands them at the `dist/` root under their own names.
+Into `public/`, not into `dist/` after the fact, for one concrete reason: `pnpm dev` and
+`pnpm preview` serve `public/`, and `data.md` D4's Playwright criteria run against exactly those two
+servers. Three consequences to take in the same commit:
+
+- **`.gitignore`.** The copies are generated 43 MB of binary sitting inside the app tree. Ignore
+  `apps/app/public/dict-*.sqlite`, `apps/app/public/dict-manifest.json` and
+  `apps/app/public/decomp.json`, and check with `git status` after a build that nothing generated is
+  offered — this is W0's `.gitignore` lesson a second time, with a bigger file.
+- **Staleness is a real failure and it is silent**, because the filename carries the version and a
+  stale copy is a *different* filename that the manifest no longer names. The copy step is therefore
+  "clean the old artifacts out of `public/`, then copy", and the criterion below asserts the copied
+  bytes against the manifest's `bytes` and `sha256`.
+- **Pre-compression.** `data.md` D4 requires the `.br` served under content negotiation: 13.9 MB
+  against 43.1 MB is the difference between a first load a learner tolerates and one they abandon.
+  Whether the host negotiates a *pre-compressed sibling* (`dict-….sqlite.br` beside the file) or
+  compresses on its own edge is not established by any audit for a binary of this size, and this plan
+  does not assume it. **Measure it rather than declare it:** the deployed smoke run below reads
+  `content-encoding` and the transferred length off the real response, and the number goes into
+  `HANDOFF.md` and into W6's budget. If the host will not negotiate, the fallback is to ship the
+  `.br` under its own name and have `data.md`'s fetch ask for it explicitly — that is a `data.md`
+  change, so it is written into `HANDOFF.md` as a question, not made here.
+
+**`decomp.json` gets a stated delivery here, because nothing else states one.** It is copied with the
+other two and served at `/decomp.json`. It is **not** content-addressed and therefore not immutable:
+it is 0.92 MB, it is fetched lazily the first time a character sheet opens (`data.md` D4), and it is
+picked up by the service worker's runtime cache rather than precached — so it costs nothing on first
+load and nothing on second. Because the worker serves it, its bytes join W3's stamp input; the
+`.sqlite` does **not**, since W3 denies it outright and hashing 43 MB on every build to no purpose is
+the mistake next to it. The licence boundary is unaffected and must stay that way: `decomp.json`
+ships as its own file, is never merged into the `.sqlite`, and `data/COPYING-makemeahanzi` is
+rendered in `/settings` exactly as CLAUDE.md requires.
 
 *The smoke machinery.* `lib/server/route-inventory.ts` and `scripts/smoke.ts` exist because a route
 can ship untraced and only a person opening the page notices. Their *purpose* — "every route is
-exercised over HTTP on a built server" — survives; their implementation does not. It splits in two:
+exercised over HTTP on a built server" — survives; their implementation does not.
+
+**W2 owns the final form of all three files** — `scripts/smoke.ts`, `lib/server/route-inventory.ts`
+and `tests/unit/server/routes.test.ts` — and the dispositions below are that decision
+([`wave-zero.md`](wave-zero.md) §3, ruling 3). **None of the three is deleted.** `data.md` D6 removes
+the `/api/dict/*` entries from them and nothing else; `backend.md` B2 keeps the page-coverage
+assertions. W1's dev/preview adapter imports `discoverApiRoutes()` from `route-inventory.ts`, so a
+deletion would break a module W1 depends on, and the guard exists because a route once shipped
+untraced and only a human opening the page noticed.
+
+**It splits in two.**
 
 - **The SPA half, here — and it splits into two consumers that must not be merged.** With SPA
   fallback everything returns 200 `index.html`, including routes that no longer exist and builds
@@ -576,11 +671,14 @@ exercised over HTTP on a built server" — survives; their implementation does n
     `pnpm e2e` and is the assertion R7 is about.
   - **`scripts/smoke.ts` stays a dependency-free CLI** and keeps the HTTP-level checks that are still
     meaningful against a static host and a real deployment: every hashed asset in the build manifest
-    is 200, `/manifest.webmanifest`, `/sw.js` and `/offline.html` are 200 with the three header rules
-    above, and the configured API base answers. It keeps `--base-url` and `--key`.
-  - **`tests/e2e/d/smoke.spec.ts` keeps importing `runSmoke`** so the CLI is exercised in CI, exactly
-    as today. The shared route list lives in `src/routes.tsx` and both consumers derive from it —
-    never a copy, which is the discipline that made `PAGE_CASES` read `NAV_ITEMS`.
+    is 200, `/manifest.webmanifest`, `/sw.js` and `/offline.html` are 200 with the header rules
+    above, the dictionary artifact and `dict-manifest.json` are 200 with rules 4 and 5, and the
+    configured API base answers. It keeps `--base-url` and `--key`.
+  - **`tests/e2e/d/smoke.spec.ts` keeps importing `runSmoke`** so the CLI is exercised by
+    `pnpm e2e`, exactly as today — there is no CI in this repository and no plan in the set creates
+    one, so "exercised" means a phase gate someone runs, not a runner. The shared route list lives
+    in `src/routes.tsx` and both consumers derive from it — never a copy, which is the discipline
+    that made `PAGE_CASES` read `NAV_ITEMS`.
 
   Both route-derived halves are re-run by `core.md` C7's commit when the table collapses to three
   tabs (§2); nothing here needs changing for that, but somebody has to watch it pass.
@@ -591,16 +689,21 @@ exercised over HTTP on a built server" — survives; their implementation does n
   it is the guard that already failed once.
 
 **A caveat to state loudly rather than bury.** `vite preview` does not apply the host's header
-config, so a smoke run in the container proves the *content* rules and proves nothing about headers
-2 and 3. Cover them two ways: a unit test that parses the host config file and asserts the three
-rules are present (cheap, catches deletion), and a `pnpm smoke --base-url <deployed>` run in the
-after-deploy checklist (`docs/deploy.md` already has that flag and that habit).
+config, so a smoke run in the container proves the *content* rules and proves nothing about
+requirements 2 to 5. Cover them two ways: a unit test that parses `apps/app/vercel.json` and asserts
+all five rules are present (cheap, catches deletion), and a `pnpm smoke --base-url <deployed>` run in
+the after-deploy checklist (`docs/deploy.md` already has that flag and that habit). The dictionary's
+`content-encoding` is in the second half only — nothing in the container can prove it.
 
-**Files.** `apps/app/vercel.json` or the chosen host's equivalent (**new — nothing like it exists
-today**), `tests/e2e/p0/routes.spec.ts` (new), `scripts/smoke.ts` (rewritten),
-`lib/server/route-inventory.ts` (reduced to what the adapter and the coverage check still need),
-`tests/unit/server/routes.test.ts` (rewritten around the route table and the host config),
-`tests/e2e/d/smoke.spec.ts`, `docs/deploy.md` (rewritten for a static deployment).
+**Files.** `apps/app/vercel.json` (**new — nothing like it exists today**),
+`tests/e2e/p0/routes.spec.ts` (new), **`scripts/smoke.ts` (rewritten — this plan's file)**,
+**`lib/server/route-inventory.ts` (reduced to what the adapter and the coverage check still need —
+this plan's file, not deleted)**, **`tests/unit/server/routes.test.ts` (rewritten around the route
+table and the host config — this plan's file)**, `tests/e2e/d/smoke.spec.ts`, the copy step in the
+root/app `build` scripts (`package.json`) that puts `dict-<schema>-<cedict>.sqlite`,
+`dict-manifest.json` and `decomp.json` into `apps/app/public/`, `.gitignore` (the three copied
+artifacts), `tests/unit/dict/artifact-copy.test.ts` (new — the copied bytes against the manifest),
+`docs/deploy.md` (rewritten for a static Vercel deployment of `apps/app`).
 
 **Acceptance criteria.**
 
@@ -609,16 +712,32 @@ today**), `tests/e2e/p0/routes.spec.ts` (new), `scripts/smoke.ts` (rewritten),
   it must survive this one.
 - The route spec fails when the entry chunk is deleted from `dist/` — the deliberate proof that the
   content assertion is real and a 200 is not enough.
-- A unit test parses the host config file and asserts SPA fallback plus the three header rules.
-  Deleting any one of them fails the test. **This test and the host config file land in the same
-  commit as W1's `next build` removal reaches deployment**, or the rules exist nowhere.
-- **The missing-data banner still works on a built server**: with `data/` absent, `/api/dict/hsk?band=1`
-  answers 503 to a `HEAD` and the banner renders; with it present, no banner. This is the criterion
-  §4's `DictStore`-readiness row points at, and it is here because W1's adapter is what keeps the
-  probe answering.
-- `docs/deploy.md` describes a static deployment: what is uploaded, what the headers are, where the
-  API base points, and an after-deploy checklist that ends in `pnpm smoke --base-url` — the CLI half,
-  which needs no browser.
+- A unit test parses `apps/app/vercel.json` and asserts the SPA fallback plus all five rules — the
+  three header rules, the artifact's `public, max-age=31536000, immutable`, and `dict-manifest.json`
+  **not** being immutable. Deleting any one of them fails the test. **This test and the host config
+  file land in the same commit as W1's `next build` removal reaches deployment**, or the rules exist
+  nowhere.
+- **After `pnpm build`, `apps/app/dist/` contains all three dictionary artifacts** — the `.sqlite`
+  named by `dict-manifest.json`, the manifest itself, and `decomp.json` — and a unit test asserts the
+  copied `.sqlite`'s byte length and `sha256` equal the manifest's. Then run the copy step alone
+  against an empty `data/` and watch it fail loudly rather than leave a `dist/` whose manifest points
+  at nothing. The two halves are separate because a stale copy and a missing copy fail differently
+  and both look fine from the browser until the import throws.
+- **No dictionary artifact is committed.** `git status` after a full build is clean, and
+  `git ls-files apps/app/public` lists no `.sqlite` and no `decomp.json`.
+- **Measured on the first real deployment and recorded in `HANDOFF.md`:** the artifact's
+  `content-encoding`, its transferred length against its 43.1 MB on-disk length, and its
+  `cache-control`. If `content-encoding` is not `br`, the pre-compression question goes into
+  `HANDOFF.md` as a `data.md` question and the uncompressed number goes into W6's budget. This is a
+  measurement, not a threshold; nothing in the container can take it.
+- **The missing-data banner still works on a built server**: with `data/` moved away *after* the
+  build (the copy step above means a build with no `data/` fails rather than ships),
+  `/api/dict/hsk?band=1` answers 503 to a `HEAD` and the banner renders; with it present, no banner.
+  This is the criterion §4's `DictStore`-readiness row points at, and it is here because W1's adapter
+  is what keeps the probe answering.
+- `docs/deploy.md` describes the static Vercel deployment of `apps/app`: what is uploaded (including
+  the three dictionary artifacts), what the five host rules are, where the API base points, and an
+  after-deploy checklist that ends in `pnpm smoke --base-url` — the CLI half, which needs no browser.
 
 ---
 
@@ -627,15 +746,18 @@ today**), `tests/e2e/p0/routes.spec.ts` (new), `scripts/smoke.ts` (rewritten),
 **Builds.** The replacement for `.next/BUILD_ID`, and the cache policy rewritten for a single-document
 SPA with hashed assets.
 
-**The stamp.** There is no `BUILD_ID` in a Vite build (STACK §2.2). Turn on Vite's build manifest and
-stamp the worker with a **content hash over that manifest plus the bytes of every unhashed file the
-worker precaches or serves** — today `public/offline.html`, `public/manifest.webmanifest` and the
-three files in `public/icons/`. The second half is not optional and it is the one a builder will
-skip. Vite's manifest covers only what goes through the module graph; files in `publicDir` are copied
-to the dist root verbatim, keeping their authored names and gaining no content hash, so they appear
-in no manifest. Hash the manifest alone and editing `offline.html` leaves the stamp unchanged,
-`activate` — which deletes every cache that is not the current one — purges nothing, and the stale
-precached offline page is served forever. `.next/BUILD_ID` did not have that hole.
+**The stamp.** There is no `BUILD_ID` in a Vite build (STACK §2.2). Turn on Vite's build manifest
+and stamp the worker with a **content hash over that manifest plus the bytes of every unhashed file
+the worker precaches or serves** — `public/offline.html`, `public/manifest.webmanifest`, the three
+files in `public/icons/`, and, from W2, `public/decomp.json`. The dictionary `.sqlite` is
+deliberately **not** in that list: the worker denies it outright (below), so it is not a file the
+worker serves, and hashing 43 MB on every build would buy nothing. The second half of the stamp
+input is not optional and it is the one a builder will skip. Vite's manifest covers only what goes
+through the module graph; files in `publicDir` are copied to the dist root verbatim, keeping their
+authored names and gaining no content hash, so they appear in no manifest. Hash the manifest alone
+and editing `offline.html` leaves the stamp unchanged, `activate` — which deletes every cache that
+is not the current one — purges nothing, and the stale precached offline page is served forever.
+`.next/BUILD_ID` did not have that hole.
 
 With that second half in place the scheme is better than what it replaces: `BUILD_ID` changed on
 every build, so a rebuild with identical output purged a cache for nothing; this hash changes exactly
@@ -646,13 +768,13 @@ filename off the installed Vite rather than assuming it.
 
 **Why not `vite-plugin-pwa`.** STACK §2.2 offers it as the alternative and STACK §6 records it at
 1.3.0 with Vite 8 support. Rejected, for the reason the current worker's own header gives: the
-interesting part is the policy, and this app's policy is unusual in two ways a generator will fight —
-`/api/**` must be network-only because the real cache is `ask_cache` in IndexedDB storing ids rather
-than gloss text (CLAUDE.md), and the dictionary artifact must be excluded from the HTTP cache
+interesting part is the policy, and this app's policy is unusual in two ways a generator will fight
+— `/api/**` must be network-only because the real cache is `ask_cache` in IndexedDB storing ids
+rather than gloss text (CLAUDE.md), and the dictionary artifact must be excluded from the HTTP cache
 entirely because it lives in OPFS. A generated precache manifest that hoovers up every emitted asset
-does the wrong thing with a ~15 MB file by default. **If the hand-written worker becomes a
-maintenance drag, `vite-plugin-pwa` with an explicit `globIgnores` is the fallback** — record that in
-`HANDOFF.md` so the option is not rediscovered from scratch.
+does the wrong thing with a 43.1 MB file (13.9 MB brotli, `data.md` D1) by default. **If the
+hand-written worker becomes a maintenance drag, `vite-plugin-pwa` with an explicit `globIgnores` is
+the fallback** — record that in `HANDOFF.md` so the option is not rediscovered from scratch.
 
 **The policy, rewritten.** Three ordered rules again, two of which change shape:
 
@@ -787,8 +909,10 @@ credentials/CORS mode is written down once. `backend.md` owns the server's CORS 
 owns the client's half and the fact that the two must agree.
 
 **Files.** `middleware.ts` (deleted), `lib/server/access.ts` → `packages/access/**` (moved, with the
-symbol-by-symbol diff above), new `src/access/client.ts`, `lib/dict/client.ts`, `lib/ai/*` call
-sites, **`scripts/smoke.ts`** (line 32 imports `ACCESS_COOKIE` and line 270 sends
+symbol-by-symbol diff above), new `src/access/client.ts`, `lib/dict/client.ts`, the three client call
+sites that reach the gated routes (`components/lookup/ask-panel.tsx`,
+`components/review/example-sentences.tsx`, and `recall.ts`, which wave 0 moved to `packages/ai/`),
+**`scripts/smoke.ts`** (line 32 imports `ACCESS_COOKIE` and line 270 sends
 `headers.cookie` for `--key`; both become the header — the deploy checklist runs this script against
 a gated deployment, so missing it means `pnpm smoke --key` 401s everything in production),
 `tests/unit/server/access.test.ts`, `tests/e2e/d/access-gate.spec.ts` (rewritten to drive the preview
@@ -870,9 +994,10 @@ touch Dexie directly is exactly what the round trip must not do — the reason t
 survive is that dropping them resurrects deleted cards on the next sync, which is a `Repository`-level
 guarantee.
 
-So W5 states the addition and takes it through the frozen-file route (CLAUDE.md freezes this file;
-§4 lists it as a settle-first surface with no sibling owner). The smallest addition that satisfies
-the criterion:
+**Wave 0 has already landed the addition**, as a types-only commit that carries this plan's two
+methods and `backend.md` B5's four at once, and the file is frozen after it
+([`wave-zero.md`](wave-zero.md) §5). So W5 implements against a signature that already exists rather
+than widening a frozen file. The two methods it implements:
 
 ```
 exportAll(): Promise<Snapshot>          // every store, every row, tombstones included
@@ -883,8 +1008,8 @@ importAll(snapshot: Snapshot): Promise<void>   // replaces the database wholesal
 per store of the row shapes `lib/db/schema.ts` already defines. Two implementation notes that belong
 in the interface's doc comment: `importAll` is destructive by contract (this is restore, not merge —
 merge is `backend.md`'s sync), and both methods are the only members of the interface allowed to see
-`deletedAt !== null` rows. `backend.md` B5 widens the same file for the change feed, so whichever
-lands first, the other rebases; do not build two parallel export surfaces.
+`deletedAt !== null` rows. `backend.md` B5 implements the change feed against the same
+wave-0 diff, so there is no rebase and no second export surface to build.
 
 **Unverified, and it needs a Mac.** Register #13 — whether `persist()` is honoured in Safari for a
 non-installed site, and current Firefox group limits — cannot be answered in this container. The check
@@ -955,11 +1080,12 @@ tooling reason you cannot, add the fourth rule to `scripts/sw.template.js` **and
 say so in `HANDOFF.md`.
 
 **The budget, stated as one number** and written into `HANDOFF.md`: entry bundle + CSS + the font
-weights actually used at their subset sizes + the dictionary transfer (`data.md`'s number; STACK §2.5
-estimates ~15 MB brotli, measured at 15.4 MB for the 47.2 MB file). Break it into *first paint*,
-*first useful interaction* and *fully offline-capable*, because they are three different numbers and
-only the last one includes the dictionary. Then decide, with the number visible, whether the hanzi
-face ships at one weight or two.
+weights actually used at their subset sizes + the dictionary transfer (`data.md` D1's measured
+**13.9 MB brotli** for the 43.1 MB file — that measurement supersedes STACK §2.5's ~15 MB estimate
+and STACK §3's 15.4 / 47.2, and W2's first deployment measures what the host actually
+transfers). Break it into *first paint*, *first useful interaction* and *fully offline-capable*,
+because they are three different numbers and only the last one includes the dictionary. Then decide,
+with the number visible, whether the hanzi face ships at one weight or two.
 
 **A dependency worth naming here rather than in the risk list.** Register #4 — the reported 10 MB
 per-file OPFS cap in WKWebView, from a single third-party source — decides whether the web dictionary
@@ -1020,18 +1146,52 @@ SPA that has no other use for them.
 a remote risk to an open decision: for a Chinese dictionary, per-word pages are how every incumbent is
 found. The middle path is that the Astro site statically emits `/word/<headword>` at the apex from the
 same `pnpm data` output, **with the app unchanged**. The measurement that decides it is Astro's build
-time and output size at 124,188 headwords, with HSK 1–6 (11,028 banded headwords in `data/hsk.json`)
-as the fallback cut. Do not build them in this phase; **do** leave `apps/site/` able to read the data
-output, and record the measurement as an open item.
+time and output size at 124,188 headwords, with the HSK bands as the fallback cut. Do not build them
+in this phase; **do** leave `apps/site/` able to read the data output, and record the measurement as
+an open item.
+
+**What the HSK cut actually is, because it is easy to get wrong twice.** There is **no
+`data/hsk.json`** — `data/` holds `ATTRIBUTION.md`, `COPYING-makemeahanzi`, `decomp.json` and
+`dict.json`, and `data.md` §6 says so. HSK bands are a field on the headword: `Entry.hskBand`
+(`lib/types.ts:44`, optional, `HskBand = 1|2|3|4|5|6|7`), and after `data.md` D1 the
+`entries.hsk_band` column. So the cut is a filter over the dictionary the site already reads, not a
+separate input, which is cheaper than a file would have been. And the size: counted at `HEAD`,
+**11,028** of the 124,188 entries carry a band at all, but **5,622 of those are band 7** — the
+combined "7–9" that `hskBandLabel()` renders — so **HSK 1–6 is 5,406 headwords**. Both are worth
+measuring, 5,406 as the conservative cut and 11,028 as every banded word; whichever is chosen, the
+measurement is Astro's build time and output size at that count.
 
 **The licence rule applies to any public page.** `dict.json` is CC BY-SA 4.0 and a public page
 carrying its content must carry the attribution and the modification notice visibly (PLAN.md §5).
 `decomp.json` is LGPL-3.0-or-later and must never appear on a page that merges the two datasets.
 Whatever the marketing site shows of the dictionary, it shows under those rules.
 
-**Files.** `apps/site/**` (new Astro project), `pnpm-workspace.yaml`, DNS and two deployment
-configurations, `docs/deploy.md` (two deployments, two checklists), `apps/app/public/manifest.webmanifest`
-(`id`, `start_url`, `scope` stay `/` — they are origin-relative and correct on the new origin).
+**Two pages that gate two store submissions, and this phase owns them**
+([`wave-zero.md`](wave-zero.md) §10, ruling 15). App Store Connect requires a privacy policy URL and
+a support URL before a build can be submitted; Play's listing requires a privacy policy URL and its
+Data safety form has to be re-answered the moment `backend.md` lands accounts. Neither existed
+anywhere in the set, and a blocked submission costs a week against an hour's writing. The apex is the
+only plausible host, so:
+
+- **`/privacy`** — what the app stores and where. Today that is an honest and unusually short page:
+  everything is in the browser's or the device's own storage, there is no account and no server-side
+  record, the three model-backed routes send the text a learner asks about to a model provider, and
+  the `ask_cache` stores entry ids and sense indexes rather than gloss text (CLAUDE.md). It must be
+  **revised, not merely re-read, when `backend.md` lands accounts and sync**, because that is the
+  commit where "no server-side record" stops being true; say so on the page and in `HANDOFF.md`.
+- **`/support`** — how to report a problem and reach a human: one contact route that works, and what
+  to include. It may be a single email address; it may not be a form that nobody reads.
+
+Both are plain content pages on the Astro site, no app code, no dependency on anything else in the
+set. **Their final URLs go into `HANDOFF.md` the moment the apex domain is registered** —
+`https://<domain>/privacy` and `https://<domain>/support` — because `ios.md` I8 and `android.md` A8
+paste them into store forms and neither plan can guess them.
+
+**Files.** `apps/site/**` (new Astro project, including `src/pages/privacy.*` and
+`src/pages/support.*`), `pnpm-workspace.yaml`, DNS and two Vercel projects on the same account
+(§4), `docs/deploy.md` (two deployments, two checklists), `HANDOFF.md` (the two URLs),
+`apps/app/public/manifest.webmanifest` (`id`, `start_url`, `scope` stay `/` — they are
+origin-relative and correct on the new origin).
 
 **Acceptance criteria.**
 
@@ -1046,6 +1206,10 @@ configurations, `docs/deploy.md` (two deployments, two checklists), `apps/app/pu
   that origin.
 - The apex renders `data/ATTRIBUTION.md`'s content, or links to a page that does, and the CC BY-SA
   attribution plus modification notice is visible on any page carrying dictionary content.
+- **`/privacy` and `/support` are live on the apex and their exact URLs are in `HANDOFF.md`.** The
+  privacy page names what is stored, where, and what leaves the device; the support page gives one
+  contact route that reaches a human. Two store submissions are blocked without them, so "written but
+  not deployed" does not close this criterion.
 - `pnpm build` at the workspace root builds both deployables; a failure in one does not silently
   produce a partial deploy of the other.
 
@@ -1185,9 +1349,11 @@ three are true:
 - `docs/desktop.md` exists and states the trigger as three testable conditions, the pinned versions,
   and the two storage hazards. A reader who has never seen this conversation can decide whether to
   pull the trigger from that page alone.
-- A CI-able check asserts the build has no absolute-origin assumption: serve the default build from a
-  second port and boot it, and build once more with `--base=/sub/`, serve that output behind a
-  `/sub/` prefix, and boot it. Same two checks as W1's, now standing.
+- A standing check asserts the build has no absolute-origin assumption: serve the default build from
+  a second port and boot it, and build once more with `--base=/sub/`, serve that output behind a
+  `/sub/` prefix, and boot it. Same two checks as W1's, now standing. **"Standing" means a spec in
+  `tests/e2e/**` that `pnpm e2e` runs at every phase gate, not a pipeline** — there is no CI in this
+  repository and no plan creates one, so a check nobody runs is a check that does not exist.
 - The installed PWA is verified on at least one desktop platform available to the owner: it installs,
   opens in a standalone window, works offline after a warm load, and `navigator.storage.persisted()`
   is recorded. **Chromium in the container can prove most of this; a real installed window cannot be
@@ -1215,8 +1381,10 @@ own types and behaviour, which are checkable locally.
 **R2 — React Router 8's floors bite an environment that is not this container.** It requires
 React >= 19.2.7 (this repo is on 19.2.8), Vite 7+ (target 8), **Node >= 22.22**, is ESM-only, and has
 removed `react-router-dom`. The container is on v22.22.2 — one patch above the floor.
-*Trigger:* a build image, a CI runner or a contributor's machine on Node 22.21 or below.
-*Check:* `node -v` in every environment that builds, and `engines.node` enforced rather than
+*Trigger:* Vercel's build image or a contributor's machine on Node 22.21 or below. (There is no CI
+runner: this repository has no `.github/` and no plan in the set creates one.)
+*Check:* `node -v` in every environment that builds — Vercel's Node version pinned to 22.x in the
+project settings and recorded in `docs/deploy.md` — and `engines.node` enforced rather than
 documented (W0).
 *Mitigation:* W0 bumps `engines` and `.nvmrc` before anything imports the router.
 
@@ -1239,19 +1407,19 @@ export in W5 is the mitigation that does not depend on the answer.
 
 **R5 — The reported 10 MB per-file OPFS cap in WKWebView (register #4).** One third-party source
 (`wendylabsinc/opfs-checker`) against WebKit's published per-origin policy of 15–20% of disk for
-non-browser apps. If it is real, the ~47 MB dictionary cannot be imported into `opfs-sahpool` on
+non-browser apps. If it is real, the 43.1 MB dictionary cannot be imported into `opfs-sahpool` on
 Safari and the web dictionary path fails on one of the two engines that matter.
 *Trigger:* the import throws or truncates on desktop Safari or on an iPhone.
 *Check:* import the real file into `opfs-sahpool` on desktop Safari and on an iPhone, before
 committing to the web dictionary path. **`data.md` owns the check; it needs a Mac.**
-*Mitigation:* `data.md`'s fallbacks — `sqlite3_deserialize` in memory (~45 MB of wasm heap) or the
+*Mitigation:* `data.md`'s fallbacks — `sqlite3_deserialize` in memory (~43 MB of wasm heap) or the
 bare-table variant. Either changes W6's budget, which is why W6 cites the register entry instead of
 freezing a number.
 
-**R6 — The first-load budget is indefensible.** Three font families, hanzi faces at 4.5–9 MB per full
-weight, and a ~15 MB brotli dictionary on top. STACK §2.1 asks for the budget to be stated as one
-number *before* committing to it, and §2.4 makes the installed PWA the entire desktop product while
-§2.6 makes the web the funnel — so the number is load-bearing twice.
+**R6 — The first-load budget is indefensible.** Three font families, hanzi faces at 4.5–9 MB per
+full weight, and a 13.9 MB brotli dictionary (`data.md` D1, measured) on top. STACK §2.1 asks for the
+budget to be stated as one number *before* committing to it, and §2.4 makes the installed PWA the
+entire desktop product while §2.6 makes the web the funnel — so the number is load-bearing twice.
 *Trigger:* W6's table sums to something the owner would not download.
 *Check:* `core.md` C0's `pnpm font:coverage` (no hardware needed, run first) plus real byte counts
 from `dist/`.
@@ -1314,8 +1482,10 @@ React Router framework mode with `prerender`.
 *Trigger:* the owner wants `/word/打算` to be a crawlable page.
 *Check:* the middle path first — Astro static word pages at the apex from the same `pnpm data`
 output, with the app unchanged. **The measurement that decides it is Astro's build time and output
-size at 124,188 headwords**, with HSK 1–6 (11,028 banded headwords already in `data/hsk.json`) as the
-fallback cut. Nothing in the audits touched it.
+size at 124,188 headwords**, with an HSK cut as the fallback: 5,406 headwords for HSK 1–6, or 11,028
+for every banded word including the combined 7–9 band. **There is no `data/hsk.json`** — the bands
+are `Entry.hskBand`, and `entries.hsk_band` after `data.md` D1 — so the cut is a filter over the
+dictionary the site already reads, not a separate input (W7). Nothing in the audits touched it.
 *Mitigation:* W7 leaves `apps/site/` able to read the data output, which is what keeps the middle
 path cheap.
 
@@ -1344,7 +1514,7 @@ despite the server not existing; everything after W2 is separate work.
   but it costs a codegen Vite plugin and a dependency shipping several releases a week, against a
   router that is three tabs and a palette. §2.3 names the reversal condition.
 - **`vite-plugin-pwa`.** The policy is the interesting part of this worker and a generated precache
-  manifest does the wrong thing with a 15 MB dictionary by default. Recorded in W3 as the fallback if
+  manifest does the wrong thing with a 43.1 MB dictionary by default. Recorded in W3 as the fallback if
   the hand-written worker becomes a drag, so the option is not rediscovered from scratch.
 - **A Content-Security-Policy.** There is none in this repo today. W7 is what makes writing one cheap
   — after the split it applies to the app origin only — but writing it is not this plan's work, and a

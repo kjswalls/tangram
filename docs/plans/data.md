@@ -97,10 +97,16 @@ retrieval step that would move to the client.
 `{retrieved, segment, entry?, readings?}` — four injected values, no import of `lib/dict`. That is
 what makes client-side grounding validation possible without touching `ground.ts`. One catch, worth
 knowing before it is discovered: `segment` there is **synchronous**, `(text: string) => Token[]`,
-and a `DictStore` is async. **The resolution is in phase D3**, with `lib/ai/retrieve.ts`. (Earlier
-drafts of this document, and `core.md`'s gate table, cite "`data.md` §5.7" for this; §5 has six
-phases and no §5.7, and the material moved from D6 to D3 when the `backend.md` gate cycle was
+and a `DictStore` is async. **The resolution is in phase D3**, with `packages/ai/retrieve.ts`.
+(Earlier drafts of this document, and `core.md`'s gate table, cite "`data.md` §5.7" for this; §5 has
+seven phases and no §5.7, and the material moved from D6 to D3 when the `backend.md` gate cycle was
 broken. D3 is the reference.)
+
+**`lib/ai/**` has already moved by the time this plan writes into it.** Wave 0 creates
+`packages/ai/` and moves all ten existing `lib/ai/**` modules into it in one commit
+([wave-zero.md](wave-zero.md) §5), so every `lib/ai/…` path in this section is a HEAD fact and the
+post-wave-0 spelling is `packages/ai/…`. That is why D3 writes `packages/ai/retrieve.ts` into a
+directory that already exists, and why there is no gate between this plan and `backend.md` B1.
 
 **Consumers of `lib/dict/client.ts`** (these are what `core.md` must re-point):
 `components/lookup/lookup-view.tsx`, `components/lookup/entry-detail.tsx`,
@@ -130,9 +136,11 @@ provides brotli. React Router 8 already requires Node ≥ 22.22 (STACK §6), so 
    `data/*.json` the only generated output. (`lib/types.ts` is also frozen; D1 should *not* need to
    change it — see D1's Files.) Do this first, as its own commit, or every phase below fights the
    instructions.
-2. **The repository/workspace layout must be decided** (STACK §7): one pnpm workspace or three
-   repos. This plan assumes one workspace with `pnpm data` at the root writing to `data/`, and each
-   deployable's build copying from there. If that is wrong, only Phase D1's output paths change.
+2. **The repository/workspace layout is settled** ([wave-zero.md](wave-zero.md) §1): one pnpm
+   workspace, `web.md` W0 executes the move, and `data/` and `scripts/` **stay at the workspace
+   root** because three deployables consume `pnpm data`'s output. Each deployable's build copies
+   out of `data/`. Wave 0 also creates `packages/ai/` and moves the ten existing `lib/ai/**`
+   modules into it, which is the directory D3 writes `retrieve.ts` into.
 3. Nothing else. Phases D1–D4 run entirely in this Linux container with no hardware.
 
 **Sibling-plan gates:**
@@ -141,15 +149,16 @@ provides brotli. React Router 8 already requires Node ≥ 22.22 (STACK §6), so 
 |---|---|
 | D1, D2, D3 | Nothing. They are pure TypeScript against Node's own SQLite. |
 | D4 (web store) | `web.md` must have reached the point where a Vite build exists and can serve a static asset and run a worker. It does **not** need the shell rewritten. |
-| D5 (native store) | `ios.md` / `android.md` must have a Capacitor project that builds and installs on a device, and the hardware in STACK §4's preconditions table must exist. |
-| D6 (retire the routes) | `core.md` must have re-pointed every consumer in §3 at `DictStore`, and **`backend.md`'s first B2 commit** — the frozen ask/answer contract, which `backend.md` §4 says lands there — must exist. Not all of B2: `backend.md` B2 gates on `lib/ai/retrieve.ts`, which this plan builds in **D3**, so gating D6 on the whole of B2 would deadlock the two documents. |
+| D5a (native store, Android) | `android.md` must have a Capacitor Android project that builds and installs, and **an Android phone** must exist. No Mac and no iOS device. |
+| D5b (native store, iOS) | `ios.md` must have a Capacitor iOS project that builds and installs, and **a Mac with Xcode 26 and a physical iOS 26 device** must exist. Consumes D5a's `lib/dict/runners/capacitor.ts` unchanged. |
+| D6 (retire the routes) | `core.md` must have re-pointed every consumer in §3 at `DictStore`, and **`backend.md`'s first B2 commit** — the frozen ask/answer contract, which `backend.md` §4 says lands there — must exist. Not all of B2: `backend.md` B2 gates on `packages/ai/retrieve.ts`, which this plan builds in **D3**, so gating D6 on the whole of B2 would deadlock the two documents. |
 
 **What other plans may start against, and when.** The `DictStore` and `SqlRunner` interfaces, the
 `DictStatus` union and the SQL schema are settle-first surfaces (STACK §7). They land as the **first
 commit of D1** — `lib/dict/sql.ts`, `lib/dict/store.ts`, `lib/dict/decomp-store.ts` (types only)
 and `lib/dict/schema.sql`, type declarations with nothing behind them — and are frozen from then on.
 `core.md` may code against `DictStore` from that commit, with a hand-written fake first and the
-in-Node implementation from D2/D3 as its test double, long before D4 or D5 exist. `core.md`
+in-Node implementation from D2/D3 as its test double, long before D4, D5a or D5b exist. `core.md`
 (line 184) and `ios.md` (§4) both gate on exactly this commit, so D1 is not allowed to reorder it
 behind the builder.
 
@@ -157,8 +166,8 @@ behind the builder.
 
 ## 5. Phases
 
-Six phases. D1–D3 are container-only and should be done first and in order; D4 and D5 are
-independent of each other; D6 is the cleanup that can only run last.
+Seven phases. D1–D3 are container-only and should be done first and in order; D4, D5a and D5b are
+each independent of the others' hardware; D6 is the cleanup that can only run last.
 
 ### D1 — The artifact: `pnpm data` emits one SQLite file
 
@@ -416,7 +425,7 @@ reverse is not.
 derivations plus "reindexed into SQLite; pinyin lookup keys and gloss tokens derived mechanically".
 `decomp.json` is **not** in the SQLite file and never will be — that separation is the licence rule
 (CLAUDE.md, PLAN.md §5), and D1 must include a test that asserts the `.sqlite` contains no table,
-column or value sourced from Make Me a Hanzi. SQLCipher's BSD notice is added in D5, when the
+column or value sourced from Make Me a Hanzi. SQLCipher's BSD notice is added in D5a, when the
 plugin that needs it arrives.
 
 **Acceptance criteria.**
@@ -667,19 +676,22 @@ in a behavioural diff that has to be argued rather than asserted.
 
 **Files.** `lib/dict/query/gloss.ts`, `lib/dict/rank.ts` (the `glossTier` machinery moved out of
 `search.ts`), `lib/dict/search.ts` (rewritten as the router over the store), `lib/dict/segment.ts`
-(inverted), `lib/ai/retrieve.ts` (new — see below), `tests/unit/dict/{search,segment}.test.ts`
+(inverted), `packages/ai/retrieve.ts` (new — see below), `tests/unit/dict/{search,segment}.test.ts`
 (mechanically rewritten, expected values frozen — see acceptance criterion 1),
 `tests/unit/ai/helpers.ts` (re-pointed at the store).
 
-**`lib/ai/retrieve.ts` lands here, not in D6.** `mergedSearch()` and `candidateEntries()`
+**`packages/ai/retrieve.ts` lands here, not in D6.** `mergedSearch()` and `candidateEntries()`
 (`app/api/ask/route.ts:177` and `:198`) depend on `search`, `segment` and `getEntry` and on nothing
-about the wire, so they can move to `lib/ai/retrieve.ts` over `DictStore` the moment `search` and
-`segment` exist — which is the end of this phase. Leaving them in D6 deadlocks two documents:
-`backend.md:180` gates B2 on "`data.md` D2 and D3 … **and D6's `lib/ai/retrieve.ts`**", while D6
-gates on `backend.md`'s contract. Building it here breaks the cycle in the direction the dependency
-actually runs. The `GroundContext.segment` mismatch (§3) is resolved here too, and
-resolving it is this file's job. **`GroundContext.segment` is synchronous** (`lib/ai/ground.ts:403`)
-and `DictStore.segment` is not. The fix is not to make `ground.ts` async — `tests/unit/ai/` encode
+about the wire, so they can move to `packages/ai/retrieve.ts` over `DictStore` the moment `search`
+and `segment` exist — which is the end of this phase. `packages/ai/` and the ten modules beside it
+were created and moved in wave 0 ([wave-zero.md](wave-zero.md) §5), so this file is written into a
+directory that already exists and nothing here waits on `backend.md` B1. Leaving them in D6
+deadlocks two documents: `backend.md:180` gates B2 on "`data.md` D2 and D3 … **and D6's
+`retrieve.ts`**", while D6 gates on `backend.md`'s contract. Building it here breaks the cycle in
+the direction the dependency actually runs. The `GroundContext.segment` mismatch (§3) is resolved
+here too, and resolving it is this file's job. **`GroundContext.segment` is synchronous**
+(`packages/ai/ground.ts:403`, `lib/ai/ground.ts:403` before wave 0's move) and `DictStore.segment`
+is not. The fix is not to make `ground.ts` async — `tests/unit/ai/` encode
 its rules and should not be churned. The fix is for `retrieve.ts` to `await store.segment()` for
 each rendered phrase up front, build a `Map<string, Token[]>`, and pass
 `(text) => map.get(text) ?? []`. `entry` and `readings` resolve the same way, from an awaited batch.
@@ -895,7 +907,7 @@ What else changes is everything that reaches into the index:
    group creeping back in.
 8. Round-trip budget from D2 still holds for `search` and `segment`. `isGlossToken`'s statement
    rides in the existing search batch and must not raise the count.
-9. **`lib/ai/retrieve.ts` is done and proven.** For a fixed list of at least 20 ask-shaped queries
+9. **`packages/ai/retrieve.ts` is done and proven.** For a fixed list of at least 20 ask-shaped queries
    (English sentences, single English words, hanzi, and a mixed one) the ported `mergedSearch` and
    `candidateEntries` return the same entry sets, in the same order, as `app/api/ask/route.ts:177`
    and `:198` do against the JSON index. `tests/unit/ai/` passes with `GroundContext.segment` fed
@@ -1011,14 +1023,22 @@ in §7. Do not let this phase claim completion on Safari.
 
 ---
 
-### D5 — The native store: the Capacitor plugin runner and the bundled asset
+### D5a — The native store on Android: the Capacitor plugin runner and the bundled asset
 
 **What it builds.** `SqlRunner` over `@capacitor-community/sqlite`, the first-launch copy, and the
-answers to four register entries. **This phase cannot start without a Mac with Xcode 26, a physical
-iOS 26 device and at least one Android phone** (STACK §4 preconditions).
+answers to the three register entries an Android phone can settle. **This phase cannot start
+without an Android phone** and an `android.md` Capacitor Android project that builds and installs on
+it (STACK §4 preconditions). It needs **no Mac and no iOS device** — that is the whole reason it is
+a phase of its own, and `android.md` A5 gates on **D5a alone**.
 
-**Files.** `lib/dict/runners/capacitor.ts`, the asset copy step in each platform's build (owned
-jointly with `ios.md`/`android.md`), `data/ATTRIBUTION.md` (SQLCipher's BSD notice).
+**Files.** `lib/dict/runners/capacitor.ts`, the asset copy step in the Android build (owned jointly
+with `android.md`), `data/ATTRIBUTION.md` (SQLCipher's BSD notice).
+
+`lib/dict/runners/capacitor.ts` is platform-neutral: one runner over one plugin API, which D5b then
+re-runs this phase's acceptance list against on iOS **without editing it**. It lands here because
+Android is the cheaper hardware precondition. If the iOS device happens to arrive first, D5b lands
+the file instead and D5a reduces to its Android checks — it is the same file either way and neither
+phase gets a second copy.
 
 **The mechanism.** Ship `dict-<schema>-<cedict>.sqlite` as an app asset. On first launch and
 whenever the manifest's filename differs from what is in app storage, `copyFromAssets()` it into
@@ -1032,22 +1052,71 @@ bundled assets with brotli; the 13.9 MB brotli figure belongs to D4's web transf
 nowhere else. The 19.5 MB is itself a proxy: **STACK register #16** is "Store compression ratio —
 the audit used `gzip -9` as a proxy for what the stores actually do", and its check is to read the
 real download size in the Play Console and App Store Connect after the first upload. So the packaged
-half of this budget is unverified and this plan does depend on #16 for it. Every size estimate in
-`ios.md` and `android.md` must use 63 MB and must carry that caveat.
+half of this budget is unverified and this plan does depend on #16 for it. This is the single budget
+for both platforms: D5b adopts it unchanged, and every size estimate in `ios.md` and `android.md`
+must use 63 MB and must carry that caveat.
 
 **Bundling ties dictionary updates to store releases.** That is the trade, stated so it is chosen
 rather than discovered. If it ever becomes unacceptable, delivery switches to
 download-on-first-launch, which is the same file, the same manifest, the same versioning and the
 same `SqlRunner` — only `open()`'s first branch changes.
 
-**Four register entries are settled in this phase, in one device session:**
+**Three register entries are settled in this phase, in one device session:**
+
+| # | Question | The check |
+|---|---|---|
+| 6 | Do `ATTACH` and the `immutable=1` URI flag pass through the plugin? | Call both; read the error. Not fatal either way — two connections work — but it decides whether the dictionary and the learner's database can share a connection. Answered here for Android; D5b confirms it on iOS, because the plugin's two native implementations are different code behind one JS API. |
+| 18 | How long does `copyFromAssets()` of a 43 MB file take, and what does it cost in storage? Nobody has measured it. | Time it on the lowest-spec Android target, with the device near-full as well as empty; record peak storage. The iPhone half is D5b's. |
+| 5 | Does the plugin ship 16 KB-page-aligned `.so` files? A misaligned one is a Play **rejection**. | `zipalign -c -P 16 -v` on a real AAB. Owned by `android.md`, but it blocks this artifact reaching a store. |
+
+Register **#20** — is FTS5 compiled into the SQLCipher **iOS** pod — is not answerable here and is
+**D5b's**. Do not let this phase claim "one file, no per-platform build" on Android evidence alone.
+
+**Batching is the whole performance story here.** Every `SqlRunner.query()` is one JSON round trip
+across the bridge (~1–5 ms plus result serialisation). The D2 round-trip test is what keeps a
+keystroke at two calls; run it against this runner too. If measurement shows two trips per search is
+too many on a real device, the fix is a correlated subquery that fetches candidate headwords and all
+their readings in one statement — `WHERE simp IN (SELECT simp FROM entries WHERE simp >= ? AND
+simp < ? ORDER BY rowid LIMIT 400)` — not a cache in front of a chatty API. This applies to D5b's
+device just as much; it is stated once, here.
+
+**Acceptance criteria.**
+
+1. The same fixed query list from D2/D3/D4 returns identical results through the Capacitor runner on
+   a real Android device.
+2. Register entries 6, 18's Android half and 5 have written answers with the command and the output.
+   A phase that cannot run these because there is no Android phone is **blocked, not complete**.
+3. Cold-launch time with the dictionary open is measured on the named low-end Android target (STACK
+   §4 requires naming one) and compared against Play's 5 s flag.
+4. The first-launch copy is a visible, one-time progress state with a designed low-storage failure
+   path — neither exists in any screen today; `core.md` owns drawing them, this phase owns the
+   states. They are specified once and D5b checks the same two states on iOS.
+5. SQLCipher's BSD notice is in `data/ATTRIBUTION.md` and rendered in the app.
+6. `typeof window.speechSynthesis` is logged from the Capacitor Android WebView while a device is in
+   hand (register #19, five seconds, belongs to `android.md` but costs nothing here).
+
+---
+
+### D5b — The native store on iOS: FTS5 in the SQLCipher pod
+
+**What it builds.** No new module. It puts D5a's `lib/dict/runners/capacitor.ts` and the bundled
+artifact on a physical iPhone, wires the asset copy into the Xcode build, and answers the one
+register entry that only Apple hardware can answer. **This phase cannot start without a Mac with
+Xcode 26 and a physical iOS 26 device** (STACK §4 preconditions), which is why it is separated from
+D5a: nothing on Android's side of the native store should wait on an iPhone.
+
+**Files.** The asset copy step in the iOS build (owned jointly with `ios.md`).
+`lib/dict/runners/capacitor.ts` is **D5a's and unchanged here**; if it turns out to need an
+iOS-specific branch, that is a finding to write into `HANDOFF.md`, not a refactor to make in this
+phase. The 63 MB two-copy budget, the bundling trade and the batching rule are all stated in D5a and
+adopted here verbatim.
+
+**Two register entries are settled in this phase, in one device session:**
 
 | # | Question | The check |
 |---|---|---|
 | 20 | Is FTS5 compiled into the SQLCipher **iOS** pod? Verified for Android only. This is the claim that makes "one file, no per-platform build" true. | Four probes on the copied asset, and the pass mark is **all four returning without error**, not a version comparison — see below. |
-| 6 | Do `ATTACH` and the `immutable=1` URI flag pass through the plugin? | Call both; read the error. Not fatal either way — two connections work — but it decides whether the dictionary and the learner's database can share a connection. |
-| 18 | How long does `copyFromAssets()` of a 43 MB file take, and what does it cost in storage? Nobody has measured it. | Time it on the lowest-spec Android target and on an iPhone, with the device near-full as well as empty; record peak storage. |
-| 5 | Does the plugin ship 16 KB-page-aligned `.so` files? A misaligned one is a Play **rejection**. | `zipalign -c -P 16 -v` on a real AAB. Owned by `android.md`, but it blocks this artifact reaching a store. |
+| 6, 18 | The iPhone halves of D5a's two cross-platform questions. | `ATTACH` and `immutable=1` called through the iOS plugin; `copyFromAssets()` of the 43 MB file timed on the iPhone, empty and near-full, with peak storage recorded. |
 
 **Register #20's check, spelled out.** The register entry is titled "The SQLite *version* behind the
 SQLCipher iOS pod, and therefore whether FTS5 is compiled into it", and reading a version string
@@ -1067,27 +1136,20 @@ reported version is at or above the container's **3.51.2**, every feature is kno
 (*measured 2026-09-13 (this plan)*) and the probes should be a formality; below it, the probes are
 the only answer available.
 
-**Batching is the whole performance story here.** Every `SqlRunner.query()` is one JSON round trip
-across the bridge (~1–5 ms plus result serialisation). The D2 round-trip test is what keeps a
-keystroke at two calls; run it against this runner too. If measurement shows two trips per search is
-too many on a real device, the fix is a correlated subquery that fetches candidate headwords and all
-their readings in one statement — `WHERE simp IN (SELECT simp FROM entries WHERE simp >= ? AND
-simp < ? ORDER BY rowid LIMIT 400)` — not a cache in front of a chatty API.
-
 **Acceptance criteria.**
 
 1. The same fixed query list from D2/D3/D4 returns identical results through the Capacitor runner on
-   both a real iPhone and a real Android device.
-2. Register entries 20, 6 and 18 have written answers with the command and the output. A phase that
-   cannot run these because there is no hardware is **blocked, not complete**.
-3. Cold-launch time with the dictionary open is measured on the named low-end Android target (STACK
-   §4 requires naming one) and compared against Play's 5 s flag.
-4. The first-launch copy is a visible, one-time progress state with a designed low-storage failure
-   path — neither exists in any screen today; `core.md` owns drawing them, this phase owns the
-   states.
-5. SQLCipher's BSD notice is in `data/ATTRIBUTION.md` and rendered in the app.
-6. `typeof window.speechSynthesis` is logged from the Capacitor Android WebView while a device is in
-   hand (register #19, five seconds, belongs to `android.md` but costs nothing here).
+   a real iPhone — the same assertions D5a ran on Android, unedited.
+2. Register entry 20 has a written answer carrying all four probes' statements and their output, and
+   register entries 6 and 18 have their iPhone-side answers. A phase that cannot run these because
+   there is no Mac or no iOS 26 device is **blocked, not complete**.
+3. Cold-launch time with the dictionary open is measured on the iPhone and reported beside D5a's
+   Android figure.
+4. The one-time copy progress state and the low-storage failure path D5a specified behave the same
+   on iOS.
+5. If any of #20's four probes fails, the fallback in §6's risk row is **chosen and written down**
+   before the phase closes. "One file everywhere" may not be asserted on the strength of an unrun
+   probe.
 
 ---
 
@@ -1120,7 +1182,7 @@ left to disagree with.
 | `lib/dict/load.ts`, `lib/dict/index.ts`'s `LazyDictIndex` | deleted with the routes |
 | `lib/dict/decomp.ts` and its `DecompResponse` | replaced by `lib/dict/decomp-store.ts`. `decomp.ts:9` is `import { getDecomp } from './load'`, so it cannot survive `load.ts`. `DecompResponse['characters']` is an anonymous element type today (`{ char: string; entry: DecompEntry \| null }[]`); D1's first commit names it `DecompCharacter[]` in `lib/dict/decomp-store.ts`, which is why it is in the frozen set. |
 | `next.config.ts` `outputFileTracingIncludes` | deleted with `next.config.ts` (`web.md`) |
-| `scripts/smoke.ts` and **the whole of** `lib/server/route-inventory.ts`, plus `tests/unit/server/routes.test.ts` | deleted, not trimmed. The inventory walks `app/api/**` to answer "which routes read the dictionary", and after `web.md` replaces `next.config.ts` and `app/**` there is nothing for it to walk. Their replacement is `web.md`'s and `backend.md`'s call; **STACK §7 flags that nothing yet replaces "every route is exercised on a built server", and this phase does not close that gap** — it only stops pretending the Next-shaped version still applies. |
+| The `/api/dict/*` **entries** in `scripts/smoke.ts`, `lib/server/route-inventory.ts` and `tests/unit/server/routes.test.ts` | entries removed; the files are `web.md` W2's ([wave-zero.md](wave-zero.md) §3). This phase deletes the five dictionary routes' smoke cases, inventory entries and route assertions, and **leaves all three files in place** — `web.md` W1's dev/preview API adapter imports `discoverApiRoutes()` from the inventory, and W2 decides their final form (smoke rewritten as a dependency-free CLI, the inventory reduced to what the adapter and the coverage check still need, `routes.test.ts` rewritten around the route table and the host config). The guard exists because `/api/examples` and `/api/recall` once shipped untraced and only a human opening the page noticed; **STACK §7 flags that nothing yet replaces "every route is exercised on a built server", and this phase does not close that gap** — W2 does. |
 | `tests/e2e/p1/dict-api.spec.ts` | replaced by D4's Playwright store test |
 | `data/dict.json` | see below |
 
@@ -1136,7 +1198,7 @@ fate here so the tail is scoped rather than discovered:
 | `tests/unit/data.test.ts` | re-pointed. Its subject is the *generated data*, not the runtime, so its assertions move onto the artifact (via the Node runner) with `dict.json` read directly where the test is about `dict.json`. Its `decomp.json` case is unaffected. |
 | `tests/unit/lists/helpers.ts` | re-pointed: `dictEntrySource()` is built over a `DictStore` on the Node runner instead of `getDictIndex`/`getEntries`/`hskBand`. `lib/lists/entry-source.ts` is the consumer `core.md` fixes; this is its test double. |
 | `tests/unit/lists/spine.test.ts` | re-pointed at the same helper; it only needs `getDict()` for fixtures. |
-| `tests/unit/ai/helpers.ts`, `tests/unit/ai/route.test.ts`, `tests/unit/ai/examples-route.test.ts` | re-pointed **in D3**, not here, with `lib/ai/retrieve.ts`. `entriesFor`/`entryFor` become store calls; `resetDictCache` becomes closing and reopening the store. |
+| `tests/unit/ai/helpers.ts`, `tests/unit/ai/route.test.ts`, `tests/unit/ai/examples-route.test.ts` | re-pointed **in D3**, not here, with `packages/ai/retrieve.ts`. `entriesFor`/`entryFor` become store calls; `resetDictCache` becomes closing and reopening the store. |
 | `tests/unit/server/cold-start.test.ts` | deleted here, but **only because D1 already carries its two load-bearing properties**: `readingKeys`/`normalizePinyin` agreement over every reading and `glossTokens` agreement over every gloss are D1 acceptance criterion 4, re-asserted against the artifact. Its third describe block (the indexes are built one at a time) is about `LazyDictIndex` and dies with it. Do not delete this file before D1's verifier is green. |
 
 **The API contract change nobody should discover at runtime.** `hskBand` gains `limit`/`offset`
@@ -1145,7 +1207,7 @@ fix. Everything else keeps its shape: `SearchResult`, `SegmentResult`, `EntriesR
 `DecompResponse.characters` are the same types, minus the `meta` wrapper, since the version is now
 `store.status.version`.
 
-**What this plan owes the three model routes** was **built in D3**, not here: `lib/ai/retrieve.ts`,
+**What this plan owes the three model routes** was **built in D3**, not here: `packages/ai/retrieve.ts`,
 the `GroundContext.segment` adapter, and their acceptance criteria are D3's, for the gate reason in
 §4. All D6 does about them is delete the server-side originals in `app/api/ask/route.ts` once
 `backend.md`'s frozen contract says what replaces the route. `core.md`'s gate table cites
@@ -1161,9 +1223,10 @@ the data".
 **Acceptance criteria.**
 
 1. `grep -r "api/dict" --include=*.ts --include=*.tsx` returns nothing outside history.
-2. No module outside `scripts/`, `tests/` and `lib/dict/runners/node.ts` imports `node:fs`. The
-   exemptions are exact and there are no others: `lib/server/route-inventory.ts:20` imports four
-   `node:fs` functions and is why the whole file is deleted above rather than trimmed, and
+2. No module outside `scripts/`, `tests/`, `lib/server/` and `lib/dict/runners/node.ts` imports
+   `node:fs`. The exemptions are exact and there are no others: `lib/server/route-inventory.ts:20`
+   imports four `node:fs` functions and is build-side, Node-only and imported by nothing in the app
+   (it survives this phase with its `/api/dict/*` entries removed — see the table above), and
    `tests/unit/dict/data-required.ts` needs `existsSync` to produce the "run `pnpm data`" message.
 3. The app runs with the network offline from a cold start, once the dictionary is `ready`:
    lookup, search, segmentation of a pasted passage and the character sheet all work.
@@ -1184,25 +1247,25 @@ STACK §4's.
 | Risk | Trigger | Mitigation |
 |---|---|---|
 | **OPFS per-file cap in WKWebView (#4).** One third-party README claims 10 MB per file; WebKit's published policy is a per-origin quota. The web dictionary is 43 MB. | `importDb` throws or truncates on desktop Safari or on an iPhone. | The check: import the real file into `opfs-sahpool` on desktop Safari and on an iPhone, **before** D4 is called done. If it fails: `sqlite3_deserialize` in-memory (~43 MB wasm heap, per-session), or the bare-table variant (§7), or Safari web users get lookup through the server while native and Chromium get the file. Needs a Mac; nothing in this container answers it. |
-| **FTS5 missing from the SQLCipher iOS pod (#20).** Verified for the Android artifact only. | `CREATE VIRTUAL TABLE … USING fts5` or a `MATCH` fails on iOS. | D5's device session runs the check. If it fails, "one file everywhere" survives — only English gloss search on iOS breaks — and the fallback is a `LIKE`-based gloss query over `entries.glosses` (slow but correct) or a different plugin. Do not discover this after the schema is frozen. |
-| **`copyFromAssets()` of 43 MB is slow or fails on a full device (#18).** Unmeasured by anyone. | First launch hangs, or fails on a device near storage capacity. | Measure in D5 on the lowest-spec target, empty and near-full. Design the one-time progress state and the low-storage failure path as part of the phase, not after. |
+| **FTS5 missing from the SQLCipher iOS pod (#20).** Verified for the Android artifact only. | `CREATE VIRTUAL TABLE … USING fts5` or a `MATCH` fails on iOS. | D5b's device session runs the check. If it fails, "one file everywhere" survives — only English gloss search on iOS breaks — and the fallback is a `LIKE`-based gloss query over `entries.glosses` (slow but correct) or a different plugin. Do not discover this after the schema is frozen. |
+| **`copyFromAssets()` of 43 MB is slow or fails on a full device (#18).** Unmeasured by anyone. | First launch hangs, or fails on a device near storage capacity. | Measure in D5a on the lowest-spec Android target and in D5b on the iPhone, empty and near-full. Design the one-time progress state and the low-storage failure path as part of the phase, not after. |
 | **WASM query latency is worse than the 2–5× extrapolation (#10).** Nobody measured a browser. | D4's measurement shows an interactive query over ~50 ms. | Measured in D4 against the same seven queries. Levers, in order: fewer round trips (the correlated-subquery form), a smaller `LIMIT`, prepared-statement reuse in the worker, and moving the debounce up. |
-| **`ATTACH`/`immutable=1` do not pass through the plugin (#6).** | The call errors on device. | Two connections work; only the query layer's shape changes. Checked in D5's same session. |
+| **`ATTACH`/`immutable=1` do not pass through the plugin (#6).** | The call errors on device. | Two connections work; only the query layer's shape changes. Checked in D5a's session and confirmed in D5b's. |
 | **Search behaviour drifts during the D3 port.** FTS5's exact AND replaces truncated posting-list intersection, and `isGlossToken`'s candidate order decides which section leads. | `search.test.ts` assertions move, or `sun`/`shi`/`women` route to the wrong section. | The differential test over ≥200 queries in D3, and the rule that every changed assertion carries a one-line justification. `isGlossToken` must inspect candidates in `rowid` order. |
 | **The prefix range sentinel drops astral-plane headwords.** Not an audit item; found while writing this plan. | Extension-B headwords stop appearing in prefix search while exact search still works. | Increment the last code point of the prefix; never append `U+FFFF`. No `COLLATE NOCASE`. Unit test in D2 with a real astral headword. |
 | **`words.freq` diverges from `headwordFreq()`.** SQL `MAX(freq)` and replaying `compareEntries` differ where a jieba frequency is 0 or absent. | `segment.test.ts` fails on a sentence nobody wrote a case for. | Compute it in TS at build time and assert equality for all 242,087 pairs in `verify-data.ts`. |
 | **`node:sqlite` is experimental** and could change across Node minors. | The build script breaks after a Node upgrade. | Pin Node ≥ 22.22 in `engines` (React Router 8 requires it anyway) and keep the builder's SQLite usage to plain `exec`/`prepare`/`run`/`all`. Fallback is `better-sqlite3` as a devDependency; the container has no `sqlite3` CLI, so do not plan on one. |
 | **The build is not reproducible**, so a `.sqlite` built on one machine cannot be checked against one built on another and the verifier's result stops transferring. | Two `pnpm data` runs on the same snapshot produce different `sha256sum`s. | D1 acceptance criterion 7. Fixed insert order, **no timestamp anywhere in the file** — `built_at` is not a `meta` row and `builtAt` is not in the manifest, precisely so that this criterion is achievable — and a single final `VACUUM`. Note the filename is not at risk either way: it is `dict-<schema>-<cedict>.sqlite` and contains no hash. |
-| **Licence leakage.** `decomp.json` merged into the SQLite file, or the CC BY-SA attribution not shipped with the new artifact. | A `decomposition` column appears; `/settings` stops naming the sources. | D1's test asserting no Make Me a Hanzi data in the `.sqlite`; `meta.sources` carries the same `DictSource[]` the JSON does so `/settings` renders from data; SQLCipher's BSD notice added in D5. |
+| **Licence leakage.** `decomp.json` merged into the SQLite file, or the CC BY-SA attribution not shipped with the new artifact. | A `decomposition` column appears; `/settings` stops naming the sources. | D1's test asserting no Make Me a Hanzi data in the `.sqlite`; `meta.sources` carries the same `DictSource[]` the JSON does so `/settings` renders from data; SQLCipher's BSD notice added in D5a. |
 | **Bundling couples dictionary updates to store review.** | A CC-CEDICT fix needs a release. | Accepted for v1 and written down. The escape is download-on-first-launch: same file, same manifest, one branch in `open()`. |
-| **Store-release size on Android.** ~19.5 MB packaged (`gzip -9` as a proxy — register **#16**) is far under Play's 200 MB base-module cap, but the doubled on-device footprint is ~63 MB. | The Play Console's reported download size after the first upload differs materially from 19.5 MB. | Read the real number off the Play Console and App Store Connect after the first upload and correct `ios.md`, `android.md` and D5's budget. Until then the packaged half of the 63 MB is unverified. Nothing to *do* about the size itself — the headroom is enormous — but the figure two sibling plans quote rests on #16. |
+| **Store-release size on Android.** ~19.5 MB packaged (`gzip -9` as a proxy — register **#16**) is far under Play's 200 MB base-module cap, but the doubled on-device footprint is ~63 MB. | The Play Console's reported download size after the first upload differs materially from 19.5 MB. | Read the real number off the Play Console and App Store Connect after the first upload and correct `ios.md`, `android.md` and D5a's budget. Until then the packaged half of the 63 MB is unverified. Nothing to *do* about the size itself — the headroom is enormous — but the figure two sibling plans quote rests on #16. |
 
 One item the audits could not verify that this plan **does not** depend on, recorded so nobody
 re-opens it here: whether ITP's seven-day eviction reaches WKWebView (**#3**) — the dictionary is a
 re-downloadable cache and the learner's data is `core.md`'s and `backend.md`'s problem.
 
-An earlier draft listed the store compression ratio (**#16**) here too. That was wrong: D5's
-on-device budget, which `ios.md` and `android.md` are told to adopt, uses `gzip -9` as its proxy for
+An earlier draft listed the store compression ratio (**#16**) here too. That was wrong: D5a's
+on-device budget, which D5b, `ios.md` and `android.md` all adopt, uses `gzip -9` as its proxy for
 the packaged half, and #16 is exactly the question of whether that proxy holds. It is in the risk
 table above instead.
 

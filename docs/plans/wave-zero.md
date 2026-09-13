@@ -200,6 +200,12 @@ was manufactured by the misquote.
 
 Items 4 and 5 touch code, and both must land **before** `web.md` W0's `git mv`, or they will be moving
 files that are themselves being moved. If W0 has already run, they land at the post-W0 paths instead.
+
+> **Items 4 and 5 are NOT executable as written.** A verification pass found both underspecified — see
+> [README.md](README.md) V5 and V6. Item 4 gives the `Repository` diff as method names with no
+> signatures, and one of its types is defined by a phase many waves downstream. Item 5 names ten
+> modules to move and none of the 33 files with 74 import sites that would break. Both need a pass
+> before a session runs them. Item 3, the `CLAUDE.md` rewrite, is unaffected and is executable.
 Nothing else in wave 0 touches code.
 
 After that, the build sequence in [README.md](README.md) is executable as written.

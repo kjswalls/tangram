@@ -11,6 +11,13 @@ rejected, and what is still open. Every number and version in it was measured or
 **2026-09-13** and is tagged as one or the other. Re-check anything load-bearing before you act on
 it.
 
+The build plans that execute this record are in [`docs/plans/`](plans/README.md), and the decisions
+that span them — the workspace layout, which shared surfaces are frozen by which commit, the phase
+splits, and sixteen cross-document corrections including several to this file — are settled in
+[`docs/plans/wave-zero.md`](plans/wave-zero.md). Where a plan and this record disagree about a seam
+between plans, wave zero is the ruling; where a plan has **measured** something this record
+estimated, the plan's figure supersedes and this record says so at the figure.
+
 Two facts frame every decision below and are not repeated in each one:
 
 - **There are no users and no data.** The owner has not used the app. Schema changes are free.
@@ -42,10 +49,10 @@ mode**. It ships to three places from that one build:
   one is written it would apply only to the app for the same reason.
 
 The dictionary stops being a 35 MB JSON blob parsed into the heap. It becomes **one prebuilt,
-read-only SQLite file** (`dict-<cedictVersion>.sqlite`, ~47 MB raw / ~15 MB brotli), produced by the
-existing `pnpm data` step, **identical on all three platforms**, and queried rather than loaded. It
-uses only built-in SQLite features — no tokenizer extension — which is exactly what makes one file
-work everywhere. Native platforms bundle it as an app asset and open it read-only through
+read-only SQLite file** (`dict-<schema>-<cedict>.sqlite`, **43.1 MB raw / 13.9 MB brotli**, measured
+against the schema `data.md` D1 actually ships), produced by the existing `pnpm data` step,
+**identical on all three platforms**, and queried rather than loaded. It uses only built-in SQLite
+features — no tokenizer extension — which is exactly what makes one file work everywhere. Native platforms bundle it as an app asset and open it read-only through
 `@capacitor-community/sqlite`; the web fetches it once and imports it into OPFS through
 `@sqlite.org/sqlite-wasm` with the `opfs-sahpool` VFS. A small `DictStore` interface sits over the
 two implementations, the same shape as the existing `lib/db/repository.ts` seam.
@@ -241,7 +248,7 @@ attribute). Full Noto Sans SC OTFs are ~4.5–9 MB each; slim subsets of 0.7–1
 On native those are app-package bytes and nobody notices. **On the web they are first-load bytes on
 top of the dictionary**, and the settled visual language (product-decisions §11) asks for Noto Serif
 SC for hanzi plus Newsreader and DM Sans for Latin. State the web first-load budget as one number
-before committing to it: app bundle + ~15 MB brotli dictionary (§2.5) + whatever the coverage check
+before committing to it: app bundle + 13.9 MB brotli dictionary (§2.5) + whatever the coverage check
 in register entry #9 returns, multiplied by the weights actually used. That matters more than it
 looks, because §2.4 makes the installed PWA the entire desktop product and §2.6 makes the web the
 funnel. The mitigation that exists on web and is irrelevant in an app package:
@@ -429,11 +436,12 @@ and cheap, in which case pinning 2.11.x could strand you on an old GTK path on L
 
 ### 2.5 Dictionary storage: one prebuilt read-only SQLite file; FTS5 for English only
 
-**Decision.** `pnpm data` emits **one** `dict-<cedictVersion>.sqlite` (~47 MB raw, ~15 MB brotli)
-built with **only built-in SQLite features**. All Chinese and pinyin normalisation happens at
-**build time in TypeScript**. `decomp.json` (0.92 MB) stays JSON — it is never indexed, and keeping
-it separate is what guarantees the LGPL data never merges into the CC-BY-SA data, which is a licence
-rule, not a preference.
+**Decision.** `pnpm data` emits **one** `dict-<schema>-<cedict>.sqlite` (**43.1 MB raw, 13.9 MB
+brotli** — `data.md` D1's measurement against the schema it ships, superseding this record's
+original 47.2 / 15.4 estimate; §3) built with **only built-in SQLite features**. All Chinese and
+pinyin normalisation happens at **build time in TypeScript**. `decomp.json` (0.92 MB) stays JSON —
+it is never indexed, and keeping it separate is what guarantees the LGPL data never merges into the
+CC-BY-SA data, which is a licence rule, not a preference.
 
 **The single strongest reason.** The current approach cannot ship to a phone. Parsing `dict.json`
 and building the index costs **58 MB of heap / 184 MB RSS and 0.7 s** in Node, with **another 1.6 s
@@ -486,18 +494,19 @@ MB `__TEXT` limit per binary. A ~20 MB compressed dictionary is nowhere near eit
 offline from the first second and no download UI.
 
 It does **not** mean no failure mode, and the audit's "no failure mode" phrasing should not survive
-into a build plan. Bundling still requires a `copyFromAssets()` of a ~47 MB file into app storage on
+into a build plan. Bundling still requires a `copyFromAssets()` of a 43.1 MB file into app storage on
 first launch and again whenever `dict.version` changes. Nobody measured how long that takes, it can
 fail on a device low on storage, and it means the installed footprint carries the dictionary
-**twice** — compressed inside the package and expanded in app storage — so budget on the order of 60
-MB on device, not 15. Design it as a one-time progress state, not as "offline from the first second".
-Register entry #18 is the measurement. And state the consequence plainly: **bundling ties every
-dictionary refresh to a store release** and its review latency. That is the trade the
-`dict-<cedictVersion>.sqlite` naming implies but does not by itself deliver; if dictionary updates
+**twice** — compressed inside the package and expanded in app storage — so budget **≈63 MB** on
+device (19.5 MB packaged + 43.1 MB expanded, `data.md` D5's figure), not 14. Design it as a one-time
+progress state, not as "offline from the first second". Register entry #18 is the measurement. And
+state the consequence plainly: **bundling ties every dictionary refresh to a store release** and its
+review latency. That is the trade the
+`dict-<schema>-<cedict>.sqlite` naming implies but does not by itself deliver; if dictionary updates
 ever need to be independent of releases, delivery switches to download-on-first-launch, which is the
 same file and the same versioning (see "what would make this wrong" below).
 
-On the **web** there is no bundling, so the first load pays a ~15 MB brotli download behind a banner
+On the **web** there is no bundling, so the first load pays a 13.9 MB brotli download behind a banner
 — exactly the shape of the existing missing-data banner. Add the fonts to that budget, per §2.1.
 
 **Delivery per platform.**
@@ -513,7 +522,7 @@ On the **web** there is no bundling, so the first load pays a ~15 MB brotli down
   to `data/ATTRIBUTION.md` alongside CC-CEDICT and Make Me a Hanzi.
 - **Web:** fetch once, import into OPFS via `installOpfsSAHPoolVfs()` and
   `OpfsSAHPoolUtil.importDb(name, chunkCallback)` — the chunked form streams a `fetch` body without
-  holding 45 MB in memory — then open with the `opfs-sahpool` VFS **in a dedicated worker**.
+  holding 43 MB in memory — then open with the `opfs-sahpool` VFS **in a dedicated worker**.
   `opfs-sahpool` needs **no COOP/COEP headers and no SharedArrayBuffer**, which is decisive: static
   hosts and embedded WebViews cannot set those reliably, and Capacitor closed its custom-headers
   issue (#7813) as "not planned".
@@ -537,7 +546,7 @@ On the **web** there is no bundling, so the first load pays a ~15 MB brotli down
    TS over the ≤50 candidate rows. `detail=full` costs +8.1 MB instead of +4.7 MB.
 3. **Browser persistence has edges.** OPFS sync access handles require a worker; `opfs-sahpool`
    holds an **exclusive** lock, so it is one connection per origin and a second tab must fall back
-   to an in-memory database (`sqlite3_deserialize`, ~45 MB of wasm heap) or route through a
+   to an in-memory database (`sqlite3_deserialize`, ~43 MB of wasm heap) or route through a
    SharedWorker. Safari 16.4+ is the stated floor. Storage can be evicted, so **the import must be
    idempotent and keyed by dictionary version**.
 4. **The Capacitor bridge is async.** Every keystroke becomes a JSON round trip through the plugin
@@ -571,11 +580,10 @@ are refused, at ~2 s and ~60 MB heap per cold launch. *Pure-JS search libraries*
 FlexSearch, Orama) all hold the index in memory: the same cost profile as today with more code, and
 nothing beats a B-tree for exact/prefix lookups on 124k short keys. *A Chinese-aware FTS5 tokenizer*
 (`wangfenjin/simple` is the serious one — MIT/GPL dual, pinyin search, iOS xcframework and Android
-builds) has **no WASM story** and a reported ~4 s jieba load. *Ship a bare 22.8 MB table and build
-indexes on device* — the on-device indexing was measured at 0.8 s natively, but **the compressed
-sizes for this variant do not survive a sanity check** (§3) and the size of the saving is the whole
-argument for it. Reproduce those two numbers before treating this as the fallback. Start with the
-full file.
+builds) has **no WASM story** and a reported ~4 s jieba load. *Ship a bare 20.0 MB table and build
+indexes on device* — re-measured by `data.md` D1 (§3) after the audit's compressed figures failed a
+sanity check: 6.2 MB brotli, indexes rebuilt in 0.46 s, so the saving is real and larger than this
+record supposed. It still buys a second code path for 7.7 MB of transfer. Start with the full file.
 
 **What would make this wrong.** You need full-text search **inside** Chinese text — example
 sentences, Chinese-language gloss text, user notes. Then you need a bigram/trigram tokenizer, a
@@ -729,35 +737,52 @@ documentation, a changelog, a vendor page or a search summary.
 
 ### Dictionary artifacts
 
+**The shipping figure is the last row, not the audit's.** Everything above it is the dictionary
+audit's measurement against the schema the audit sketched; `data.md` D1 then specified and measured
+the schema that is actually being built, and **its 43.1 MB raw / 13.9 MB brotli supersedes this
+record's 47.2 / 15.4 everywhere**. The audit rows stay because the per-feature deltas are still the
+best available guide to what each index costs.
+
 | Artifact | Raw | gzip -9 | brotli q11 | Basis |
 |---|---|---|---|---|
 | `data/dict.json` (today, 124,188 entries) | **35.1 MB** | 7.4 MB | 5.2 MB | measured |
 | `data/decomp.json` | 0.92 MB | 0.19 MB | — | measured |
-| SQLite: entries table + unique id index | 23.5 MB | | | measured |
-| + hanzi indexes (`simp`, `trad`) | 27.6 MB | | | measured |
-| + pinyin key table (toneless + toned, indexed) | 36.0 MB | | | measured |
-| + gloss FTS5 (`detail=none`) | 40.7 MB | | | measured |
-| + `words` table for segmentation (242k rows) | 43.3 MB | | | measured |
-| + optional `chars` table for infix "contains 算" (427k rows) | **47.2 MB** | 21.5 MB | **15.4 MB** | measured |
-| Bare entries table only (indexes built on device) | 22.8 MB | 9.8 MB | 11.9 MB *(suspect)* | **re-measure — see below** |
-| Gloss FTS5 at `detail=full` instead of `none` | +8.1 MB (vs +4.7 MB) | | | measured |
-| Trigram FTS over simp/trad (rejected) | +3.4 MB | | | measured |
+| SQLite: entries table + unique id index | 23.5 MB | | | measured, audit schema |
+| + hanzi indexes (`simp`, `trad`) | 27.6 MB | | | measured, audit schema |
+| + pinyin key table (toneless + toned, indexed) | 36.0 MB | | | measured, audit schema |
+| + gloss FTS5 (`detail=none`) | 40.7 MB | | | measured, audit schema |
+| + `words` table for segmentation (242k rows) | 43.3 MB | | | measured, audit schema |
+| + optional `chars` table for infix "contains 算" (427k rows) | 47.2 MB | 21.5 MB | 15.4 MB | measured, audit schema — **superseded** |
+| **The finished file, `data.md` D1's schema** | **43.1 MB** | **19.5 MB** | **13.9 MB** | **measured against the schema that ships** |
+| Bare entries table only (indexes built on device) | 20.0 MB | 8.5 MB | **6.2 MB** | re-measured by `data.md` D1 — the audit's 22.8 / 9.8 / 11.9 was wrong |
+| Gloss FTS5 at `detail=full` instead of `none` | +8.1 MB (vs +4.7 MB) | | | measured, audit schema |
+| Trigram FTS over simp/trad (rejected) | +3.4 MB | | | measured, audit schema |
 
-**The bare-table row does not pass a sanity check.** Brotli q11 larger than gzip -9 on the same input
-is implausible, and every other row in the table has brotli comfortably below gzip (35.1 → 7.4 → 5.2;
-47.2 → 21.5 → 15.4). The figures are transcribed faithfully from the dictionary audit — they are not
-an invention — but the audit's own prose then calls this variant a "ship 12 MB, index on first
-launch" option, which matches neither of its compressed numbers cleanly. **Do not present 11.9 MB as
-measured until it is reproduced:** re-run `brotli -q 11` and `gzip -9` on the bare-table file the
-build script produces. The number is load-bearing twice — §2.5 offers this variant as the fallback if
-transfer size matters, and register entry #4 offers it as the fallback if the OPFS cap bites — and
-the case reads very differently at a 3.5 MB saving than at a 5.6 MB one, given it buys a second code
-path and 0.8 s of on-device indexing.
+D1 comes in smaller while shipping *more* — it also carries an `entries_hsk` index the audit never
+priced. Three of its choices are why, and each is measured in D1's own cumulative table rather than
+derivable from the rows above: **pinyin keys are columns on `entries`, not a side table** (3 MB
+cheaper and one fewer join); **the gloss FTS5 content is pre-stemmed at build time**, contentless
+and `detail=none`; and **the infix capability is a packed delta-varint posting list** per
+(character, script) at **+1.4 MB**, where the obvious one-row-per-(character, script, entry) shape
+is 636k rows and **+22.4 MB**. A build session that writes the obvious version makes the file 50%
+bigger for nothing.
+
+**The bare-table row did not pass a sanity check, and has been re-measured.** Brotli q11 larger than
+gzip -9 on the same input is implausible, and every other row in the table has brotli comfortably
+below gzip (35.1 → 7.4 → 5.2; 43.1 → 19.5 → 13.9). The audit's figures were transcribed faithfully
+— they were not an invention — but its own prose then called this variant a "ship 12 MB, index on
+first launch" option, which matched neither of its compressed numbers cleanly. `data.md` D1 re-ran it
+against the shipping schema: **20.0 MB raw, 8.5 MB gzip -9, 6.2 MB brotli q11, indexes rebuilt in
+0.46 s**. The number is load-bearing twice — §2.5 offers this variant as the fallback if transfer
+size matters, and register entry #4 offers it as the fallback if the OPFS cap bites — and the real
+saving (13.9 → 6.2 MB brotli) is *larger* than this record supposed, at the cost of a second code
+path. D1 still declines it for v1; the case is in `data.md` §7.
 
 **Any on-device footprint estimate has to double the file.** A bundled dictionary sits compressed in
 the app package *and* expanded in app storage after `copyFromAssets()`, so the installed cost on a
-phone is roughly the download plus the ~47 MB expansion, not the download alone (§2.5, register entry
-#18).
+phone is roughly the download plus the 43.1 MB expansion, not the download alone: **≈63 MB**
+(19.5 MB packaged + 43.1 MB expanded), which is the figure `data.md` D5, `ios.md` and `android.md`
+all budget against, with the packaged half resting on register entry #16 (§2.5, register entry #18).
 
 ### Query latency
 
@@ -827,7 +852,7 @@ entry that cannot be run is not a soft entry; it is a blocked phase.
 | **A physical Android phone with Google Mobile Services** | #5 (`zipalign -c -P 16` on a real AAB), #7, #8, #11, #19 | The emulator answers #8 and #19 and can produce a build for #5. It cannot stand in for real hardware on #7 or #11. |
 | **A physical Android phone without GMS** | The other half of #7 — whether a no-GMS device reports any Mandarin voice | Unanswerable. This is the check that decides whether audio tier 3 is v1 scope (§5.3), so leaving it open leaves tier 3 a live v1 risk with an unpriced production project behind it. |
 | **A named low-end Android target** | #11, and reason 7 of "what would make Capacitor wrong" | This record says "the low-end Android target" and never names a device. Name one before the first Android phase, or the performance bar is unfalsifiable. |
-| **Desktop Safari** | #4 (importing the real 47 MB file into `opfs-sahpool`) and #13 (`persist()` behaviour) | Needs the same Mac. Note this one blocks the **web** dictionary path, not only mobile. |
+| **Desktop Safari** | #4 (importing the real 43.1 MB file into `opfs-sahpool`) and #13 (`persist()` behaviour) | Needs the same Mac. Note this one blocks the **web** dictionary path, not only mobile. |
 
 The sequencing consequence should be planned rather than discovered. **Everything web and desktop
 proceeds in the container**: the Vite move, the SQLite build step, the `DictStore` web
@@ -843,12 +868,12 @@ product on its own.
 | 1 | **The per-character reader itself, plus a reported WKWebView crash on the iOS 26 beta when `-webkit-user-select: none` is applied during touch** (one Apple forum thread; resolution unknown). Neither audit ran the combination this record specifies: one `<ruby>` element per character, `caretRangeFromPoint` on every `pointermove`, painted with the Custom Highlight API over a DOM interleaved with `<rt>` nodes. Each recommended the pieces separately. | The entire reader and drag-select design. On iOS the CSS is load-bearing for suppressing native selection; everywhere, the per-character combination's pointer latency and layout cost are unmeasured, and product rules 1–2 make the reader's data model character-granular (§2.1). | **One prototype answers both, so build it once.** Per-character ruby over a realistic pasted passage (a few hundred characters), drag-select via `caretRangeFromPoint`, highlight via the Custom Highlight API. Measure `pointermove` latency and layout time; confirm highlight ranges land on base characters and never on `<rt>` text; confirm copy excludes the pinyin. Run it in desktop Chromium first — free, in the container, no hardware — and then on a **real iOS 26 device** before anything else in the reader is built. If the crash reproduces and no CSS workaround exists, the reader screen is the first candidate for the native-`UIViewController` boundary in §2.1, with the cost that paragraph now states. |
 | 2 | **Is `caretPositionFromPoint` default-on in Safari 26?** It landed in WebKit in late 2024 behind a flag. | Nothing fatal — `document.caretRangeFromPoint` is WebKit-proprietary and present in every WKWebView — but it decides whether the hit-test path is standards-track or forks per engine. | Feature-detect at runtime and log which path is taken on a real iOS 26 device. Write the code to prefer the standard and fall back. |
 | 3 | **Does ITP's seven-day eviction apply to WKWebView inside a native app?** Unanswered on Apple's own forums. | Whether any learner data may live only in the Capacitor WebView's IndexedDB. | Cheapest answer is to not need it: put the dictionary in bundled native SQLite and get account sync working early. To actually measure: write a marker row, leave a device untouched for eight days of Safari use, re-open. |
-| 4 | **The reported 10 MB per-file OPFS cap in WKWebView.** Single third-party source (`wendylabsinc/opfs-checker`); WebKit's published policy is a per-origin quota of 15–20% of disk for non-browser apps. | The **web** delivery of the 47 MB dictionary on Safari and on iOS in general. Does not block native, which uses the plugin. | Import the real 47 MB file into `opfs-sahpool` on desktop Safari and on an iPhone, and see whether it succeeds. Do this before committing to the web dictionary path. Fallback if it fails: `sqlite3_deserialize` in-memory (~45 MB wasm heap) or the bare-table variant. |
+| 4 | **The reported 10 MB per-file OPFS cap in WKWebView.** Single third-party source (`wendylabsinc/opfs-checker`); WebKit's published policy is a per-origin quota of 15–20% of disk for non-browser apps. | The **web** delivery of the 43.1 MB dictionary on Safari and on iOS in general. Does not block native, which uses the plugin. | Import the real 43.1 MB file into `opfs-sahpool` on desktop Safari and on an iPhone, and see whether it succeeds. Do this before committing to the web dictionary path. Fallback if it fails: `sqlite3_deserialize` in-memory (~43 MB wasm heap) or the bare-table variant. |
 | 5 | **Does `@capacitor-community/sqlite` ship 16 KB-page-aligned native libraries?** Required by Play for `.so` files since November 2025; the plugin bundles SQLCipher. | **Play Store submission.** A misaligned `.so` is a rejection, not a warning. | `zipalign -c -P 16 -v <aab-or-apk>` on a real build, in the first Android phase. If it fails, the options are a newer plugin release, a rebuild of the native lib, or Capawesome's paid plugin. |
 | 6 | **Do `ATTACH` and the `immutable=1` URI flag pass through `@capacitor-community/sqlite`?** | How the read-only dictionary connection is opened, and whether the dictionary and the user database can be attached in one connection. | Call both against a copied asset on a device and read the error. Not fatal either way — two connections work — but it changes the query layer's shape. |
 | 7 | **Availability of a Mandarin TTS voice on the target Android devices**, including whether Google Speech Services' offline zh-CN pack is downloadable (never confirmed from Google's own docs) and what non-GMS devices report. | Which **audio tier** must ship first (§5), and whether tier 3 is v1 scope. | `isLanguageAvailable('zh-CN')` on each physical test device, GMS and non-GMS, before and after installing voice data. |
 | 8 | **Whether the CJK synthetic-bold regression in Android WebView 139–140 is actually fixed in 143** (Chromium 446078849, reported fixed, unconfirmed). | How much the bundled-font work matters and whether a `lang` attribute alone is sufficient. | Render bold hanzi with and without `lang="zh-Hans"` on a device with WebView in the 139–143 range. Mitigated regardless by bundling a real bold weight. |
-| 9 | **Whether a slim Noto subset covers the CC-CEDICT headword character set.** Subsets are 0.7–1.4 MB; the full face is 4.5–9 MB per weight. | App size vs. tofu boxes in the dictionary — **and the web first-load budget**, since on native a face is package bytes but on web it is transfer on top of the ~15 MB dictionary (§2.1). | Extract the distinct character set from `data/dict.json` headwords and run a coverage check against the candidate subset's cmap, for every face and weight the visual language actually uses. This is a script, not a device test, and it needs no hardware — do it first. Then decide web delivery separately from native: `unicode-range`-split subsets exist on the web and are irrelevant inside an app package. |
+| 9 | **Whether a slim Noto subset covers the CC-CEDICT headword character set.** Subsets are 0.7–1.4 MB; the full face is 4.5–9 MB per weight. | App size vs. tofu boxes in the dictionary — **and the web first-load budget**, since on native a face is package bytes but on web it is transfer on top of the 13.9 MB dictionary (§2.1). | Extract the distinct character set from `data/dict.json` headwords and run a coverage check against the candidate subset's cmap, for every face and weight the visual language actually uses. This is a script, not a device test, and it needs no hardware — do it first. Then decide web delivery separately from native: `unicode-range`-split subsets exist on the web and are irrelevant inside an app package. |
 | 10 | **WASM query latency.** The 2–5× multiplier over native is an extrapolation; nothing was measured in a browser. | The web build's interactive-search feel. Native is measured and comfortable. | Port the measured query set into a browser harness against the real file under `opfs-sahpool` and re-measure. |
 | 11 | **Capacitor cold-start time on real hardware.** No rigorous benchmark exists in either direction; the pathological reports (Capacitor #6115, a 13 s migration report) all trace to large bundles or loading data at boot. | Requirement 2 of "what would make Capacitor wrong". | Measure cold start on the low-end Android target and on an older iPhone once the SQLite path is in, and compare against Play's 5 s flag and your own 2 s bar. |
 | 12 | **Capacitor 8's stated iOS 15 minimum** and several other Capacitor/Tauri version facts came from **search snippets, because capacitorjs.com, ionic.io, tauri.app, capawesome.io and issues.chromium.org were all egress-blocked** during the Android audit. | Deployment-target choices and the `rt { user-select: none }` copy-exclusion behaviour, which needs Safari 16.4+. | Read the official docs from an unblocked network before the first mobile phase starts. This is a five-minute task and it validates a whole cluster of facts at once. |
@@ -857,7 +882,7 @@ product on its own.
 | 15 | **Play's 12-tester / 14-day closed-test requirement for personal developer accounts created after 13 November 2023.** Sourced, not confirmed from Google. | Android release timeline — it is a two-week gate before production, and it applies to every stack. | Read the current Play Console policy page before planning any launch date. |
 | 16 | **Store compression ratio.** The audit used `gzip -9` as a proxy for what the stores actually do. | Only the app-size estimate, which has enormous headroom. | Read the actual download size in the Play Console and App Store Connect after the first upload. |
 | 17 | **RN and Expo version disagreement between the two mobile audits** (SDK 57/RN 0.86 vs SDK 56/RN 0.85; `op-sqlite` 18.2.1 vs 17.1.3). A second inter-audit disagreement is recorded in §6 on the `tauri` core row (2.10.1 via search vs 2.11.5 on crates.io). | Nothing, unless RN is reconsidered. Recorded so the discrepancy is not mistaken for a fact. | Read the npm registry if RN ever comes back on the table. |
-| 18 | **How long the first-launch `copyFromAssets()` of the ~47 MB dictionary takes, and what it costs in storage.** Unmeasured by anyone; the audit's "no failure mode" phrasing skipped past it. | The first-run experience on both mobile platforms, and every on-device footprint estimate — the file lands twice, compressed in the package and expanded in app storage. | Time the copy on the lowest-spec Android target and on an iPhone, with the device near-full as well as empty, and record peak storage. Then design the one-time progress state and the low-storage failure path; neither exists in any screen today. |
+| 18 | **How long the first-launch `copyFromAssets()` of the 43.1 MB dictionary takes, and what it costs in storage.** Unmeasured by anyone; the audit's "no failure mode" phrasing skipped past it. | The first-run experience on both mobile platforms, and every on-device footprint estimate — the file lands twice, compressed in the package and expanded in app storage. | Time the copy on the lowest-spec Android target and on an iPhone, with the device near-full as well as empty, and record peak storage. Then design the one-time progress state and the low-storage failure path; neither exists in any screen today. |
 | 19 | **Whether `window.speechSynthesis` really is undefined in the Capacitor Android WebView.** Chromium issue 40468168 — the id and its status came from a search snippet, because `issues.chromium.org` was egress-blocked during the Android audit. | Whether `@capacitor-community/text-to-speech` is mandatory or merely convenient, i.e. a plugin dependency. | Log `typeof window.speechSynthesis` in the Capacitor WebView on the Android test device or the emulator during the first mobile phase. Five seconds. Native TTS is wanted anyway for the enhanced iOS voices and the range events, so a surprise here changes the justification rather than the plan. |
 | 20 | **The SQLite version behind the SQLCipher iOS pod, and therefore whether FTS5 is compiled into it.** Verified for the Android artifact only; named in the dictionary audit's own not-verified list. | The "one file, no per-platform build" claim on iOS — the load-bearing simplification of §2.5. | Open the copied asset on an iOS device through the plugin and run `SELECT sqlite_version()` plus a trivial `CREATE VIRTUAL TABLE t USING fts5(x)`. Fold it into the same device session as #6, which already touches the plugin against a copied asset. |
 
@@ -865,7 +890,10 @@ product on its own.
 
 ## 5. Open decisions
 
-Genuinely unsettled. Each has a recommendation and what it would take to close it.
+Genuinely unsettled. Each has a recommendation and what it would take to close it. Two entries at
+the end are not open in that sense and are kept here so a reader looking for them finds them: §5.6
+and §5.8 are **settled**, recorded with the decision rather than deleted, and §5.9 is an open item
+with no owner rather than a decision awaiting a measurement.
 
 ### 5.1 Desktop shell: command palette or page shell — and its default theme
 
@@ -1008,15 +1036,22 @@ one person with two devices. Write that down as the protocol and revisit only wh
 *Running cost.* Deliberately unpriced, because it depends on which of the two components lands where.
 Do not put a number on the server in any plan until this section closes.
 
-### 5.6 Does the `chars` infix table ship in v1?
+### 5.6 Does the `chars` infix table ship in v1? — **CLOSED by `data.md` D1**
 
-The optional `chars` table (427k rows, +3.9 MB) is what makes "which words contain 算" answerable.
-The app does not do this today. **Recommendation:** include it — the measured sizes above already
-assume it, and "show me every word with this character" is a natural companion to the per-character
-sheet the product decisions require (Rule 2: tap a character → its readings, meanings,
-decomposition, *and the words the learner already has containing it*). To decide: whether that panel
-searches the whole dictionary or only the learner's own words. If only their own words, the table is
-unnecessary and the file drops to 43.3 MB.
+The optional infix table is what makes "which words contain 算" answerable. The app does not do this
+today. This record's recommendation was to include it, on the grounds that "show me every word with
+this character" is a natural companion to the per-character sheet the product decisions require
+(Rule 2: tap a character → its readings, meanings, decomposition, *and the words the learner already
+has containing it*), and it left open whether that panel searches the whole dictionary or only the
+learner's own words.
+
+**`data.md` D1 closed it: the table ships.** It also removed the reason to hesitate. The naive shape
+this section priced — one row per (character, script, entry), 636k rows — costs **+22.4 MB**, not the
++3.9 MB estimated here; the same information as one delta-varint posting list per (character, script)
+costs **+1.4 MB**. Both measured. At 3% of the file, and with the schema frozen at the end of D1 —
+so the alternative is not "add it later" but "bump `SCHEMA_VERSION` and re-ship 43 MB" — the larger
+capability is the cheap side of the trade. The learner's-own-words panel `core.md` C4 builds is an
+`allCards()` filter either way; the table is what lets the dictionary-wide variant exist at all.
 
 ### 5.7 Indexable per-word pages, and whether the SPA decision survives them
 
@@ -1039,13 +1074,54 @@ merge the two datasets.
 **Recommendation:** plan for Astro static word pages and keep the SPA. **The measurement that decides
 it** is Astro's build time and output size at that page count: try the full 124,188 headwords, and if
 that build is impractical fall back to a curated subset — HSK 1–6 headwords are the natural cut, and
-`pnpm data` already bands 11,028 of them into `data/hsk.json`. Measure before committing; a static
-site generator emitting 124k pages is a real build-time question, not a formality. Nothing in the
-audits touched it.
+`pnpm data` already bands 11,028 of them. **There is no `data/hsk.json` and nothing generates one**;
+the band lives on `Entry.hskBand` inside `dict.json`, and after `data.md` D1 in `entries.hsk_band`
+with the `entries_hsk` index over it, so the cut is a query, not a file. Measure before committing;
+a static site generator emitting 124k pages is a real build-time question, not a formality. Nothing
+in the audits touched it.
 
 **What would make even this wrong:** you want the *app* pages themselves indexed — a word page that
 is the live app, not a marketing page that links to it. Then React Router framework mode with
 `prerender` is the answer and §2.2 and §2.6 both reopen.
+
+### 5.8 Where the web app is hosted — **SETTLED: Vercel**
+
+`apps/app` is a static SPA build and it ships to **Vercel**, on the **same account as the existing
+deployment** described in [`docs/deploy.md`](deploy.md). This was left unowned long enough that
+`web.md` W2 had written a fallback around it — commit a placeholder `vercel.json` and record the
+gap — and `docs/plans/wave-zero.md` ruling 14 closed it: the fallback is now the decision, taken
+deliberately rather than defaulted into.
+
+What it settles and what it does not. It settles where `web.md` W2's host config lands — the SPA
+fallback, the manifest content type, the three `/sw.js` headers, and (per wave zero §6) the
+dictionary's two rules: the content-addressed `.sqlite` path served `Cache-Control: public,
+max-age=31536000, immutable`, and the pre-compressed `.br` under content negotiation. It does **not**
+decide where `apps/server` lives — that is `backend.md` B0, inside §5.5, and it is still open. Nor
+does it change §2.6: the Astro site is a separate deployment on a separate origin, and being on the
+same provider is not being on the same origin. Note that `docs/deploy.md` documents a *Next* app on
+Vercel today; most of it (the access gate, the function memory and timeout notes, `pnpm smoke`)
+describes routes that §2.2 and `data.md` D6 remove, so it needs rewriting alongside W2 rather than
+being followed as-is.
+
+### 5.9 There is no CI, and v1 does not create one — **OPEN ITEM, NO OWNER**
+
+Recorded because two of the build plans were quietly assuming otherwise. There is **no `.github/`
+directory** in this repo and **no plan in the set creates one**; every check that says "in CI" today
+means "when someone runs it". The rule that a new Postgres table without a row-level-security policy
+is a failed migration, the assertion that the Android SDK level is what it claims, the grep that no
+signing secret is committed, and the dictionary manifest's sha256 as an integrity check are all
+things a pipeline would enforce. In v1 they are unit tests under `tests/unit/` instead — which is a
+real guarantee for the ones that can be expressed as a test in this container, and no guarantee at
+all for the ones that cannot.
+
+This is an item rather than a decision because it has no recommendation attached and no phase to
+attach it to. The two things a build session needs to know are that **writing "asserted in CI" into
+an acceptance criterion writes an assertion nobody runs**, and that adding CI later is cheap and
+uncontroversial — it is a workspace-level task, not a redesign. The related question of what
+replaces `pnpm smoke` and `route-inventory.ts` as the "every route is exercised on a built server"
+guarantee is in §7 and is `web.md` W2's; the native half of the same question ("what proves a
+Capacitor build works") is answered by both mobile plans as a written manual device checklist, and
+that answer is deliberate.
 
 ---
 
@@ -1124,15 +1200,28 @@ The audits scoped the client. Three areas were not audited and any plan that dep
 its own: **the server** (framework, host, auth, sync protocol, conflict resolution — §5.5), **the
 model integration itself** (PLAN.md §3.4 remains the contract; the Anthropic SDK version and model
 id are in `docs/data-sources.md` and `.env.example`), and **list import** (clipboard, Pleco
-tab-separated export, Anki text export — scoped as its own task; `addListMembers(listId,
-entryIds[])` already exists on the repository, `.apkg` is out of scope).
+tab-separated export, Anki text export; `addListMembers(listId, entryIds[])` already exists on the
+repository, `.apkg` is out of scope).
+
+**List import is deliberately not scheduled for v1.** Every plan in the set pushes it out of scope
+with the same sentence — "its own task, per STACK §7" — and until now that sentence pointed at a
+task nobody had written, which reads as an oversight rather than a choice. It is a choice.
+product-decisions §9 specifies the feature fully (one word per line as hanzi or pinyin, Pleco's
+tab-separated export, Anki's text export, resolution against the dictionary, a preview listing
+unmatched lines with a reading picker for polyphones, then one bulk add), the repository already
+exposes the bulk-add call it ends in, and none of it touches a frozen surface or a schema. That is
+what makes it a clean later addition rather than a hole: nothing in v1 has to be built differently
+to accommodate it, and nothing in v1 is missing because it is absent. Write it when there is a list
+worth importing.
 
 ### CLAUDE.md is superseded, and rewriting it is the first task
 
 A fresh session does not read PLAN.md first. It reads **`CLAUDE.md` at the repo root**, which is
 auto-loaded as project instructions and therefore outranks this document unless it is changed. Two
 parts of it contradict this record directly and must be rewritten **as the first commit of the
-migration**, before any build phase runs:
+migration**, before any build phase runs. What the rewrite has to say is specified in
+[`docs/plans/wave-zero.md`](plans/wave-zero.md) §2, which owns it as a wave-0 deliverable; this
+section says why:
 
 - **The Commands section is entirely Next-shaped** — `pnpm dev` is `next dev`, `pnpm build` is
   `pnpm data:ensure && next build && pnpm sw`, `pnpm sw` stamps `public/sw.js` from `.next/BUILD_ID`,
@@ -1155,23 +1244,32 @@ of this and should survive verbatim: FSRS parameters are built in exactly one pl
 
 ### The surfaces that must be settled before parallel work
 
+This table is the origin of `docs/plans/wave-zero.md` §2's settle-first list, and that list is now
+the operative one: a shared surface is frozen by a **types-only first commit** in the plan that owns
+it, and every other plan gates on that commit rather than on the whole phase. The State column below
+names the commit where one now exists.
+
 | Surface | Why it is shared | State |
 |---|---|---|
-| The `DictStore` interface | Every read path on three platforms goes through it | To design. Two implementations: the Capacitor plugin and `sqlite-wasm` in a worker. |
-| The SQLite schema — including the segmenter's `meta` table (`logTotal`, `maxLen` per script) and the script-detection flags | §2.5 hard part 5: inverting `segment()` is a schema decision, not a code detail | To design, in the same pass as `DictStore`. |
+| The `DictStore` interface | Every read path on three platforms goes through it | **Frozen by `data.md` D1's first commit** — the `DictStore` / `SqlRunner` / `DictStatus` declarations, types only. Two implementations: the Capacitor plugin and `sqlite-wasm` in a worker. |
+| The SQLite schema — including the segmenter's `meta` table (`logTotal`, `maxLen` per script) and the script-detection flags | §2.5 hard part 5: inverting `segment()` is a schema decision, not a code detail | **Designed and frozen in `data.md` D1**, in the same pass as `DictStore`. `SCHEMA_VERSION` is in the artifact filename, so a later change re-ships the file. |
 | The router and the route table | Every screen | React Router 8 data mode (§2.3). |
 | The design tokens | Every component, both candidate shells, and the light/dark question in §5.1 | product-decisions §11 fixes the palette; the token layer is what makes a dark palette a swap rather than a second design. |
 | **The `TTSProvider` interface** | Two adapters, and every surface with a speaker button (product rule 3) | Must gain `stop()`, boundary events and utterance identity before anything uses it (§2.1). |
-| The new `/api/ask` request contract | Client, server, and every grounding test in `tests/unit/ai/` | Blocked on §5.5. |
-| **Repository and workspace layout** | The plan produces three deployables — the Vite app, the Astro site, the server. One repo with workspaces, or three? This is literally the first commit. | Undecided. A single pnpm workspace is the obvious default for a solo developer and keeps the shared `pnpm data` step in one place. |
-| **The `pnpm data` → artifact path** | `data/*.json` is generated and gitignored; the plan replaces it with a ~47 MB SQLite file that has to reach the Capacitor `android/` and `ios/` asset directories, the web host, and (if §5.7 lands) the Astro build — reproducibly, from a step that today writes only to `data/`. `decomp.json`'s delivery (§2.2) rides along with it. | Undecided, and it is a build-system design rather than a script tweak. |
-| **The sync protocol** | Client and server both; `Repository` may have to grow a change feed | Undesigned (§5.5). The recommendation there — append-only review log, recomputed card state, last-write-wins on `updatedAt` — is the thing to settle rather than invent per-phase. |
+| The new `/api/ask` request contract | Client, server, and every grounding test in `tests/unit/ai/` | **Frozen by `backend.md` B2's first commit.** §5.5's recommendation — the client sends the retrieved entries — is the shape it takes. |
+| **Repository and workspace layout** | The plan produces three deployables — the Vite app, the Astro site, the server. One repo with workspaces, or three? This is literally the first commit. | **Settled: a single pnpm workspace** (wave zero §1), `apps/app` + `apps/server` + `apps/site` + `packages/ai`, with `data/` and `scripts/` staying at the root because three deployables consume `pnpm data`'s output. Executed by `web.md` W0. |
+| **The `pnpm data` → artifact path** | `data/*.json` is generated and gitignored; the plan replaces it with a 43.1 MB SQLite file that has to reach the Capacitor `android/` and `ios/` asset directories, the web host, and (if §5.7 lands) the Astro build — reproducibly, from a step that today writes only to `data/`. `decomp.json`'s delivery (§2.2) rides along with it. | **Settled: `pnpm data` writes only to `data/` and each deployable's build copies out of it** (`data.md` D1). `pnpm data` is never taught about deployables. The web copy and its two host rules — including `decomp.json` — are `web.md` W2's (wave zero §6); the two Capacitor copies are `ios.md` I3 and `android.md` A5's. |
+| **The sync protocol** | Client and server both; `Repository` may have to grow a change feed | Undesigned (§5.5); the recommendation there — append-only review log, recomputed card state, last-write-wins on `updatedAt` — is the thing to settle rather than invent per-phase. The **interface** is settled ahead of it: wave zero §5 lands one types-only `Repository` diff carrying both callers' additions at once — `exportAll`/`importAll` for `web.md` W5's local backup, `changedSince`/`applyRemote`/`syncState`/`setSyncState`/`resetAccount` for `backend.md` B5 — and freezes it. |
 
 Two smaller things a build session hits on day one and should not have to decide alone. **Tailwind
 4** currently runs through `@tailwindcss/postcss` and `postcss.config.mjs`; the Vite plugin story is
 different and nothing here has checked it. And **there is no native test story at all** — Playwright
 covers a built web server, `pnpm smoke` is Next-shaped and being rewritten (§2.2), and nothing in
-this record says what proves a Capacitor build works. Decide what replaces `pnpm smoke` and
-`route-inventory.ts` as the "every route is exercised over HTTP on a built server" guarantee once
-there are only three routes and a different server, and decide whether native builds are tested in v1
-at all. Say which, because "tested" otherwise silently means "web only".
+this record says what proves a Capacitor build works. Both halves of that now have an answer.
+`pnpm smoke`, `lib/server/route-inventory.ts` and `tests/unit/server/routes.test.ts` are **`web.md`
+W2's** to give a final form — smoke as a dependency-free CLI, route-inventory reduced to what the
+dev/preview adapter and the coverage check still need, `routes.test.ts` rewritten around the route
+table and the host config; `data.md` D6 removes the `/api/dict/*` entries from them and deletes
+none of the three (wave zero §3). On native, **both mobile plans say out loud that automated tests
+stay web-only** and every native phase ends in a written manual device checklist — so "tested" means
+"web only" by decision rather than by silence. What still has no owner is CI itself; see §5.9.

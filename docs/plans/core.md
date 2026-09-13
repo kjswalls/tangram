@@ -6,9 +6,10 @@
 **Read first:** [`docs/STACK.md`](../STACK.md) is the decision record this plan is built on and it is
 not re-argued here — where this plan says "because §2.1", go and read §2.1. [`PLAN.md`](../../PLAN.md)
 remains authoritative for the data contract (§3.1), the schema (§3.3) and the grounding contract
-(§3.4). The product decisions taken with the owner supersede PLAN.md's UI wherever they conflict, and
-the design canvas showing every screen in this plan on real pixels is linked from
-product-decisions §10.
+(§3.4). The product decisions taken with the owner supersede PLAN.md's UI wherever they conflict. The
+design canvas linked from product-decisions §10 shows every screen on real pixels and is
+**illustrative**: a build session cannot open it, so the layout facts the phases below depend on are
+written out in §1 and where the two differ **this plan governs**.
 
 Two facts frame everything below and are not repeated: **there are no users and no data** (schema
 changes are free; nothing here is a migration plan), and the builder is **one person with AI
@@ -27,6 +28,32 @@ two verbs, a shelf, Today as a sentence, and four grade buttons a beginner can r
 true now — the app is seven Next routes of token-granular text with no ruby anywhere, a
 fire-and-forget speaker button, and a jade-and-white token set that is not the settled palette.
 
+**The layout facts the phases below depend on.** They are written here rather than left on the design
+canvas, because a phase whose acceptance criterion depends on a source a build session cannot open is
+not executable. Each one names the phase that consumes it; a phase that wants to change one changes it
+here first, and the adversarial review reads this list rather than the canvas.
+
+- **Three tabs, and on the phone the bar is at the bottom.** Look up / Practice / Library, in that
+  order, thumb-reachable, the bar taking `env(safe-area-inset-bottom)` as padding so its background
+  extends under the home indicator. Neither product-decisions §1 nor §10 states the placement; **this
+  plan states it**, because `ios.md` I5's safe-area work and `android.md` A2's inset work both depend
+  on it and both are otherwise guessing. (C7)
+- **The wide shell is the same three destinations at ~720px and above** — the same screens in a wider
+  container, not a second design. (C7)
+- **Sheets are bottom sheets on phones and side panels at wide widths.** At 390px a sheet covers the
+  lower two thirds and the tapped character stays visible above it. (C1, C4)
+- **The ground is warm paper, cards are bordered rather than shadowed, and the radius scale is
+  12 / 16 / 24 px.** The hexes are in C0's token table and that table is the authority for them. (C0, C1)
+- **Exactly one filled primary action per screen, and it is vermillion.** Jade is Look up and
+  "learning"; gold is "new". (C0, C8)
+- **Ruby sits above the character**, one `<ruby>` per character, and the band is only reserved when
+  something in the passage is annotated. (C3)
+- **Today is a sentence and the lookup box leads the screen**; Practice is stated beneath it, not as
+  number tiles. (C8)
+- **The four grade buttons are a 2×2 grid at 390px.** (C8)
+- **Session progress is the seven tangram pieces filling as the session advances** — the one playful
+  element in the design (product-decisions §11), and a finished day is a finished square. (C8)
+
 ## 2. Scope boundaries
 
 **This plan owns:**
@@ -38,6 +65,17 @@ fire-and-forget speaker button, and a jade-and-white token set that is not the s
   that enforces the rule.
 - The live-hanzi primitives: per-character ruby, the word sheet and the character sheet, the
   hand-rolled drag-to-select-a-span interaction, and the speaker control with hold-to-slow.
+- **`lib/reader/**` and the known / learning / new feedback it drives.** `lib/reader/states.ts`
+  exports `tokenStates`, `lib/reader/sentence.ts` exports the provenance span, and **no other plan in
+  the set names either file**. The colouring and the "Mark known" action survive the reader rewrite:
+  C5b carries `tokenStates` onto `<HanziText>`, C4 carries "Mark known" into the word sheet. PLAN.md
+  §1's loop is *your known-word set shapes what you see next*, and the coloured passage is the only
+  place a learner sees it.
+- **The in-context gloss on a reader tap** (C4) — one line on what the word means in *that* sentence,
+  consuming the `context?` field `backend.md`'s ask contract already carries.
+- **The Practice queue merge** (C7) — `lib/lists/today.ts`, `lib/lists/introduce.ts` and
+  `lib/srs/session.ts`, so that new words, recognition and writing are one session. See below.
+- **The tangram-pieces session progress** (C8).
 - The `TTSProvider` interface (a settle-first shared surface, STACK §7) and its **web** adapter.
 - The relabelling work: the two-verb information architecture, Today as a sentence, the four renamed
   grade buttons, plain-language stats, the learner level, hiding the optimizer.
@@ -45,9 +83,9 @@ fire-and-forget speaker button, and a jade-and-white token set that is not the s
   `DecompStore`** (C4a). `data.md` §3 names the seven modules and `data.md` D6 is gated on this plan
   having done it.
 - **Drawing the dictionary's four states** — `absent`, `preparing` (determinate), `ready`, `failed` —
-  and the first-launch copy progress with its low-storage failure path (C4a). `data.md` D4/D5 own the
-  *state model*; three sibling plans (`data.md` D4/D5, `ios.md` I3, `android.md` A5) say this plan
-  owns the *screens*, and `ios.md` records that none of them exist in any screen today.
+  and the first-launch copy progress with its low-storage failure path (C4a). `data.md` D4/D5a/D5b
+  own the *state model*; three sibling plans (`data.md` D4 and D5a/D5b, `ios.md` I3, `android.md` A5)
+  say this plan owns the *screens*, and `ios.md` records that none of them exist in any screen today.
 - **The ask panel's three answer states** (product-decisions §5): thinking, no-AI-reachable, and
   nothing-verifiable (C7).
 - The disposition of every existing file under `components/` — the table is §8, one row per file.
@@ -62,14 +100,14 @@ fire-and-forget speaker button, and a jade-and-white token set that is not the s
 | The server, accounts, sync, BYOK key custody, the new `/api/ask` request contract | `backend.md` (it exists — `docs/plans/backend.md`) | The ask panel's three answer states are **built here, in C7**, against the client-side ask module. The wire contract behind it is `backend.md` B2's settle-first surface; `backend.md` §2 says every screen, including its own sign-in screen, is this plan's. |
 | List import (clipboard / Pleco / Anki) | its own task, per STACK §7 | Scoped separately by product-decisions §9. |
 
-**One gap the orchestrator has to close before C7.** product-decisions §1 merges new-word
-introduction into a single Practice session. That is queue *composition* — `lib/lists/today.ts`,
-`lib/lists/introduce.ts`, `lib/srs/session.ts` — not shared UI, and **no sibling plan names it**
-(`ios.md` §2 flags the same gap from its side). This plan relabels and re-homes the existing review
-session; it does not merge the queues. **C7 is the deadline, not C8**: C7 is the phase that builds the
+**The Practice queue merge is C7's, and it is queue composition rather than shared UI.**
+product-decisions §1 merges new-word introduction into a single Practice session. That is
+`lib/lists/today.ts`, `lib/lists/introduce.ts` and `lib/srs/session.ts`, and no sibling plan names
+them (`ios.md` §2 flagged the same gap from its side), so they are in **C7's** Files list and C7 has an
+acceptance criterion for one queue. **C7 is the deadline, not C8**: C7 is the phase that builds the
 Practice tab, and its criterion that a screen renders identically in both shells says nothing about
-whether that screen is one session or two. Without the merge, C7 ships a Practice tab that still
-introduces new words on a different screen from the one that reviews them, and C8 only relabels it.
+whether that screen is one session or two. Without the merge, C7 would ship a Practice tab that still
+introduces new words on a different screen from the one that reviews them, and C8 would only relabel it.
 
 ## 3. What exists today
 
@@ -127,7 +165,7 @@ interval from `fsrs.repeat()`), `components/reader/**` (6 files), `components/li
 §3's list verbatim, and `data.md` D6 will not delete the routes until this plan has re-pointed all
 seven. C4a is that work.
 
-**The reader, precisely — this is what C3–C5 replace.** `components/reader/reader-text.tsx` renders
+**The reader, precisely — this is what C3–C5b replace.** `components/reader/reader-text.tsx` renders
 one `<button data-token-index>` per **word** token, with a single delegated `onClick` on the
 container (deliberate: a 2,000-character text is ~1,300 tokens). Tokens whose `kind` is not `'word'`
 — punctuation, Latin runs, whitespace — render as `<span data-testid="reader-text-run">` with **no
@@ -135,9 +173,20 @@ index at all** and are never tapped or coloured (lines 55–78). `lib/stores/rea
 as `selected` / `spanEnd` **token** indexes, with `extend()` growing it by whole adjacent word tokens
 and `spanOf()` slicing the body by token boundaries. Selection is therefore token-granular in both
 the DOM and the store, and product rules 1–2 make both character-granular: this is a rewrite of the
-data model, not an addition to it (STACK §2.1). C5 has to say what happens to the untappable runs,
+data model, not an addition to it (STACK §2.1). C5b has to say what happens to the untappable runs,
 because in a character-index model every character in the body has an index whether or not it is
 Chinese.
+
+**The reader's colouring and "Mark known", which the rewrite must not drop.** `lib/reader/states.ts`
+exports `tokenState` / `tokenStates` — one `WordState` (`known | learning | new`) per token, from one
+`ReaderIndex` built by three repository reads, with `undefined` for non-word tokens — and
+`components/reader/reader-screen.tsx:23` imports it and line 44 maps it over the tokens.
+`components/reader/reader-lookup.tsx:129`'s `markKnown()` calls `getRepository().markKnown([...])` on
+the ranked entry and the passage recolours immediately. `lib/reader/sentence.ts` is the provenance
+span the card carries. C5b deletes `reader-text.tsx` and C4 deletes `reader-lookup.tsx`, so both
+capabilities have to be carried across deliberately: `lib/reader/states.ts` itself needs no rewrite —
+it answers about tokens, and after C5b a token is a grouping over characters, which is exactly the
+unit the colour lands on.
 
 **Hanzi rendering.** `grep -rn 'ruby\|<rt'` over the repo returns **nothing**. Pinyin is almost
 everywhere a whole-word string from `Entry.pinyinMarked`, produced by `toMarked()` in
@@ -184,16 +233,34 @@ helper modules. Playwright drives the container's Chromium at `/opt/pw-browsers/
 |---|---|---|
 | CLAUDE.md rewritten | orchestrator, per STACK §7 | **Before C0.** It is the first commit of the migration, not a phase. The frozen surfaces this plan actually edits — unfreeze exactly these — are `app/globals.css` (C0), `app/layout.tsx` (C0 rule 2 changes `<html lang="en">`), `components/ui/**` (C0, C1), `lib/db/schema.ts` (C3 adds `pinyinDisplay`; C8 changes `DEFAULT_SETTINGS.spineStartBand`), `eslint.config.mjs` (C7's `no-restricted-imports` rule — CLAUDE.md's frozen list ends with the configs) and `components/lookup/lookup-panel.tsx` (C3 switches its `hanzi` headword at line 67 to `<HanziText>`). **`lib/types.ts` is not on that list**: the alignment work reads `Entry.pinyinNum`, which already exists at line 27, and no phase here changes the `Entry` shape. (`data.md` D1 does need `lib/types.ts` unfrozen, for its own reasons.) |
 | Vite + React Router 8 skeleton building and serving | `web.md`, its first phase | **Before C1.** C0 is CSS and a script and can land under either build. Everything from C1 on writes components that must not import `next/*`, and the gallery route in C1 needs a router. |
-| Repo/workspace layout decided | orchestrator, STACK §7 | Before C0 — it decides whether these paths gain an `src/` or a package prefix. This plan writes today's paths and expects `web.md` to relocate them once, mechanically. |
+| The `git mv` into `apps/app/` | `web.md` **W0** (the layout itself is settled — one pnpm workspace, wave-zero §1) | **Before C0.** It relocates every path this plan writes, so the Files blocks below are stated post-W0 rather than translated phase by phase; see the path note under this table. |
 | `DictStore` / `DecompStore` interfaces and the `DictStatus` union, **frozen** | `data.md`, **the first commit of D1** | Before C4. `data.md` §4 says explicitly that these land as D1's first commit and are frozen from then on, and that this plan "may code against `DictStore` from that commit, with the in-Node implementation from D2/D3 as its test double". C4 needs the signature, not the SQLite file; **C4a needs the frozen `DictStatus` union**, because it draws its four states. Until D1's first commit, components may read through today's `lib/dict/client.ts`. |
 | `decomp.json` delivery decided | `data.md` (STACK §2.2 leaves it open) | Before C4 ships. The character sheet is the only consumer. |
 | A `DictStore` test double runnable in the container | `data.md` D2/D3 (in-Node SQLite) | Before C4a's e2e specs. C4a's `preparing` / `failed` / `absent` fixtures need a store whose status can be driven from a test; if D2/D3 have not landed, C4a builds against a hand-written fake that implements the same frozen interface and the real one is swapped in later. |
 | The ask/answer request contract | `backend.md`, **the first commit of B2** | Before C7's three answer states are *wired*, not before they are *drawn*. The states are reachability and grounding facts — thinking, unreachable, nothing-verifiable — so C7 designs and tests them against a client-side ask module whose shape C7 defines (§C7); B2 fills in the wire format. |
-| Nothing from `ios.md` / `android.md` | — | This whole plan runs in the Linux container against desktop Chromium. That is deliberate: STACK §4 says everything web and desktop proceeds without hardware, and **the mobile plans depend on this one**, not the other way round. |
+| Nothing from `ios.md` / `android.md`, **except C5b** | — | Every other phase runs in the Linux container against desktop Chromium. That is deliberate: STACK §4 says everything web and desktop proceeds without hardware, and **the mobile plans depend on this one**, not the other way round. C5b is the single exception and it is written into the row below rather than left as an aside, because a session working from this document alone would otherwise ship the drag-select production code before the crash check exists. |
+| Register #1 answered on a physical iOS 26 device — the WKWebView crash check against `-webkit-user-select: none` during touch | `ios.md` **I2** | **Before C5b**, and before nothing else here. I2 runs against **C5a's** gallery harness, which touches no production reader file, so the two do not deadlock: C5a → I2 → C5b. `ios.md` §4.4 states the same ordering from its side. C3 survives a bad outcome — if I2 crashes, the fault is in the selection CSS, not the ruby renderer — so only C5b is at risk. |
 | A cmap parser and the candidate font binaries | C0 adds them; see C0 | **Before C0's script runs.** Neither exists in this container today: `fc-list` shows no Noto Serif SC, Noto Sans SC, Newsreader or DM Sans (the only CJK faces installed are WenQuanYi Zen Hei and IPA Gothic), `package.json` has no font-parsing dependency, and `python3 -c "import fontTools"` fails. C0 must acquire both, and that is a `package.json` edit. |
 
-The one hard ordering constraint inside this plan: **C2 (`TTSProvider`) must land before any mobile
-plan starts**, because two adapters implement it and STACK §7 lists it as settle-first.
+The one hard ordering constraint inside this plan: **C2 (`TTSProvider`) must land before either
+mobile plan's TTS phase — `ios.md` I4 and `android.md` A4** — because those two adapters implement it
+and STACK §7 lists it as settle-first. It is **not** a gate on the mobile plans *starting*: `ios.md`
+§4.3 is right that I0–I3 consume nothing from `TTSProvider`, and the same is true of A1–A3. An earlier
+draft of this line said "before any mobile plan starts"; that was wrong, `android.md` A4 quoted the
+wrong version of it, and this is the sentence that governs.
+
+**Paths, stated once so every Files block below can be read literally.** Every phase here runs after
+`web.md` W0, which is a `git mv` of `app/`, `components/`, `lib/`, `public/`, `tests/` and the configs
+into **`apps/app/`**. So **`app/…`, `components/…`, `lib/…`, `tests/…` and
+`eslint.config.mjs` in the Files blocks below are relative to `apps/app/`** — `lib/db/schema.ts` means
+`apps/app/lib/db/schema.ts` — while `data/`, `docs/…`, `packages/…`, `PLAN.md` and `HANDOFF.md` are
+workspace-root paths and are written out in full. Two cases need care rather than a rule. `scripts/`:
+wave-zero §1 keeps it at the workspace root alongside `data/`, while `web.md` W0's `git mv` list still
+names it, so **C0 confirms which is true at its commit** before it writes `scripts/font-coverage.ts`,
+and puts the cmap parser's pin in whichever `package.json` owns that script — there are two after W0, a
+root one and `apps/app/package.json`. And `components/screens/**`, `components/hanzi/**`,
+`components/gallery/**` and `components/dict/**` are new trees under `apps/app/components/`; they do
+not exist under the old layout at all.
 
 ## 5. Phases
 
@@ -210,9 +277,12 @@ Each phase below adds acceptance criteria that are executable or observable. Whe
 *measurement nobody has taken*, it says so and names the number to record rather than pretending a
 threshold was validated.
 
-There are eleven phases: C0–C9 plus **C4a**, which sits between C4 and C5. C4a is lettered rather than
-numbered because `ios.md`, `android.md` and `data.md` all cite this plan's phases by name and
-renumbering would silently invalidate their dependency tables.
+There are twelve phases: C0–C9, plus **C4a**, which sits between C4 and C5a, and the split of the
+drag-select phase into **C5a** (the gallery harness, desktop Chromium, no production reader file
+touched) and **C5b** (the production rewrite, gated on `ios.md` I2). Both extras are lettered rather
+than numbered because `ios.md`, `android.md` and `data.md` all cite this plan's phases by name and
+renumbering would silently invalidate their dependency tables; `ios.md` §4.4 already cites C5a and
+C5b by those names.
 
 ---
 
@@ -597,12 +667,12 @@ match the word only in prose and are not call sites.
 | `lists/word-search.tsx` :76 | **C3** | search-result rows inside a list |
 | `lists/list-detail.tsx` :201 | **C3** | list member rows |
 | `reader/reader-lookup.tsx` :188 | **C4** | folded into the word sheet by C4; switched there, not here |
-| `reader/reader-text.tsx` :106 | **C5** | replaced wholesale by `<HanziText>` |
-| `reader/reader-screen.tsx` :123 | **C5** | the saved-text title row, above the reader it wraps |
+| `reader/reader-text.tsx` :106 | **C5b** | replaced wholesale by `<HanziText>` |
+| `reader/reader-screen.tsx` :123 | **C5b** | the saved-text title row, above the reader it wraps |
 | `reader/text-composer.tsx` :69 :111 | **out of scope, with a reason** | :69 is a `<textarea>` — ruby cannot render inside a form control and the learner is typing, not reading. :111 is a saved-text title in a picker list. Both keep the `.hanzi` type utility and get no ruby. Say so in the commit so a later reader does not think they were missed. |
 | `shell/site-header.tsx` :12 | **out of scope, with a reason** | 七巧板 is the wordmark, not content. C7 rewrites this file for the tab shell; the wordmark stays plain. |
 
-`components/reader/reader-text.tsx` is **not** switched here — C5 replaces it — and `reader-lookup.tsx`
+`components/reader/reader-text.tsx` is **not** switched here — C5b replaces it — and `reader-lookup.tsx`
 waits for C4 for the same reason.
 
 **Acceptance criteria.**
@@ -616,15 +686,15 @@ waits for C4 for the same reason.
   **non-empty** syllable and no syllable was dropped — non-empty is what makes the `xx5` case fail
   the property instead of passing it — and **record the fallback rate over the whole dictionary in
   `HANDOFF.md`**. If that rate is above a few percent the alignment rule needs another pass before
-  C5 builds on it.
+  C5a builds on it.
 - Playwright, **recorded not asserted**: build a `Range` over a rendered passage, copy it, and write
   into `HANDOFF.md` whether Chromium's clipboard string contains the `<rt>` text. The
   copy-excludes-`user-select: none`-content behaviour is sourced for **WebKit only** (Safari 16.4,
   bug 80159); no audit establishes Blink's, and a programmatic `Range` over `user-select: none`
   content is exactly the untested case. If Chromium does exclude it, promote this to an assertion in
   the same commit and say so. Note that this criterion is about the C3 DOM, where the passage is
-  selectable; **C5 puts `user-select: none` on the whole passage and takes the clipboard over
-  explicitly**, so this criterion is retired when C5 lands and C5's replaces it.
+  selectable; **C5b puts `user-select: none` on the whole passage and takes the clipboard over
+  explicitly**, so this criterion is retired when C5b lands and C5b's replaces it.
 - At 390px, a 200-character passage wraps with no horizontal scroll and no ruby annotation clipped:
   assert every `<rt>`'s bounding box is inside its container's.
 - `pinyinDisplay: 'never'` hides every `<rt>` **except** on a card answer face, asserted in a unit
@@ -646,13 +716,35 @@ waits for C4 for the same reason.
 ### C4 — The word sheet and the character sheet
 
 **Builds.** Product rule 2's tap behaviour, on the `Sheet` primitive: tap a word → the word opens
-with its senses and an Add; tap again, or tap a character inside the word → that single character
-opens with its own reading, meanings, decomposition, and the words the learner already has
+with its senses, an Add, a **Mark known** action and — when the tap came from a passage — one line on
+what the word means *in that sentence*; tap again, or tap a character inside the word → that single
+character opens with its own reading, meanings, decomposition, and the words the learner already has
 containing it.
 
 The word sheet is largely the existing `EntryDetail` re-homed: it already does the thing that
 matters most, which is refusing to pick a reading for a polyphone on the learner's behalf. Keep that
 behaviour and its tests.
+
+**"Mark known" comes with it, and it is the reader's half of PLAN.md §1's loop.**
+`components/reader/reader-lookup.tsx:129` is the action today: `getRepository().markKnown([id])` on
+the ranked entry, after which the passage recolours immediately. C4 deletes that file into the word
+sheet, so the action moves with it and nothing else in the set names it. Two properties survive
+verbatim: it acts on the **ranked** entry the sheet is showing (`entryIds` is frequency-ordered, so a
+polyphone is not marked known on the strength of a reading the learner did not look at), and its
+failure is visible rather than silent — the current file sets a `markError` flag and says so. The
+recolour is C5b's, because C5b owns the passage; C4 owns the action and the repository write.
+
+**The in-context gloss line** (product-decisions §5). When the sheet was opened from a passage rather
+than from the search box, it carries one line on what the word means *in that sentence* — the
+disambiguation a beginner cannot do for themselves and the reason the tap is worth more than a
+dictionary lookup. The sentence is already computed: `lib/reader/sentence.ts` returns the provenance
+span and `contextFor()` in `entry-detail.tsx:39` already threads a `CardContext` through the sheet, so
+the input exists. The line is **model output over a cited entry**, so it obeys the grounding contract
+like everything else: it is the `context?` field `backend.md`'s `/api/ask/propose` and
+`/api/ask/answer` already carry, the sense it names must be one of the entry's own senses, and when
+there is no answer or no AI reachable the line is **absent**, not empty — the senses and the Add do
+not wait on it. Nothing here is a second wire contract; C7 owns the ask module's state shape and this
+line consumes it.
 
 The character sheet is new. Its content: the character in `<HanziText>` at display size, its own
 speaker, its readings and glosses (a single-character dictionary lookup), its decomposition from
@@ -676,14 +768,25 @@ the rest. Either way the sheets take the store as an injected dependency, never 
 module-level singleton, because C4a and the mobile plans swap the implementation underneath them.
 
 **Files.** `components/hanzi/word-sheet.tsx`, `components/hanzi/char-sheet.tsx`,
-`components/lookup/entry-detail.tsx` (re-homed), `components/reader/reader-lookup.tsx` (folded into
-the sheet).
+`components/hanzi/context-gloss.tsx` (the in-context line), `components/lookup/entry-detail.tsx`
+(re-homed), `components/reader/reader-lookup.tsx` (folded into the sheet, **including its
+`markKnown()`**), `lib/reader/sentence.ts` (consumed, not changed).
 
 **Acceptance criteria.**
 
 - e2e: from a rendered passage, tap a two-character word → word sheet with both senses and an Add;
   tap one character inside it → character sheet with a decomposition block; press Escape → focus
   returns to the character that was tapped.
+- **"Mark known" survives the fold.** e2e: tap a word in a passage, press Mark known, and assert
+  `known_words` contains the ranked entry's id (through `window.__tangram`) and the sheet reflects
+  it. Unit: a polyphone whose sheet is showing reading B marks reading B's entry, not the
+  frequency-first one, and a rejected repository write surfaces the visible error rather than
+  silently succeeding.
+- **The in-context gloss line.** e2e: with the ask module answering, a tap from a passage renders one
+  line naming one of the entry's own senses; with the module forced to `unavailable`, the line is
+  absent and the senses and the Add are unchanged — the same fixture C7 uses, so the two phases
+  cannot disagree about the state. Unit: the line never renders a sense the cited entry does not
+  have.
 - A unit test asserts no code path writes any field of a `DecompEntry` into a `CardSnapshot` — walk
   the import graph the way `lib/server/route-inventory.ts` walks routes, or assert on the snapshot
   builder's output for a card added from the character sheet.
@@ -700,13 +803,13 @@ the sheet).
 **Why this is a phase and not a footnote.** `data.md` D6 — the phase that deletes
 `app/api/dict/**` — is gated verbatim on "`core.md` must have re-pointed every consumer in §3 at
 `DictStore`", and `data.md` §3 names those consumers. Separately, three sibling plans (`data.md`
-D4 and D5, `ios.md` I3, `android.md` A5) each say this plan draws the dictionary's readiness screens,
-and `ios.md` records that **they do not exist in any screen today**. Neither piece of work belongs to
+D4, D5a and D5b, `ios.md` I3, `android.md` A5) each say this plan draws the dictionary's readiness
+screens, and `ios.md` records that **they do not exist in any screen today**. Neither piece of work belongs to
 any C-phase above, and without this phase two plans would each be waiting for the other.
 
 It sits after C4 because the character sheet is the last new consumer to appear (it reads
-`DecompStore`), and before C5 because C5 rewrites `lib/stores/reader.ts` — better that it inherit a
-`DictStore` caller than that C4a rewrite a file C5 is about to rewrite again.
+`DecompStore`), and before C5b because C5b rewrites `lib/stores/reader.ts` — better that it inherit a
+`DictStore` caller than that C4a rewrite a file C5b is about to rewrite again.
 
 **Part one: re-point the seven callers.** Every module that imports `lib/dict/client.ts` moves to
 `DictStore` / `DecompStore`. From `data.md` §3, verified at `HEAD`:
@@ -732,8 +835,9 @@ low-end device will feel the bridge.
 **Two things must not change while the plumbing does.** `lib/ai/ground.ts`'s `GroundContext` is
 already injectable — `data.md` notes it takes `{retrieved, segment, entry?, readings?}` and imports no
 `lib/dict`. But it also notes the catch: **`segment` there is synchronous `(text) => Token[]` and a
-`DictStore` is async** (`data.md` §5.7 owns the resolution). C4a must not paper over that with a
-blocking wrapper; if §5.7's answer has not landed, the ask panel keeps its current retrieval path and
+`DictStore` is async** (`data.md` **D3** owns the resolution, and resolves it by having
+`packages/ai/retrieve.ts` `await store.segment()` and hand `GroundContext` the tokens). C4a must not
+paper over that with a blocking wrapper; if D3 has not landed, the ask panel keeps its current retrieval path and
 C4a records which caller is still on `lib/dict/client.ts` and why. And the grounding tests in
 `tests/unit/ai/**` must pass with their assertions unchanged — that is `backend.md` B2's stated check
 and it is equally the check here.
@@ -792,13 +896,23 @@ proves they render.
 
 ---
 
-### C5 — Drag to select a span
+### C5a — The drag-select harness, measured before anything is built
 
-**This is the riskiest single piece of UI in the project and it gets its own phase, its own
-prototype, and a fallback that ships if it fails.** Both mobile audits reached the same conclusion
-independently: the platform's own text selection is unusable here because it sweeps the `<rt>`
-pinyin into the selection and the clipboard, its precision degrades from characters to lines as the
-selection grows, and its handles and callout menu fight the dictionary UI.
+**This is the riskiest single piece of UI in the project, so it gets a phase whose whole output is a
+harness and a set of numbers, and a second phase that writes production code only after a device has
+answered.** Both mobile audits reached the same conclusion independently: the platform's own text
+selection is unusable here because it sweeps the `<rt>` pinyin into the selection and the clipboard,
+its precision degrades from characters to lines as the selection grows, and its handles and callout
+menu fight the dictionary UI.
+
+**C5a touches no production reader file.** That is the point of the split, not a stylistic
+preference: `ios.md` I2 — the physical-device crash check that STACK register #1 makes the whole iOS
+decision rest on — loads *this harness*, and `ios.md` §4.4 states that no C5b production file may
+land before I2 answers. One phase gates the other in each direction unless the harness is separable,
+so it is separable. The harness lives entirely under `components/gallery/**` and attaches its pointer
+handlers to its own container: the design is delegated container handlers plus `caretRangeFromPoint`
+hit-testing into whatever DOM is underneath, so it needs **no prop and no edit on `<HanziText>`**,
+which C3 already ships.
 
 **The design** (STACK §2.1, identical on all three platforms): `user-select: none` on the passage,
 Pointer Events, hit-test every `pointermove` with `document.caretRangeFromPoint` —
@@ -828,76 +942,54 @@ takes it:
    belongs after capture, never before it.
 
 **The axis-discrimination threshold is a value to record, not a value to assume.** No audit measured
-one. Start from whatever the prototype shows separates a deliberate horizontal sweep from the
+one. Start from whatever the harness shows separates a deliberate horizontal sweep from the
 horizontal drift in a thumb's vertical scroll on a 390px-wide passage — a few CSS pixels of
-horizontal travel before vertical travel exceeds it is the usual shape — measure it in the prototype
-with both mouse and touch emulation, and write the number and how it was chosen into `HANDOFF.md`
-after C5. `ios.md` and `android.md` re-check it on hardware, where thumbs are less precise than
-Playwright.
+horizontal travel before vertical travel exceeds it is the usual shape — measure it here with both
+mouse and touch emulation, and write the number and how it was chosen into `HANDOFF.md` at the end of
+this phase, because C5b consumes it and `ios.md` and `android.md` re-check it on hardware, where
+thumbs are less precise than Playwright.
 
-**The app owns the clipboard for a drag span, because nothing else can.** `user-select: none` on the
-passage means there is no native selection to copy, and a `Highlight` registered in `CSS.highlights`
-is a *styling* construct: it does not alter `document.getSelection()` and does not participate in
-copy. So a `Cmd/Ctrl+C` with a span active would put nothing on the clipboard unless this phase
-handles it. It does: a `copy` event handler on the passage that, when a span is active, calls
-`preventDefault()` and writes `spanOf(from, to)` — hanzi only, no `<rt>` text, because the app is
-choosing the string rather than the engine deriving it. On touch, where there is no `Cmd+C`, the span
-gets an explicit **Copy** affordance next to the lookup result in the sheet. This is a small addition
-and it is in the file list below rather than assumed.
+**The harness carries a Copy affordance**, even though the production clipboard handler is C5b's.
+`ios.md` I2's check 5 drags a span on the device and reads the clipboard back, and it says in as many
+words that if the harness has no copy affordance the check cannot be substituted with a system copy —
+there is no system selection on a `user-select: none` passage to copy from. So the harness derives the
+string from its own character index and writes it — base characters only, no `<rt>` text — and C5b
+promotes that code into `span-clipboard.ts`, where it reads `spanOf()` instead, rather than inventing
+it twice.
 
-**Untappable runs get indexes too.** Today's `reader-text.tsx` gives a `data-token-index` only to
-`kind === 'word'` tokens; punctuation, Latin and whitespace render as bare
-`<span data-testid="reader-text-run">`. In a character-index model **every character in the body has
-an index**, including those, because `spanOf()` now slices the body string by character offsets and a
-span that crosses a comma has to contain the comma. So: every character gets an index and is a valid
-span *interior*; only Chinese characters are valid **tap** targets and valid span *endpoints*. A drag
-that starts or ends on a run of punctuation snaps inward to the nearest Chinese character; a drag
-across one passes through it. The `data-testid="reader-text-run"` hook stays, so the specs that use
-it keep working.
-
-**Build the prototype first, in this phase, before the production component.** Register entry #1
-says neither audit ran this combination — one `<ruby>` per character, `caretRangeFromPoint` on every
-`pointermove`, Custom Highlight API over a DOM whose text nodes are interleaved with `<rt>`
-annotations — and that its pointer latency and layout cost are unmeasured. **It is fully testable in
-desktop Chromium, in this container, with no hardware**, which is the single biggest advantage this
-plan has: Playwright's `mouse.down/move/up` and its touch emulation drive it directly. Prototype in
-the gallery, measure, then build.
-
-**The span model changes with it.** `lib/stores/reader.ts`'s `selected` / `spanEnd` become
-**character** indexes; `spanOf()` slices the body by character offsets; `extend()` either goes or
-becomes the fallback's mechanism. This is the data-model rewrite STACK §2.1 warns about — plan for
-it rather than discovering it.
-
-**The fallback, specified now and not later.** If the highlight cannot be made to land only on base
-characters, or the measured pointer path is unusable, or (on the mobile plans) iOS refuses:
-**tap-the-first-character, then tap "…to here" on the last** — which is the current `extend()` model
-generalised to characters, needs no `caretRangeFromPoint`, no Custom Highlight API and no
-`pointermove` at all, and paints with a class on the already-per-character DOM. Ship it as the
-automatic degrade when either API is missing, feature-detected at runtime, so the fallback is
+**The fallback is prototyped here too, specified now and not later.** If the highlight cannot be made
+to land only on base characters, or the measured pointer path is unusable, or (on the mobile plans)
+iOS refuses: **tap-the-first-character, then tap "…to here" on the last** — which is the current
+`extend()` model generalised to characters, needs no `caretRangeFromPoint`, no Custom Highlight API
+and no `pointermove` at all, and paints with a class on the already-per-character DOM. It ships as
+the automatic degrade when either API is missing, feature-detected at runtime, so the fallback is
 exercised in normal operation rather than being dead code discovered in a crisis.
 
-**Files.** `components/hanzi/use-span-select.ts`, `components/hanzi/span-clipboard.ts` (the `copy`
-handler and the Copy affordance), `components/hanzi/hanzi-text.tsx` (drag integration),
-`components/reader/reader-text.tsx` (replaced by `<HanziText>`), `components/reader/reader-screen.tsx`
-(its `.hanzi` title row, per C3's table), `components/reader/use-reader-index.ts` (it indexes tokens
-today and must index characters), `lib/stores/reader.ts` (character-granular span model),
-`components/gallery/**` (the prototype stays, as the harness).
+**Build it so it can be loaded standalone.** R2 depends on this: `ios.md` I2 loads the harness at one
+URL on a physical device, with no sign-in, no dictionary and no app state behind it, and the crash it
+is looking for happens during touch on the passage. A harness that needs the rest of the app booted
+is a harness that cannot answer register #1.
+
+**Files.** `components/gallery/span-select-harness.tsx` (the prototype interaction, its own pointer
+logic, its own highlight registration and its own copy handler), `components/gallery/**` (the entry
+and its standalone route, dev-guarded as C1 established), `tests/e2e/core/span-select-harness.spec.ts`.
+**Not in this phase, and this list is the enforcement:** `components/hanzi/use-span-select.ts`,
+`components/hanzi/span-clipboard.ts`, `components/hanzi/hanzi-text.tsx`,
+`components/reader/reader-text.tsx`, `components/reader/reader-screen.tsx`,
+`components/reader/use-reader-index.ts`, `lib/stores/reader.ts` — every one of them is C5b's.
 
 **Acceptance criteria.**
 
-- Playwright, desktop Chromium: press on character 3 of a rendered passage, move across characters
-  4–7, release → the reported span is exactly characters 3–7 and the lookup fires with that string.
-  Repeat backwards (press on 7, drag to 3) → the same span. Repeat with touch emulation.
+- **The phase's diff contains no production reader file.** `git diff --name-only` for the commit
+  matches nothing under `components/hanzi/`, `components/reader/`, `lib/stores/` or `lib/reader/`.
+  This is the criterion `ios.md` I2 is actually relying on; assert it rather than intending it.
+- Playwright, desktop Chromium, against the harness: press on character 3 of the rendered passage,
+  move across characters 4–7, release → the reported span is exactly characters 3–7. Repeat backwards
+  (press on 7, drag to 3) → the same span. Repeat with touch emulation.
 - Drag across a line break → the span is contiguous in the source string, not in visual order.
 - **The highlight never covers an `<rt>`**: assert that every range in the highlight registry
   resolves to a text node whose parent is not an `<rt>`.
-- **Copying with a span active puts exactly the span's hanzi on the clipboard** — the app's own `copy`
-  handler, asserted against `spanOf()`'s string, with no `<rt>` text and no leading or trailing
-  punctuation beyond what the span contains. With **no** span active, a copy over the passage yields
-  nothing, because `user-select: none` is doing its job; assert that too, so the two paths are
-  distinguished rather than conflated. This criterion replaces C3's record-what-Chromium-does
-  criterion, which was written against a selectable passage that no longer exists after this phase.
-- The touch Copy affordance appears with a span and writes the same string.
+- The harness's Copy affordance writes exactly the span's base characters, with no `<rt>` text.
 - **Scrolling is not broken**: a vertical drag that starts on the passage still scrolls the page, at
   390px under touch emulation, with the passage taller than the viewport. This is satisfiable
   precisely because the passage rests at `touch-action: pan-y` and only takes the pointer after the
@@ -909,10 +1001,103 @@ today and must index characters), `lib/stores/reader.ts` (character-granular spa
 - **Measure and record in `HANDOFF.md`**, over a 500-character passage: `pointermove` handler time
   (p50/p95) and dropped frames during a full-width drag. The budget is one frame (16.7 ms) for the
   whole move → highlight update; **no audit measured this**, so the first run sets the baseline and
-  the review judges it.
+  the review judges it. Record which caret API the feature detection chose.
 - With `caretRangeFromPoint` and `caretPositionFromPoint` both stubbed out, the fallback engages and
   a separate spec asserts tap-then-tap-to-here produces the same span. This spec must exist and pass
   in the same run as the drag spec.
+- The harness loads at its own URL with nothing else booted, and `HANDOFF.md` records that URL — it is
+  the address `ios.md` I2 opens on the device.
+
+---
+
+### C5b — Drag to select a span, in the reader
+
+**Gate: `ios.md` I2 has answered register #1 on a physical iOS 26 device.** No file in this phase's
+list may land before it. C5a's harness is what I2 runs; this phase is what I2 unblocks. If I2 crashes
+with no CSS workaround, read R2 before assuming an easy exit — the reader screen becomes the first
+candidate for a native `UIViewController` boundary, and the cost of that is a Core Text ruby engine.
+
+**Builds.** C5a's prototype, promoted into the reader: the production hook, the character-granular
+span model, the clipboard, and the known / learning / new colouring carried across from the file this
+phase deletes. Nothing in C5a's *design* is re-argued here; what changes is that it runs over the real
+passage and the real store.
+
+**The span model changes with it.** `lib/stores/reader.ts`'s `selected` / `spanEnd` become
+**character** indexes; `spanOf()` slices the body by character offsets; `extend()` either goes or
+becomes the fallback's mechanism. This is the data-model rewrite STACK §2.1 warns about — plan for
+it rather than discovering it. `components/reader/use-reader-index.ts` indexes tokens today and must
+index characters.
+
+**Untappable runs get indexes too.** Today's `reader-text.tsx` gives a `data-token-index` only to
+`kind === 'word'` tokens; punctuation, Latin and whitespace render as bare
+`<span data-testid="reader-text-run">`. In a character-index model **every character in the body has
+an index**, including those, because `spanOf()` now slices the body string by character offsets and a
+span that crosses a comma has to contain the comma. So: every character gets an index and is a valid
+span *interior*; only Chinese characters are valid **tap** targets and valid span *endpoints*. A drag
+that starts or ends on a run of punctuation snaps inward to the nearest Chinese character; a drag
+across one passes through it. The `data-testid="reader-text-run"` hook stays, so the specs that use
+it keep working.
+
+**The app owns the clipboard for a drag span, because nothing else can.** `user-select: none` on the
+passage means there is no native selection to copy, and a `Highlight` registered in `CSS.highlights`
+is a *styling* construct: it does not alter `document.getSelection()` and does not participate in
+copy. So a `Cmd/Ctrl+C` with a span active would put nothing on the clipboard unless this phase
+handles it. It does: a `copy` event handler on the passage that, when a span is active, calls
+`preventDefault()` and writes `spanOf(from, to)` — hanzi only, no `<rt>` text, because the app is
+choosing the string rather than the engine deriving it. On touch, where there is no `Cmd+C`, the span
+gets an explicit **Copy** affordance next to the lookup result in the sheet. C5a's harness already
+wrote this string; `span-clipboard.ts` is where it becomes production code.
+
+**The colouring comes across, and this is the phase that could silently drop it.** `lib/reader/**` is
+this plan's (§2) and `reader-text.tsx` — the file this phase deletes — is the only consumer of
+`tokenStates` in the UI today. `<HanziText>` therefore takes the states: a `tokenStates` prop
+(`(WordState | undefined)[]`, aligned to the token grouping, exactly the shape `lib/reader/states.ts`
+already returns), rendered as `data-state` on the word grouping span — **not** per character, because
+a word has one state and a character inside it does not have its own. `lib/reader/states.ts` needs no
+rewrite: it answers about tokens, and after this phase a token is a grouping over characters. The
+stable hooks `reader-text.tsx` documents in its own header — `data-testid="reader-token"` and
+`data-state` — survive verbatim, because `tests/e2e/p5/helpers.ts`'s `tokenStates(page)` reads them
+and C7 migrates that spec rather than rewriting it. Non-word runs still carry no state and are still
+untappable; they are merely indexable now.
+
+**Files.** `components/hanzi/use-span-select.ts` (C5a's pointer logic, promoted),
+`components/hanzi/span-clipboard.ts` (the `copy` handler and the Copy affordance),
+`components/hanzi/hanzi-text.tsx` (drag integration and the `tokenStates` prop),
+`components/reader/reader-text.tsx` (**deleted**, replaced by `<HanziText>`),
+`components/reader/reader-screen.tsx` (its `.hanzi` title row per C3's table, and it now hands
+`<HanziText>` the states it already computes at line 44),
+`components/reader/use-reader-index.ts` (it indexes tokens today and must index
+characters), `lib/stores/reader.ts` (character-granular span model),
+`components/gallery/**` (the harness is re-pointed at the production hook so it cannot rot).
+
+**Acceptance criteria.**
+
+- Playwright, desktop Chromium, **against the reader screen** this time: press on character 3 of a
+  rendered passage, move across characters 4–7, release → the reported span is exactly characters 3–7
+  and the lookup fires with that string. Repeat backwards, and with touch emulation. C5a proved the
+  interaction; this proves the wiring.
+- **Copying with a span active puts exactly the span's hanzi on the clipboard** — the app's own `copy`
+  handler, asserted against `spanOf()`'s string, with no `<rt>` text and no leading or trailing
+  punctuation beyond what the span contains. With **no** span active, a copy over the passage yields
+  nothing, because `user-select: none` is doing its job; assert that too, so the two paths are
+  distinguished rather than conflated. This criterion replaces C3's record-what-Chromium-does
+  criterion, which was written against a selectable passage that no longer exists after this phase.
+- The touch Copy affordance appears with a span and writes the same string.
+- A span that crosses punctuation contains it; a drag that starts or ends on punctuation snaps inward
+  to the nearest Chinese character. Both asserted, because the snapping rule is the one a reader
+  notices and no test today covers it.
+- **The colouring survives the rewrite.** `tests/e2e/p5/reader.spec.ts`'s existing assertions pass
+  against the new DOM with its `tokenStates(page)` helper unchanged: a passage renders `known`,
+  `learning` and `new` word spans, non-word runs carry no state, and **marking a word known from the
+  word sheet recolours it without a reload** — the C4 action and this phase's rendering, tested
+  together, because separately each looks fine and the loop is what the learner sees.
+- Scrolling is not broken, and the axis threshold C5a recorded is the one this phase ships: the same
+  vertical-drag-still-scrolls spec, now against the reader screen at 390px under touch emulation.
+- With both caret APIs stubbed out, the fallback engages on the real reader and tap-then-tap-to-here
+  produces the same span.
+- The gallery harness still runs, now driving `use-span-select.ts` rather than its own copy of the
+  logic, and its spec passes unchanged. A harness that has drifted from the production hook is worth
+  nothing to `ios.md` on the next device run.
 
 ---
 
@@ -925,9 +1110,9 @@ character lit as it plays; **tap a character** → hear that syllable alone.
 The mechanism is `lib/tts/sequence.ts` from C2: enqueue **one utterance per character** and advance
 the highlight on each utterance's `start`. Do this even where boundary events exist — the Android
 audit is explicit that range events are engine-dependent and the STACK record adopts per-character
-utterances as the rule, not the fallback. The highlight reuses C5's Custom Highlight API painting
-with a different highlight name, so the "currently speaking" mark and the "selected span" mark
-compose instead of fighting.
+utterances as the rule, not the fallback. The highlight reuses the Custom Highlight API painting
+C5a prototyped and C5b ships, with a different highlight name, so the "currently speaking" mark and
+the "selected span" mark compose instead of fighting.
 
 Hold detection needs a real threshold and a way out. **The threshold is a starting value to be tuned,
 not a specified one**: no audit measured it, product-decisions §4 rule 3 says only "Hold the speaker →
@@ -958,8 +1143,9 @@ the component's header).
 
 ### C7 — The two shells, and the rule that the screens are identical
 
-**Builds.** The phone three-tab shell, the wide-screen shell, and the mechanical enforcement that a
-screen cannot tell which one it is in.
+**Builds.** The phone three-tab shell, the wide-screen shell, the mechanical enforcement that a
+screen cannot tell which one it is in, and **the Practice queue merge** that makes the Practice tab
+one session rather than two screens behind one label.
 
 Three tabs replace seven routes (product-decisions §1): **Look up** (dictionary + AI answer + pasted
 texts — `/read` merges in here), **Practice** (one session), **Library** (lists, saved texts,
@@ -998,6 +1184,23 @@ The shape C7 needs from the ask module is small and C7 defines it: a discriminat
 `idle | thinking | answered | unavailable | ungrounded`, plus the grounded entries. `backend.md` B2
 supplies what fills `answered`; it does not change the other four.
 
+**The Practice queue merge, which is queue composition and not shared UI.** product-decisions §1's
+central claim is that learning a new word, recognising it and writing it are **one** session, and
+today they are not: `lib/lists/today.ts` introduces the day's new words when Today is opened (it
+creates their cards and charges `settings.introduced[dayKey]` through `lib/lists/introduce.ts`), and
+`lib/srs/session.ts` then serves whatever `buildQueue` returns on a different screen. C7 is the phase
+that builds the Practice tab, so C7 is where they become one queue: the session draws its new words
+through `introduceCards()` as it needs them and interleaves them with recognition and writing items
+from the same queue, and the Practice tab is the only place any of the three is reached.
+
+Three properties are not negotiable, because each of them is a bug the current split already fixed
+and a merge could reintroduce. **The introduction charge stays at card creation, not at grading** —
+`introduce.ts`'s header explains why (a learner who sees ten new words and closes the tab has spent
+the day's ten, and a reload must not hand out another ten). **The cap is still the day's cap**, read
+from the same settings, whoever asks for the cards. And **nothing about FSRS changes**: this is
+composition over `buildQueue`, not a second scheduler. C8 relabels what this phase composes; if the
+merge slips, C8 relabels two screens and the product's central claim ships false.
+
 **The enforcement is the deliverable, not the two shells.** Screens live in `components/screens/**`
 and take everything they need as props or from stores; they import nothing from
 `components/shell/**` and nothing from the router. Navigation is handed down (a `navigate` prop or a
@@ -1008,7 +1211,8 @@ does inside a tab. Without this rule, C9 is impossible and the two shells drift 
 `components/shell/wide-shell.tsx`, `components/shell/site-header.tsx` (rewritten for the tab model),
 `nav-link.tsx`, `page-header.tsx`, `components/lookup/ask-panel.tsx` and a new
 `components/lookup/ask-state.ts` (the three answer states), `components/screens/**` (see §8 for which
-file becomes which screen), `eslint.config.mjs` (the import rule), and **`tests/e2e/**` — the suite
+file becomes which screen), **`lib/lists/today.ts`, `lib/lists/introduce.ts` and `lib/srs/session.ts`
+(the queue merge)**, `eslint.config.mjs` (the import rule), and **`tests/e2e/**` — the suite
 migration is this phase's work and is sized in the criteria below**. `data-banner.tsx` is not here:
 C4a deleted it.
 
@@ -1022,6 +1226,14 @@ C4a deleted it.
   content between the two widths, not just that both render.
 - Tab state survives navigation away and back; the bottom bar shows the active tab with
   `aria-current="page"`.
+- **One session serves all three.** e2e, from a fresh database with new words available and reviews
+  due in both directions: starting Practice once reaches a new word, a recognition item and a write
+  item **without leaving the Practice tab** and without visiting Today or any second screen; the run
+  ends in one completion state. Unit, over `lib/srs/session.ts` and `lib/lists/today.ts`: the merged
+  queue introduces at most the day's cap, charges `settings.introduced[dayKey]` at card creation, and
+  a reload mid-session hands out no further new words — the three properties above, asserted, because
+  a merge that quietly re-charges the cap is indistinguishable from a working one until the second
+  day.
 - **The suite migrates, with a number in it.** All 29 files under `tests/e2e/**` run green against
   the three-tab IA, and the **22 that navigate by path** either navigate to a tab or reach their
   screen through one. `web.md` W1's criterion requires the seven-route suite green immediately before
@@ -1040,8 +1252,20 @@ C4a deleted it.
 
 ### C8 — Plain language: two verbs, a sentence, four buttons, honest stats
 
-**Builds.** The relabelling. Nothing about FSRS changes — ratings 1–4 and every scheduling behaviour
-are untouched — only what the learner reads.
+**Builds.** The relabelling, and the one piece of play in the whole design. Nothing about FSRS changes
+— ratings 1–4 and every scheduling behaviour are untouched — only what the learner reads.
+
+**The tangram pieces are the session's progress indicator, and this is the phase that builds them.**
+product-decisions §11 calls the seven pieces *the* one playful element in the design: they fill as a
+practice session progresses, so a finished day is a finished square. It appeared in no phase of any
+plan in the set, which is how it was nearly lost; it is small, and it is the app's name rendered as a
+progress bar, so it earns its place. The rules that keep it from becoming decoration: it reads the
+**merged** queue C7 built (seven pieces over the session's total items, so the fraction is honest and
+a session of three items does not fill three sevenths and stop), it is the *only* animated element and
+the motion is plain CSS per §7, it never appears outside a running session, and it carries a text
+alternative — `role="progressbar"` with the real value and max — because a square filling up is not an
+accessible progress report on its own. If the piece count and the item count disagree, the pieces
+round; the accessible value does not.
 
 **Today becomes a sentence.** The three number tiles in `app/(today)/today-view.tsx` (which
 product-decisions §2 says were tried and rejected because they were the most prominent thing on
@@ -1113,7 +1337,8 @@ threshold; the change is that the surface is absent, not disabled, below it.
 **Files.** `lib/srs/card.ts`, `lib/db/schema.ts`, `app/(today)/today-view.tsx` (→
 `components/screens/today.tsx`), `components/review/{grade-bar,review-card,production-card,recall-input}.tsx`,
 `components/shell/nav.ts`, `components/stats/**`, `components/settings/optimizer-panel.tsx`,
-`components/screens/library.tsx`.
+`components/screens/library.tsx`, `components/screens/practice.tsx` (the pieces are mounted here),
+new `components/practice/tangram-progress.tsx`.
 
 **Acceptance criteria.**
 
@@ -1139,6 +1364,10 @@ threshold; the change is that the surface is absent, not disabled, below it.
 - With a fresh database, `/library` shows "Your level: Just starting" and `spineStartBand` reads 1.
 - The optimizer surface is absent below 1,000 scorable reviews and present above it — two e2e
   fixtures.
+- **The tangram pieces fill and are readable.** e2e: at the start of a session zero pieces are
+  filled; after grading half the merged queue the `progressbar`'s `aria-valuenow` is half its
+  `aria-valuemax` and strictly more pieces are filled than at the start; at the end the square is
+  complete. The pieces are absent outside a session, asserted on the Practice tab's idle state.
 - The calibration decision is recorded: either the panel carries a one-sentence beginner explanation
   written by the owner and a test asserts that sentence renders, or the panel is gone and no test
   references it. A phase that ships neither has not run the test STACK §5.2 asked for.
@@ -1180,10 +1409,11 @@ were explicitly **not verified** and that this plan depends on.
 **R1 — The per-character reader combination is unmeasured (register #1).** Neither audit ran one
 `<ruby>` per character + `caretRangeFromPoint` per `pointermove` + Custom Highlight API over a DOM
 interleaved with `<rt>` nodes; each recommended the pieces separately.
-*Trigger:* C3's recorded layout time or C5's recorded `pointermove` p95 comes back high, or the
+*Trigger:* C3's recorded layout time or C5a's recorded `pointermove` p95 comes back high, or the
 highlight visibly lags the finger on a few-hundred-character passage.
-*Check that settles it:* C5's prototype, in desktop Chromium, in this container — measure before
-building the production component. *Mitigation:* C5's tap-then-tap fallback, which needs neither
+*Check that settles it:* C5a, in desktop Chromium, in this container — a whole phase whose output is
+the harness and the numbers, before C5b writes a production line. *Mitigation:* the tap-then-tap
+fallback C5a prototypes and C5b ships, which needs neither
 API; and the highlight can be coarsened to per-character class toggling if the Highlight API is the
 cost.
 
@@ -1191,8 +1421,9 @@ cost.
 Apple forum thread, resolution unknown. The CSS is load-bearing on iOS for suppressing native
 selection.
 *Trigger:* the reader crashes the WebView on a real iOS 26 device.
-*Check:* run the same prototype on a physical iOS 26 device — `ios.md` owns it, but this plan's
-prototype is the artifact that answers it, so **build the prototype so it can be loaded standalone**.
+*Check:* `ios.md` I2, running **C5a's** harness on a physical iOS 26 device — `ios.md` owns the check,
+but this plan's harness is the artifact that answers it, which is why C5a builds it standalone and
+why no C5b file lands before the answer.
 *Mitigation:* if it reproduces with no CSS workaround, the reader screen is the first candidate for
 the native `UIViewController` boundary (STACK §2.1) — and that paragraph is explicit that the blast
 radius is one screen but the cost is a Core Text ruby engine, so read it before assuming an easy
@@ -1202,13 +1433,14 @@ exit.
 *Trigger:* the feature detection logs the proprietary path on iOS.
 *Check:* feature-detect at runtime, log which path was taken, read the log on a real device.
 *Mitigation:* nothing fatal — `caretRangeFromPoint` is present in every WKWebView and ancient in
-Blink. Write the code to prefer the standard and fall back, which C5 requires anyway.
+Blink. Write the code to prefer the standard and fall back, which C5a requires anyway.
 
 **R4 — Font coverage and the web first-load budget (register #9).** Slim Noto subsets are 0.7–1.4 MB
 and the audit expects them not to cover 124k CC-CEDICT headwords; full faces are 4.5–9 MB per
 weight, and the settled visual language asks for three families.
 *Trigger:* C0's coverage script reports uncovered characters, or `web.md`'s budget sums to something
-indefensible on top of the ~15 MB brotli dictionary.
+indefensible on top of the **13.9 MB brotli** dictionary (43.1 MB raw). That is `data.md` D1's
+measurement of the schema it actually specifies, and it supersedes STACK §3's 15.4 MB / 47.2 MB.
 *Check:* `pnpm font:coverage`, in C0, first, because it needs no hardware.
 *Mitigation:* on native it is package bytes and nobody notices; on web, `unicode-range`-split
 subsets so a page downloads only the blocks it renders (`web.md` owns the delivery).
@@ -1277,7 +1509,7 @@ nothing later. `data-banner.tsx` is deleted, not rewritten.
 Blink is the only engine this container can test.
 *Trigger:* C3's recorded Chromium copy string contains the pinyin.
 *Check:* C3's record-don't-assert criterion, in the container, at no cost.
-*Mitigation:* C5 makes the question moot for the reader by taking the clipboard over explicitly. If
+*Mitigation:* C5b makes the question moot for the reader by taking the clipboard over explicitly. If
 Chromium turns out to include `<rt>` text and a surface outside the reader still relies on native
 selection, that surface gets the same explicit `copy` handler.
 
@@ -1335,12 +1567,12 @@ rather than implied.
 | `lookup/lookup-view.tsx` | becomes `screens/look-up.tsx`; `DictStore` | C4a, C7 |
 | `lookup/search-results.tsx` | keep; `<HanziText>` at :62 :83 | C3 |
 | `pwa/register-sw.tsx` | **out of scope.** `web.md` owns the service worker and PWA install. | — |
-| `reader/reader-lookup.tsx` | **deleted**, folded into the word sheet | C4 |
-| `reader/reader-screen.tsx` | keep; `.hanzi` title row at :123; folds into the Look up tab when `/read` merges in | C5, C7 |
-| `reader/reader-text.tsx` | **deleted**, replaced by `<HanziText>` with the character-granular span model | C5 |
+| `reader/reader-lookup.tsx` | **deleted**, folded into the word sheet — **including its `markKnown()` action at :129**, which is the only "Mark known" affordance in the app | C4 |
+| `reader/reader-screen.tsx` | keep; `.hanzi` title row at :123; hands `<HanziText>` the `tokenStates` it already computes at :44; folds into the Look up tab when `/read` merges in | C5b, C7 |
+| `reader/reader-text.tsx` | **deleted**, replaced by `<HanziText>` with the character-granular span model; its `data-testid="reader-token"` / `data-state` hooks and the colouring they carry survive on the word grouping span | C5b |
 | `reader/reader-view.tsx` | folds into the Look up screen's pasted-text view | C7 |
 | `reader/text-composer.tsx` | keep; `.hanzi` at :69 (a `<textarea>`) and :111 (a picker title) stay **plain, no ruby** — see C3's table for why; re-homed into Look up | C7 |
-| `reader/use-reader-index.ts` | rewritten with the span model: it indexes tokens today and must index characters | C5 |
+| `reader/use-reader-index.ts` | rewritten with the span model: it indexes tokens today and must index characters | C5b |
 | `review/add-reverse.tsx` | keep; relabelled ("Write" direction) | C8 |
 | `review/context-line.tsx` | keep; `<HanziText>` at :25 | C3 |
 | `review/example-sentences.tsx` | keep; `<HanziText>` at :362 — named by product-decisions §4, and the existing per-token reading becomes per-character; `DictStore` | C3, C4a |
@@ -1349,7 +1581,7 @@ rather than implied.
 | `review/production-card.tsx` | keep; `<HanziText>` at :169 :173 :216; relabelled "Write" | C3, C8 |
 | `review/recall-input.tsx` | keep; **relabel only** — its suggest-don't-press behaviour and ring-plus-word cue are correct and are not rewritten | C8 |
 | `review/review-card.tsx` | keep; `<HanziText>` at :108 :111 :165 :201; "Do you remember it?" / "Show the answer" ordering | C3, C8 |
-| `review/review-session.tsx` | becomes `screens/practice.tsx`. **The queue merge (§2's unassigned gap) lands here or nowhere**; C7 re-homes the screen, it does not merge the queues. | C7 |
+| `review/review-session.tsx` | becomes `screens/practice.tsx`. **The queue merge lands here**: C7 re-homes the screen and merges the queues in the same phase, over `lib/lists/today.ts`, `lib/lists/introduce.ts` and `lib/srs/session.ts`. C8 mounts the tangram pieces on it. | C7, C8 |
 | `settings/optimizer-panel.tsx` | keep, 414 lines unchanged; moved into Library and made **absent** below 1,000 scorable reviews | C7, C8 |
 | `shell/data-banner.tsx` | **deleted**, replaced one-for-one by the `DictStatus` screens | C4a |
 | `shell/nav-link.tsx` | rewritten for the tab model (the router swap is `web.md` W1's) | C7 |

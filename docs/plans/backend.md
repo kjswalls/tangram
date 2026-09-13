@@ -1,7 +1,9 @@
 # Tangram — build plan: the server (accounts, sync, and the AI proxy)
 
-**Status:** plan, written 2026-09-13. Sibling plans: [`data.md`](data.md), [`core.md`](core.md),
-[`web.md`](web.md), [`ios.md`](ios.md), [`android.md`](android.md).
+**Status:** plan, written 2026-09-13; corrected 2026-09-13 for the orchestrator's rulings in
+[`wave-zero.md`](wave-zero.md), which are settled and binding on this document. Sibling plans:
+[`data.md`](data.md), [`core.md`](core.md), [`web.md`](web.md), [`ios.md`](ios.md),
+[`android.md`](android.md).
 
 **Read first:** [`docs/STACK.md`](../STACK.md) is the decision record this plan implements; it is not
 re-argued here. §2.8 is the accounts/sync/BYOK decision, §5.5 is the open question this plan closes,
@@ -45,7 +47,8 @@ every device is an island, and the three model-backed routes run inside the Next
 - Accounts: sign-up, sign-in, session, sign-out, and the rule that the app stays fully usable signed
   out.
 - The sync protocol: the Postgres schema, the row-level rules, the conflict policy, the change feed
-  that `lib/db/repository.ts` grows, and the client engine that drives it.
+  that wave 0's `lib/db/repository.ts` diff declares and this plan implements, and the client engine
+  that drives it.
 - The schema corrections sync requires on the client side (`list_members`, `known_words`, the hard
   delete in `unmarkKnown`, and the whole-database clear in `resetAll`), and the natural-key merge
   rules the four stores with one need.
@@ -63,8 +66,8 @@ every device is an island, and the three model-backed routes run inside the Next
 | Not here | Owner | Why the seam is where it is |
 |---|---|---|
 | The Vite build, the router, the workspace layout, the client's API base and the gate's client half | [`web.md`](web.md) (W0, W1, W4) | This plan produces something behind a base URL. How the client reaches it, and the `?key=`→header exchange in the browser, are transport. |
-| The **local** export/import (`lib/db/export.ts`, `lib/db/import.ts`) | [`web.md`](web.md) W5 | It ships before this plan does and must not wait for it. This plan adds an account-level export **over the same row shapes** and depends on W5's round-trip test; it does not rebuild it. See §5, B5. |
-| The SQLite dictionary, `DictStore`, and the client-side retrieval helpers (`lib/ai/retrieve.ts`) | [`data.md`](data.md) (D1–D4; **`lib/ai/retrieve.ts` lands in D3**, `data.md:674`, not in D6) | The contract flip in B2 consumes them. `data.md` D3 already names the async-`segment` adapter this plan needs, and D6 only deletes. |
+| The **local** export/import (`lib/db/export.ts`, `lib/db/import.ts`) | [`web.md`](web.md) W5 | It ships before this plan does and must not wait for it. This plan adds an account-level export **over the same row shapes** and depends on W5's round-trip test; it does not rebuild it. W5's `exportAll`/`importAll` and this plan's five sync members are **one interface diff, landed in wave 0** ([`wave-zero.md`](wave-zero.md) §5), so neither plan widens `lib/db/repository.ts` itself. See §5, B5. |
+| The SQLite dictionary, `DictStore`, and the client-side retrieval helpers (`packages/ai/retrieve.ts`) | [`data.md`](data.md) (D1–D4; **`retrieve.ts` lands in D3**, `data.md:674`, not in D6) | The contract flip in B2 consumes them. `data.md` D3 already names the async-`segment` adapter this plan needs, and D6 only deletes. |
 | Every screen, including the sign-in screen's visual design and the "backup is on" copy | [`core.md`](core.md) | This plan supplies the auth flow, the client modules and unstyled functional UI where a screen does not exist yet. That is named debt, not a design. |
 | **Every state of the ask panel** — thinking, offline, nothing-verifiable — and `components/lookup/ask-state.ts` | [`core.md`](core.md) C7 | `core.md:191` says it designs those states "against a client-side ask module whose shape C7 defines" and that B2 "fills `answered`". So B2 changes the **module**, not the panel's states, and touches `ask-panel.tsx` / `example-sentences.tsx` only at the call site. Neither plan may claim the other's half. |
 | `tests/unit/server/routes.test.ts` and `docs/deploy.md` | [`web.md`](web.md) W2 rewrites both | Both were listed here as deletions or rewrites and both are W2's. This plan appends to what W2 produced; it does not delete a page-coverage guard it does not own. See B2 and B7. |
@@ -122,9 +125,11 @@ between W4's client and this plan's server and B1 must not invent a second one.
 Second, `lib/ai/**` is not uniformly free of the client's database. `lib/ai/examples.ts:47-48`
 imports `type { Repository } from '@/lib/db/repository'` and `{ isPhraseSnapshot, type CardRow, type
 SettingsRow } from '@/lib/db/schema'`, and `isPhraseSnapshot` (`lib/db/schema.ts:97`) is a **value**,
-not a type, so it survives into the emitted JavaScript. A shared `packages/ai` that both halves
-import therefore drags `lib/db/schema.ts` — the file B4 edits — in with it. B1 decides which way that
-goes; it must not be discovered by whoever runs `tsc`.
+not a type, so it survives into the emitted JavaScript. Wave 0 moves those ten modules into
+`packages/ai/**` as they stand ([`wave-zero.md`](wave-zero.md) §5), so the coupling arrives with them:
+a shared `packages/ai` that both halves import drags `lib/db/schema.ts` — the file B4 edits — in with
+it. **B1 breaks it**, and decides which way that goes; it must not be discovered by whoever runs
+`tsc`.
 
 **The dictionary is loaded into the server process today.** `docs/deploy.md` §5 measures it: a cold
 instance takes ~2.3 s to answer `/api/ask` after the lazy indexes were added in Phase 8, and settles
@@ -135,8 +140,8 @@ these handlers in B1 and is deleted in B2.
 (`addCardFromEntry`, `grade`, `listDue`, `addListMembers`, `getSettings`, `askCache.get/set`,
 `resetAll`, …). `lib/db/dexie.ts` is the only implementation; `lib/db/get-db.ts` memoises it on
 `globalThis` behind `'use client'`. STACK §1 is right that this is a *data-layer swap* seam and not a
-sync seam: there is no change feed, no per-row version, no origin, no conflict policy. §5, B5 is
-where it grows one.
+sync seam: there is no change feed, no per-row version, no origin, no conflict policy. Wave 0's
+types-only interface diff declares one and §5, B5 implements it.
 
 **What the schema actually guarantees, row by row.** This is the load-bearing part of §3 and it is
 not what a skim of PLAN.md §3.3 suggests. `lib/db/schema.ts` defines `BaseRow` as
@@ -216,13 +221,19 @@ whatever host B0 picks and is the first question to ask of it.
 
 **Before this plan starts:**
 
-1. **CLAUDE.md must be rewritten** (STACK §7). It is auto-loaded project instructions, it describes a
-   Next-shaped command set, and its frozen-file list freezes `lib/db/schema.ts` and
-   `lib/db/repository.ts` — the two files B4 and B5 must change. STACK §7 already rules that
-   `lib/db/schema.ts` "is now editable"; the instructions have to say so too or every phase below
-   fights them.
+1. **CLAUDE.md must be rewritten** ([`wave-zero.md`](wave-zero.md) §2, STACK §7). It is auto-loaded
+   project instructions, it describes a Next-shaped command set, and its frozen-file list freezes
+   `lib/db/schema.ts` and `lib/db/repository.ts` — the two files B4 and B5 must change. The rewrite
+   replaces that list with a settle-first one: `lib/db/schema.ts` is editable (STACK §7 already rules
+   it so), and `lib/db/repository.ts` is frozen **after** wave 0's interface diff, which is the diff
+   B5 implements against. The instructions have to say so or every phase below fights them.
 2. **The workspace layout must exist** — `web.md` W0's single pnpm workspace, into which this plan
-   adds `apps/server/`. If that decision reverses, only the paths in this plan change.
+   adds `apps/server/`. If that decision reverses, only the paths in this plan change. Wave 0's two
+   code commits land inside that layout and this plan consumes both: the `lib/db/repository.ts`
+   interface diff (`changedSince`, `applyRemote`, `syncState`/`setSyncState`, `resetAccount`,
+   plus `web.md` W5's `exportAll`/`importAll`), and `packages/ai/` with the ten existing `lib/ai/**`
+   modules already moved into it. **Neither is a phase of this plan.** B1 does not move `lib/ai/**`
+   and B5 does not widen `Repository`.
 3. **Two facts must be read from an unblocked network before B0 commits to a shape.** Neither was
    established by any audit. They are listed with their checks in §6, and B0's acceptance is what
    forces them: the provider's terms on third-party custody of end-user API keys, and the chosen
@@ -256,11 +267,11 @@ sandbox, and pretending otherwise is how a criterion gets quietly reinterpreted 
 | Phase | Needs |
 |---|---|
 | B0 | `web.md` W0 (the workspace) plus §4 item 4's domain, host account and Postgres decision. It otherwise runs in the container. |
-| B1 | `web.md` W1 (the app builds under Vite and has a configurable API base) and W4 (the client sends `X-Tangram-Access`, `lib/server/access.ts` has moved to a shared package). B1 is what lets `web.md` delete its dev/preview API adapter, so W1 must land first and the adapter must not be treated as a product. |
+| B1 | `web.md` W1 (the app builds under Vite and has a configurable API base) and W4 (the client sends `X-Tangram-Access`, `lib/server/access.ts` has moved to a shared package), plus wave 0's `packages/ai/` — B1 imports it and does not create it. B1 is what lets `web.md` delete its dev/preview API adapter, so W1 must land first and the adapter must not be treated as a product. |
 | **B2, first commit** (the contract module, `packages/ai/schemas.ts`) | B1 and nothing else. It is a type declaration with nothing behind it, and freezing it is what unblocks `data.md` D6 and `core.md` C7. It must be a **separate commit**, landed early, precisely so the two gates below do not form a cycle. |
-| **B2, the rest** (the rewrite and the deletion) | `data.md` **D1–D4** — D1's frozen interfaces, D2/D3's query layer, **D3's `lib/ai/retrieve.ts`** (`data.md:674` builds it there, not in D6), and **D4's browser store**, without which B2's e2e criteria have no dictionary in a browser to render from. Plus `core.md` **C4a**, which re-points every `lib/dict/client.ts` consumer at `DictStore` — `data.md` §4 makes that a gate on D6 and this plan inherits it. |
+| **B2, the rest** (the rewrite and the deletion) | `data.md` **D1–D4** — D1's frozen interfaces, D2/D3's query layer, **D3's `packages/ai/retrieve.ts`** (`data.md:674` builds it there, not in D6; wave 0's `packages/ai/` is where it lands), and **D4's browser store**, without which B2's e2e criteria have no dictionary in a browser to render from. Plus `core.md` **C4a**, which re-points every `lib/dict/client.ts` consumer at `DictStore` — `data.md` §4 makes that a gate on D6 and this plan inherits it. |
 | B3 | B0 for the server half (JWT verification); `web.md` **W0 and W1** for the client half, because B3 writes `apps/app/src/auth/**` and `apps/app/src/routes/account.tsx` and `apps/app/src/` does not exist until W1 creates it. Independent of `data.md` and `core.md`; the sign-in screen may be unstyled. |
-| B4, B5 | B3, and §4 item 4's reachable Postgres. B5 also wants `web.md` W5's export/import round-trip test *and* its repository dump/restore addition, because the account-level export is built over both. |
+| B4, B5 | B3, and §4 item 4's reachable Postgres. **B5 gates on wave 0's `lib/db/repository.ts` interface diff** — the types-only commit that declares `changedSince`, `applyRemote`, `syncState`/`setSyncState` and `resetAccount` alongside `web.md` W5's `exportAll`/`importAll` — and on W5's export/import round-trip test, because the account-level export is built over W5's serializer. |
 | B6 | B3, and a **yes** on the provider-terms check. A **no**, or an unclear answer, stops B6 and leaves the single-account shape in place (§5, B6). |
 | B7 | Everything it hardens, plus `web.md` W2, which rewrites `docs/deploy.md` first. |
 
@@ -268,14 +279,16 @@ sandbox, and pretending otherwise is how a criterion gets quietly reinterpreted 
 dictionary routes until this plan's ask/answer contract is settled, and B2's rewrite cannot happen
 until `data.md` has given the client a dictionary. Both plans resolve it the same way and the
 resolution is load-bearing: **B2's first commit is the contract alone**, `data.md` D6 gates on *that
-commit* rather than on the phase (`data.md:145`), and `lib/ai/retrieve.ts` lands in D3. If a build
-session reads either gate as whole-phase, it deadlocks.
+commit* rather than on the phase (`data.md:145`), and `retrieve.ts` lands in D3, inside wave 0's
+`packages/ai/`. If a build session reads either gate as whole-phase, it deadlocks.
 
 **What other plans may start against, and when.** The API base URL and path names are settle-first
 (`/api/ask`, `/api/examples`, `/api/recall` keep their paths so `GATED_PATHS` in
 `lib/server/access.ts` stays literally true). The **new ask/answer contract** is the other settle-first
 surface named in STACK §7; it lands as the first commit of B2 and is frozen from then on, because
-`core.md`'s ask module and `data.md`'s retrieval helpers both code against it.
+`core.md`'s ask module and `data.md`'s retrieval helpers both code against it. The two surfaces this
+plan *shares* rather than owns — `lib/db/repository.ts` and `packages/ai/**` — are settled before any
+phase here runs, by wave 0's two code commits (§4 item 2), and are frozen from then on.
 
 ## 5. Phases
 
@@ -322,8 +335,9 @@ and sync. That resolution is what makes the recommendation possible.
   entire document. Sync needs no server code at all under this shape: the client talks to PostgREST
   with the account's JWT and RLS does the enforcement (B4).
 - *The proxy is a plain Node service* (Hono, or a bare `node:http` handler — the handlers are already
-  `(Request) => Response`, so the framework is nearly irrelevant). It goes there because `lib/ai/**`
-  is Node-shaped TypeScript against `@anthropic-ai/sdk@0.124.0` with a 30 s deadline, and porting it
+  `(Request) => Response`, so the framework is nearly irrelevant). It goes there because
+  `packages/ai/**` is Node-shaped TypeScript against `@anthropic-ai/sdk@0.124.0` with a 30 s deadline,
+  and porting it
   to a Deno edge runtime is unforced work with a runtime-limits question attached (§6). It verifies
   the Supabase JWT and holds the key. **It holds no learner content** — no cards, no reviews, no
   prompt text at rest. It is not, however, literally stateless: B6 gives it a `provider_keys` row to
@@ -334,9 +348,9 @@ and sync. That resolution is what makes the recommendation possible.
   instance; it does not mean the process writes nothing.
 
 **The falsifier, stated up front:** if the host's function limits comfortably exceed the 30 s ask
-deadline *and* `lib/ai/**` runs unmodified on Supabase Edge Functions, then the proxy belongs there
-too and this becomes one deployable and one bill. That is a check, not an opinion (§6, row 2). Run it
-in this phase. The reverse falsifier: if Supabase Auth turns out to cost more configuration than
+deadline *and* `packages/ai/**` runs unmodified on Supabase Edge Functions, then the proxy belongs
+there too and this becomes one deployable and one bill. That is a check, not an opinion (§6, row 2).
+Run it in this phase. The reverse falsifier: if Supabase Auth turns out to cost more configuration than
 writing sessions against the same Postgres, the whole thing collapses into one Node service — but do
 not decide that on taste, decide it after B3.
 
@@ -386,16 +400,19 @@ B7 finishes the server half), `HANDOFF.md` (the decisions below).
 in behaviour, with the gate in front of them. This phase deliberately changes **nothing** about what
 the routes do, so that the review has one variable.
 
-The handlers move as files. `lib/ai/**` moves into a shared workspace package (both the server and
-the client import from it: `ground.ts` and `cache-key.ts` already run in the browser, and B2 needs
-more of it to). `lib/server/access.ts` arrives from `web.md` W4 and `requireAccess(request)` stays the
-first line of every handler, for the reason its own header gives — a gate that lives only in
-middleware is one config edit from being off, and the failure mode is an invoice.
+The handlers move as files. They import `packages/ai/**`, which **already exists**: wave 0 moved the
+ten `lib/ai/**` modules there ([`wave-zero.md`](wave-zero.md) §5), and both the server and the client
+import from it (`ground.ts` and `cache-key.ts` already run in the browser, and B2 needs more of it
+to). **This phase does not move it and must not re-move it.** `lib/server/access.ts` arrives from
+`web.md` W4 and `requireAccess(request)` stays the first line of every handler, for the reason its own
+header gives — a gate that lives only in middleware is one config edit from being off, and the failure
+mode is an invoice.
 
-**Break the `lib/db` coupling here, before the package exists in two places.** §3 records it:
-`lib/ai/examples.ts:47-48` imports `Repository`, `CardRow`, `SettingsRow` and the runtime helper
-`isPhraseSnapshot` from `lib/db/**`. Pulling `lib/db/schema.ts` into `packages/ai` would make the
-file B4 rewrites a dependency of the server's bundle, which is the opposite of what a shared package
+**Break the `lib/db` coupling here, before the server bundles the package.** §3 records it:
+`packages/ai/examples.ts` (`lib/ai/examples.ts:47-48` at HEAD, before wave 0's move) imports
+`Repository`, `CardRow`, `SettingsRow` and the runtime helper `isPhraseSnapshot` from `lib/db/**`.
+Pulling `lib/db/schema.ts` into `packages/ai` would make the file B4 rewrites a dependency of the
+server's bundle, which is the opposite of what a shared package
 is for. **The recommendation is injection, matching what `ground.ts` already does with
 `GroundContext`:** `examples.ts` takes the two schema helpers and the repository reads it needs as
 arguments supplied by its caller, so `packages/ai` depends on `zod`, the SDK and `lib/types.ts` and
@@ -424,9 +441,9 @@ declares and fails on any non-2xx, derived from a route table module rather than
 so a route added without a smoke case is a test failure.
 
 **Files.** `apps/server/src/routes/{ask,examples,recall}.ts` (moved, not rewritten),
-`packages/ai/**` (moved `lib/ai/**`, all ten modules including `index.ts`, with the `lib/db` coupling
-broken), `packages/access/**` (moved `lib/server/access.ts`, `isAuthorizedRequest` rewritten by W4),
-`apps/server/src/cors.ts` **(new)**, `apps/server/src/smoke.ts` **(new)**,
+`packages/ai/**` (**not moved here — wave 0 did that; this phase edits it only to break the `lib/db`
+coupling**), `packages/access/**` (moved `lib/server/access.ts`, `isAuthorizedRequest` rewritten by
+W4), `apps/server/src/cors.ts` **(new)**, `apps/server/src/smoke.ts` **(new)**,
 `apps/app/**` call sites already pointed at `VITE_API_BASE` by `web.md` W4, `docs/deploy.md` (the
 server's env-var section), `web.md`'s `vite-plugins/api.ts` (its three model cases deleted),
 `package.json` and `tests/unit/deps.test.ts` **if** this phase adds a runtime dependency — the deps
@@ -446,8 +463,9 @@ chose it, is one such package.
   is not:** it makes local development and the container suite work with no configuration, and it
   means an unset secret in production is an open till. B7 adds the limit that survives that mistake.
 - Every test under `tests/unit/ai/**` passes **unmoved** except for import paths — all seventeen
-  files, including the four route tests. Nothing about behaviour changes in this phase, so any
-  assertion that needs editing is evidence that something did.
+  files, including the four route tests. The `lib/ai` → `packages/ai` half of that rewrite happened in
+  wave 0; what changes here is the handlers' new home. Nothing about behaviour changes in this phase,
+  so any assertion that needs editing is evidence that something did.
 - **CORS, including the preflight.** A custom request header makes every cross-origin `POST` a
   preflighted request, so the allowlist is not one header. *(deploy, or against two local origins)*
   An `OPTIONS` to each gated path from `https://app.<domain>` returns the allowed methods **and
@@ -518,7 +536,7 @@ If a build session finds itself writing an adapter that fabricates the missing `
 taken the wrong branch.
 
 The client skips `propose` when `needsProposals(query)` is false — that function is 4 lines in
-`app/api/ask/route.ts` and moves to `lib/ai/retrieve.ts` with `mergedSearch`, `candidateEntries`,
+`app/api/ask/route.ts` and moves to `packages/ai/retrieve.ts` with `mergedSearch`, `candidateEntries`,
 `mergeRetrieved`, `RETRIEVED_CAP` and `SEARCH_HEAD` (`data.md` **D3** assigns that move, at
 `data.md:674`). So a
 hanzi query is one round trip, as today; an English question is two. **The second round trip is
@@ -581,19 +599,20 @@ exercises" for the app's *pages*, which is `web.md`'s half of the smoke story. *
 API-route cases and the `next.config` import from it and leaves the page-coverage assertions
 standing.** Deleting a guard this plan does not own is how a page ships with no smoke case.
 
-**What the client half is, and what it is not.** B2 builds `lib/ai/ask-client.ts` **(new)**: the two
-round trips, the `needsProposals` skip, the retrieval call into `lib/ai/retrieve.ts`, the awaited
-segmentation map, the local `ground()`, the fallback above and the cache read/write. That module is
-the provider interface `core.md` C7 renders — `core.md:191` says C7 "designs and tests [the three
-answer states] against a client-side ask module whose shape C7 defines" and that B2 "fills
-`answered`". **B2 therefore changes the module and the two call sites, and no state of the panel.**
+**What the client half is, and what it is not.** B2 builds `lib/ai/ask-client.ts` **(new)** — the
+**only** module left under `apps/app/lib/ai/` after wave 0's move, and browser-side because it calls
+the server: the two round trips, the `needsProposals` skip, the retrieval call into
+`packages/ai/retrieve.ts`, the awaited segmentation map, the local `ground()`, the fallback above and
+the cache read/write. That module is the provider interface `core.md` C7 renders — `core.md:191` says
+C7 "designs and tests [the three answer states] against a client-side ask module whose shape C7
+defines" and that B2 "fills `answered`". **B2 therefore changes the module and the two call sites, and no state of the panel.**
 If C7 has already landed, B2 wires `ask-client.ts` behind C7's `ask-state.ts`; if it has not, B2
 leaves `ask-panel.tsx`'s existing rendering exactly as it found it.
 
 **Files.** `apps/server/src/routes/{ask,examples,recall}.ts` (rewritten), `packages/ai/schemas.ts`
 **(new — the frozen contract, and the first commit of this phase)**, `packages/ai/provider.ts`
-(three signatures `Entry` → `RetrievedEntry`), `lib/ai/ask-client.ts` **(new)**, `lib/ai/retrieve.ts`
-(from `data.md` **D3**), `components/lookup/ask-panel.tsx` and
+(three signatures `Entry` → `RetrievedEntry`), `lib/ai/ask-client.ts` **(new)**,
+`packages/ai/retrieve.ts` (from `data.md` **D3**), `components/lookup/ask-panel.tsx` and
 `components/review/example-sentences.tsx` (**call sites only**), `tests/unit/ai/ground.test.ts` and
 `attacks.test.ts` (unmoved), `tests/unit/ai/{route,examples-route,recall-route,route-provider}.test.ts`
 (rewritten — see the criteria), `tests/unit/ai/ask-client.test.ts` **(new)**,
@@ -613,8 +632,8 @@ leaves `ask-panel.tsx`'s existing rendering exactly as it found it.
   `tests/unit/ai/route.test.ts` imports `{ GET, POST, mergeRetrieved, needsProposals, RETRIEVED_CAP,
   SEARCH_HEAD } from '@/app/api/ask/route'` (`route.test.ts:15`) and asserts on a response body this
   phase deletes — `body.entries` (`:64`, `:71`) and `body.dictVersion` (`:72`). Its retrieval
-  assertions belong to `lib/ai/retrieve.ts` and its grounding assertions to the new client module, so
-  they move to `tests/unit/dict/retrieve.test.ts` (`data.md` D3's file) and
+  assertions belong to `packages/ai/retrieve.ts` and its grounding assertions to the new client
+  module, so they move to `tests/unit/dict/retrieve.test.ts` (`data.md` D3's file) and
   `tests/unit/ai/ask-client.test.ts`, and what is left is a server test over the two endpoints and
   the request schema. Same for `examples-route` and `recall-route`. The criterion: **no assertion is
   dropped, each one is named in the commit message with where it went**, and the union of the three
@@ -665,11 +684,12 @@ document after B0's, and the one most likely to go unnoticed until a code does n
 **The headline criterion cannot be "an email arrives", because no build session can read an inbox.**
 Split it. The **automatable** half uses the auth provider's own test-address mechanism — a fixed
 address with a fixed code, configured for the project and named in `docs/deploy.md` — so the sign-in
-flow is exercisable end to end in CI and in the container against a local or remote project without
-any mail leaving it. The **manual** half is one check the owner performs once per environment and
-records: send a real code to a real address, note the delivery time and whether it landed in spam.
-Do not let the automatable half stand in for the manual one; a test address proves the flow and
-proves nothing at all about deliverability.
+flow is exercisable end to end in the container, against a local or remote project, without any mail
+leaving it — there is no CI to run it in (`wave-zero.md` §10, ruling 13), so `pnpm test` and the
+Playwright suite are where it runs. The **manual** half is one check the owner performs once per
+environment and records: send a real code to a real address, note the delivery time and whether it
+landed in spam. Do not let the automatable half stand in for the manual one; a test address proves
+the flow and proves nothing at all about deliverability.
 
 **What the JWT means to the proxy while B6 has not run, stated as a rule before it is asserted as a
 test.** Between B1 and B6 — which may be the permanent state, since B6 is conditional — the
@@ -832,6 +852,20 @@ implement correctly, and it means a buggy or old client cannot walk back a newer
 no update or delete policy at all — insert-only, `on conflict (id) do nothing` — and therefore no
 guard.
 
+**Every table has a policy, and the guard is a unit test because there is no CI.** The rule for this
+migration and every later one is: **a new table with no policy is a failed migration.** An earlier
+draft asserted that with a `pg_policies` query in CI. There is no CI — no `.github/` directory exists
+and no plan in this set creates one (`wave-zero.md` §10, ruling 13) — so this takes the same treatment
+`android.md` gives its two: it is a **unit test under `tests/unit/`**, run by `pnpm test` like
+everything else. `tests/unit/server/policies.test.ts` reads every file under
+`apps/server/supabase/migrations/` and asserts that each `create table tangram.<x>` in them is matched
+by `alter table tangram.<x> enable row level security` and by at least one `create policy … on
+tangram.<x>`, with an explicit allowlist for the deliberate exceptions (`reviews` has no update or
+delete policy; B6's `provider_keys` has no select policy) so an exception has to be written down to
+pass. It needs no database and no network, which is the point: the discipline is enforced in the suite
+a build session already runs. The live form of the same question — a `pg_policies` query against the
+real schema — joins the SQL suite below, behind the `TANGRAM_TEST_POSTGRES_URL` guard B0 chose.
+
 **The conflict policy, complete.** Write it down here so no phase invents its own:
 
 | Table | Policy |
@@ -905,9 +939,11 @@ escalation are in §6.
 `lib/db/schema.ts` (`list_members.updatedAt`, `known_words.updatedAt`/`deletedAt`, the three
 `updatedAt` index declarations, `sync_state`, a Dexie version bump and its upgrade block),
 `lib/db/dexie.ts` (`unmarkKnown`, `knownEntryIds`, `markKnown`, the `resetAll` and `loadDemo`
-guards), `lib/dev/seed.ts` (the `loadDemo` guard), `lib/db/repository.ts` (doc comments on the changed
-delete semantics and on `resetAll`'s new precondition), `tests/unit/db/known-words.test.ts`
-**(new)**, `tests/unit/db/reset.test.ts` **(new)**.
+guards), `lib/dev/seed.ts` (the `loadDemo` guard), `lib/db/repository.ts` (**doc comments only**, on
+the changed delete semantics and on `resetAll`'s new precondition — the interface itself is wave 0's
+frozen diff and B4 adds no member to it), `tests/unit/db/known-words.test.ts` **(new)**,
+`tests/unit/db/reset.test.ts` **(new)**, `tests/unit/server/policies.test.ts` **(new — the
+migration-policy guard; no CI exists to hold it)**.
 
 **Acceptance criteria.** The SQL ones run wherever B0 decided they run (§4 item 4, B0 acceptance 5);
 they are *(deploy)* if that answer was a remote project.
@@ -918,6 +954,11 @@ they are *(deploy)* if that answer was a remote project.
   test file. A sync design whose isolation was never executed is not a sync design.
 - Supabase's own security advisors report no errors on the new schema (`get_advisors`, security
   lint). Warnings are recorded with a reason if they are accepted.
+- **The policy guard runs in `pnpm test`, not in CI.** `tests/unit/server/policies.test.ts` passes over
+  the migrations this phase writes, and fails when a table is added to a migration file with no
+  `enable row level security` and no policy — assert that by adding such a table to a fixture, not to
+  the real migration. The live `pg_policies` form of the same check runs with the SQL suite and is
+  *(deploy)* on the same condition as the rest of it.
 - **The LWW guard rejects rather than rewrites.** Update a row with an older `updated_at`, then
   assert three things: the user columns are unchanged, **`server_updated_at` is unchanged**, and the
   row does **not** appear in a pull taken from the pre-write cursor. The middle assertion is the one
@@ -944,19 +985,28 @@ they are *(deploy)* if that answer was a remote project.
 
 ### B5 — The sync engine, the change feed, and what recompute actually means
 
-**Builds.** The client engine, the repository members it needs, and the account-level export.
+**Builds.** The client engine, the Dexie implementation of the sync members wave 0 declared, and the
+account-level export.
 
 **The seam widens, and this is the architectural cost of sync.** `lib/db/repository.ts` is a domain
 API (`grade()`, `listDue()`, `addListMembers()`). Applying a remote row cannot go through it —
-`grade()` would write a *new* review row for a review that already happened. So the interface gains a
-narrow row-level channel alongside the domain one:
+`grade()` would write a *new* review row for a review that already happened. So the interface carries
+a narrow row-level channel alongside the domain one:
 
 ```ts
 changedSince(store: SyncedStore, sinceMs: number): Promise<Row[]>;  // local writes to push
 applyRemote(store: SyncedStore, rows: Row[]): Promise<void>;        // remote rows, LWW + dedupe
-syncState: { get(): Promise<SyncState>; set(patch: Partial<SyncState>): Promise<SyncState> };
+syncState(): Promise<SyncState>;                                    // the cursor and last-synced stamp
+setSyncState(patch: Partial<SyncState>): Promise<SyncState>;
 resetAccount(): Promise<void>;                                      // B4 correction 4
 ```
+
+**Those five declarations are not this phase's to write.** They landed in wave 0's types-only
+interface diff ([`wave-zero.md`](wave-zero.md) §5), alongside `web.md` W5's `exportAll`/`importAll`,
+precisely so this plan and W5 never widen the same file twice; `lib/db/repository.ts` has been frozen
+since. **B5 gates on that commit and implements the five in `lib/db/dexie.ts`.** If B5 finds it needs
+a sixth member, that is a frozen-surface change: it stops, writes the need into `HANDOFF.md`, and
+continues without it.
 
 **`changedSince` does not have one key, and pretending it does is how it becomes a table scan.**
 `SyncedStore` is the eight stores B4 lists, not `StoreName`, and the column each one filters on
@@ -976,9 +1026,9 @@ transaction. For the other four it is a bulk put under the LWW comparator.
 
 Say plainly what this is: the repository is no longer only a domain API, and any second
 implementation — the `@capacitor-community/sqlite` one STACK §2.8 leaves open for mobile, or the
-`tauri-plugin-sql` one §2.4 leaves open for desktop — must satisfy all four as well. That is a real
-increase in what a swap costs, and it is the price of sync being a property of the seam rather than a
-feature bolted to Dexie.
+`tauri-plugin-sql` one §2.4 leaves open for desktop — must satisfy all five as well, plus W5's
+`exportAll`/`importAll` from the same wave-0 diff. That is a real increase in what a swap costs, and
+it is the price of sync being a property of the seam rather than a feature bolted to Dexie.
 
 **The loop.** `push()` reads `changedSince(store, lastPushedAt)` for each synced store and upserts to
 PostgREST; on success it records `lastPushedAt = t0`, the timestamp taken *before* the read, so a row
@@ -1046,10 +1096,10 @@ If the two serializers ever diverge, a test says so. **If this plan slips, W5's 
 entire safety net and must ship anyway** — that is the point of STACK §2.8's export-first framing and
 of `ios.md`/`android.md` reusing it.
 
-**Files.** `lib/sync/{engine,cursor,mapping,conflicts,export}.ts` **(all new)**,
-`lib/db/repository.ts` (the four additions), `lib/db/dexie.ts` (their implementation),
-`lib/srs/recompute.ts` **(new)**, `apps/app/src/routes/account.tsx` (sync status, last-synced, manual
-sync, and the two resets B4 distinguished), `tests/unit/sync/**` **(new)**, `tests/e2e/sync/**`
+**Files.** `lib/sync/{engine,cursor,mapping,conflicts,export}.ts` **(all new)**, `lib/db/dexie.ts`
+(the implementation of wave 0's five sync members), `lib/srs/recompute.ts` **(new)**,
+`apps/app/src/routes/account.tsx` (sync status, last-synced, manual sync, and the two resets B4
+distinguished), `tests/unit/sync/**` **(new)**, `tests/e2e/sync/**`
 **(new)**, and `package.json` + `tests/unit/deps.test.ts` if the PostgREST calls go through
 `@supabase/supabase-js` rather than `fetch` (see B3).
 
@@ -1280,9 +1330,9 @@ that this plan is the mitigation *for*.
 | **The 40-entry `retrieved` payload is too large on a mobile connection (#none — nobody measured it).** | B2's recorded payload size or throttled latency is poor. | Measured in B2. Lever: send fewer glosses per entry rather than fewer entries — PLAN.md §3.4 says the prompt sees `id, simp, trad, pinyinMarked, glosses`, and glosses are 20% of `dict.json`'s bytes (`docs/deploy.md` §5's field breakdown). |
 | **Register #3 — whether ITP's seven-day eviction applies to WKWebView inside a native app.** Unanswered on Apple's own forums. | Learner data disappears from a mobile app that has not been opened in a week. | **This plan is the mitigation** and STACK §4's own suggested answer is "cheapest answer is to not need it: get account sync working early". Until B5 ships, the cover is `web.md` W5's local export and, on native, STACK §2.8's option 2 (a `@capacitor-community/sqlite` `Repository`). **If B5 slips, neither of those may slip with it.** |
 | **Register #13 — `navigator.storage.persist()` in Safari for a non-installed site.** | A browser tab loses its cards. | Same: sync is the durable answer, install and `persist()` are `web.md` W5's, and the export is the floor. |
-| **RLS is misconfigured and one account can read another's rows.** The classic Supabase failure. | B4's isolation test passes but an advisor warns, or a later migration adds a table without a policy. | B4's nine-assertion isolation test plus the security advisor run, and a rule for every later migration: **a new table with no policy is a failed migration**, asserted by a query over `pg_policies` in CI rather than by discipline. |
+| **RLS is misconfigured and one account can read another's rows.** The classic Supabase failure. | B4's isolation test passes but an advisor warns, or a later migration adds a table without a policy. | B4's nine-assertion isolation test plus the security advisor run, and a rule for every later migration: **a new table with no policy is a failed migration**, asserted by `tests/unit/server/policies.test.ts` over the migration files rather than by discipline. **There is no CI and v1 does not create one** (`wave-zero.md` §10, ruling 13), so the guard is a unit test that `pnpm test` runs; the live `pg_policies` query is the same rule against the real schema, behind `TANGRAM_TEST_POSTGRES_URL`. |
 | **A local reset is silently undone, or a demo deck is pushed to the real account.** `resetAll` (`lib/db/dexie.ts:742`) hard-clears every table with no tombstones and is wired to the settings screen, `loadDemo` and two e2e helpers. | Someone resets, syncs, and their deck comes back; or `loadDemo` runs while signed in. | B4 correction 4: `resetAll` and `loadDemo` refuse while a session exists, and "reset this account" becomes a separate tombstone-and-push operation that B5 implements and asserts. Discovered late, this is the failure that makes B3's "offer export-then-reset instead" a remedy that does not work. |
-| **The seam widens and the mobile/desktop `Repository` implementations become expensive.** STACK §2.8 and §2.4 both leave a second implementation open. | `ios.md` or a Tauri phase discovers it must implement `changedSince`/`applyRemote`/`syncState`/`resetAccount` too. | Stated here so it is not discovered: B5 makes those four part of the interface. Keep them narrow — four members, row-level, no domain logic — precisely so a second implementation is a day and not a week. |
+| **The seam widens and the mobile/desktop `Repository` implementations become expensive.** STACK §2.8 and §2.4 both leave a second implementation open. | `ios.md` or a Tauri phase discovers it must implement `changedSince`/`applyRemote`/`syncState`/`setSyncState`/`resetAccount` too. | Stated here so it is not discovered: wave 0's interface diff makes those five part of the interface and B5 implements them. Keep them narrow — five members, row-level, no domain logic — precisely so a second implementation is a day and not a week. |
 | **Two components, two bills, two deploy procedures.** | The solo developer stops deploying because it is annoying. | B0 records the cost and the procedure and tries a rollback once; B7's checklist is one page. If it is still annoying after B7, the collapse-to-one-service option (B0's second falsifier) is still open and the code does not care. |
 
 ## 7. Out of scope for v1

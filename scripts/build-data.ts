@@ -12,9 +12,10 @@ import { createRequire } from 'node:module';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-import { normalizePinyin, toMarked } from '../lib/dict/pinyin';
+import { normalizePinyin, toMarked } from '../apps/app/lib/dict/pinyin';
+import { dirOf, workspaceRoot } from '../apps/app/lib/server/roots';
+
 import type {
   DecompFile,
   DictEntry,
@@ -22,20 +23,39 @@ import type {
   DictSource,
   EntryId,
   HskBand,
-} from '../lib/dict/types';
+} from '../apps/app/lib/dict/types';
 
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+// The WORKSPACE root: `data/` is generated once here and read by three
+// deployables, which is why this script stays at the root rather than moving into
+// `apps/app/` (docs/plans/wave-zero.md §1, docs/STACK.md §5). Resolved by marker
+// rather than by `..` so that a later move cannot silently relocate the artifact
+// while every test still passes (docs/plans/web.md W0).
+// `TANGRAM_DATA_DIR` is the authoritative mechanism; this is its safety net.
+const repoRoot = workspaceRoot(dirOf(import.meta.url));
+// Resolved against the workspace root, not the cwd, so that a relative
+// TANGRAM_DATA_DIR means the same directory here as it does to the reader in
+// lib/dict/load.ts. There are two cwds in routine use now.
 const dataDir = process.env.TANGRAM_DATA_DIR
-  ? resolve(process.env.TANGRAM_DATA_DIR)
+  ? resolve(repoRoot, process.env.TANGRAM_DATA_DIR)
   : resolve(repoRoot, 'data');
-// Raw sources sit beside the data when TANGRAM_DATA_DIR is set, otherwise in the
-// repo-local cache PLAN.md §3.1 names. Both are gitignored.
-const rawDir = process.env.TANGRAM_DATA_DIR
-  ? resolve(dataDir, 'raw')
-  : resolve(repoRoot, '.cache/tangram/raw');
+// Raw sources always go in the workspace-local cache PLAN.md §3.1 names, never
+// beside the data. They used to go beside it whenever TANGRAM_DATA_DIR was set,
+// which was harmless while nothing set it — but the root `data` and
+// `data:ensure` scripts now always do, so that branch would put 8.2 MB of
+// upstream downloads INSIDE `data/`, which is the directory next.config.ts
+// traces wholesale into all eight route bundles. Gitignored either way.
+const rawDir = resolve(repoRoot, '.cache/tangram/raw');
 
 const force = process.argv.includes('--force');
 const ensure = process.argv.includes('--ensure');
+
+// Where this script would write, printed and nothing else. `tests/unit/workspace.test.ts`
+// asks the writer directly rather than re-deriving its arithmetic, because the
+// failure mode W0 names is the writer and the reader drifting together.
+if (process.argv.includes('--print-data-dir')) {
+  process.stdout.write(`${dataDir}\n`);
+  process.exit(0);
+}
 
 const HSK_URL = 'https://raw.githubusercontent.com/ivankra/hsk30/master/hsk30-expanded.csv';
 const JIEBA_URL = 'https://raw.githubusercontent.com/fxsjy/jieba/master/jieba/dict.txt';

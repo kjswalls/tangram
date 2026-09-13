@@ -12,6 +12,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+import { workspaceRoot } from '../server/roots';
 import type { DecompFile, DictDataMissingBody, DictFile } from './types';
 
 export class DictDataMissingError extends Error {
@@ -24,10 +25,26 @@ export class DictDataMissingError extends Error {
   }
 }
 
-/** `TANGRAM_DATA_DIR` points at the directory holding dict.json; default `<cwd>/data`. */
+/**
+ * The directory holding `dict.json`.
+ *
+ * `TANGRAM_DATA_DIR` is the **authoritative** mechanism and the root `data`,
+ * `data:ensure` and `build` scripts set it to the absolute workspace-root
+ * `data/`. The default below is the safety net for everything they do not wrap —
+ * `pnpm -F app dev`, `next start`, vitest, a Playwright web server — all of which
+ * run with cwd `apps/app/`. It must **not** be `<cwd>/data`: that would read
+ * `apps/app/data`, and `scripts/build-data.ts`'s matching default would write
+ * there too, so the two agree with each other in the wrong place while every
+ * test still passes (docs/plans/web.md W0).
+ */
 export function dataDir(): string {
   const configured = process.env.TANGRAM_DATA_DIR;
-  return configured ? resolve(configured) : resolve(process.cwd(), 'data');
+  // Resolved against the workspace root rather than the cwd, because there are
+  // now two cwds in routine use — the root scripts run at the workspace root,
+  // everything under `pnpm -F app` runs at `apps/app/`. An absolute value is
+  // unaffected (`resolve` returns it unchanged); a relative one would otherwise
+  // mean two different directories to the writer and the reader.
+  return configured ? resolve(workspaceRoot(), configured) : resolve(workspaceRoot(), 'data');
 }
 
 interface DictCache {

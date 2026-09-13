@@ -18,11 +18,14 @@ import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { appRoot, workspaceRoot } from '@/lib/server/roots';
+
 import { NAV_ITEMS } from '@/components/shell/nav';
 
-const root = resolve(import.meta.dirname, '../../..');
+const root = appRoot(import.meta.dirname);
 const manifest = JSON.parse(readFileSync(resolve(root, 'public/manifest.webmanifest'), 'utf8'));
-const sw = readFileSync(resolve(root, 'scripts/sw.template.js'), 'utf8');
+// `scripts/` is at the WORKSPACE root, not the app's (docs/plans/wave-zero.md §1).
+const sw = readFileSync(resolve(workspaceRoot(import.meta.dirname), 'scripts/sw.template.js'), 'utf8');
 
 describe('manifest.webmanifest', () => {
   it('carries the fields an install prompt requires', () => {

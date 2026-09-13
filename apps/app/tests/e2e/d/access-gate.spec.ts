@@ -15,12 +15,14 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
+import { appRoot } from '../../../lib/server/roots';
+
 import { expect, request as playwrightRequest, test, type APIRequestContext } from '@playwright/test';
 
 const SECRET = 'e2e-access-secret-9f3a';
 const PORT = Number(process.env.PORT ?? 3000) + 100;
 const BASE = `http://127.0.0.1:${PORT}`;
-const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
+const REPO_ROOT = appRoot(fileURLToPath(new URL('.', import.meta.url)));
 
 let server: ChildProcess | undefined;
 let api: APIRequestContext;

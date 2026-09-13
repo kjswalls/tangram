@@ -28,11 +28,14 @@
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { NAV_ITEMS } from '../components/shell/nav';
-import { ACCESS_COOKIE } from '../lib/server/access';
-import { discoverApiRoutes, type HttpMethod } from '../lib/server/route-inventory';
+import { NAV_ITEMS } from '../apps/app/components/shell/nav';
+import { ACCESS_COOKIE } from '../apps/app/lib/server/access';
+import { discoverApiRoutes, type HttpMethod } from '../apps/app/lib/server/route-inventory';
+import { dirOf, workspaceRoot } from '../apps/app/lib/server/roots';
 
-const REPO_ROOT = resolve(fileURLToPath(import.meta.url), '../..');
+// `discoverApiRoutes` and the tracing check walk the APP's tree; this script
+// lives at the workspace root (docs/plans/wave-zero.md §1).
+const REPO_ROOT = resolve(workspaceRoot(dirOf(import.meta.url)), 'apps/app');
 
 /** Values one case hands to the next: real ids beat invented ones. */
 export interface SmokeContext {

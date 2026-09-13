@@ -22,14 +22,19 @@
  * the real one.
  */
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+import { dirOf, workspaceRoot } from '../apps/app/lib/server/roots';
 
-export const TEMPLATE_PATH = resolve(repoRoot, 'scripts/sw.template.js');
-export const OUTPUT_PATH = resolve(repoRoot, 'public/sw.js');
-export const BUILD_ID_PATH = resolve(repoRoot, '.next/BUILD_ID');
+// This script lives at the WORKSPACE root and every path below is the APP's, so
+// the two roots have to be named separately. Found by marker rather than by
+// counting `..`, which is what silently survives the next move (W0).
+const appDir = resolve(workspaceRoot(dirOf(import.meta.url)), 'apps/app');
+
+export const TEMPLATE_PATH = resolve(dirOf(import.meta.url), 'sw.template.js');
+export const OUTPUT_PATH = resolve(appDir, 'public/sw.js');
+export const BUILD_ID_PATH = resolve(appDir, '.next/BUILD_ID');
 
 /** What the template carries where the build's id belongs. */
 export const BUILD_ID_PLACEHOLDER = '__TANGRAM_BUILD_ID__';

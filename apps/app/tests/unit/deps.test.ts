@@ -11,7 +11,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+import { appRoot } from '@/lib/server/roots';
+
+const repoRoot = appRoot(dirname(fileURLToPath(import.meta.url)));
 
 const loaders: Record<string, () => Promise<Record<string, unknown>>> = {
   '@anthropic-ai/sdk': () => import('@anthropic-ai/sdk'),

@@ -19,7 +19,7 @@ import {
   readBuildId,
   renderServiceWorker,
   TEMPLATE_PATH,
-} from '../../../scripts/build-sw';
+} from '../../../../../scripts/build-sw';
 
 const template = readFileSync(TEMPLATE_PATH, 'utf8');
 

@@ -13,7 +13,7 @@
  */
 import { expect, test } from '@playwright/test';
 
-import { checkRouteCoverage, runSmoke } from '../../../scripts/smoke';
+import { checkRouteCoverage, runSmoke } from '../../../../../scripts/smoke';
 
 test.describe('production smoke', () => {
   // A cold dictionary load is seconds, and the first case pays for it.

@@ -162,6 +162,42 @@ export function tracingKeyMatches(key: string, routePath: string): boolean {
 }
 
 /**
+ * Include globs that match no file on disk.
+ *
+ * `untracedDictRoutes` below answers "is there a KEY for this route", which was
+ * the whole question while the Next project directory and the workspace root
+ * were the same directory. They are not any more: `data/` is at the workspace
+ * root and the globs are resolved with cwd set to the project directory, so
+ * `./data/**` went on being a perfectly well-formed entry that matched nothing,
+ * and every gate stayed green because `next dev`, `next start`, `pnpm smoke`
+ * and the e2e suite all read `data/` off local disk. Only a deployment would
+ * have noticed, which is the same way `/api/examples` and `/api/recall` got out.
+ *
+ * So the VALUE is checked too, against the filesystem, from the directory Next
+ * resolves it from. Only the `**` suffix form the config uses is understood;
+ * anything else is treated as a literal path, which is the safe reading — a
+ * pattern this cannot verify should fail rather than pass.
+ */
+export function unmatchedTracingIncludes(
+  tracingIncludes: Readonly<Record<string, readonly string[]>>,
+  projectDir: string,
+): { key: string; glob: string }[] {
+  const empty: { key: string; glob: string }[] = [];
+  for (const [key, globs] of Object.entries(tracingIncludes)) {
+    for (const glob of globs) {
+      const suffix = '/**';
+      const isDirGlob = glob.endsWith(suffix);
+      const target = resolve(projectDir, isDirGlob ? glob.slice(0, -suffix.length) : glob);
+      const matches = isDirGlob
+        ? existsSync(target) && statSync(target).isDirectory() && readdirSync(target).length > 0
+        : existsSync(target);
+      if (!matches) empty.push({ key, glob });
+    }
+  }
+  return empty;
+}
+
+/**
  * The routes that read the dictionary but are not covered by any
  * `outputFileTracingIncludes` key — i.e. the ones that would 500 in production.
  */

@@ -21,7 +21,10 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: `pnpm build && pnpm start -p ${PORT}`,
+    // `pnpm -w build` is the WORKSPACE root's build: it runs `data:ensure` at the
+    // root, where `data/` lives, and only then builds the app. The app's own
+    // `build` deliberately does not generate data (docs/plans/web.md W0).
+    command: `pnpm -w build && pnpm start -p ${PORT}`,
     url: baseURL,
     reuseExistingServer: true,
     timeout: 600_000,

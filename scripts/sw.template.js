@@ -11,7 +11,7 @@
  *                      (CLAUDE.md). A second, dumber HTTP cache in front of the
  *                      same route would serve a stale answer for a *different*
  *                      profile.
- *   /_next/static/**   cache-first, no revalidation. The paths are content
+ *   /assets/**         cache-first, no revalidation. The paths are content
  *                      hashed, so a hit is always correct and a miss is a new
  *                      build.
  *   navigations        **network-first**, with the cache as the offline
@@ -126,7 +126,14 @@ self.addEventListener('fetch', (event) => {
   if (url.pathname.startsWith('/api/')) return;
   if (url.pathname === '/sw.js') return;
 
-  if (url.pathname.startsWith('/_next/static/')) {
+  // `/assets/` is where Vite emits its hashed output. It was `/_next/static/`
+  // until web.md W1 swapped the build, and the rule then matched nothing: no
+  // script or stylesheet entered the cache, so an offline navigation served a
+  // precached document referencing assets that were not there — a blank page
+  // where there used to be a working shell. Nothing failed; the worker simply
+  // stopped doing its job. The property the rule depends on is unchanged:
+  // Vite's names are content-addressed, so a hit is never stale.
+  if (url.pathname.startsWith('/assets/')) {
     event.respondWith(cacheFirst(event));
     return;
   }

@@ -8,7 +8,7 @@
  * asserted by counting `POST`s, not by reading the key — a key that is right
  * for the wrong reason still has to spare the request.
  */
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '../render';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ExamplesRouteResponse } from '@/app/api/examples/route';

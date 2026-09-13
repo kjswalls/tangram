@@ -9,7 +9,7 @@
  * it would otherwise overwrite the suggestion belonging to the card that is
  * actually up.
  */
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '../render';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { RecallInput } from '@/components/review/recall-input';

@@ -9,7 +9,7 @@
  * rule that decides what a front may show: no reading, ever, since the reading
  * is the answer.
  */
-import { render, screen } from '@testing-library/react';
+import { render, screen } from '../render';
 import { describe, expect, it } from 'vitest';
 
 import { PhraseFace } from '@/components/review/phrase-face';

@@ -30,9 +30,17 @@ test.describe('the SPA fallback', () => {
     const bad: string[] = [];
     page.on('response', (response) => {
       const url = new URL(response.url());
-      // Any asset fetched from under the route's own path is the relative-base
-      // failure: it would 200 with index.html and the page would stay blank.
-      if (/^\/lists\/.+\/assets\//.test(url.pathname)) bad.push(url.pathname);
+      if (url.origin !== new URL(page.url()).origin) return;
+      // Any asset path that is not rooted at /assets/ is the relative-base
+      // failure. It has to be written this way round: with `base: './'` Vite
+      // emits `./assets/<hash>.js`, which from the document at
+      // `/lists/does-not-exist-yet` resolves to `/lists/assets/<hash>.js` — no
+      // segment between `/lists/` and `/assets/`. A pattern expecting one
+      // (`/lists/.+/assets/`) matches nothing and the test passes while the app
+      // is broken, which is the failure it exists to catch happening to itself.
+      if (url.pathname.includes('/assets/') && !url.pathname.startsWith('/assets/')) {
+        bad.push(url.pathname);
+      }
     });
     await page.goto('/lists/does-not-exist-yet');
     await expect(page.getByRole('navigation', { name: 'Main' })).toBeVisible();

@@ -15,7 +15,7 @@
  * the real component against a real database and then asks the real
  * `buildQueue` what the day has left.
  */
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '../render';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { AddReverse } from '@/components/review/add-reverse';

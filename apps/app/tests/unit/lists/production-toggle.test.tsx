@@ -7,7 +7,7 @@
  * says how many are still waiting. Turning it off stops the next pass and
  * deletes nothing.
  */
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '../render';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { ProductionListToggle } from '@/components/lists/production-list-toggle';

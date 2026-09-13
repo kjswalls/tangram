@@ -6,7 +6,7 @@
  * itself, the numbers it quotes must be the held-out ones, and Revert must
  * actually put back what was there.
  */
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '../render';
 import { useState } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { default_w } from 'ts-fsrs';

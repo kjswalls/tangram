@@ -8,7 +8,7 @@
  * string, and an Add from it carried no provenance at all — which is commitment
  * 2 of §1 quietly failing.
  */
-import { render } from '@testing-library/react';
+import { render } from '../render';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { ReaderScreen } from '@/components/reader/reader-screen';

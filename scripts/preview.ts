@@ -23,7 +23,11 @@ import { preview } from 'vite';
 import { dirOf, workspaceRoot } from '../apps/app/lib/server/roots';
 
 const appDir = resolve(workspaceRoot(dirOf(import.meta.url)), 'apps/app');
-const port = Number(process.env.PORT ?? 4173);
+// 3000, not Vite's 4173: `scripts/smoke.ts` and `playwright.config.ts` both
+// default to 3000, and so did the `next start` this replaced. A preview server
+// on a different default port than the thing that probes it is a trap that only
+// shows up when someone runs the two commands separately, as CLAUDE.md invites.
+const port = Number(process.env.PORT ?? 3000);
 
 const server = await preview({
   root: appDir,

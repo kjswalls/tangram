@@ -6,7 +6,7 @@
  * the rule these pin is: under the floor, no marks are rendered at all — a
  * sentence saying how far off the number is, instead.
  */
-import { render, screen } from '@testing-library/react';
+import { render, screen } from '../render';
 import { describe, expect, it } from 'vitest';
 
 import { CalibrationChart } from '@/components/stats/calibration-chart';

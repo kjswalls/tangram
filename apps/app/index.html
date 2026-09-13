@@ -33,6 +33,13 @@
     <link rel="apple-touch-icon" href="/apple-icon.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
 
+    <!--
+      Next's `appleWebApp: { capable: true }` emitted the standards-track
+      `mobile-web-app-capable`, not only the Apple-prefixed one. Both are here:
+      the prefixed form is what older iOS reads, the unprefixed one is what
+      Chrome wants and what Chrome warns about the absence of.
+    -->
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Tangram" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />

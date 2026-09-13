@@ -8,7 +8,7 @@
  * purpose. That is the case the feature's one rule is about: a suggestion that
  * lands while the card is sitting there graded by nobody must not grade it.
  */
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '../render';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ReviewSession } from '@/components/review/review-session';

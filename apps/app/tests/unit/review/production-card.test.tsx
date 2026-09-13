@@ -7,7 +7,7 @@
  * sentence the word was met in says the word by definition. Each of those is a
  * separate way to give the game away and each is checked here.
  */
-import { render, screen } from '@testing-library/react';
+import { render, screen } from '../render';
 import { describe, expect, it } from 'vitest';
 
 import { ProductionCard } from '@/components/review/production-card';

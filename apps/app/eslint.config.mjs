@@ -46,7 +46,33 @@ const config = [
     },
   },
   {
-    files: ['**/*.tsx'],
+    // Every component carrying a <Link> needs a React Router context to render
+    // at all, and the failure is asynchronous: the test still reports a pass
+    // while vitest records an unhandled error and exits non-zero. That is a
+    // green-looking red gate, so it is a lint error rather than a convention.
+    files: ['tests/unit/**/*.{ts,tsx}'],
+    ignores: ['tests/unit/render.tsx'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: '@testing-library/react',
+              message:
+                "Import from 'tests/unit/render' instead — it wraps render in a MemoryRouter. " +
+                'Without it any component containing a <Link> throws asynchronously and ' +
+                '`pnpm test` exits 1 while still printing every test as passed.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // `.ts` as well as `.tsx`: a custom hook in a plain .ts module is exactly
+    // where rules-of-hooks earns its keep, and eslint-config-next covered both.
+    files: ['**/*.{ts,tsx}'],
     plugins: { 'react-hooks': reactHooks },
     rules: {
       'react-hooks/rules-of-hooks': 'error',

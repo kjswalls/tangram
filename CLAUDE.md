@@ -49,22 +49,32 @@ pnpm smoke        # hit every route of a built, running server; fails on any non
 **authoritative** mechanism and the root `data` / `data:ensure` / `build` scripts set it to the
 absolute workspace-root path; both files' defaults resolve the workspace root by walking up for
 `pnpm-workspace.yaml`, which is the safety net for everything those scripts do not wrap — `pnpm -F
-app dev`, `next start`, vitest, the Playwright web server, all of which run with cwd `apps/app/`.
+app dev`, `pnpm preview`, vitest, the Playwright web server, all of which run with cwd `apps/app/`.
 Neither is cwd-relative, deliberately: a cwd-relative default reads `apps/app/data`, the writer's
 matching default writes there, and **the two agree with each other in the wrong place while every
 test still passes.** If you touch either file, check the invariant by running it, not by reading it
 — and note that a bundler or a deployment that does not carry `pnpm-workspace.yaml` alongside
-`data/` breaks the marker walk, which is why `next.config.ts` traces both.
+`data/` breaks the marker walk, which is why `apps/app/tracing.config.ts` traces both.
 
 Node **>= 22.22** (React Router 8's floor); pnpm 10. Playwright uses the container's Chromium via
 `executablePath: /opt/pw-browsers/chromium` — **never run `playwright install`**. `pnpm e2e` occupies
 `$PORT` (default 3000).
 
-> **Migration state.** The web plan's phases land in order and the commands change with them. Until
-> `web.md` **W0** lands there is no workspace: everything is at the repo root. Until **W1** lands the
-> app is still Next 16 — `pnpm dev` is `next dev`, `pnpm build` is `next build`, there is no
-> `pnpm preview` and no `pnpm typecheck`, and `next build` is the repo's only typechecker. Check
-> `package.json` rather than assuming; the table above is where it is going.
+> **Migration state, as of `web.md` W1.** W0 (the workspace) and W1 (the Vite swap) have landed:
+> the table above is what the repo actually does, Next is uninstalled, and `pnpm typecheck` is in
+> the phase gate. Three things the following phases still owe, so that a builder does not read a
+> green gate as a finished one:
+>
+> - **The access gate does not exist** until **W4**. `middleware.ts` is deleted and nothing can set
+>   the cookie the three model-backed routes read, so with `TANGRAM_ACCESS_SECRET` set they refuse
+>   everyone. Do not deploy with it set before W4 lands.
+> - **The service worker's cache name is `dev` on every build** until **W3** restamps it from a hash
+>   of Vite's output, so `activate` purges nothing between builds.
+> - **`pnpm smoke`'s page cases prove nothing** until **W2**. The SPA fallback answers every
+>   non-file path with 200 `index.html`, so a status-only check passes against a broken build.
+>
+> `HANDOFF.md` has the full list with what each phase owes. Check `package.json` rather than
+> assuming.
 
 ## Shared surfaces: frozen by a commit, not by a list
 

@@ -1,4 +1,12 @@
 /**
+ * **HALF OF WHAT THIS HEADER DESCRIBES DOES NOT RUN BETWEEN web.md W1 AND W4.**
+ * `middleware.ts` performed the `?key=` → cookie exchange, Next invoked it, and
+ * both are gone. Every function in this file still works and the routes still
+ * call `requireAccess`, so with `TANGRAM_ACCESS_SECRET` set the three paid
+ * routes refuse — but **nothing can issue the cookie**, so they refuse
+ * everyone, and a phone cannot be authorised at all. W4 rebuilds the exchange
+ * as a header check against this same module. Rule 2 below is the part that is
+ * currently aspirational.
  * The shared-secret access gate for the routes that spend money.
  *
  * Tangram is a single-user app on a public URL. `/api/ask`, `/api/examples` and
@@ -15,9 +23,9 @@
  *  2. **A cookie, not a header.** The owner tests on a phone, and a phone
  *     browser cannot set a request header. One visit to
  *     `https://<app>/?key=<secret>` leaves an `HttpOnly` cookie behind and the
- *     phone is authorised for a year; `middleware.ts` does that exchange and
- *     strips the key back out of the URL so it does not sit in history or leak
- *     through a `Referer`.
+ *     phone is authorised for a year; `middleware.ts` did that exchange and
+ *     stripped the key back out of the URL so it did not sit in history or leak
+ *     through a `Referer`. **W4 owns rebuilding it; see the note at the top.**
  *  3. **The comparison never short-circuits and the secret never travels.** A
  *     wrong key gets a flat `401 {"error":"unauthorized"}` — no stack trace, no
  *     hint, no echo of what was sent, and nothing is written to the log. The
@@ -31,11 +39,13 @@
  * stops being valid at the same instant, because there is no stored session to
  * fall out of sync with.
  *
- * Nothing here imports from `next/*`, so `middleware.ts` (Edge runtime), the
- * route handlers (Node runtime) and the unit tests all run the same code.
+ * Nothing here imports from `next/*` — deliberately, and it is why this half
+ * survived W1 untouched when the other half could not: `middleware.ts` imported
+ * `NextRequest`/`NextResponse` and could not compile once the package was gone.
+ * The route handlers, W4's replacement and the unit tests all run this code.
  */
 
-/** The cookie `middleware.ts` sets and the routes read. */
+/** The cookie the routes read. W4 is what will set it again; see the top. */
 export const ACCESS_COOKIE = 'tangram_access';
 
 /** The query parameter that trades a key for the cookie: `/?key=<secret>`. */

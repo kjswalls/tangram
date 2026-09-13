@@ -10,7 +10,7 @@
  * placement alone would get wrong: typing into the recall box must not flip the
  * card it is about.
  */
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '../render';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ReviewCard } from '@/components/review/review-card';

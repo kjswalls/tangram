@@ -65,6 +65,11 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
-    sourcemap: true,
+    // Off, as Next's was: `productionBrowserSourceMaps` defaults to false and
+    // the deleted next.config.ts did not set it. `dist/` is uploaded verbatim to
+    // the static host (W2), so `true` would publish 2.8 MB of full application
+    // source alongside a 654 KB bundle. A phase whose job is to change the build
+    // system should not also change what the build publishes.
+    sourcemap: false,
   },
 });

@@ -6,23 +6,33 @@
  * mounted-once components and the `<main>` wrapper, plus the `<Outlet />` that
  * used to be `children`.
  */
-import { Outlet } from 'react-router';
+import type { ReactNode } from 'react';
+
+import { Outlet, ScrollRestoration } from 'react-router';
 
 import { RegisterServiceWorker } from '@/components/pwa/register-sw';
 import { DataBanner } from '@/components/shell/data-banner';
 import { SiteHeader } from '@/components/shell/site-header';
 import { TestHooks } from '@/components/shell/test-hooks';
 
-export function Root() {
+/**
+ * `children` is for the router's `errorElement`, which renders outside the
+ * `<Outlet />` and would otherwise lose the header and the nav.
+ *
+ * `<ScrollRestoration />` is not decoration: `history.scrollRestoration` is
+ * `auto` by default and cannot work in an SPA, because the browser restores the
+ * offset at popstate — before React has re-rendered the page it belongs to. Next
+ * handled this; a data-mode router does it only if asked.
+ */
+export function Root({ children }: { children?: ReactNode }) {
   return (
     <>
       <SiteHeader />
       <DataBanner />
       <TestHooks />
       <RegisterServiceWorker />
-      <main className="mx-auto w-full max-w-3xl px-4 py-6 sm:py-8">
-        <Outlet />
-      </main>
+      <main className="mx-auto w-full max-w-3xl px-4 py-6 sm:py-8">{children ?? <Outlet />}</main>
+      <ScrollRestoration />
     </>
   );
 }

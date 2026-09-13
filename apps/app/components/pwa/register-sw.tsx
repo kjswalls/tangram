@@ -60,31 +60,61 @@ export interface RegisterEnvironment {
   isProduction: boolean;
   /** `window.location.protocol`, e.g. `https:`, `http:`, `capacitor:`. */
   protocol: string;
+  /** `window.location.hostname`. */
+  hostname: string;
   /** `window.isSecureContext` — true for https and for `http://localhost`. */
   isSecureContext: boolean;
-  /** Is a Capacitor bridge present? True inside the iOS and Android WebViews. */
-  hasNativeBridge: boolean;
+  /**
+   * Is this actually running on a device, per the Capacitor bridge?
+   *
+   * Not "does a `Capacitor` global exist". `@capacitor/core` assigns that global
+   * the moment it is *imported*, and there is one build for all three platforms
+   * — so as soon as `ios.md` I0 adds the dependency and anything imports it, the
+   * global exists in the web bundle too and a bare presence test would switch
+   * the web PWA's worker off. `isNativePlatform()` is the question that means
+   * what it says, and the presence test is only the fallback for a bridge too
+   * old to answer it.
+   */
+  isNativePlatform: boolean;
 }
 
 /** Custom schemes a native shell serves from. Never a web origin. */
 const NATIVE_SCHEMES = new Set(['capacitor:', 'tauri:', 'file:', 'ionic:']);
 
+/**
+ * Hosts a native shell serves from over plain http, where the scheme cannot
+ * tell you anything. Tauri 2 uses `tauri://localhost` on macOS, Linux and iOS
+ * but `http://tauri.localhost` on Windows and Android — which is a secure
+ * context (the URL spec treats any host ending in `.localhost` as potentially
+ * trustworthy) and injects no Capacitor global, so neither of the other two
+ * tests catches it.
+ */
+const NATIVE_HOSTS = new Set(['tauri.localhost']);
+
 /** Exported for the unit test: the branch has no other observable output. */
 export function shouldRegister(env: RegisterEnvironment): boolean {
   if (!env.isProduction) return false;
-  if (env.hasNativeBridge) return false;
+  if (env.isNativePlatform) return false;
   if (NATIVE_SCHEMES.has(env.protocol)) return false;
+  if (NATIVE_HOSTS.has(env.hostname)) return false;
   // Not `protocol === 'https:'`: `http://localhost` is a secure context and is
   // what `pnpm preview` and the whole e2e suite serve. See the header.
   return env.isSecureContext;
 }
 
+interface CapacitorBridge {
+  isNativePlatform?: () => boolean;
+}
+
 function readEnvironment(): RegisterEnvironment {
+  const bridge = (window as Window & { Capacitor?: CapacitorBridge }).Capacitor;
   return {
     isProduction: import.meta.env.PROD,
     protocol: window.location.protocol,
+    hostname: window.location.hostname,
     isSecureContext: window.isSecureContext,
-    hasNativeBridge: 'Capacitor' in window,
+    isNativePlatform:
+      typeof bridge?.isNativePlatform === 'function' ? bridge.isNativePlatform() : bridge !== undefined,
   };
 }
 

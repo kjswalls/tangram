@@ -69,12 +69,30 @@ function readBody(req: IncomingMessage): Promise<Buffer> {
 
 async function writeResponse(res: ServerResponse, response: Response, dropBody: boolean) {
   res.statusCode = response.status;
-  response.headers.forEach((value, key) => res.setHeader(key, value));
-  if (dropBody || response.body === null) {
+  // `getSetCookie()` rather than the forEach: Headers collapses repeated
+  // Set-Cookie into one comma-joined value, which is not a valid cookie header.
+  response.headers.forEach((value, key) => {
+    if (key.toLowerCase() !== 'set-cookie') res.setHeader(key, value);
+  });
+  const cookies = response.headers.getSetCookie();
+  if (cookies.length > 0) res.setHeader('set-cookie', cookies);
+
+  if (response.body === null) {
     res.end();
     return;
   }
-  res.end(Buffer.from(await response.arrayBuffer()));
+  // Read the body even for HEAD: it is the only way to know the length, and
+  // RFC 9110 §9.3.2 requires a HEAD response to carry the headers the
+  // equivalent GET would — a client that sizes a download from it gets
+  // nothing otherwise. `data-banner.tsx` reads only the status, but the
+  // contract is the contract.
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (!res.hasHeader('content-length')) res.setHeader('content-length', buffer.byteLength);
+  if (dropBody) {
+    res.end();
+    return;
+  }
+  res.end(buffer);
 }
 
 /**
@@ -85,24 +103,53 @@ function routeTable(): Map<string, ApiRoute> {
   return new Map(discoverApiRoutes(APP_ROOT).map((route) => [route.path, route]));
 }
 
+/** The verbs a route answers, including the HEAD this adapter synthesises. */
+function allow(route: ApiRoute): string {
+  const verbs = new Set<string>(route.methods);
+  if (verbs.has('GET')) verbs.add('HEAD');
+  verbs.add('OPTIONS');
+  return [...verbs].join(', ');
+}
+
 function middleware(routes: Map<string, ApiRoute>, load: LoadModule): Connect.NextHandleFunction {
   return (req, res, next) => {
+    // EVERYTHING inside the try. Node's HTTP parser accepts request targets the
+    // WHATWG URL parser rejects, so even the `new URL(...)` below can throw —
+    // and an async IIFE that throws is an unhandled rejection, which takes the
+    // whole dev or preview server down on a single malformed request.
     void (async () => {
-      const host = req.headers.host ?? 'localhost';
-      const { pathname } = new URL(req.url ?? '/', `http://${host}`);
-      const route = routes.get(pathname);
-      if (!route) return next();
-
-      const method = (req.method ?? 'GET').toUpperCase() as HttpMethod;
-      // HEAD is answered by GET with the body dropped — see the header above.
-      const verb: HttpMethod = method === 'HEAD' ? 'GET' : method;
-
+      let pathname = req.url ?? '/';
       try {
+        const host = req.headers.host ?? 'localhost';
+        pathname = new URL(req.url ?? '/', `http://${host}`).pathname;
+
+        // `/api/**` belongs to this adapter and to nothing else. A miss must be
+        // a 404 here rather than falling through to the SPA fallback, which
+        // would answer a typo'd or retired API path with 200 text/html — the
+        // shape `lib/dict/client.ts` then fails to parse, reporting a JSON
+        // error for what is really a missing route. Only non-API paths go on
+        // to the rest of the Vite stack.
+        const route = routes.get(pathname) ?? routes.get(pathname.replace(/\/$/, ''));
+        if (!route) {
+          if (!pathname.startsWith('/api/')) return next();
+          res.statusCode = 404;
+          res.setHeader('content-type', 'application/json; charset=utf-8');
+          res.end(JSON.stringify({ error: 'no-such-route', path: pathname }));
+          return;
+        }
+
+        const method = (req.method ?? 'GET').toUpperCase() as HttpMethod;
+        // HEAD is answered by GET with the body dropped — see the header above.
+        const verb: HttpMethod = method === 'HEAD' ? 'GET' : method;
+
         const module = await load(route.file);
         const handler = module[verb];
         if (!handler) {
           res.statusCode = 405;
-          res.setHeader('Allow', route.methods.join(', '));
+          // `route.methods` is what the file literally exports, so it never
+          // contains HEAD — which this adapter does serve. Advertising a verb
+          // set that excludes one the server answers is its own small lie.
+          res.setHeader('Allow', allow(route));
           res.end();
           return;
         }
@@ -112,10 +159,14 @@ function middleware(routes: Map<string, ApiRoute>, load: LoadModule): Connect.Ne
         await writeResponse(res, response, method === 'HEAD');
       } catch (cause) {
         // A throwing handler is a bug in the handler, not a 404. Surface it.
-        console.error(`api adapter: ${method} ${pathname} threw`, cause);
+        console.error(`api adapter: ${req.method} ${pathname} threw`, cause);
+        if (res.headersSent) {
+          res.end();
+          return;
+        }
         res.statusCode = 500;
         res.setHeader('content-type', 'application/json; charset=utf-8');
-        res.end(JSON.stringify({ error: 'api-adapter-threw', route: route.path }));
+        res.end(JSON.stringify({ error: 'api-adapter-threw', path: pathname }));
       }
     })();
   };

@@ -14,7 +14,7 @@
  * because the branch has no other observable output; `ios.md` I1 asserts the
  * same thing on a real device.
  */
-import { render } from '@testing-library/react';
+import { render } from '../render';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { RegisterServiceWorker, shouldRegister } from '@/components/pwa/register-sw';
@@ -66,8 +66,9 @@ describe('the native gate', () => {
   const web = {
     isProduction: true,
     protocol: 'https:',
+    hostname: 'app.example.com',
     isSecureContext: true,
-    hasNativeBridge: false,
+    isNativePlatform: false,
   };
 
   it('registers on a production https origin — the deployed web build', () => {
@@ -78,11 +79,15 @@ describe('the native gate', () => {
     // This is `pnpm preview` and therefore the whole e2e suite. W1 specifies
     // the test as `protocol === 'https:'`, which would hang every spec that
     // waits on navigator.serviceWorker.ready. See the component's header.
-    expect(shouldRegister({ ...web, protocol: 'http:', isSecureContext: true })).toBe(true);
+    expect(
+      shouldRegister({ ...web, protocol: 'http:', hostname: 'localhost', isSecureContext: true }),
+    ).toBe(true);
   });
 
   it('refuses a plain http origin that is NOT a secure context', () => {
-    expect(shouldRegister({ ...web, protocol: 'http:', isSecureContext: false })).toBe(false);
+    expect(
+      shouldRegister({ ...web, protocol: 'http:', hostname: 'example.com', isSecureContext: false }),
+    ).toBe(false);
   });
 
   it("refuses iOS's capacitor:// scheme", () => {
@@ -91,20 +96,43 @@ describe('the native gate', () => {
 
   it('refuses an Android WebView, whose origin is indistinguishable from preview', () => {
     // http://localhost, secure context, everything the web build looks like.
-    // Only the injected Capacitor bridge tells them apart, which is why the
-    // predicate tests for it rather than for the URL.
+    // Only the bridge tells them apart, which is why the predicate asks it
+    // rather than looking at the URL.
     expect(
       shouldRegister({
         isProduction: true,
         protocol: 'http:',
+        hostname: 'localhost',
         isSecureContext: true,
-        hasNativeBridge: true,
+        isNativePlatform: true,
       }),
     ).toBe(false);
   });
 
-  it('refuses a Tauri shell and a file:// origin', () => {
+  it('still registers on the web once @capacitor/core is a dependency', () => {
+    // One build for three platforms: importing @capacitor/core assigns the
+    // global in the WEB bundle too, so a bare "is there a Capacitor object"
+    // test would switch the PWA's worker off the day ios.md I0 lands.
+    // isNativePlatform() is false there, and that is the question asked.
+    expect(shouldRegister({ ...web, isNativePlatform: false })).toBe(true);
+  });
+
+  it('refuses a Tauri shell on every platform it uses', () => {
+    // tauri://localhost on macOS, Linux and iOS...
     expect(shouldRegister({ ...web, protocol: 'tauri:' })).toBe(false);
+    // ...and http://tauri.localhost on Windows and Android, which is a secure
+    // context and carries no bridge, so only the hostname catches it.
+    expect(
+      shouldRegister({
+        ...web,
+        protocol: 'http:',
+        hostname: 'tauri.localhost',
+        isSecureContext: true,
+      }),
+    ).toBe(false);
+  });
+
+  it('refuses a file:// origin', () => {
     expect(shouldRegister({ ...web, protocol: 'file:', isSecureContext: false })).toBe(false);
   });
 
@@ -132,7 +160,10 @@ describe('the native gate', () => {
     vi.stubEnv('PROD', true);
     const secure = Object.getOwnPropertyDescriptor(window, 'isSecureContext');
     Object.defineProperty(window, 'isSecureContext', { configurable: true, value: true });
-    Object.defineProperty(window, 'Capacitor', { configurable: true, value: {} });
+    Object.defineProperty(window, 'Capacitor', {
+      configurable: true,
+      value: { isNativePlatform: () => true },
+    });
     try {
       render(<RegisterServiceWorker />);
       await new Promise((done) => setTimeout(done, 20));

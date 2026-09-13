@@ -1,5 +1,19 @@
 # Deploying Tangram to Vercel
 
+> **⚠️ OUT OF DATE AS OF `web.md` W0 AND W1, AND KNOWN TO BE.** This document describes a
+> single-package Next.js repository. Since then the app has moved to `apps/app/` in a pnpm
+> workspace and the build is Vite, not Next. At least these are now wrong: the Vercel *Root
+> directory* and framework preset, the build command, the Node floor (`engines` is `>=22.22`),
+> `TANGRAM_DATA_DIR`'s default (it is the workspace root, found by marker, not `<cwd>/data`), and
+> **the whole `?key=` authorisation flow in §4, which `middleware.ts` performed and which does not
+> exist between W1 and W4** — following it now parks the secret in the URL and authorises nothing.
+>
+> It is deliberately not rewritten yet: `web.md` **W2** writes `apps/app/vercel.json` and owns the
+> host rules, and **W4** rebuilds the access gate, so one correct version now would be wrong twice
+> more before v1. **W2 owns rewriting this file.** Until then, read `HANDOFF.md` for the current
+> layout and `docs/plans/web.md` for where it is going.
+
+
 One page, in the order you will need it. Everything here was measured on the
 build container (4 shared vCPU, Node 22) unless it says otherwise; the two
 things that could only be checked against a real deployment are called out as

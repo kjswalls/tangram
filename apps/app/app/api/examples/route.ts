@@ -375,9 +375,13 @@ function info(provider: ProviderName): ExamplesRouteInfo {
 /**
  * The access gate (lib/server/access.ts). A no-op unless
  * `TANGRAM_ACCESS_SECRET` is set in the environment; when it is, this route
- * costs money and answers nothing without the cookie. `middleware.ts` refuses
- * the same request one layer earlier — the handler checks again because a
- * matcher is easy to break and an invoice is expensive.
+ * costs money and answers nothing without the cookie. Until web.md W1 this was
+ * the SECOND of two layers — `middleware.ts` refused the same request one
+ * earlier — and it is now the only one, because there is no middleware in a
+ * Vite SPA. **Nothing can set the cookie between W1 and W4**, so with the
+ * secret set this route refuses everything; W4 rebuilds the exchange as a
+ * header check. The check staying here is what makes that a re-plumbing rather
+ * than a hole.
  */
 export function GET(request: Request): Response {
   const denied = requireAccess(request);

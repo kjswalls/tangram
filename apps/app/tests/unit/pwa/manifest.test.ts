@@ -29,6 +29,16 @@ const sw = readFileSync(resolve(workspaceRoot(import.meta.dirname), 'scripts/sw.
 // The entry document carries what Next's `metadata`/`viewport` exports emitted.
 const html = readFileSync(resolve(root, 'index.html'), 'utf8');
 
+/**
+ * Where the build puts its hashed output. Vite's default is `assets/` under
+ * `build.outDir`; `build.assetsDir` overrides it. Read from the config rather
+ * than written down twice, because the service worker's cache-first rule keys
+ * on this exact prefix and the two silently diverging is what W1 shipped.
+ */
+const viteConfig = readFileSync(resolve(root, 'vite.config.ts'), 'utf8');
+const assetsDir = /assetsDir:\s*'([^']+)'/.exec(viteConfig)?.[1] ?? 'assets';
+const ASSET_DIR = `/${assetsDir}/`;
+
 describe('manifest.webmanifest', () => {
   it('carries the fields an install prompt requires', () => {
     expect(manifest.name).toBe('Tangram');
@@ -113,13 +123,19 @@ describe('sw.js', () => {
     // second, dumber cache in front of a grounded, profile-dependent answer.
     expect(sw).toMatch(/if \(url\.pathname\.startsWith\('\/api\/'\)\) return;/);
     const apiIndex = sw.indexOf("startsWith('/api/')");
-    const staticIndex = sw.indexOf("startsWith('/_next/static/')");
+    const staticIndex = sw.indexOf(`startsWith('${ASSET_DIR}')`);
     expect(apiIndex).toBeGreaterThan(-1);
     expect(staticIndex).toBeGreaterThan(apiIndex);
   });
 
   it('caches the hashed static chunks and precaches every nav route', () => {
     expect(sw).toContain('cacheFirst(event)');
+    // Not a literal: the rule has to name the directory THIS BUILD emits. It
+    // said '/_next/static/' through the whole of W1 and matched nothing, so the
+    // worker cached no script or stylesheet at all and an offline navigation
+    // rendered a blank page. Every gate stayed green. Read the prefix off the
+    // build config so the two cannot drift again.
+    expect(sw).toContain(`url.pathname.startsWith('${ASSET_DIR}')`);
     // Read off the nav rather than listed here: `/stats` arrived in Phase 8 and
     // a hand-copied list is how a nav destination quietly stops being offline.
     for (const item of NAV_ITEMS) {

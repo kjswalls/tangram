@@ -35,7 +35,7 @@ import {
   type GroupCandidate,
   type MatchSource,
 } from './rank';
-import { decodeRowids } from './artifact';
+import { SCHEMA_VERSION, decodeRowids } from './artifact';
 import { normalizePinyin } from './pinyin';
 import {
   MAX_HANZI_PREFIX_IDS,
@@ -168,6 +168,13 @@ export function detectScriptFrom(chars: CharTable, text: string): SegmentScript 
  * input; both are needed, because debouncing does not help the second tab, the
  * back button, or a component that mounts twice.
  */
+/** Freeze a result before it enters the cache. Arrays and plain objects only. */
+function freezeShallow<T>(value: T): T {
+  if (Array.isArray(value)) return Object.freeze(value) as T;
+  if (value && typeof value === 'object') return Object.freeze(value) as T;
+  return value;
+}
+
 class ResultCache {
   readonly #limit: number;
   readonly #done = new Map<string, unknown>();
@@ -195,7 +202,14 @@ class ResultCache {
 
     const promise = run()
       .then((value) => {
-        this.#done.set(key, value);
+        // Frozen before it is stored, because a cache hands out the *same*
+        // object to every later caller: one consumer calling `.sort()` on a
+        // returned entry list, or emptying it, would poison every subsequent
+        // answer for the life of the session. Shallow — the entries themselves
+        // are still mutable, and a consumer that reaches into one deserves what
+        // it gets — but it stops the whole class of accidents that look like a
+        // dictionary bug.
+        this.#done.set(key, freezeShallow(value));
         while (this.#done.size > this.#limit) {
           const oldest = this.#done.keys().next().value;
           if (oldest === undefined) break;
@@ -265,26 +279,56 @@ export class SqliteDictStore implements DictStore {
     if (this.#opened) return;
     if (this.#opening) return this.#opening;
     this.#setStatus({ state: 'preparing' });
-    this.#opening = (async () => {
-      try {
-        const runner = await this.#options.connect();
-        const results = await runner.query(OPEN_BATCH);
-        const opened = readOpenBatch(results as SqlRow[][]);
-        this.#runner = runner;
-        this.#opened = opened;
-        this.#setStatus({ state: 'ready', version: opened.meta.dictVersion });
-      } catch (error) {
-        this.#setStatus({
-          state: 'failed',
-          reason: 'corrupt',
-          message: error instanceof Error ? error.message : String(error),
-        });
-        throw error;
-      } finally {
-        this.#opening = undefined;
+    // The `.finally` is attached OUTSIDE the async body on purpose. An async
+    // function runs synchronously up to its first suspension, so a `connect()`
+    // that throws before ever awaiting would reach an inner `finally` *before*
+    // the assignment below — latching a rejected promise into `#opening`
+    // forever, and wedging every later `open()` on a store that could have
+    // recovered. A `.finally` callback is always a microtask, so by the time it
+    // runs the assignment has happened.
+    // The tracked promise is the CHAINED one, not the raw attempt: clearing the
+    // slot by comparing against the attempt would never match, and a failed
+    // open would latch its rejection into `#opening` — the same wedge in a new
+    // place, and one a test caught.
+    const tracked: Promise<void> = this.#attemptOpen().finally(() => {
+      if (this.#opening === tracked) this.#opening = undefined;
+    });
+    this.#opening = tracked;
+    return tracked;
+  }
+
+  async #attemptOpen(): Promise<void> {
+    let runner: SqlRunner | undefined;
+    try {
+      runner = await this.#options.connect();
+      const results = await runner.query(OPEN_BATCH);
+      const opened = readOpenBatch(results as SqlRow[][]);
+      // The artifact says which schema it is, and a store that reads a file
+      // built by a different `SCHEMA_VERSION` answers confidently and wrongly.
+      // D4 distinguishes the four failure reasons properly — it is the phase
+      // that fetches bytes and can tell a truncated download from someone
+      // else's database — but the check belongs here, where every runner gets
+      // it for free.
+      if (opened.meta.schemaVersion !== SCHEMA_VERSION) {
+        throw new Error(
+          `the dictionary is schema ${opened.meta.schemaVersion}, this build reads ${SCHEMA_VERSION}`,
+        );
       }
-    })();
-    return this.#opening;
+      this.#runner = runner;
+      this.#opened = opened;
+      this.#setStatus({ state: 'ready', version: opened.meta.dictVersion });
+    } catch (error) {
+      // Close what was opened. On OPFS the pool holds an exclusive lock per
+      // origin and on Capacitor the plugin holds a native handle, so a leaked
+      // connection is not garbage — it is a retry that can never succeed.
+      if (runner) await runner.close().catch(() => {});
+      this.#setStatus({
+        state: 'failed',
+        reason: 'corrupt',
+        message: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
   }
 
   /** Everything `open()` read, for the callers that need the constants. */
@@ -293,6 +337,11 @@ export class SqliteDictStore implements DictStore {
   }
 
   async close(): Promise<void> {
+    // A `close()` racing a pending `open()` used to read `#runner` before the
+    // continuation had assigned it: the connection leaked and the store flipped
+    // back to `ready` a moment after being closed. Waiting for the attempt to
+    // settle — its failure is not this call's problem — makes close mean closed.
+    if (this.#opening) await this.#opening.catch(() => {});
     this.#cache.clear();
     const runner = this.#runner;
     this.#runner = undefined;
@@ -404,6 +453,10 @@ export class SqliteDictStore implements DictStore {
   async search(query: string, options: SearchOptions = {}): Promise<SearchResult> {
     const { opened } = this.#ready();
     const { signal } = options;
+    // Before the cache, not after: a cached answer to a superseded keystroke is
+    // still an answer the caller asked to stop caring about, and a call that
+    // rejects when cold and resolves when warm is the worst kind of flake.
+    signal?.throwIfAborted();
     const trimmed = query.trim();
     const key = `search:${trimmed}:${options.limit ?? ''}:${options.cursor ?? ''}`;
     return this.#cache.take(key, async () => {

@@ -3868,3 +3868,126 @@ prefix match.
   contains the character and compares the whole list in rowid order.
 - All seven HSK bands are compared **in full**, not sampled — the 51 rankless entries are the only
   rows where the two orderings can disagree and six of them are in band 1.
+
+### What D2's adversarial review changed
+
+Five lenses (plan compliance; what breaks that no test covers; is the answer actually the same;
+the `rank.ts` extraction; will it survive the other runners), then two refuters per finding — one on
+correctness, one on consequence, refuting by default. **20 findings, 12 verified, and the
+correctness verifier confirmed eleven of the twelve factually.** One survived both refuters. The
+consequence verifiers refuted most of the rest on "no production consumer exists yet", which is true
+and is not a reason to leave them: `core.md` is the consumer and it has not been written.
+
+**The one that survived: the pinyin differential test asserted nothing a broken store could fail.**
+It compared the intersection of the two key lists with itself. Both verifiers reproduced it by
+mutation — with `pinyinPrefix` changed to `LIMIT 1` the store dropped 打算盘 from `dasuan`, three of
+four groups from `dasu` and half of `nu:3`, and **all 1,039 tests still passed**. That is the worst
+kind of defect this repo has a name for, and it was in the phase's headline guarantee.
+
+It is fixed by asserting what can actually be asserted, which took working out, because the obvious
+assertion is both too strong and too weak. Too strong: the JSON side runs an English section
+alongside the pinyin one and `dedupe` awards a headword to whichever ranked it higher, so the JSON's
+pinyin section is a **subset** of the store's, which has no English competitor until D3. Too weak:
+comparing only the shared keys. So the test now asserts containment, the relative order of the
+shared keys, per-group entry-id set equality, and full field-for-field equality for every group the
+JSON matched at a single reading — plus a second, independent oracle described below.
+
+**The cap gate was wrong in the direction that hides bugs.** Both differential blocks decided
+"capped or not" by comparing `SearchResult.total` against 400 or 600. `total` is a **deduped group
+count summed over every section**; the caps count **ids per script**. Measured, they disagree in
+both directions — `无` is capped at 400 ids with a total of 397, `lu:4` is uncapped at 442 ids with
+a total of 483 — so the strict "must agree exactly" rule was running on truncated queries and the
+loose rule on exact ones. The predicate now asks the JSON implementation with its own `prefixIds`,
+which is the function that does the truncating.
+
+**"Every group is a prefix match" is not a test.** The capped branch asserted only that. It is
+equally true of a store that kept the four hundred *least* frequent matches — verified: mutating the
+prefix query to `ORDER BY rowid DESC` passed every assertion in the file. The capped branch now
+compares the store's group set against an oracle built from the JSON index alone: the exact matches
+plus the N lowest-rowid prefix matches per script, `index.entries` being a Map in `compareEntries`
+order and therefore a walk in rowid order. That is a complete specification of the store's candidate
+set, capped or not.
+
+**And a shared-code blind spot, which is the cost of the `rank.ts` extraction.** Anything `rank.ts`
+gets wrong it gets wrong on *both* sides, so no differential test can see it: forcing `materialise`
+to stamp `hskBand: 1` on every group passed all 116 store tests. It is caught today only because
+`search.test.ts` still checks a literal band — and D6 re-points that file at the store. So
+`store.test.ts` now carries one deliberately **non**-differential assertion, checking each group's
+band against `data/dict.json` directly.
+
+The tests were then re-run against seven separate mutations, each restored afterwards. Before these
+changes 0 of 7 failed; after them 7 of 7 do: pinyin prefix `LIMIT 1`, hanzi prefix `DESC`, pinyin
+prefix `DESC`, `upperBound` appending `U+FFFF`, `hskBand` ordering by rowid, `entries()` ignoring
+the requested order, `readingCount` counting rows, and `materialise` forcing a band.
+
+### The capped-query record (criterion 4)
+
+D2 requires "the diff and one line of justification per query" for every capped query. The test
+computes it rather than transcribing it, and writes it to stdout on every run:
+
+```
+capped hanzi queries (cap 400 ids per script):
+  中: store 385 groups, json 422; 97 only in the store (more frequent), 134 only in the JSON (earlier by key)
+  无: store 398 groups, json 397; 13 only in the store, 12 only in the JSON
+  高: store 392 groups, json 398;  1 only in the store,  7 only in the JSON
+  一: store 400 groups, json 429; 138 only in the store, 167 only in the JSON
+
+capped pinyin queries (cap 600 ids):
+  xian: store 634, json 587; 334 only in the store, 287 only in the JSON
+  da:   store 581, json 575; 450 only in the store, 444 only in the JSON
+  yi:   store 717, json 572; 463 only in the store, 318 only in the JSON
+  shi:  store 622, json 569; 374 only in the store, 321 only in the JSON
+  zhi:  store 647, json 587; 303 only in the store, 243 only in the JSON
+  shu:  store 605, json 582; 402 only in the store, 379 only in the JSON
+```
+
+**The justification is the same line for all ten and it is D2's one budgeted behavioural change:**
+the JSON walk emits whole key buckets in lexicographic key order until 400 (or 600) *ids* have
+accumulated, and `ORDER BY rowid LIMIT n` takes the n most frequent across all matching keys. Each
+side's exclusives are checked to be genuine matches — a prefix match on a real headword for hanzi, a
+reading whose key starts with the query's key for pinyin — so nothing else is hiding inside the
+diff. The pinyin numbers are larger than the hanzi ones because the pinyin section's JSON side also
+loses groups to the English section's `dedupe`, which the store has no equivalent of until D3.
+
+**A second face of the same change, which D2 does not mention.** A headword's readings sit under
+*different* pinyin keys when one of them is neutral-tone — 女人 is `nu:3 ren2` (`nu3ren2`) and
+`nu:3 ren5` (`nu3ren`) — so key order and rowid order disagree *inside* a group, on queries nowhere
+near the cap. Four queries in the suite's list show it, one group each: `nu:3`, `hé`, `men2`,
+`guai1`. The entry **sets** are always identical; only the order differs. It is pinned by name in
+its own test rather than tolerated in an aggregate, so if that count grows something else has
+changed. D2's "must agree exactly, entries included" is therefore true of the hanzi section and not
+quite true of the pinyin one, and this is why.
+
+### Six store defects the review found, all fixed
+
+None could bite today — `sqlite-store.ts` has no importer outside its own test — and all of them
+would have bitten `core.md`, which is the consumer that has not been written yet.
+
+1. **`open()` latched a rejected promise forever.** An async function runs synchronously to its
+   first suspension, so a `connect()` that threw *before* awaiting reached the inner `finally`
+   before the assignment to the in-flight slot — leaving a rejected promise there and wedging every
+   later `open()` on a store that could have recovered. The first fix was wrong in a second way (it
+   compared the slot against the raw attempt rather than the chained promise, so the slot was never
+   cleared at all) and a test caught that too.
+2. **A failed `open()` leaked its `SqlRunner`.** On OPFS the pool holds an exclusive lock per origin
+   and on Capacitor the plugin holds a native handle, so a leaked connection is not garbage — it is
+   a retry that can never succeed.
+3. **`close()` racing a pending `open()` was a no-op**: it read `#runner` before the continuation
+   assigned it, leaked the connection, and let the store flip back to `ready` a moment after being
+   closed. It now waits for the attempt to settle.
+4. **`open()` read `meta.schema_version` and never checked it.** A file built by a different
+   `SCHEMA_VERSION` opened, answered every query, and reported `ready`. It is now a `failed` open —
+   D4 refines the four failure reasons, but the check belongs where every runner gets it for free.
+5. **The result cache handed out its stored object.** One consumer calling `.sort()` on a returned
+   entry list, or emptying it, would corrupt every later answer for the life of the session, and the
+   symptom would look like a dictionary bug. Results are shallow-frozen before they enter the cache.
+6. **A cached search resolved instead of rejecting when its signal was already aborted**, because
+   the cache was consulted before the signal. A call that rejects when cold and resolves when warm
+   is the worst kind of flake.
+
+Three smaller ones fixed with them: the `node:fs` guard only matched single-quoted static imports
+(it now matches any quote style and dynamic `import()`); the two prefix caps existed in `search.ts`
+*and* in the query modules with nothing tying them together (`search.ts` imports them now); and the
+`xx5` test could not fail, because `xx` does not parse as pinyin so the query never reached the
+pinyin index — it now asserts against the columns, and checks a real `xx5` headword (働) is still
+findable by hanzi with an empty `pinyinMarked`.

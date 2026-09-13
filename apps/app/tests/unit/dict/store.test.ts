@@ -14,15 +14,20 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { getDictIndex, getEntries, hskBand, readingCount } from '@/lib/dict/index';
+import { exactIds, getDictIndex, getEntries, hskBand, prefixIds, readingCount } from '@/lib/dict/index';
+import { hasUnknownReading, normalizePinyin, readingKeys } from '@/lib/dict/pinyin';
+import { MAX_HANZI_PREFIX_IDS } from '@/lib/dict/query/hanzi';
+import { MAX_PINYIN_PREFIX_IDS } from '@/lib/dict/query/pinyin';
 import { HSK_BANDS, type HskBand } from '@/lib/types';
 import { getDict } from '@/lib/dict/load';
 import { nodeRunner } from '@/lib/dict/runners/node';
 import { SqliteDictStore, detectScriptFrom } from '@/lib/dict/sqlite-store';
 import { upperBound } from '@/lib/dict/query/hanzi';
-import { search } from '@/lib/dict/search';
+import { search, type SearchGroup } from '@/lib/dict/search';
 import type { SqlQuery, SqlRunner, SqlValue } from '@/lib/dict/sql';
 import type { DictEntry } from '@/lib/dict/types';
+import { headwordTotals } from '@/lib/dict/segment';
+import { SCHEMA_VERSION } from '@/lib/dict/artifact';
 import { dictArtifactPath, requireDictData } from './data-required';
 
 requireDictData();
@@ -97,11 +102,6 @@ const PINYIN_QUERIES = [
   'shi',
   'ni3hao3',
 ];
-
-/** Both implementations' groups for one section, as `key` lists. */
-function keysOf(sections: { source: string; groups: { key: string }[] }[], source: string): string[] {
-  return sections.filter((part) => part.source === source).flatMap((part) => part.groups.map((g) => g.key));
-}
 
 describe('entries — the store answers what getEntries answers', () => {
   it('returns the same rows, in the order asked for, for a spread of ids', async () => {
@@ -209,25 +209,150 @@ describe('wordsContaining — no counterpart in the JSON index, so a brute-force
   });
 });
 
+/**
+ * Did the JSON side's prefix walk actually stop at the cap?
+ *
+ * The obvious gate — `SearchResult.total` against 400 or 600 — is wrong, and
+ * wrong in the direction that hides bugs: `total` is a **deduped group count
+ * summed over every section**, while the caps count **ids per script**. On the
+ * pinyin route `total` also carries the English section's groups, which the
+ * store has none of until D3. Measured, the two disagree in both directions —
+ * `无` is capped at 400 ids with a total of 397, `lu:4` is uncapped at 442 ids
+ * with a total of 483 — so a `total`-based gate runs the strict rule on
+ * truncated queries and the loose rule on exact ones.
+ *
+ * So the predicate asks the JSON implementation directly, with its own
+ * `prefixIds`, which is the function that does the truncating.
+ */
+function sortedHeadwords(map: Map<string, string[]>): { keys: string[]; ids: string[][] } {
+  const keys = [...map.keys()].sort();
+  return { keys, ids: keys.map((key) => map.get(key) as string[]) };
+}
+
+function hanziPrefixIds(query: string): number {
+  const index = getDictIndex();
+  return Math.max(
+    prefixIds(sortedHeadwords(index.bySimp), query, MAX_HANZI_PREFIX_IDS).length,
+    prefixIds(sortedHeadwords(index.byTrad), query, MAX_HANZI_PREFIX_IDS).length,
+  );
+}
+
+/**
+ * What the store's candidate queries MUST return, derived from the JSON index
+ * alone.
+ *
+ * The capped branch needs this. "Every group is a prefix match" is true of a
+ * store that kept the four hundred *least* frequent matches — verified: mutating
+ * the prefix query to `ORDER BY rowid DESC` passed every other assertion in this
+ * file. `index.entries` is a Map built in `compareEntries` order, so a walk over
+ * it is a walk in rowid order, which is exactly what `ORDER BY rowid LIMIT n`
+ * takes.
+ */
+function idsByRowidOrder(matches: (entry: DictEntry) => boolean, limit: number): string[] {
+  const out: string[] = [];
+  for (const entry of getDictIndex().entries.values()) {
+    if (!matches(entry)) continue;
+    out.push(entry.id);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+/** The exact groups a correct store returns for a hanzi query, capped or not. */
+function expectedHanziKeys(query: string): Set<string> {
+  const index = getDictIndex();
+  const ids = new Set<string>([
+    ...(index.bySimp.get(query) ?? []),
+    ...(index.byTrad.get(query) ?? []),
+    ...idsByRowidOrder((entry) => entry.simp.startsWith(query), MAX_HANZI_PREFIX_IDS),
+    ...idsByRowidOrder((entry) => entry.trad.startsWith(query), MAX_HANZI_PREFIX_IDS),
+  ]);
+  const keys = new Set<string>();
+  for (const id of ids) {
+    const entry = index.entries.get(id) as DictEntry;
+    keys.add(`${entry.trad}|${entry.simp}`);
+  }
+  return keys;
+}
+
+/** The same for a pinyin query, over whichever key column the query uses. */
+function expectedPinyinKeys(query: string): Set<string> {
+  const index = getDictIndex();
+  const pinyin = normalizePinyin(query);
+  const toned = pinyin.syllables.some((syllable) => syllable.tone !== null);
+  const wanted = toned ? pinyin.toned : pinyin.toneless;
+  const keyOf = (entry: DictEntry): string | null => {
+    if (hasUnknownReading(entry.pinyinNum)) return null;
+    const computed = readingKeys(entry.pinyinNum) ?? normalizePinyin(entry.pinyinNum);
+    return (toned ? computed.toned : computed.toneless) || null;
+  };
+  const ids = new Set<string>([
+    ...(toned ? exactIds(index.byPinyinToned, pinyin.toned) : []),
+    ...exactIds(index.byPinyinToneless, pinyin.toneless),
+    ...idsByRowidOrder((entry) => (keyOf(entry) ?? '').startsWith(wanted), MAX_PINYIN_PREFIX_IDS),
+  ]);
+  const keys = new Set<string>();
+  for (const id of ids) {
+    const entry = index.entries.get(id) as DictEntry;
+    keys.add(`${entry.trad}|${entry.simp}`);
+  }
+  return keys;
+}
+
+function pinyinPrefixIds(query: string): number {
+  const pinyin = normalizePinyin(query);
+  if (!pinyin.fullyParsed) return 0;
+  const index = getDictIndex();
+  const toned = pinyin.syllables.some((syllable) => syllable.tone !== null);
+  return prefixIds(
+    toned ? index.byPinyinToned : index.byPinyinToneless,
+    toned ? pinyin.toned : pinyin.toneless,
+    MAX_PINYIN_PREFIX_IDS,
+  ).length;
+}
+
+/** A page big enough that neither implementation's section is cut by paging. */
+const WHOLE = { limit: 100_000 };
+
+function sectionOf(result: { sections: { source: string; groups: SearchGroup[] }[] }, source: string): SearchGroup[] {
+  return result.sections.filter((part) => part.source === source).flatMap((part) => part.groups);
+}
+
 describe('hanzi search — group for group, order for order', () => {
   it.each(HANZI_QUERIES)('%s', async (query) => {
-    const fromStore = await store.search(query, { limit: 50 });
-    const fromIndex = search(query, { limit: 50 });
+    const fromStore = await store.search(query, WHOLE);
+    const fromIndex = search(query, WHOLE);
     expect(fromStore.route).toBe(fromIndex.route);
-    const mine = keysOf(fromStore.sections, 'hanzi');
-    const theirs = keysOf(fromIndex.sections, 'hanzi');
-    if (fromIndex.total <= 400) {
-      // Under the cap the two must agree exactly, entries included.
+    const mine = sectionOf(fromStore, 'hanzi');
+    const theirs = sectionOf(fromIndex, 'hanzi');
+
+    if (hanziPrefixIds(query) < MAX_HANZI_PREFIX_IDS) {
+      // Under the cap the two must agree exactly — keys, order, and every field
+      // of every entry of every group.
+      expect(mine.map((group) => group.key)).toEqual(theirs.map((group) => group.key));
       expect(mine).toEqual(theirs);
-      expect(fromStore.groups).toEqual(fromIndex.groups);
-      expect(fromStore.total).toBe(fromIndex.total);
-    } else {
-      // At the cap they are allowed to differ, and the difference must be
-      // explained by key-order-versus-frequency truncation and nothing else:
-      // every group the store returns is a real prefix match, and the exact
-      // headword still leads.
-      expect(mine[0]).toBe(theirs[0]);
-      expect(mine.length).toBeGreaterThan(0);
+      return;
+    }
+
+    // At the cap, equality is not the criterion and must not be asserted: the
+    // JSON walk keeps the alphabetically-first headwords and `ORDER BY rowid
+    // LIMIT` keeps the most frequent. What IS asserted is that the difference is
+    // explained by exactly that and by nothing else — every group either side
+    // returns is a genuine exact-or-prefix match on a real headword.
+    expect(mine.length).toBeGreaterThan(0);
+    // The store's candidate set is fully determined even at the cap: the exact
+    // matches plus the 400 lowest-rowid prefix matches per script. Asserting
+    // membership against an oracle built from the JSON index is what makes this
+    // branch a real test — "every group is a prefix match" is equally true of a
+    // store that kept the 400 LEAST frequent matches.
+    expect(new Set(mine.map((group) => group.key))).toEqual(expectedHanziKeys(query));
+    for (const group of theirs) {
+      expect(group.simp.startsWith(query) || group.trad.startsWith(query)).toBe(true);
+    }
+    // The exact headword still leads, which is the property a learner notices.
+    if (getDictIndex().bySimp.has(query) || getDictIndex().byTrad.has(query)) {
+      expect(mine[0].simp === query || mine[0].trad === query).toBe(true);
+      expect(theirs[0].simp === query || theirs[0].trad === query).toBe(true);
     }
   });
 
@@ -244,6 +369,28 @@ describe('hanzi search — group for group, order for order', () => {
     expect(readings).toContain('le');
     expect(readings).toContain('liǎo');
     expect(group.hskBand).toBe(1);
+  });
+
+  it('carries a band computed from every reading, checked against dict.json directly', async () => {
+    // Not a differential assertion, deliberately. `rank.ts` is SHARED by the two
+    // implementations, so anything it gets wrong it gets wrong on both sides and
+    // a store-versus-index comparison is blind to it — verified: forcing
+    // `materialise` to stamp `hskBand: 1` on every group passes every
+    // differential test in this file. The oracle here is the raw JSON.
+    const byHeadword = new Map<string, number[]>();
+    for (const entry of getDict().entries) {
+      const key = `${entry.trad}|${entry.simp}`;
+      const bands = byHeadword.get(key) ?? [];
+      if (entry.hskBand !== undefined) bands.push(entry.hskBand);
+      byHeadword.set(key, bands);
+    }
+    for (const query of ['打算', '了', '学习', '中', '我', '爸爸']) {
+      for (const group of (await store.search(query, { limit: 100 })).groups) {
+        const bands = byHeadword.get(group.key) ?? [];
+        const want = bands.length > 0 ? Math.min(...bands) : undefined;
+        expect(group.hskBand, `${query} → ${group.key}`).toBe(want);
+      }
+    }
   });
 
   it('accepts traditional input and answers with the simplified headword', async () => {
@@ -314,26 +461,86 @@ describe('the prefix range trap', () => {
 });
 
 describe('pinyin search — the section matches the JSON one', () => {
+  // What "matches" can mean here, precisely, because the obvious assertion is
+  // both too strong and too weak:
+  //
+  // - too strong, because the JSON side runs an English section alongside the
+  //   pinyin one and `dedupe` gives a headword to whichever ranked it higher —
+  //   so the JSON's pinyin section is a SUBSET of the store's, which has no
+  //   English competitor until D3;
+  // - too weak if it only compares the intersection, which is what an earlier
+  //   version of this block did. Measured: with `pinyinPrefix` mutated to
+  //   `LIMIT 1` the store dropped 打算盘 from `dasuan`, three of four groups from
+  //   `dasu` and half of `nu:3`, and every assertion still passed.
+  //
+  // So: containment, the relative order of the shared keys, and every reading of
+  // every shared group.
   it.each(PINYIN_QUERIES)('%s', async (query) => {
-    const fromStore = await store.search(query, { limit: 50 });
-    const fromIndex = search(query, { limit: 50 });
-    const theirs = keysOf(fromIndex.sections, 'pinyin');
-    const mine = keysOf(fromStore.sections, 'pinyin');
-    if (theirs.length === 0) {
-      expect(mine.length).toBe(0);
+    const fromStore = await store.search(query, WHOLE);
+    const fromIndex = search(query, WHOLE);
+    const mine = sectionOf(fromStore, 'pinyin');
+    const theirs = sectionOf(fromIndex, 'pinyin');
+    const mineKeys = mine.map((group) => group.key);
+    const theirKeys = theirs.map((group) => group.key);
+
+    if (pinyinPrefixIds(query) >= MAX_PINYIN_PREFIX_IDS) {
+      // At the cap the two candidate sets differ by design, but the store's is
+      // still fully determined — the exact tiers plus the 600 lowest-rowid
+      // prefix matches — so it is asserted against its own oracle rather than
+      // against the JSON side.
+      expect(mine.length).toBeGreaterThan(0);
+      expect(new Set(mineKeys)).toEqual(expectedPinyinKeys(query));
       return;
     }
-    // The English half is D3's, so the store's pinyin section is not competing
-    // with an English one yet and cannot be deduped against it. Compare the
-    // groups the JSON implementation gave the pinyin section, in its order, as
-    // far as the store's page reaches.
-    const capped = fromIndex.total > 600;
-    if (!capped) {
-      const shared = theirs.filter((key) => mine.includes(key));
-      expect(shared.length).toBeGreaterThan(0);
-      expect(mine.filter((key) => theirs.includes(key))).toEqual(shared);
+    // Under the cap the oracle and the JSON side must agree with each other too,
+    // which is what makes the oracle trustworthy in the branch above.
+    expect(new Set(mineKeys)).toEqual(expectedPinyinKeys(query));
+
+    // Containment. This is the assertion the LIMIT-1 mutation fails immediately.
+    const missing = theirKeys.filter((key) => !mineKeys.includes(key));
+    expect(missing, `${query}: the store lost groups the JSON index found`).toEqual([]);
+
+    // The shared keys appear in the same relative order in both.
+    expect(mineKeys.filter((key) => theirKeys.includes(key))).toEqual(theirKeys);
+
+    for (const group of theirs) {
+      const got = mine.find((candidate) => candidate.key === group.key) as SearchGroup;
+      expect(got.simp).toBe(group.simp);
+      expect(got.trad).toBe(group.trad);
+      expect(got.hskBand).toBe(group.hskBand);
+      expect(got.source).toBe('pinyin');
+      // Every reading of the headword, as a set. The ORDER of the readings can
+      // differ — see the named case below — but nothing may be added or lost.
+      expect([...got.entries.map((entry) => entry.id)].sort()).toEqual(
+        [...group.entries.map((entry) => entry.id)].sort(),
+      );
+      // Where the JSON matched exactly one reading there is no ordering choice
+      // to make, so the groups must be identical field for field. That is the
+      // large majority of them.
+      if (group.matchedIds.length === 1) expect(got).toEqual(group);
     }
-    expect(mine.length).toBeGreaterThan(0);
+  });
+
+  it('orders a group’s readings by frequency where the JSON index orders them by key', async () => {
+    // The second face of D2's one behavioural change, pinned by name rather than
+    // tolerated in an aggregate. A headword's readings sit under DIFFERENT
+    // pinyin keys when one of them is neutral-tone — 女人 is `nu:3 ren2`
+    // (`nu3ren2`) and `nu:3 ren5` (`nu3ren`) — and `prefixIds` walks whole key
+    // buckets in lexicographic KEY order while `ORDER BY rowid` is frequency
+    // order. So the two put the same two readings in a different order inside
+    // the group, on a query nowhere near the cap.
+    //
+    // Four queries in this suite's list show it: nu:3, hé, men2, guai1, one
+    // group each. If that count grows, something else has changed.
+    const mine = sectionOf(await store.search('nu:3', WHOLE), 'pinyin');
+    const theirs = sectionOf(search('nu:3', WHOLE), 'pinyin');
+    const key = '女人|女人';
+    const a = mine.find((group) => group.key === key) as SearchGroup;
+    const b = theirs.find((group) => group.key === key) as SearchGroup;
+    expect(a.entries.map((entry) => entry.pinyinNum)).toEqual(['nu:3 ren2', 'nu:3 ren5']);
+    expect(b.entries.map((entry) => entry.pinyinNum)).toEqual(['nu:3 ren5', 'nu:3 ren2']);
+    // …and the two orders are permutations of one another, never different sets.
+    expect([...a.entries.map((e) => e.id)].sort()).toEqual([...b.entries.map((e) => e.id)].sort());
   });
 
   it('finds 打算 first however the reading is typed', async () => {
@@ -348,6 +555,9 @@ describe('pinyin search — the section matches the JSON one', () => {
     const toneless = (await store.search('dasuan')).groups.map((group) => group.simp);
     expect(toneless).toContain('大蒜');
     expect(toneless.indexOf('打算')).toBeLessThan(toneless.indexOf('大蒜'));
+    // 打算盘 arrives only through the prefix tier, so it is what a broken prefix
+    // query loses first.
+    expect(toneless).toContain('打算盘');
   });
 
   it('keeps neutral-tone words reachable from tone marks', async () => {
@@ -364,16 +574,114 @@ describe('pinyin search — the section matches the JSON one', () => {
     }
   });
 
-  it('keeps xx5 readings out of the pinyin index entirely', async () => {
+  it('keeps xx5 readings out of both key columns entirely', async () => {
     // CC-CEDICT's "no known reading" marker. Indexing it would answer a search
-    // for `xx` with 34 unrelated characters; NULL columns keep them out of the
-    // range scan for free.
-    const result = await store.search('xx');
-    expect(keysOf(result.sections, 'pinyin')).toEqual([]);
+    // for `xx` with 34 unrelated characters. Asserted against the columns rather
+    // than through `search('xx')` — `xx` does not parse as pinyin, so that query
+    // never reaches the pinyin index and the test could not fail.
+    const runner = nodeRunner(path);
+    try {
+      const [indexed, headword] = await runner.query([
+        {
+          sql: "SELECT count(*) AS n FROM entries WHERE pinyin_num LIKE '%xx5%' AND (py_toneless IS NOT NULL OR py_toned IS NOT NULL)",
+        },
+        { sql: "SELECT count(*) AS n FROM entries WHERE pinyin_num LIKE '%xx5%'" },
+      ]);
+      expect(indexed[0].n).toBe(0);
+      // …and there really are such entries, so the zero above means something.
+      expect(headword[0].n).toBeGreaterThan(0);
+    } finally {
+      await runner.close();
+    }
+    // The headword itself is still findable by hanzi, which is the point: it has
+    // no reading, not no existence. 働 is one (a Japanese-made character
+    // CC-CEDICT carries with no Mandarin reading) and it IS inside
+    // `CJK_PATTERN`, unlike 々 and the era ligatures, which route to English.
+    expect((await store.search('働')).groups.map((group) => group.simp)).toContain('働');
+    expect((await store.search('働')).groups[0].entries[0].pinyinMarked).toBe('');
   });
 
   it('answers a partial reading by prefix', async () => {
     expect((await store.search('dasu')).groups.map((group) => group.simp)).toContain('打算');
+  });
+});
+
+/**
+ * D2 criterion 4: "the phase records the diff and one line of justification per
+ * query" for every query that hits the cap. This is that record, computed rather
+ * than transcribed, so it cannot go stale.
+ */
+describe('the capped queries, and why each one differs', () => {
+  const CAPPED_HANZI = ['中', '无', '高', '一'];
+  const CAPPED_PINYIN = ['xian', 'da', 'yi', 'shi', 'zhi', 'shu'];
+
+  it('every capped hanzi query differs only by frequency-versus-key truncation', async () => {
+    const report: string[] = [];
+    for (const query of CAPPED_HANZI) {
+      expect(hanziPrefixIds(query), `${query} was expected to hit the cap`).toBe(
+        MAX_HANZI_PREFIX_IDS,
+      );
+      const mine = sectionOf(await store.search(query, WHOLE), 'hanzi');
+      const theirs = sectionOf(search(query, WHOLE), 'hanzi');
+      const mineKeys = new Set(mine.map((group) => group.key));
+      const theirKeys = new Set(theirs.map((group) => group.key));
+      const onlyMine = [...mineKeys].filter((key) => !theirKeys.has(key));
+      const onlyTheirs = [...theirKeys].filter((key) => !mineKeys.has(key));
+      // Both sides' exclusives must be real prefix matches — the only permitted
+      // explanation is which 400 ids each kept — and the store's set must be
+      // exactly the most frequent 400 per script.
+      for (const group of [...mine, ...theirs]) {
+        expect(group.simp.startsWith(query) || group.trad.startsWith(query)).toBe(true);
+      }
+      expect(new Set(mine.map((group) => group.key))).toEqual(expectedHanziKeys(query));
+      report.push(
+        `  ${query}: store ${mine.length} groups, json ${theirs.length}; ` +
+          `${onlyMine.length} only in the store (more frequent), ${onlyTheirs.length} only in the JSON (earlier by key)`,
+      );
+    }
+    // Written straight to stdout so the phase's writeup can quote it and a later
+    // session can re-run it. `console.log` is captured by the test runner.
+    process.stdout.write(
+      `\ncapped hanzi queries (cap ${MAX_HANZI_PREFIX_IDS} ids per script):\n${report.join('\n')}\n`,
+    );
+  });
+
+  it('every capped pinyin query differs only by frequency-versus-key truncation', async () => {
+    const report: string[] = [];
+    for (const query of CAPPED_PINYIN) {
+      expect(pinyinPrefixIds(query), `${query} was expected to hit the cap`).toBe(
+        MAX_PINYIN_PREFIX_IDS,
+      );
+      const mine = sectionOf(await store.search(query, WHOLE), 'pinyin');
+      const theirs = sectionOf(search(query, WHOLE), 'pinyin');
+      const mineKeys = new Set(mine.map((group) => group.key));
+      const theirKeys = new Set(theirs.map((group) => group.key));
+      const onlyMine = [...mineKeys].filter((key) => !theirKeys.has(key));
+      const onlyTheirs = [...theirKeys].filter((key) => !mineKeys.has(key));
+      const pinyin = normalizePinyin(query);
+      const toned = pinyin.syllables.some((syllable) => syllable.tone !== null);
+      const wanted = toned ? pinyin.toned : pinyin.toneless;
+      // Every group either side returns carries a reading whose key starts with
+      // the query's key. Anything else would be a different bug wearing the
+      // truncation's clothes.
+      for (const group of [...mine, ...theirs]) {
+        const keys = group.entries.map((entry) => {
+          const computed = readingKeys(entry.pinyinNum) ?? normalizePinyin(entry.pinyinNum);
+          return toned ? computed.toned : computed.toneless;
+        });
+        expect(
+          keys.some((key) => key.startsWith(wanted)),
+          `${group.key} carries no reading under ${wanted}`,
+        ).toBe(true);
+      }
+      report.push(
+        `  ${query}: store ${mine.length} groups, json ${theirs.length}; ` +
+          `${onlyMine.length} only in the store (more frequent), ${onlyTheirs.length} only in the JSON (earlier by key)`,
+      );
+    }
+    process.stdout.write(
+      `\ncapped pinyin queries (cap ${MAX_PINYIN_PREFIX_IDS} ids):\n${report.join('\n')}\n`,
+    );
   });
 });
 
@@ -490,6 +798,29 @@ describe('caching and cancellation', () => {
     await cached.close();
   });
 
+  it('hands out a frozen result, so one caller cannot poison the next', async () => {
+    // A cache returns the SAME object to every later caller. Without this, a
+    // consumer calling `.sort()` on a returned list — or emptying it — would
+    // corrupt every subsequent answer for the life of the session, and the
+    // symptom would look like a dictionary bug.
+    const first = await store.hskBand(3, { limit: 5 });
+    expect(Object.isFrozen(first)).toBe(true);
+    expect(() => {
+      (first as DictEntry[]).length = 0;
+    }).toThrow();
+    expect((await store.hskBand(3, { limit: 5 })).length).toBe(5);
+  });
+
+  it('refuses an already-aborted search even when the answer is cached', async () => {
+    // A call that rejects when cold and resolves when warm is the worst kind of
+    // flake: it is correct on the first keystroke and wrong on the second.
+    const warmed = await store.search('中', { limit: 10 });
+    expect(warmed.groups.length).toBeGreaterThan(0);
+    const controller = new AbortController();
+    controller.abort();
+    await expect(store.search('中', { limit: 10, signal: controller.signal })).rejects.toThrow();
+  });
+
   it('refuses an already-aborted search rather than running it', async () => {
     const counting = countingRunner();
     const cancellable = new SqliteDictStore({ connect: async () => counting.runner });
@@ -517,16 +848,117 @@ describe('open() and the meta constants', () => {
     expect(opened.meta.entryCount).toBe(getDict().entries.length);
     expect(opened.meta.schemaVersion).toBe(1);
     // Constants of the snapshot, not of the code. The client takes Math.log()
-    // of `wordsTotal`, so the DP's scores stay bit-identical to today's.
-    expect(opened.meta.wordsTotal.simp).toBeGreaterThan(0);
-    expect(opened.meta.maxLen.simp).toBe(15);
-    expect(opened.meta.maxLen.trad).toBe(15);
-    expect(opened.chars.size).toBeGreaterThan(14_000);
+    // of `wordsTotal`, so the DP's scores stay bit-identical to today's only if
+    // these are exact — and the two scripts must be asserted separately, since
+    // `maxLen` happens to be 15 for both and a store that read `max_len_simp`
+    // twice would pass a symmetric assertion.
+    const index = getDictIndex();
+    expect(opened.meta.wordsTotal.simp).toBe(headwordTotals(index, 'simp').total);
+    expect(opened.meta.wordsTotal.trad).toBe(headwordTotals(index, 'trad').total);
+    expect(opened.meta.wordsTotal.simp).not.toBe(opened.meta.wordsTotal.trad);
+    expect(opened.meta.maxLen.simp).toBe(headwordTotals(index, 'simp').maxLen);
+    expect(opened.meta.maxLen.trad).toBe(headwordTotals(index, 'trad').maxLen);
+    expect(opened.chars.size).toBe(
+      new Set(
+        [...index.bySimp.keys(), ...index.byTrad.keys()].filter((word) => [...word].length === 1),
+      ).size,
+    );
   });
 
   it('refuses to answer before open()', async () => {
     const shut = new SqliteDictStore({ connect: async () => nodeRunner(path) });
     await expect(shut.entries(['打算|打算[da3 suan4]'])).rejects.toThrow(/not open/);
+  });
+
+  it('refuses an artifact built by a different SCHEMA_VERSION', async () => {
+    // Nothing else would notice: the file opens, every query answers, and the
+    // answers are shaped by a schema this build does not know.
+    const wrongSchema = new SqliteDictStore({
+      connect: async () => ({
+        query: async () => [
+          [
+            { key: 'schema_version', value: String(SCHEMA_VERSION + 1) },
+            { key: 'dict_version', value: '1.3.20251213' },
+            { key: 'entry_count', value: '1' },
+            { key: 'words_total_simp', value: '1' },
+            { key: 'words_total_trad', value: '1' },
+            { key: 'max_len_simp', value: '1' },
+            { key: 'max_len_trad', value: '1' },
+          ],
+          [],
+        ],
+        close: async () => {},
+      }),
+    });
+    await expect(wrongSchema.open()).rejects.toThrow(/schema/);
+    expect(wrongSchema.status.state).toBe('failed');
+  });
+
+  it('closes the connection it opened when open() fails', async () => {
+    // On OPFS the pool holds an exclusive lock per origin and on Capacitor the
+    // plugin holds a native handle, so a leaked connection is not garbage —
+    // it is a retry that can never succeed.
+    let closed = 0;
+    const leaky = new SqliteDictStore({
+      connect: async () => ({
+        query: async () => {
+          throw new Error('the file is not a database');
+        },
+        close: async () => {
+          closed += 1;
+        },
+      }),
+    });
+    await expect(leaky.open()).rejects.toThrow();
+    expect(closed).toBe(1);
+  });
+
+  it('recovers from a connect() that throws synchronously', async () => {
+    // An async function runs synchronously to its first suspension, so a
+    // `connect()` that throws before awaiting used to latch a rejected promise
+    // into the in-flight slot and wedge every later open() on a store that
+    // could have recovered.
+    let attempts = 0;
+    const flaky = new SqliteDictStore({
+      connect: () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error('no bytes yet');
+        return Promise.resolve(nodeRunner(path));
+      },
+    });
+    await expect(flaky.open()).rejects.toThrow('no bytes yet');
+    await flaky.open();
+    expect(flaky.status).toEqual({ state: 'ready', version: getDict().meta.version });
+    expect(attempts).toBe(2);
+    await flaky.close();
+  });
+
+  it('close() during a pending open() really closes, and does not flip back to ready', async () => {
+    let closed = 0;
+    let release: (() => void) | undefined;
+    const slow = new SqliteDictStore({
+      connect: async () => {
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const inner = nodeRunner(path);
+        return {
+          query: (batch, signal) => inner.query(batch, signal),
+          close: async () => {
+            closed += 1;
+            await inner.close();
+          },
+        };
+      },
+    });
+    const opening = slow.open();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const closing = slow.close();
+    release?.();
+    await opening;
+    await closing;
+    expect(slow.status).toEqual({ state: 'absent' });
+    expect(closed).toBe(1);
   });
 
   it('reports failure rather than throwing past the status', async () => {
@@ -581,7 +1013,12 @@ describe('no module under lib/dict imports node:fs except the loader and the Nod
         if (!name.endsWith('.ts')) continue;
         const relative = full.slice(root.length + 1);
         if (relative === 'load.ts' || relative === 'runners/node.ts') continue;
-        if (/from '(node:fs|node:sqlite)/.test(readFileSync(full, 'utf8'))) offenders.push(relative);
+        // Any quote style, and dynamic `import('node:…')` as well as static
+        // — a guard that only sees one spelling is a guard that passes the day
+        // someone writes the other.
+        if (/(?:from|import\s*\(|require\s*\()\s*['"`]node:(?:fs|sqlite|path|os|crypto|child_process)/.test(readFileSync(full, 'utf8'))) {
+          offenders.push(relative);
+        }
       }
     };
     walk(root);

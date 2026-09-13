@@ -19,6 +19,8 @@
  */
 import { exactIds, getDictIndex, prefixIds, type DictIndex, type SortedIndex } from './index';
 import { normalizePinyin, type NormalizedPinyin } from './pinyin';
+import { MAX_HANZI_PREFIX_IDS } from './query/hanzi';
+import { MAX_PINYIN_PREFIX_IDS } from './query/pinyin';
 import {
   CandidateSet,
   SECTION_LABELS,
@@ -41,6 +43,16 @@ import type { DictEntry, EntryId, HskBand } from './types';
  */
 export { CJK_PATTERN, hasCjk, SEARCH_PAGE_SIZE } from './rank';
 export type { MatchSource } from './rank';
+
+/**
+ * The two prefix caps come from the query modules rather than being declared
+ * here as well. They are behaviour, not configuration — the JSON implementation
+ * and the store must truncate at the same point or every differential test is
+ * comparing two different questions — and one constant in two files is one
+ * constant waiting to be edited in one of them.
+ */
+export { MAX_HANZI_PREFIX_IDS } from './query/hanzi';
+export { MAX_PINYIN_PREFIX_IDS } from './query/pinyin';
 
 /** Which router branch ran — useful in tests and in the API response. */
 export type SearchRoute = 'hanzi' | 'pinyin+english' | 'english';
@@ -105,8 +117,6 @@ export interface SearchOptions {
   signal?: AbortSignal;
 }
 
-const MAX_HANZI_PREFIX_IDS = 400;
-const MAX_PINYIN_PREFIX_IDS = 600;
 /** Guard on one gloss token's posting list; the lists are frequency-ordered. */
 const MAX_GLOSS_CANDIDATES = 5000;
 

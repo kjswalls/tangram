@@ -3483,3 +3483,118 @@ assertion false it fails and has to be rewritten into the real one.
   and the build is clean; they are left in place rather than swept, because `core.md` C7 restructures
   these components anyway and a 41-file no-op diff would bury that one.
 
+
+---
+
+## W1 review — thirteen survivors, and the two the phase had reported as done
+
+Six lenses, each finding then put to an independent agent instructed to refute it, defaulting to
+refuted when uncertain. **46 findings raised, 13 survived**, reducing to eight distinct defects. All
+eight are fixed in `fix(W1): the review's survivors`. This is the section worth reading if you only
+read one, because two of the eight are things the W1 commit **said it had done**.
+
+### The two that were reported green and were not
+
+**1. `pnpm test` exited 1, and the commit message printed it as passing.** 906 assertions passed,
+vitest recorded four unhandled errors, and the process exited non-zero. The cause is the thing the
+W1 commit itself describes: a component carrying a `<Link>` throws without a router context — but
+**asynchronously**, from a branch reached after the assertions, so the test prints as passed and
+only the exit code disagrees. Five test files had been moved onto `tests/unit/render.tsx`; thirteen
+more had not, and two of them rendered `ReviewSession`, whose session-finished state holds two
+`<Link>`s.
+
+The verification failure is the builder's and is worth naming, because it is the general lesson of
+this session: **every check of that gate went through `| grep -E "Tests "`, which discards the exit
+code.** A gate read through a pipe is not a gate. Every gate in the fix commit was re-run bare and
+its `$?` recorded.
+
+All thirteen files now import `render` from the helper, and `no-restricted-imports` makes
+`@testing-library/react` an **error** under `tests/unit/**`, with a message saying why. A convention
+that can be honoured by accident is not a convention, and this one had already been missed twice.
+
+**2. The service worker cached nothing, and an offline navigation rendered a blank page.**
+`scripts/sw.template.js`'s cache-first rule keyed on `/_next/static/` — Next's chunk directory,
+which a Vite build never emits. Vite's hashed output is `/assets/**`. So the worker precached seven
+HTML documents referencing scripts and stylesheets it did not have, `shell()` served one of them
+offline, and `#root` came up empty.
+
+Everything was green. `tests/unit/pwa/manifest.test.ts` *asserted the dead rule* by its literal
+string, so the unit suite actively certified it. The e2e suite passed because every spec ran online.
+W1 shipped this and its HANDOFF section enumerated exactly three deliberate regressions; this was a
+fourth, and nobody had seen it.
+
+Two guards now, because a string match is exactly what failed: `manifest.test.ts` reads the asset
+prefix **off `vite.config.ts`** rather than repeating it, and `tests/e2e/c/sw-offline.spec.ts` goes
+offline and asserts the page still renders. Verified the way it should have been the first time —
+the new spec **fails against the previous commit** and passes against the fix.
+
+### The other six
+
+- **An unhandled rejection in the adapter could kill the dev or preview server.**
+  `new URL(req.url, …)` sat outside the try/catch inside a `void (async …)()`. Node's HTTP parser
+  accepts request targets the WHATWG URL parser rejects, so one malformed request took the server
+  down. Plus four more adapter defects from the same lens: `/api/<unknown>` fell through to the SPA
+  fallback and answered 200 `text/html` (now a JSON 404, and a trailing slash matches as Next did);
+  the 405 `Allow` omitted the HEAD the adapter itself serves; HEAD dropped `content-length`, which
+  RFC 9110 §9.3.2 requires; repeated `Set-Cookie` headers were collapsed by `Headers.forEach` (uses
+  `getSetCookie()`).
+- **No `errorElement` and no catch-all route.** Any unmatched URL — routine, since the SPA fallback
+  serves `index.html` for every path — and any throw from any route component replaced the whole app
+  with React Router's unstyled built-in error page: no header, no nav, no way back. Next rendered a
+  404 inside the layout, so this was a regression rather than a missing nicety.
+  `src/routes/not-found.tsx` is both, inside the shell.
+- **`<ScrollRestoration />` was missing.** `history.scrollRestoration` is `auto` and cannot work in
+  an SPA: the browser restores the offset at popstate, before React has rendered the page it belongs
+  to. Next handled it; a data-mode router does it only when asked.
+- **The native-bridge test would have inverted the day `ios.md` I0 lands.** `'Capacitor' in window`
+  is true as soon as `@capacitor/core` is *imported*, and there is one build for three platforms —
+  so the web PWA would have stopped registering its worker. It asks `isNativePlatform()` now,
+  falling back to presence only for a bridge too old to answer. Separately, Tauri 2 serves
+  `http://tauri.localhost` on Windows and Android: a secure context with no bridge, which neither of
+  the other tests caught. Hostname check added.
+- **`sourcemap: true` published 2.8 MB of application source.** Next's `productionBrowserSourceMaps`
+  defaults to false and the deleted config did not set it, so this was an unremarked change in what
+  the build *publishes*, in a phase whose job was to change how it is *built*. Off.
+- **`mobile-web-app-capable` was dropped.** Next's `appleWebApp: { capable: true }` emits the
+  standards-track tag, not the Apple-prefixed one. W1 added only the Apple form. Both now.
+
+Two smaller ones found in the same pass and fixed with them: the spa-fallback spec's filter was
+`/^\/lists\/.+\/assets\//`, but with a relative base the asset resolves to `/lists/assets/<hash>.js`
+— no segment in between — so the pattern matched nothing and the test would have passed while the
+app was broken, which is the failure it exists to prevent happening to itself. And the three paid
+routes plus `lib/server/access.ts` still documented `middleware.ts` as a live first layer; W1 asked
+for a "dead until W4" marker and it went away with the file it was written on.
+
+### One correction to the W1 commit message, which cannot be amended
+
+**Its unit-test itemisation is wrong.** It says "+11: register-sw.test.tsx +4 net …;
+manifest.test.ts +3". The total is right, the breakdown is not: `register-sw.test.tsx` went 2 → 11
+(**+9**, nine added, none removed) and `manifest.test.ts` went 12 → 14 (**+2**). 9 + 2 = 11.
+`deps.test.ts` and `workspace.test.ts` changed content, not count. It also says "Five unit files
+changed only their `render` import"; it was five at that commit and should have been seven, which is
+the same miss that left the gate red.
+
+The e2e itemisation — 3 removed, 5 added — is correct **counted in test cases by title**, which is
+the unit `web.md` W1 asks for. One of the three removed titles carried two of the three named gate
+behaviours, so "three assertions removed" and "two test cases removed" are both true statements
+about the same change; the file's own header maps all three behaviours to their W4 criterion.
+
+### What the review refuted that is still worth knowing
+
+Twenty-six findings were refuted, and three of the refutations carry information for later phases
+rather than for this one:
+
+- **The SPA fallback will swallow `/api/**` on a real static host.** `dist/` contains no server, and
+  a naive catch-all rewrite answers `/api/dict/hsk?band=1` with 200 `index.html` — so the
+  missing-data probe reads healthy while every dictionary call fails to parse. Refuted as W2's, and
+  it is W2's: **`apps/app/vercel.json` must exclude `/api` from the SPA rewrite**, and W2's five
+  stated requirements do not currently say so.
+- **`build.manifest` is off.** W3's Files list names turning it on. W2's rewritten `pnpm smoke` is
+  specified as "every hashed asset in the build manifest is 200" and its Files list does not mention
+  `vite.config.ts`. Whichever of the two gets there first should turn it on.
+- **`core.md` C1's dev-only `/gallery` route.** C1 says its route entry sits behind an
+  `import.meta.env.DEV` guard and that `pnpm e2e` runs "against a dev-mode server or a build with
+  `--mode development`, whichever `web.md` W1 settles". W1 dictates a production preview server and
+  that is what landed, so **C1's gallery specs cannot run under the current `playwright.config.ts`**
+  and C1 owns adding a second project or a dev-mode webServer.
+

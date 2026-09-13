@@ -3483,3 +3483,369 @@ assertion false it fails and has to be rewritten into the real one.
   and the build is clean; they are left in place rather than swept, because `core.md` C7 restructures
   these components anyway and a 41-file no-op diff would bury that one.
 
+
+---
+
+## `backend.md` B0 and B2's first commit — the server exists, the ask contract is frozen
+
+Commits on `claude/build-server`, in order:
+
+- `build: B0 — apps/server exists, answers /health with its own sha, and is gated`
+- `feat: B2's first commit — the ask contract, frozen`
+- `test: match claude/build-dictionary's fix for the two unrouted session suites`
+- `fix: what the adversarial reviews found — eight lenses, thirty-odd findings`
+- this section
+
+**B1 did not run, and B2's remainder did not run.** Neither was a choice; both have unmet
+preconditions, and for B1 no register entry connects the two. See "What is blocking".
+
+**A correction to the first commit's own message, made here rather than quietly.** It says the
+deploy-only criteria are "flagged outstanding in HANDOFF.md", and `src/app.ts`'s header says Hono is
+"the B0 decision, recorded in HANDOFF.md". Neither record existed when that commit landed — this
+section is it, four commits later. The review caught it as blocking and it was right to: B0's fourth
+acceptance bullet is *"Recorded in `HANDOFF.md`, all six"*, and a commit message asserting a record
+that does not exist makes `git log` misleading about the state of the phase.
+
+### What landed
+
+**B0 — `apps/server/`.** A Hono service answering `GET /health` with the git sha of its own build,
+wired into every root gate, plus the API half of `pnpm smoke`. `packages/ai/` — **created, not
+filled**; see the freeze note below.
+
+**B2's first commit — `packages/ai/schemas.ts`.** The frozen wire contract, declarations only.
+`data.md` D6 and `core.md` C7 gate on this commit rather than on the phase, and the dictionary
+session was running in parallel, so it landed early and stand-alone and the branch was pushed as soon
+as it was green.
+
+### What is blocking
+
+**B1 cannot start. It needs two things that do not exist.** `backend.md` §4's gate table is right:
+B1 needs `web.md` W1 **and W4**, "plus wave 0's `packages/ai/` — B1 imports it and does not create
+it".
+
+1. **`packages/ai/` with the ten `lib/ai/**` modules in it** is wave 0 deliverable 5, which has not
+   run. `README.md` **V6** flags it as not executable as written, and V6's count is exact: at
+   `d8ae52e`, `git grep -l "@/lib/ai/" -- 'apps/app/**'` is **33 files** and `git grep -o
+   "@/lib/ai/[a-z-]*"` is **74 import sites**. This session was told not to attempt it. Without it
+   the handlers have nothing to import from `apps/server`, and B1 is explicit: "They import
+   `packages/ai/**`, which **already exists** … This phase does not move it and must not re-move it."
+2. **`packages/access/`** — `web.md` W4's split of `lib/server/access.ts`, with `isAuthorizedRequest`
+   rewritten to read `X-Tangram-Access`. W4 has not run. B1's Files list names `packages/access/**`
+   and its first acceptance criterion is entirely about the gate.
+
+Nothing partial was landed in their place: a `cors.ts` guarding no cross-origin route, or an
+`access.ts` copied rather than moved, are both work that W4 and deliverable 5 would then have to undo.
+
+**B2's remainder cannot start either**, and that one the plan does say: it gates on `data.md`
+**D1–D4** and `core.md` **C4a**. D1 landed on `claude/build-dictionary` while this session ran; the
+rest have not.
+
+**To unblock B1, in order:** (a) a specification pass on deliverable 5 naming the 33 files and
+deciding the package's build-and-exports story (below); (b) `web.md` W4; then (c) B1 as written.
+
+### B0's six recorded decisions
+
+1. **The shape: Supabase for the stateful half, one small Node service for the proxy** — B0's own
+   recommendation, adopted unchanged. Nothing here tested the falsifier, so it is adopted on the
+   plan's reasoning, not on a measurement.
+
+   **The proxy is Hono 4.13.7 with `@hono/node-server` 2.1.1.** `wave-zero.md` §1 names Hono; B0
+   offers "Hono, or a bare `node:http` handler — the handlers are already `(Request) => Response`, so
+   the framework is nearly irrelevant". That symmetry argues *for* Hono: B0's falsifier is "if the
+   host's limits clear the 30 s ask deadline **and** `packages/ai/**` runs unmodified on Supabase
+   Edge Functions, the proxy belongs there and this becomes one deployable". Hono runs on Node, Deno,
+   Bun and Workers off one source; a bare `node:http` server would have to be rewritten before that
+   check could be run at all. Two runtime dependencies, both with a Node floor below this
+   workspace's.
+
+2. **The host's documented maximum request duration — OUTSTANDING.** No host account exists
+   (§4 item 4). What transfers: `docs/deploy.md` §6 records that a platform timeout below 30 s kills
+   `/api/ask` before its own deadline fires, and that `TANGRAM_ASK_ANSWER_TIMEOUT_MS` exists so the
+   deadline can be lowered without a rebuild. **The check:** read the chosen host's documented limit,
+   then deploy a handler that sleeps to just under 30 s. Decide before B1, not after.
+
+3. **The provider-terms question — OUTSTANDING, and it could not be read from here.**
+   `https://www.anthropic.com/legal/commercial-terms` and `.../consumer-terms` are **blocked by this
+   container's egress proxy** (`EGRESS_BLOCKED`; bare `curl` returns `000` for both while
+   `docs.claude.com` returns 302, so it is a per-host block, not an outage). STACK's known-unknown
+   #12 firing again. **The check is unchanged:** read both from an unblocked network and record the
+   URL and the date here. Until then **B6 does not run** and the product is single-account with the
+   owner's own key in the server's environment, which is what `.env.example` already describes.
+
+4. **Monthly cost at zero traffic — OUTSTANDING.** Needs a host. B0 forbids a number in any plan
+   until this closes, so it is recorded as unanswered rather than guessed.
+
+5. **How B4's SQL tests and B5's two-client harness execute — mechanism DECIDED, environment the
+   owner's to name.** `docker ps` still returns `dial unix /var/run/docker.sock: connect: no such
+   file or directory`, so `supabase start` cannot run here. **Every spec needing Postgres sits behind
+   `TANGRAM_TEST_POSTGRES_URL` and skips loudly when it is unset**, so an unrun suite is visible in
+   the output rather than green by absence. The remaining choice — a remote Supabase branch (record
+   its cost) or a docker-capable machine — is the owner's. A build agent in a sandbox cannot make
+   `pnpm test` depend on the network, so the guard is not negotiable either way.
+
+6. **The SMTP sender for B3 — UNDECIDED; B3 opens by choosing it.** No audit touched it, the built-in
+   sender's production suitability is itself an open question, and it carries a cost, a DNS surface
+   and a test-inbox problem. Recorded explicitly, per B0's own wording.
+
+### What I decided that the plan did not settle
+
+**The route table and the API smoke are B0's, not B1's.** `backend.md` puts `apps/server/src/smoke.ts`
+in B1's Files list. They are here because B0's deliverable is "a deploy procedure exists and is
+repeatable", and what proves a deploy is a smoke run against it. `src/routes/table.ts` is the single
+source of truth: `app.ts` mounts from it, `smoke.ts` walks it, and `tests/routes.test.ts` asserts
+**both** directions — a table entry with no handler throws at boot, and a handler with no table entry
+throws too. The second is the one B1 will hit, because B1 adds handlers.
+
+**`docs/deploy.md` is deliberately untouched.** B0 says to append a server section "to whatever
+`web.md` W2 wrote — W2 owns that file and rewrites it for a static deployment". W2 has not run, and
+the W1 section above already records that `docs/deploy.md` "is wrong today and a deploy from this
+commit would be misconfigured by it". Appending now buys one correct paragraph inside a document
+about to be rewritten around it. The server's variables went into `.env.example` instead. **B7 still
+owes `docs/deploy.md` the server half, after W2.**
+
+**The server emits real JavaScript, and that is the one place the module system cost a decision.**
+`tsconfig.build.json` uses `module: nodenext` with `allowImportingTsExtensions` +
+`rewriteRelativeImportExtensions`, so the source keeps this repo's `./thing.ts` specifier style
+(`apps/app/vite-plugins/api.ts` already writes them) and the emit carries `./thing.js` that plain
+`node dist/index.js` loads. Checked by running it.
+
+**Production is the default; development is opted into.** `readConfig` returns `production: true`
+unless `NODE_ENV` is `development`/`test` or `TANGRAM_EXPOSE_ERRORS=1`. The obvious spelling —
+expose unless `NODE_ENV === 'production'` — fails open on every host that injects nothing, which is
+most of them, and from B6 this process holds learners' provider keys.
+
+**`TANGRAM_SERVER_PORT`, falling back to `PORT`.** `PORT` is not this server's private name:
+`apps/app/playwright.config.ts`, `scripts/preview.ts` and `scripts/smoke.ts` all read it for the app
+and CLAUDE.md documents it as the e2e port. `.env.example` setting `PORT=8787` would have moved
+`pnpm e2e` onto the API server for anyone who sourced the file. A host injecting only `PORT` still
+works.
+
+**The smoke's gate secret comes from the environment.** `backend.md` B1 spells the invocation
+`--key <secret>`, and `docs/deploy.md` §7 documents the same shape for the app's smoke. It leaks:
+pnpm echoes the resolved script command on start and again in its failure banner, so
+`pnpm -F server smoke --key hunter2` prints `hunter2` to stdout — reproduced, twice in one run — and
+the value is in `ps` output and shell history throughout. `--key` still works, because the plan names
+it, but it now warns on stderr and `TANGRAM_ACCESS_SECRET` is the documented path. **`web.md` W2 owns
+`scripts/smoke.ts` and has the same leak in the same shape.**
+
+**The contract freezes `/api/examples` and `/api/recall` too, which B2 does not specify.** See below;
+it is the largest judgement call in the session.
+
+### What I found wrong in `backend.md` and the plan set
+
+1. **The build sequence schedules B1 where its preconditions cannot have landed.** `README.md`'s
+   wave 3 lists `web.md` W2 → W3 → W4 and `backend.md` B0 → B1 as *parallel* tracks. B1 needs W4
+   **finished**, so they are sequential inside that wave and nothing says so. And the scheduling note
+   says "Everything else should wait on V1 and V4 at minimum" without connecting **V6** — which
+   declares deliverable 5 not executable — to B1, whose gate row requires it. A session can reach B1
+   legitimately and find it impossible. This one did.
+
+2. **B2 specifies the ask contract and leaves `/api/examples` and `/api/recall` in prose.** All three
+   flip in the same phase, and D6 and C7 gate on "the ask contract" as one frozen surface. A freeze
+   covering one of three routes is not a freeze — B2's remainder would be free to change the other
+   two after D6 had already deleted the dictionary routes. **Both shapes were derived** from B2's own
+   sentences ("the client sends the target entry and the support pool (already capped at
+   `SUPPORT_CAP` = 40), the server returns schema-validated sentences, and `groundExamples()` plus
+   the i+1 filter run on the client"; "`/api/recall` flips least: it needs the entry's glosses, which
+   the client now sends"). `ExamplesRequest` therefore carries a **resolved** `support:
+   RetrievedEntry[]` rather than today's `known`/`knownIds`/`knownBand`/`excludeIds`, because after
+   `data.md` only the client can resolve them. A disagreement with that is a change to a frozen
+   surface and stops here.
+
+3. **The gate's prefix match is now recorded nowhere, and B2 adds two paths under `/api/ask`.**
+   `GATED_PATHS` is `['/api/ask', '/api/examples', '/api/recall']`, and the only code that ever
+   matched a request against it was `middleware.ts`:
+
+   ```ts
+   return GATED_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
+   ```
+
+   (recovered from `d8ae52e^:apps/app/middleware.ts`, which `web.md` W1 deleted). W4's disposition
+   table lists `GATED_PATHS` as "unchanged, moved" and says nothing about how it is matched; B1
+   inherits the same silence. B2 then adds `/api/ask/propose` and `/api/ask/answer` — **the two
+   routes that actually spend the money**. An exact-string gate in either half leaves both open with
+   `TANGRAM_ACCESS_SECRET` set and everything looking correct. The rule is in `schemas.ts`'s header
+   and asserted by `apps/app/tests/unit/ai/contract.test.ts`, because neither W4's session nor B1's
+   owns that file.
+
+4. **B0's `pnpm-workspace.yaml` line is already done.** W0 declared `apps/*` and `packages/*`, with a
+   comment naming `backend.md` as the reason. Harmless, but a builder looking for the edit finds none.
+
+5. **B0 asks for a `docs/deploy.md` server section in a phase scheduled before the phase that
+   rewrites `docs/deploy.md`.** Unexecutable in the scheduled order.
+
+6. **`backend.md` §3's branch reference is fine** — `claude/apps-ui-design-791zpq` exists on the
+   remote. Recorded because it reads like a dangling reference and is not; V7's "stale cross-reference"
+   entry does not cover it.
+
+7. **What `backend.md` gets right, confirmed because it is load-bearing.** `RetrievedEntry`'s six
+   fields really are *exactly* what the prompts read: `prompts.ts` touches `entry.id`, `entry.simp`,
+   `entry.trad`, `entry.pinyinMarked`, `entry.hskBand` and `entry.glosses` and nothing else, across
+   `entryLine`, the examples TARGET block and the recall THE WORD block. And `Entry` really is
+   structurally assignable to `RetrievedEntry`.
+
+### A pre-existing failure both live branches fixed, identically
+
+`pnpm test` was already exiting 1 at `3d3b817`: `tests/unit/ai/recall-session.test.tsx` and
+`tests/unit/review/production-session.test.tsx` mount `<ReviewSession>`, which reaches a `<Link>` on
+a late render, through the unwrapped `@testing-library/react` `render`. React reports the null router
+context as an **unhandled error after the assertions have passed**, so vitest printed "906 passed"
+and returned non-zero. W1 added `tests/unit/render.tsx` for exactly this and its section names five
+files it re-pointed; these two were missed.
+
+`claude/build-dictionary` hit it at the same time (`ba2c686`) and fixed it the same way. **Both
+branches now carry byte-identical files** — `git hash-object` matches `ba2c686`'s blobs for both — so
+the merge is silent. Recorded because two sessions independently repairing one file is normally how a
+conflict is made.
+
+### The `.ts` exports question, handed to whoever runs wave 0 deliverable 5
+
+`packages/ai/package.json` exports TypeScript **source**. A reviewer tested what that means and the
+first version of this package.json was wrong about it. It resolves today *by accident*: pnpm symlinks
+a workspace package, node's realpath lands outside `node_modules`, and Node's type stripping is
+therefore permitted. Against a deploy artifact where `@tangram/ai` is a real directory under
+`node_modules`, the same emitted `dist/index.js` fails with
+**`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`**. `schemas.ts` exports fourteen runtime values (the
+caps, the paths, `toRetrieved`) and B2's remainder must read them server-side, so this is not
+hypothetical. **Deliverable 5 must add a build emitting `dist/*.js` + `.d.ts` and point `exports` at
+`{types, import}`.** It is recorded in the package's own `//` field and a test asserts the package
+still holds one file, so the session that changes that has to read this.
+
+Related: `apps/app` declares `@tangram/ai` as a **devDependency**, because today's consumption is a
+type-only test. When B2's `lib/ai/ask-client.ts` imports a value it moves to `dependencies`, and
+`apps/app/tests/unit/deps.test.ts` — which asserts its loader table equals `dependencies` exactly —
+needs a loader entry in the same commit. The package now has a `"."` export so that loader can exist.
+
+### Two readings of "types-only", taken deliberately
+
+`CLAUDE.md` says the freezing commit lands "the declarations alone, first, with no implementation".
+Two things in `schemas.ts` stretch that and neither was done silently:
+
+- **The caps are `const`s with numbers.** A cap with no number is not a contract; D6 and C7 both need
+  to know that 40 is 40.
+- **`toRetrieved()` is six lines of pure projection.** Rule 1 of the contract is that `Entry` is
+  structurally assignable to `RetrievedEntry` — but that is a compile-time fact and `JSON.stringify`
+  is not, so an `Entry` handed straight to `fetch` puts all fifteen fields on the wire, nine of them
+  the model never sees, on a mobile connection. A shape nobody can construct correctly is not frozen,
+  it is merely written down.
+
+### Outstanding *(deploy)* criteria
+
+Per `backend.md` §4, a phase whose deploy-only criteria have not run is committed and flagged. This
+is the flag.
+
+| Criterion | Phase | Blocked on |
+|---|---|---|
+| `curl https://api.<domain>/health` returns the sha, and a redeploy changes it | B0 | a domain with DNS control, a host account with billing |
+| A rollback drill: deploy a known-bad build, roll back, `/health` reports the previous sha | B0 | the same, plus two deploys |
+| The host's max request duration measured against the 30 s ask deadline | B0 | a host account |
+| Monthly cost at zero traffic, from a real invoice or quote | B0 | a host account |
+| The provider-terms answer, with URL and date | B0 / B6 | an unblocked network |
+
+### The reviews, and what they changed
+
+Two adversarial reviews, four independent lenses each, run as workflows against the two commits
+after they landed.
+
+**B0** — literal compliance with the acceptance criteria (checked by running them); what breaks that
+no test covers; the key-custody path specifically; and operating it at 2 a.m. **17 findings.**
+**B2's contract** — fidelity to the plan and to the routes it replaces; each sibling session that
+will build against the frozen file; the access gate and the money; and whether the guard guards.
+**15 findings.**
+
+**The refuter phase was cut short and that is a real gap in the process, not a formality.** The
+container has four CPUs, so a workflow runs two agents at a time; three refuters per finding across
+32 findings is ~96 agents at a concurrency of two. The lens phase is what the brief asked for — two
+or more independent reviewers per phase from different angles — and it completed. Adjudication was
+then done by reproducing each finding directly: **every fix below has a test that fails against the
+old code and passes against the new one**, and the ones that could not be expressed as a unit test
+were reproduced by hand against a running server. That is stronger evidence than a model verdict,
+but it is *my* adjudication of findings raised against *my* code, and a later session re-running the
+refuters would be reasonable.
+
+**The five that were leaks rather than untidiness**, all in `apps/server/src/log.ts` unless noted,
+all now with a regression test:
+
+1. **An own `toJSON` re-materialised the secret after redaction.** A function is not an object, so
+   the walk returned it unchanged and `createLogger`'s `JSON.stringify` then called it — producing
+   the raw value on the log line. Reproduced by the reviewer with a cleartext key on stdout. Function
+   properties are now dropped.
+2. **A `Buffer` was walked into a recoverable byte dump.** `Object.entries` on a typed array yields
+   numeric indices, so every byte went out as a number and `Buffer.from(Object.values(x))` recovered
+   the key exactly. Binary is now summarised as `[binary N bytes]`.
+3. **Secrets were replaced in declaration order**, so when one contains another the longer one was
+   only half-scrubbed: `[redacted]EXTRA`. Now longest-first.
+4. **`Map`/`Set`/`Headers`/`URLSearchParams` collapsed to `{}`** — which also made `isSecretHeader`
+   dead for a real `Headers` object, the one container a proxy logs most. Now converted to entries
+   and walked.
+5. **`config.ts`'s header claimed a cross-check against `.env.example` that no test performed.** The
+   test now exists: it parses `.env.example` for `*_KEY`/`*_SECRET`/`*_TOKEN`/`*_PASSWORD` and
+   requires each to be in `SECRET_ENV_NAMES`. Proved by adding `TANGRAM_SMTP_PASSWORD=` to
+   `.env.example` and watching it go red.
+
+**The guards that did not guard**, each now proved by breaking it:
+
+- `tests/config.test.ts` scanned a **hardcoded eight-file list**, so it covered none of the files B1
+  adds — the very case the commit message advertised. It now walks `src/` recursively, and matches
+  `process["env"]` as well as `process.env`. Proved with a throwaway `src/routes/leaky.ts`.
+- The route-table check fired **one way only**. A handler added without a table entry is never
+  mounted, `mountedPaths()` is derived from the table so the test could not see it, and `smoke.ts`
+  walks the table so the smoke never probed it — green everywhere, 404 in the deployment. Symmetric
+  now.
+- `apps/app/tests/unit/workspace.test.ts`'s loosened assertion matched the **token** `tsc --noEmit`
+  rather than the bare invocation, so `tsc --noEmit -p apps/app/tsconfig.json` would have passed
+  while the root `scripts/` directory was typechecked by nothing.
+
+**The operational ones:**
+
+- **`exposeErrors` failed open.** Inverted, and `NODE_ENV`/`TANGRAM_EXPOSE_ERRORS` documented.
+- **A stamp of `'unknown'` permanently shadowed `TANGRAM_BUILD_SHA`** — on precisely the host the
+  variable exists for, making B0's rollback criterion unexecutable. `readBuildInfo` now treats it as
+  absent.
+- **`/health` echoed `TANGRAM_BUILD_SHA` unvalidated** on a public, uncached, unauthenticated route,
+  contradicting that file's own stated invariant. Now shape-checked.
+- **The build stamp recorded `HEAD` on a dirty tree.** Now suffixed `-dirty`.
+- **A forced shutdown exited 0 and logged nothing**, so a deploy that cut a 30 s ask looked identical
+  to one that drained. Now logs and exits 75; the window is `TANGRAM_DRAIN_MS`, default 35 s, past
+  the ask deadline. A bind failure logs and exits 74 instead of throwing a bare stack.
+- **The smoke swallowed every failure cause.** Node's fetch always says "fetch failed" and puts the
+  reason in `cause`, so a refused connection, a bad hostname, a TLS mismatch and a wrong port printed
+  the same line. The chain is walked now.
+- **The smoke's `gated` flag was static**, but whether a gate exists is a property of the server's
+  environment. `--gate on|off` now says which; `--gate on` runs each gated case twice, unkeyed
+  expecting 401 and keyed expecting the route's status, which is B1's acceptance criterion exactly.
+
+**And on the frozen contract**, all before anything gates on it:
+
+- `ExampleSentence` **collided with `lib/ai/examples.ts`'s `ExampleSentence`, which is the GROUNDED
+  type** — and both land in `packages/ai` under deliverable 5. Two types of one name meaning opposite
+  things, on the same `sentences` field, with `AskCache.set(key, response: unknown)` untyped
+  underneath, is how the ungrounded shape reaches `ask_cache` and the licence boundary with it.
+  Renamed `RawExampleSentence`, and a test asserts it is **not** assignable to the grounded one.
+- `RecallRequest` collided with `lib/ai/recall.ts`'s `RecallRequest` (the injectable fetch seam).
+  Renamed `RecallGradeRequest`.
+- The header claimed **`model` is part of the ask cache key. It is not** — `askCachePayload` folds
+  `promptVersion`, `provider`, `query`, the context key and `estimatedBand`, the same five PLAN.md
+  §3.4 specifies. A sibling taking the file at its word would have orphaned every row already written.
+- `RETRIEVED_CAP` is also assigned to `packages/ai/retrieve.ts` by B2 — **and `data.md` D3 owns that
+  file and is being built in parallel right now.** The caps block now says it is declared here and
+  must be imported there; `SEARCH_HEAD` stays in `retrieve.ts` because it never reaches the wire.
+- **`ContractErrorCode` was declared closed and had no code for the 429 B7 requires.** `'rate-limited'`
+  is in the union now: B7's criterion is "the app shows the real reason", and a client that branches
+  on `error` cannot show a reason for a code outside the union it was designed against.
+- **Every cap was a count; nothing bounded bytes**, while B7 writes its limiter against "the
+  body-size and entry-count caps B2 introduced". `MAX_BODY_BYTES`, `MAX_GLOSSES_PER_ENTRY`,
+  `MAX_GLOSS_CHARS`, `MAX_HEADWORD_CHARS` and `MAX_ENTRY_ID_CHARS` are declared, because the client
+  assembles the payload and a cap it cannot see is a 400 it cannot avoid.
+- `dictVersion` was **required with no consumer anywhere in the plan set**, and the mobile shells
+  ship the same SPA and update independently of this server. Optional now.
+- `MAX_SENTENCE_CHARS` was documented as rejecting. It **truncates** today
+  (`value.trim().slice(0, MAX_SENTENCE_CHARS)`), and a reader tap sets `context.sentence` from a span
+  the learner does not choose the length of — so freezing it as a 400 would have been a user-visible
+  regression introduced by the freeze.
+- "Every response carries `ProviderInfo`" was false in the same file: `RecallResponse` does not, and
+  must not — recall is uncached by design because a model explaining a grade quotes the gloss, which
+  `ask_cache` may not hold. Both the claim and the omission are now written down as decisions.
+- Three restated declarations were unpinned (`ProviderName`, `AskContext`, `MAX_EXAMPLE_SENTENCES`).
+  Pinned. `MAX_EXAMPLE_SENTENCES` is the sharp one: it is simultaneously the edge validator's cap and
+  the ceiling `examplesUserPrompt`'s `count = 3` sits under.

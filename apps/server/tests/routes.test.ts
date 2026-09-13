@@ -71,4 +71,13 @@ describe('routes/table.ts', () => {
     ).toThrow(/no handler/);
   });
 
+  it('throws at boot if app.ts has a handler the table does not declare', () => {
+    // The direction B1 will actually hit, because B1 adds handlers. Unguarded,
+    // the route is never mounted, mountedPaths() is derived from the table so
+    // this file cannot see it, smoke.ts walks the table so the smoke never
+    // probes it — and POST /api/ask 404s in the deployment with every gate
+    // green. Passing an empty table makes app.ts's own '/health' the orphan.
+    expect(() => buildApp({ routes: [] })).toThrow(/does not declare it/);
+  });
+
 });

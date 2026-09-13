@@ -18,19 +18,39 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const distDir = resolve(here, '..', 'dist');
 
-function gitSha(): string | null {
+function git(args: string[]): string | null {
   try {
-    const sha = execFileSync('git', ['rev-parse', 'HEAD'], {
+    return execFileSync('git', args, {
       cwd: here,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
-    return /^[0-9a-f]{40}$/.test(sha) ? sha : null;
   } catch {
     return null;
   }
 }
 
+/**
+ * `HEAD`, with `-dirty` appended when the working tree is not clean.
+ *
+ * Without the suffix the 2 a.m. hotfix — edit on the box, rebuild, restart —
+ * publishes the previous commit's sha through the most trustworthy-looking of
+ * the three sources, for code that is not that commit. B0's rollback drill then
+ * compares two shas, at least one of which does not identify what is running.
+ */
+function gitSha(): string | null {
+  const sha = git(['rev-parse', 'HEAD']);
+  if (sha === null || !/^[0-9a-f]{40}$/.test(sha)) return null;
+  const status = git(['status', '--porcelain']);
+  return status ? `${sha}-dirty` : sha;
+}
+
+/**
+ * `'unknown'` is written as a real value, and `readBuildInfo` knows to ignore
+ * it and fall through to `TANGRAM_BUILD_SHA`. Writing the file unconditionally
+ * keeps `dist/` self-describing — a missing file and a file saying "nothing to
+ * record" are different states and only one of them is a build that ran.
+ */
 const sha = gitSha() ?? process.env.TANGRAM_BUILD_SHA?.trim() ?? 'unknown';
 mkdirSync(distDir, { recursive: true });
 writeFileSync(

@@ -11,7 +11,11 @@
  *  1. **`dist/build-info.json`**, written by `scripts/stamp.ts` during
  *     `pnpm -F server build`. It is derived from the tree that produced the
  *     JavaScript being executed, so it is the only source that cannot disagree
- *     with the running code.
+ *     with the running code. **A stamp whose sha is `'unknown'` does not count**
+ *     — it is the stamp saying it had nothing to record, and treating it as an
+ *     answer would permanently shadow step 2 on exactly the host step 2 exists
+ *     for: one that builds from an archive with no `.git` and injects the commit
+ *     as a runtime variable.
  *  2. **`TANGRAM_BUILD_SHA`** from the environment, for a host that builds from
  *     an archive with no `.git` and injects its own commit variable.
  *  3. `'unknown'`. Never a throw and never a crash at boot: a service that will
@@ -35,6 +39,18 @@ export const UNKNOWN_SHA = 'unknown';
 /** Where the stamp sits next to the emitted `build-info.js`. */
 export const STAMP_FILE = 'build-info.json';
 
+/**
+ * What an environment-supplied sha must look like before `/health` publishes it.
+ *
+ * `/health` is public, uncached and unauthenticated, so the one value it echoes
+ * from the environment is the one value that has to be checked: a mis-templated
+ * host variable (`${GIT_SHA}` unexpanded, a branch name, a whole URL) would
+ * otherwise be published verbatim. The stamp is not checked against this — it is
+ * written by this package's own build, which already validates it, and a
+ * `-dirty` suffix is deliberate information.
+ */
+const SHA_SHAPE = /^[0-9a-f]{7,40}$/i;
+
 function readStamp(stampUrl: URL): { sha?: unknown; builtAt?: unknown } | null {
   try {
     return JSON.parse(readFileSync(stampUrl, 'utf8')) as { sha?: unknown; builtAt?: unknown };
@@ -49,14 +65,15 @@ export function readBuildInfo(
   stampUrl: URL = new URL(STAMP_FILE, import.meta.url),
 ): BuildInfo {
   const stamp = readStamp(stampUrl);
-  if (stamp && typeof stamp.sha === 'string' && stamp.sha.trim().length > 0) {
+  const stamped = typeof stamp?.sha === 'string' ? stamp.sha.trim() : '';
+  if (stamp && stamped.length > 0 && stamped !== UNKNOWN_SHA) {
     return {
-      sha: stamp.sha.trim(),
+      sha: stamped,
       builtAt: typeof stamp.builtAt === 'string' ? stamp.builtAt : null,
       source: 'stamp',
     };
   }
   const fromEnv = env.TANGRAM_BUILD_SHA?.trim();
-  if (fromEnv) return { sha: fromEnv, builtAt: null, source: 'env' };
+  if (fromEnv && SHA_SHAPE.test(fromEnv)) return { sha: fromEnv, builtAt: null, source: 'env' };
   return { sha: UNKNOWN_SHA, builtAt: null, source: 'unknown' };
 }

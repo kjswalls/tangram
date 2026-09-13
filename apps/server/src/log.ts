@@ -57,30 +57,121 @@ export function isSecretHeader(name: string): boolean {
 /**
  * Redact a value of any shape, recursively, for logging.
  *
- * Cycles are tolerated (an SDK error's `cause` chain can be cyclic) and depth
- * is bounded, because a redactor that hangs or blows the stack on a weird error
- * object means the error is never logged at all.
+ * Three things here are not defensive programming; each is a leak that was
+ * demonstrated against the first version of this file.
+ *
+ *  1. **Function-valued properties are dropped.** A function is not an object,
+ *     so an earlier version returned it unchanged — and `createLogger` then
+ *     called `JSON.stringify`, which invokes any surviving own `toJSON` and
+ *     re-materialises the object AFTER redaction ran. An own `toJSON` is exactly
+ *     how a hand-rolled request wrapper gets logged, and the key came out in
+ *     cleartext.
+ *  2. **Binary is summarised, never walked.** `Object.entries` on a `Buffer` or
+ *     a typed array yields its numeric indices, so the walk emitted every byte
+ *     as a number and `Buffer.from(Object.values(x))` recovered the secret
+ *     exactly. Length only.
+ *  3. **`Map`, `Set`, `Headers` and `URLSearchParams` are converted to entries
+ *     rather than falling through the plain-object walk**, which rendered them
+ *     as `{}` — silently lossy, and it made `isSecretHeader` dead for a real
+ *     `Headers` object, which is the one container a proxy logs most.
+ *
+ * Cycles are tolerated and depth is bounded, because a redactor that hangs or
+ * blows the stack on a weird error object means the error is never logged at
+ * all. The cycle guard tracks the **current path**, not every object ever seen:
+ * a shared sibling reference is a DAG, not a cycle, and reporting it as
+ * `[circular]` replaces the field the operator was reading the log for.
+ * A property whose getter throws yields `'[getter threw]'` rather than
+ * propagating, for the same reason.
  */
-export function redact(value: unknown, env: Env = process.env, depth = 0, seen = new WeakSet<object>()): unknown {
+export function redact(value: unknown, env: Env = process.env, depth = 0, path = new Set<object>()): unknown {
   if (typeof value === 'string') return redactString(value, env);
+  // See 1. Dropped rather than kept: nothing downstream may call it.
+  if (typeof value === 'function') return '[function]';
+  if (typeof value === 'bigint') return `${value}n`;
+  if (typeof value === 'symbol') return '[symbol]';
   if (value === null || typeof value !== 'object') return value;
   if (depth >= 6) return '[depth]';
-  if (seen.has(value)) return '[circular]';
-  seen.add(value);
+  if (path.has(value)) return '[circular]';
 
-  if (value instanceof Error) {
-    return {
-      name: value.name,
-      message: redactString(value.message, env),
-      ...(value.stack ? { stack: redactString(value.stack, env) } : {}),
-      ...(value.cause === undefined ? {} : { cause: redact(value.cause, env, depth + 1, seen) }),
-    };
+  // See 2. Before anything that could enumerate indices.
+  if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer) {
+    return `[binary ${value.byteLength} bytes]`;
   }
-  if (Array.isArray(value)) return value.map((item) => redact(item, env, depth + 1, seen));
+  if (value instanceof Date) return value.toISOString();
+  if (value instanceof RegExp) return redactString(String(value), env);
+  if (value instanceof URL) return redactString(value.href, env);
 
+  path.add(value);
+  try {
+    if (value instanceof Error) {
+      return {
+        name: value.name,
+        message: redactString(value.message, env),
+        ...(value.stack ? { stack: redactString(value.stack, env) } : {}),
+        // An SDK hangs its request and response off the error; those are where
+        // the credential lives, so they are walked rather than skipped.
+        ...redactOwnProperties(value, env, depth, path, ERROR_OWN_SKIP),
+        ...(readProperty(value, 'cause') === undefined
+          ? {}
+          : { cause: redact(readProperty(value, 'cause'), env, depth + 1, path) }),
+      };
+    }
+    if (Array.isArray(value)) return value.map((item) => redact(item, env, depth + 1, path));
+
+    // See 3. `Headers` and `URLSearchParams` expose `.entries()`; so do Map and
+    // Set. Converting them keeps `isSecretHeader` alive and keeps the data.
+    const entries = keyedEntries(value);
+    if (entries) {
+      const out: Record<string, unknown> = {};
+      for (const [key, item] of entries) {
+        out[key] = isSecretHeader(key) ? REDACTION : redact(item, env, depth + 1, path);
+      }
+      return out;
+    }
+    if (value instanceof Set) return [...value].map((item) => redact(item, env, depth + 1, path));
+
+    return redactOwnProperties(value, env, depth, path, EMPTY_SKIP);
+  } finally {
+    // The guard is the path, not the history — a sibling seen twice is a DAG.
+    path.delete(value);
+  }
+}
+
+const ERROR_OWN_SKIP = new Set(['name', 'message', 'stack', 'cause']);
+const EMPTY_SKIP: ReadonlySet<string> = new Set();
+
+/** `Map`/`Headers`/`URLSearchParams` as `[key, value]` pairs, or null. */
+function keyedEntries(value: object): [string, unknown][] | null {
+  if (value instanceof Map) return [...value].map(([key, item]) => [String(key), item]);
+  if (typeof Headers !== 'undefined' && value instanceof Headers) return [...value.entries()];
+  if (value instanceof URLSearchParams) return [...value.entries()];
+  return null;
+}
+
+/** Read one property without letting a throwing getter escape. */
+function readProperty(value: object, key: string): unknown {
+  try {
+    return (value as Record<string, unknown>)[key];
+  } catch {
+    return '[getter threw]';
+  }
+}
+
+function redactOwnProperties(
+  value: object,
+  env: Env,
+  depth: number,
+  path: Set<object>,
+  skip: ReadonlySet<string>,
+): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-    out[key] = isSecretHeader(key) ? REDACTION : redact(item, env, depth + 1, seen);
+  for (const key of Object.keys(value)) {
+    if (skip.has(key)) continue;
+    if (isSecretHeader(key)) {
+      out[key] = REDACTION;
+      continue;
+    }
+    out[key] = redact(readProperty(value, key), env, depth + 1, path);
   }
   return out;
 }

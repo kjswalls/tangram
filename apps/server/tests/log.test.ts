@@ -43,6 +43,16 @@ describe('redactString', () => {
     expect(MIN_REDACTABLE_LENGTH).toBeGreaterThan(1);
   });
 
+  it('replaces a containing secret before the one it contains', () => {
+    // In declaration order the shorter one goes first and leaves the remainder
+    // of the longer one on the line: `[redacted]EXTRA`.
+    const nested = {
+      ANTHROPIC_API_KEY: 'supersecretvalue',
+      TANGRAM_ACCESS_SECRET: 'supersecretvalueEXTRA',
+    };
+    expect(redactString('leak supersecretvalueEXTRA here', nested)).toBe(`leak ${REDACTION} here`);
+  });
+
   it('treats whitespace-only as unset, the same reading lib/server/access.ts takes', () => {
     expect(secretValues({ TANGRAM_ACCESS_SECRET: '   ' })).toEqual([]);
   });
@@ -74,6 +84,78 @@ describe('redact', () => {
     let deep: Record<string, unknown> = { end: true };
     for (let i = 0; i < 40; i += 1) deep = { nested: deep };
     expect(JSON.stringify(redact(deep, {}))).toContain('[depth]');
+  });
+
+  it('drops a function, so an own toJSON cannot re-materialise the secret after redaction', () => {
+    // The leak: a function is not an object, so an earlier version returned it
+    // unchanged and JSON.stringify then called it — producing the raw value on
+    // the log line, AFTER redaction had run. An own toJSON is how a hand-rolled
+    // request/response wrapper gets logged, and B1 puts an SDK error here.
+    const lines: string[] = [];
+    createLogger((line) => lines.push(line), env).error('provider failed', {
+      req: { toJSON: () => ({ headers: { authorization: `Bearer ${env.ANTHROPIC_API_KEY}` } }) },
+    });
+    expect(lines[0]).not.toContain('REALKEYMATERIAL');
+  });
+
+  it('summarises binary instead of walking it into a recoverable byte dump', () => {
+    // Object.entries on a Buffer yields its numeric indices, so the walk emitted
+    // every byte as a number and Buffer.from(Object.values(x)) recovered the key
+    // exactly. Length only.
+    const out = redact({ body: Buffer.from(`x-api-key: ${env.ANTHROPIC_API_KEY}`) }, env) as {
+      body: string;
+    };
+    expect(out.body).toMatch(/^\[binary \d+ bytes\]$/);
+    expect(JSON.stringify(out)).not.toContain('REALKEYMATERIAL');
+    expect(JSON.stringify(redact({ b: new TextEncoder().encode(env.ANTHROPIC_API_KEY) }, env))).not.toContain('114');
+  });
+
+  it('walks a Headers object rather than rendering it as {}, so isSecretHeader still fires', () => {
+    const headers = new Headers({ authorization: 'Bearer abc', accept: 'application/json' });
+    const out = redact({ headers }, env) as { headers: Record<string, string> };
+    expect(out.headers.authorization).toBe(REDACTION);
+    expect(out.headers.accept).toBe('application/json');
+  });
+
+  it('keeps Map and Set contents instead of collapsing them to {}', () => {
+    const out = redact({ m: new Map([['k', 'v']]), s: new Set(['a']) }, env) as {
+      m: Record<string, string>;
+      s: string[];
+    };
+    expect(out.m).toEqual({ k: 'v' });
+    expect(out.s).toEqual(['a']);
+  });
+
+  it('renders a shared sibling reference twice — a DAG is not a cycle', () => {
+    // The guard tracks the current path, not everything ever seen. Reporting a
+    // repeated sibling as [circular] replaces the field the operator is reading
+    // the log for.
+    const shared = { a: 1 };
+    expect(redact({ x: shared, y: shared }, env)).toEqual({ x: { a: 1 }, y: { a: 1 } });
+  });
+
+  it('survives a getter that throws, rather than making the logger throw', () => {
+    // app.onError logs before it builds a body, so a throwing getter anywhere in
+    // the error graph would mean no 500 body AND no log line — the exact outcome
+    // this module says it exists to prevent.
+    const error = new Error('boom');
+    Object.defineProperty(error, 'detail', {
+      get() {
+        throw new Error('getter blew up');
+      },
+      enumerable: true,
+    });
+    expect(() => redact(error, env)).not.toThrow();
+    expect(JSON.stringify(redact(error, env))).toContain('[getter threw]');
+  });
+
+  it('walks an SDK error’s own request/response properties, where the credential lives', () => {
+    const error = Object.assign(new Error('request failed'), {
+      request: { headers: { authorization: `Bearer ${env.ANTHROPIC_API_KEY}` } },
+    });
+    const text = JSON.stringify(redact(error, env));
+    expect(text).not.toContain('REALKEYMATERIAL');
+    expect(text).toContain(REDACTION);
   });
 
   it('knows which header names carry a credential', () => {

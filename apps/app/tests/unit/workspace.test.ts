@@ -57,7 +57,12 @@ describe('the workspace layout', () => {
     // `backend.md` B0 appends `apps/server` to the same script and a later
     // package will append itself again: what must stay true is that the root
     // typechecks its own `scripts/` AND every package, not the exact spelling.
-    expect(root.scripts.typecheck).toMatch(/(^|\s)tsc --noEmit(\s|$)/);
+    // The BARE invocation, not merely the token: `tsc --noEmit -p
+    // apps/app/tsconfig.json` contains the token and typechecks the root
+    // `scripts/` directory not at all — which is the same silent-coverage-loss
+    // this test exists for. The per-package parts stay loose so a new package
+    // can append itself.
+    expect(root.scripts.typecheck).toMatch(/(^|&&\s*)tsc --noEmit\s*(&&|$)/);
     expect(root.scripts.typecheck).toMatch(/-F app typecheck/);
     expect(root.scripts.build).toMatch(/typecheck/);
     expect(root.scripts.lint).toMatch(/eslint \./);

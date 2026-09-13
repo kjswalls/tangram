@@ -18,7 +18,7 @@
  */
 import { Hono } from 'hono';
 
-import { redact, type Logger } from './log.ts';
+import { redactString, type Logger } from './log.ts';
 import { health } from './routes/health.ts';
 import { ROUTES, type ServerRoute } from './routes/table.ts';
 
@@ -38,9 +38,14 @@ export interface AppOptions {
 /**
  * The handler for each declared path.
  *
- * Typed as a total map over `ROUTES`' paths at construction time — `buildApp`
- * throws if the table names a path with no handler, so a table entry added
- * without an implementation fails at boot rather than 404ing in the deployment.
+ * **The check is symmetric, and the second half is the one that matters.** A
+ * table entry with no handler throws at boot — easy, and the rarer direction. A
+ * *handler* with no table entry is the one B1 will hit, because B1 adds
+ * handlers: it is never mounted, `mountedPaths()` is derived from the table so
+ * the route test cannot see it, `smoke.ts` walks the table so the smoke never
+ * probes it, and every gate stays green while `POST /api/ask` 404s in the
+ * deployment. That is precisely the failure `routes/table.ts`'s header says the
+ * table exists to prevent, so `buildApp` throws for it too.
  */
 type RouteHandlers = Record<string, (request: Request) => Response | Promise<Response>>;
 
@@ -53,12 +58,22 @@ export function buildApp(options: AppOptions = {}): Hono {
     '/health': () => health(startedAt),
   };
 
-  for (const route of options.routes ?? ROUTES) {
+  const table = options.routes ?? ROUTES;
+  for (const route of table) {
     const handler = handlers[route.path];
     if (!handler) {
       throw new Error(`routes/table.ts declares ${route.path} but app.ts has no handler for it`);
     }
     mount(app, route, handler);
+  }
+
+  const declared = new Set(table.map((route) => route.path));
+  for (const path of Object.keys(handlers)) {
+    if (!declared.has(path)) {
+      throw new Error(
+        `app.ts has a handler for ${path} but routes/table.ts does not declare it, so it is never mounted`,
+      );
+    }
   }
 
   app.notFound((c) =>
@@ -69,9 +84,21 @@ export function buildApp(options: AppOptions = {}): Hono {
     // The only place an unhandled error is turned into a body. `redact` runs on
     // both halves: the log line and, when errors are exposed, the message —
     // an SDK error's `cause` is the likeliest carrier of a provider key.
-    logger?.error('unhandled error', { path: c.req.path, method: c.req.method, error });
+    //
+    // Wrapped, because logging must never be able to break the response. The
+    // redactor is hardened against a throwing getter, but this handler is the
+    // last thing between an exception and a blank 500 and it should not depend
+    // on that being true forever.
+    try {
+      logger?.error('unhandled error', { path: c.req.path, method: c.req.method, error });
+    } catch {
+      // Nothing useful to do, and nothing may be printed: the value that broke
+      // the redactor is the value that might carry the key.
+    }
     const body: Record<string, unknown> = { error: 'internal' };
-    if (options.exposeErrors) body.hint = redact(error instanceof Error ? error.message : String(error));
+    if (options.exposeErrors) {
+      body.hint = redactString(error instanceof Error ? error.message : String(error));
+    }
     return c.json(body, 500, { 'cache-control': 'no-store' });
   });
 

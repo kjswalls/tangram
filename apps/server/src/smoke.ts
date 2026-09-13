@@ -12,23 +12,43 @@
  * somebody maintains, because the failure this replaces is exactly "a route
  * shipped that no check exercised" (`lib/server/route-inventory.ts`'s header).
  *
- * The gate: with `TANGRAM_ACCESS_SECRET` set on the server, a gated route
- * answers 401 without the header. `--key` supplies `X-Tangram-Access` so the
- * smoke exercises the route rather than the refusal. **The key is sent and
- * never printed** — `--key` is read into a local, redacted out of every failure
- * line, and absent from the summary.
+ * ## The gate, and how the key gets here
+ *
+ * With `TANGRAM_ACCESS_SECRET` set on the server, a gated route answers 401
+ * without the `X-Tangram-Access` header and answers properly with it. Both are
+ * worth asserting, so `--gate on` runs each gated case **twice** — once without
+ * the header expecting 401, once with it expecting the route's own status —
+ * which is B1's acceptance criterion exactly. `--gate off` asserts the open
+ * behaviour. Whether a gate exists is a property of the server's environment,
+ * not of the route, so it is stated rather than guessed: a smoke that accepted
+ * either would not notice a gate that had stopped existing.
+ *
+ * **The key comes from the environment.** `TANGRAM_ACCESS_SECRET` is already the
+ * name the server reads, so the variable is usually just there. `--key <value>`
+ * still works because `backend.md` B1 names that spelling and `docs/deploy.md`
+ * §7 documents the same shape for the app's smoke — but it **leaks**, and the
+ * leak is in the recommended invocation rather than in this file: pnpm echoes
+ * the resolved script command on start and again in its failure banner, so
+ * `pnpm -F server smoke --key hunter2` prints `hunter2` to stdout twice, and the
+ * value is in `ps` output and shell history for the whole run. Passing `--key`
+ * therefore warns on stderr. Inside this module the key is never printed: it is
+ * redacted out of every failure line and absent from the summary.
  */
 import { pathToFileURL } from 'node:url';
 
-import { ROUTES, type ServerRoute, type SmokeCase } from './routes/table.ts';
+import { ROUTES, type HttpMethod, type ServerRoute, type SmokeCase } from './routes/table.ts';
 
 /** The header `web.md` W4 names and `backend.md` B1 must not rename. */
 export const ACCESS_HEADER = 'x-tangram-access';
+
+/** Whether the server under test has `TANGRAM_ACCESS_SECRET` set. */
+export type GateMode = 'on' | 'off';
 
 export interface SmokeOptions {
   baseUrl: string;
   key?: string;
   timeoutMs: number;
+  gate: GateMode;
 }
 
 export interface SmokeResult {
@@ -44,10 +64,15 @@ export class UsageError extends Error {
   override readonly name = 'UsageError';
 }
 
-export function parseArgs(argv: readonly string[]): SmokeOptions {
+export function parseArgs(
+  argv: readonly string[],
+  env: Record<string, string | undefined> = {},
+  warn: (message: string) => void = (message) => console.error(message),
+): SmokeOptions {
   let baseUrl: string | undefined;
-  let key: string | undefined;
+  let key = env.TANGRAM_ACCESS_SECRET?.trim() || undefined;
   let timeoutMs = 15_000;
+  let gate: GateMode = 'off';
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     const next = (): string => {
@@ -57,30 +82,64 @@ export function parseArgs(argv: readonly string[]): SmokeOptions {
       return value;
     };
     if (arg === '--base-url') baseUrl = next();
-    else if (arg === '--key') key = next();
-    else if (arg === '--timeout-ms') {
+    else if (arg === '--key') {
+      key = next();
+      // Not refused — B1 names this spelling — but never silent. The leak is
+      // pnpm's command echo and the process list, neither of which this module
+      // controls.
+      warn(
+        'smoke: --key puts the secret in pnpm\'s echoed command line, in ps output and in shell history. ' +
+          'Prefer TANGRAM_ACCESS_SECRET in the environment.',
+      );
+    } else if (arg === '--gate') {
+      const value = next();
+      if (value !== 'on' && value !== 'off') throw new UsageError('--gate must be on or off');
+      gate = value;
+    } else if (arg === '--timeout-ms') {
       const parsed = Number(next());
       if (!Number.isFinite(parsed) || parsed <= 0) throw new UsageError('--timeout-ms must be a positive number');
       timeoutMs = parsed;
     } else if (arg === '--help' || arg === '-h') {
-      throw new UsageError('usage: smoke --base-url <url> [--key <secret>] [--timeout-ms <n>]');
+      throw new UsageError(
+        'usage: smoke --base-url <url> [--gate on|off] [--timeout-ms <n>]\n' +
+          '  the gate secret comes from TANGRAM_ACCESS_SECRET; --key <secret> works but leaks',
+      );
     } else throw new UsageError(`unknown argument ${arg}`);
   }
   if (!baseUrl) throw new UsageError('--base-url is required');
-  return { baseUrl: baseUrl.replace(/\/+$/, ''), ...(key === undefined ? {} : { key }), timeoutMs };
+  if (gate === 'on' && key === undefined) {
+    throw new UsageError('--gate on needs the secret: set TANGRAM_ACCESS_SECRET (or pass --key)');
+  }
+  return { baseUrl: baseUrl.replace(/\/+$/, ''), ...(key === undefined ? {} : { key }), timeoutMs, gate };
 }
 
 /**
- * What status a case should produce against *this* server.
+ * The probes one smoke case turns into.
  *
- * A gated route with no key is a 401 whatever its own smoke case says, and
- * asserting that explicitly is the point: it is the one case where the healthy
- * answer is a refusal, and a smoke that accepted either would not notice a gate
- * that had stopped existing.
+ * With the gate off that is one request. With the gate on it is two, and the
+ * pair is the assertion: a gated route must refuse without the header **and**
+ * answer with it. Checking only the second would not notice a gate that had
+ * stopped existing; checking only the first would not notice a broken route.
  */
-export function expectedStatus(route: ServerRoute, testCase: SmokeCase, hasKey: boolean): number {
-  if (route.gated && !hasKey) return 401;
-  return testCase.expect;
+export interface Probe {
+  path: string;
+  method: HttpMethod;
+  body?: unknown;
+  withKey: boolean;
+  expect: number;
+}
+
+export function probesFor(route: ServerRoute, testCase: SmokeCase, gate: GateMode): Probe[] {
+  const base = { path: route.path, method: testCase.method, ...(testCase.body === undefined ? {} : { body: testCase.body }) };
+  if (!route.gated || gate === 'off') return [{ ...base, withKey: gate === 'on', expect: testCase.expect }];
+  return [
+    { ...base, withKey: false, expect: 401 },
+    { ...base, withKey: true, expect: testCase.expect },
+  ];
+}
+
+export function allProbes(gate: GateMode): Probe[] {
+  return ROUTES.flatMap((route) => route.smoke.flatMap((testCase) => probesFor(route, testCase, gate)));
 }
 
 export async function runSmoke(
@@ -88,43 +147,59 @@ export async function runSmoke(
   fetchImpl: typeof fetch = fetch,
 ): Promise<SmokeResult[]> {
   const results: SmokeResult[] = [];
-  for (const route of ROUTES) {
-    for (const testCase of route.smoke) {
-      const expected = expectedStatus(route, testCase, options.key !== undefined);
-      const headers: Record<string, string> = {};
-      if (testCase.body !== undefined) headers['content-type'] = 'application/json';
-      if (options.key !== undefined) headers[ACCESS_HEADER] = options.key;
-      const init: RequestInit = {
-        method: testCase.method,
-        headers,
-        signal: AbortSignal.timeout(options.timeoutMs),
-        ...(testCase.body === undefined ? {} : { body: JSON.stringify(testCase.body) }),
-      };
-      try {
-        const response = await fetchImpl(`${options.baseUrl}${route.path}`, init);
-        results.push({
-          path: route.path,
-          method: testCase.method,
-          expected,
-          actual: response.status,
-          ok: response.status === expected,
-        });
-      } catch (error) {
-        results.push({
-          path: route.path,
-          method: testCase.method,
-          expected,
-          actual: null,
-          ok: false,
-          // The secret can only be in this string if a fetch implementation put
-          // it there; redact anyway. `redactString` needs the live env, and the
-          // key was passed on the command line, so scrub it by value here.
-          detail: scrub(error instanceof Error ? error.message : String(error), options.key),
-        });
-      }
+  for (const probe of allProbes(options.gate)) {
+    const headers: Record<string, string> = {};
+    if (probe.body !== undefined) headers['content-type'] = 'application/json';
+    if (probe.withKey && options.key !== undefined) headers[ACCESS_HEADER] = options.key;
+    const init: RequestInit = {
+      method: probe.method,
+      headers,
+      signal: AbortSignal.timeout(options.timeoutMs),
+      ...(probe.body === undefined ? {} : { body: JSON.stringify(probe.body) }),
+    };
+    const label = probe.withKey ? `${probe.method} (keyed)` : probe.method;
+    try {
+      const response = await fetchImpl(`${options.baseUrl}${probe.path}`, init);
+      results.push({
+        path: probe.path,
+        method: label,
+        expected: probe.expect,
+        actual: response.status,
+        ok: response.status === probe.expect,
+      });
+    } catch (error) {
+      results.push({
+        path: probe.path,
+        method: label,
+        expected: probe.expect,
+        actual: null,
+        ok: false,
+        detail: scrub(describeFailure(error), options.key),
+      });
     }
   }
   return results;
+}
+
+/**
+ * Why the request failed, not merely that it did.
+ *
+ * Node's fetch sets `message` to the constant string "fetch failed" and puts the
+ * real reason — `ECONNREFUSED`, `ENOTFOUND`, a TLS error — in `cause`. This tool
+ * exists to be run when a deploy looks wrong, and one identical line for a
+ * refused connection, an unresolvable hostname, a certificate mismatch and a
+ * wrong port tells nobody anything.
+ */
+export function describeFailure(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  const parts = [error.name === 'TimeoutError' ? 'timed out' : error.message];
+  let cause: unknown = error.cause;
+  for (let depth = 0; cause instanceof Error && depth < 4; depth += 1) {
+    const code = (cause as NodeJS.ErrnoException).code;
+    parts.push(code ? `${code}: ${cause.message}` : cause.message);
+    cause = cause.cause;
+  }
+  return parts.join(' — ');
 }
 
 function scrub(text: string, key: string | undefined): string {
@@ -149,7 +224,7 @@ export function formatResults(results: readonly SmokeResult[]): string {
 const entry = process.argv[1];
 if (entry !== undefined && import.meta.url === pathToFileURL(entry).href) {
   try {
-    const options = parseArgs(process.argv.slice(2));
+    const options = parseArgs(process.argv.slice(2), process.env);
     const results = await runSmoke(options);
     console.log(formatResults(results));
     process.exitCode = results.every((r) => r.ok) ? 0 : 1;

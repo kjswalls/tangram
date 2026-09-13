@@ -40,8 +40,12 @@
  *  2. **The model id is chosen by the server and is never read from a request.**
  *     There is no `model` field on any request type here, deliberately: a client
  *     that could name the model could name the most expensive one. `model` on a
- *     *response* is the server reporting what it used, and it is part of the
- *     cache key.
+ *     *response* is the server reporting what it used, for a log line and a
+ *     badge. **It is NOT part of the cache key** — `cache-key.ts`'s
+ *     `askCachePayload` folds in `promptVersion`, `provider`, `query`, the
+ *     context key and `estimatedBand`, and nothing else, which is the same five
+ *     `PLAN.md` §3.4 specifies. A sixth would orphan every row already written,
+ *     including the two `lib/dev/seed.ts` pre-warms.
  *  3. **`cacheable` is not on the wire.** Today the server sets it when a
  *     schema-valid answer grounds to nothing and it substitutes a retrieval
  *     echo. After the flip the server cannot compute it, because the server no
@@ -59,8 +63,15 @@
  * Zod schemas. `CLAUDE.md`'s rule is that the owner "lands the declarations
  * alone, first, with no implementation", and a validator is implementation: it
  * decides what a malformed request does, which is B2's remainder to write and
- * to test. The caps below are `const` rather than prose because a cap with no
- * number is not a contract — D6 and C7 both need to know that 40 is 40.
+ * to test.
+ *
+ * Two deliberate readings of "declarations alone", both recorded in
+ * `HANDOFF.md` rather than taken silently. The caps are `const` rather than
+ * prose, because a cap with no number is not a contract — D6 and C7 both need
+ * to know that 40 is 40. And `toRetrieved()` is here, six lines of pure
+ * projection, because rule 1 without it is an invitation to ship the whole
+ * dictionary row: a shape nobody can construct correctly is not frozen, it is
+ * merely written down.
  *
  * Nothing in this file imports anything. That is not stylistic: a frozen shape
  * that imports from a package on the other side of the freeze can be changed
@@ -104,8 +115,46 @@ export interface RetrievedEntry {
   /** Marked pinyin, e.g. `dǎsuàn`. Derived, never model-authored. */
   pinyinMarked: string;
   hskBand?: HskBand;
-  /** Glosses with `CL:` lines already removed. */
+  /** Glosses with `CL:` lines already removed. At most `MAX_GLOSSES_PER_ENTRY`. */
   glosses: string[];
+}
+
+/**
+ * The six keys, as data, so a projection cannot drift from the interface.
+ *
+ * `satisfies` rather than a bare annotation: adding a seventh field to
+ * `RetrievedEntry` without adding it here is then a compile error, which is the
+ * guard `contract.test.ts`'s key count cannot give on its own.
+ */
+export const RETRIEVED_ENTRY_KEYS = [
+  'id',
+  'simp',
+  'trad',
+  'pinyinMarked',
+  'hskBand',
+  'glosses',
+] as const satisfies readonly (keyof RetrievedEntry)[];
+
+/**
+ * Project a dictionary row down to what goes on the wire.
+ *
+ * `Entry` is structurally assignable to `RetrievedEntry` and that is the point
+ * of the shape — but assignability is a compile-time fact and `JSON.stringify`
+ * is not. This is what makes the wire shape true at runtime, and it is declared
+ * here so the client, the server's own tests and any future native client call
+ * one projection rather than three. `hskBand` is omitted rather than sent as
+ * `undefined`, because `JSON.stringify` drops an undefined value anyway and a
+ * key that is sometimes absent and sometimes `null` is two shapes.
+ */
+export function toRetrieved(entry: RetrievedEntry): RetrievedEntry {
+  return {
+    id: entry.id,
+    simp: entry.simp,
+    trad: entry.trad,
+    pinyinMarked: entry.pinyinMarked,
+    ...(entry.hskBand === undefined ? {} : { hskBand: entry.hskBand }),
+    glosses: entry.glosses,
+  };
 }
 
 /** The provenance an ask carries — a reader tap, a pasted line, a question. */
@@ -128,10 +177,24 @@ export interface LearnerProfile {
 // ---------------------------------------------------------------------------
 // The caps. Server-side validation is cost control once the client supplies the
 // prompt's inputs, so every one of these is enforced at the edge by B2's zod
-// schema and a request that exceeds one is a 400, not a truncation.
+// schema. **Two behaviours, and the distinction is not cosmetic:** the counts
+// and the byte caps REJECT with a 400, because a client that exceeded one has a
+// bug; `MAX_SENTENCE_CHARS` TRUNCATES, because that is what `app/api/ask/route.ts`
+// does today and the string it bounds is a reader selection the learner does not
+// choose the length of.
 // ---------------------------------------------------------------------------
 
-/** `PLAN.md` §3.4 caps the retrieved set at 40 entries. */
+/**
+ * `PLAN.md` §3.4 caps the retrieved set at 40 entries.
+ *
+ * **Declared here and nowhere else.** `backend.md` B2 lists `RETRIEVED_CAP`
+ * among the symbols moving into `packages/ai/retrieve.ts` (which `data.md` D3
+ * owns). It must `import { RETRIEVED_CAP } from './schemas.ts'` rather than
+ * redeclare it: two constants of the same name in one package is a value the
+ * edge validator and the client's own `mergeRetrieved()` can disagree about
+ * with nothing failing to compile. `SEARCH_HEAD` is the opposite case — it
+ * shapes retrieval and never reaches the wire — so it stays in `retrieve.ts`.
+ */
 export const RETRIEVED_CAP = 40;
 /** At most eight candidate phrases come back from `propose`. */
 export const MAX_PROPOSED_PHRASES = 8;
@@ -141,9 +204,38 @@ export const SUPPORT_CAP = 40;
 export const MAX_KNOWN_SAMPLE = 200;
 /** How many sentences one examples call may return, before the client's i+1 filter. */
 export const MAX_EXAMPLE_SENTENCES = 4;
+/** `query` and the recall `answer` are rejected above this; both are typed by a person. */
 export const MAX_QUERY_CHARS = 400;
-export const MAX_SENTENCE_CHARS = 400;
 export const MAX_RECALL_ANSWER_CHARS = 400;
+/**
+ * Each of `AskContext`'s three strings — `sentence`, `question`, `query`.
+ *
+ * **Truncated, not rejected**, matching `app/api/ask/route.ts`'s `parseBody`,
+ * which does `value.trim().slice(0, MAX_SENTENCE_CHARS)`. It matters: a reader
+ * tap sets `context.sentence` from a sentence span, a pasted passage with no
+ * sentence-final punctuation is one span, and rejecting it would turn a working
+ * ask into an error on the one input path the learner does not control.
+ */
+export const MAX_SENTENCE_CHARS = 400;
+
+/**
+ * The byte caps. Counts alone do not bound a request: `retrieved` is 40 rows and
+ * a row is a string array.
+ *
+ * `backend.md` B2 asks the edge for "a total body size cap" and B7 then writes
+ * its limiter against "the body-size and entry-count caps B2 introduced". They
+ * are numbers here because the **client** is the party assembling the payload,
+ * and a cap it cannot see is a 400 it cannot avoid.
+ *
+ * The sizes follow what the dictionary actually holds: the longest CC-CEDICT
+ * headword is well inside 24 characters, an `EntryId` is `trad|simp[pinyinNum]`,
+ * and 40 entries × 12 glosses × 120 characters is ~60 KB before overhead.
+ */
+export const MAX_BODY_BYTES = 256 * 1024;
+export const MAX_GLOSSES_PER_ENTRY = 12;
+export const MAX_GLOSS_CHARS = 200;
+export const MAX_HEADWORD_CHARS = 24;
+export const MAX_ENTRY_ID_CHARS = 160;
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -212,16 +304,28 @@ export interface AskResponse {
   notes: string[];
 }
 
-/** One example sentence, same citation discipline as a `sayIt` phrase. */
-export interface ExampleSentence {
+/**
+ * One example sentence as the model returned it: **ungrounded, unfiltered**.
+ *
+ * The `Raw` prefix is load-bearing, not decoration. `apps/app/lib/ai/examples.ts`
+ * already exports `ExampleSentence = GroundedSayIt` — the *grounded, filtered,
+ * cache-safe* value, with `register` and `unverified` — and `examples.ts` is one
+ * of the ten modules `wave-zero.md` §5 moves into this package. Two types of one
+ * name in one package, meaning opposite things, on the same `sentences` field,
+ * with `AskCache.set(key, response: unknown)` untyped underneath, is how the
+ * ungrounded shape reaches `ask_cache` and the licence boundary with it.
+ */
+export interface RawExampleSentence {
   tokens: AskToken[];
   en: string;
 }
 
 // ---------------------------------------------------------------------------
-// The handshake. Every response carries it, because the client cannot build a
-// cache key without `provider` and `promptVersion` — and the offline badge has
-// to be right even when every answer on the page came from the cache.
+// The handshake. Every response for a route whose answer is CACHED carries it,
+// because the client cannot build a cache key without `provider` and
+// `promptVersion` — and the offline badge has to be right even when every answer
+// on the page came from the cache. `RecallResponse` deliberately does not; see
+// its own note.
 // ---------------------------------------------------------------------------
 
 export interface ProviderInfo {
@@ -259,8 +363,16 @@ export interface AskAnswerRequest {
   query: string;
   context?: AskContext;
   profile: LearnerProfile;
-  /** The CC-CEDICT snapshot the entries came from. Diagnostic and log-only. */
-  dictVersion: string;
+  /**
+   * The CC-CEDICT snapshot the entries came from. **Optional, and optional on
+   * purpose:** no phase in the plan set consumes it — B7's log line is "account
+   * id, route, provider, latency, outcome, token counts" — and `ExamplesRequest`
+   * and `RecallRequest` carry no equivalent, so requiring it here would 400 a
+   * client for omitting data nobody reads. The mobile shells ship the same SPA
+   * inside a WebView and update independently of this server, which is the case
+   * a required-but-unused field breaks first.
+   */
+  dictVersion?: string;
   /** At most `RETRIEVED_CAP`. The model may cite nothing else. */
   retrieved: RetrievedEntry[];
 }
@@ -303,7 +415,7 @@ export interface ExamplesResponse extends ProviderInfo {
    * either: whether an empty result is worth caching is a statement about how
    * many words the learner knew today, and only the client knows that.
    */
-  sentences: ExampleSentence[];
+  sentences: RawExampleSentence[];
 }
 
 // ---------------------------------------------------------------------------
@@ -316,13 +428,31 @@ export interface ExamplesResponse extends ProviderInfo {
 // it costs nothing to do it where the model output is first seen.
 // ---------------------------------------------------------------------------
 
-export interface RecallRequest {
+/**
+ * Named for the endpoint rather than `RecallRequest`, which
+ * `apps/app/lib/ai/recall.ts` already exports as the injectable *fetch seam*
+ * (`(input, options) => Promise<RecallSuggestion | null>`), consumed as a prop
+ * type by `components/review/recall-input.tsx` and as a return type by
+ * `lib/srs/direction.ts`. `recall.ts` moves into this package under
+ * `wave-zero.md` §5, and B2's remainder has to edit it — so the one file that
+ * must import this type is the one file that already exports that name.
+ */
+export interface RecallGradeRequest {
   entry: RetrievedEntry;
   senseIndex?: number;
   /** The learner's own words, at most `MAX_RECALL_ANSWER_CHARS`. */
   answer: string;
 }
 
+/**
+ * Carries `provider` but **not** `promptVersion`, and that is a decision rather
+ * than an omission: free-recall grading is uncached by design.
+ * `cache-key.ts` records `RECALL_PROMPT_VERSION` and `recallCacheKey` as
+ * "reserved and unused" because a recall row's payload is the model's `why`, and
+ * a live model explaining a grade quotes the gloss — which `ask_cache` may not
+ * hold (`CLAUDE.md`, the licence boundary). Adding `promptVersion` here is the
+ * first half of caching recall; do not do it.
+ */
 export interface RecallResponse {
   suggested: RecallGrade;
   /** One line of plain English prose. Scrubbed of CJK and pinyin. */
@@ -351,7 +481,16 @@ export type ContractErrorCode =
   /** The provider threw, timed out, or the transport failed. */
   | 'provider-failed'
   /** The provider answered, and the answer did not match the schema. */
-  | 'provider-invalid';
+  | 'provider-invalid'
+  /**
+   * A per-account, per-secret or per-IP limit was hit. **`backend.md` B7's**,
+   * and it is in the union now rather than when B7 runs: B7's acceptance
+   * criterion is "returns `429` with `Retry-After`, the app shows the real
+   * reason", and a client that can only branch on `error` cannot show a real
+   * reason for a code that is not in the union it was designed against. The
+   * `Retry-After` value is a header, not a body field.
+   */
+  | 'rate-limited';
 
 export interface ContractErrorBody {
   error: ContractErrorCode;

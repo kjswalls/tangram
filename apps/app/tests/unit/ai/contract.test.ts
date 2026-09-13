@@ -30,27 +30,42 @@ import { describe, expect, it } from 'vitest';
 
 import {
   CONTRACT_PATHS,
+  MAX_EXAMPLE_SENTENCES,
+  MAX_GLOSSES_PER_ENTRY,
   MAX_KNOWN_SAMPLE,
   MAX_PROPOSED_PHRASES,
   MAX_QUERY_CHARS,
   MAX_RECALL_ANSWER_CHARS,
   RETRIEVED_CAP,
+  RETRIEVED_ENTRY_KEYS,
   SUPPORT_CAP,
+  toRetrieved,
+  type AskContext as ContractAskContext,
   type AskMatch,
   type AskResponse,
   type AskSayIt,
   type AskToken,
   type HskBand as ContractHskBand,
   type LearnerProfile as ContractProfile,
+  type ProviderName as ContractProviderName,
+  type RawExampleSentence,
   type RecallGrade as ContractGrade,
   type RetrievedEntry,
 } from '@tangram/ai/schemas';
 
-import { MAX_PROPOSED_PHRASES as PROVIDER_MAX_PROPOSED, RECALL_GRADES } from '@/lib/ai/provider';
+import type { ExampleSentence as GroundedExampleSentence } from '@/lib/ai/examples';
+import {
+  MAX_EXAMPLE_SENTENCES as PROVIDER_MAX_EXAMPLE_SENTENCES,
+  MAX_PROPOSED_PHRASES as PROVIDER_MAX_PROPOSED,
+  RECALL_GRADES,
+  type AskContext as ProviderAskContext,
+  type ProviderName as ProviderProviderName,
+} from '@/lib/ai/provider';
 import { RECALL_ANSWER_MAX_CHARS } from '@/lib/ai/recall';
 import { GATED_PATHS } from '@/lib/server/access';
 import type {
   AskMatch as AppAskMatch,
+  AskResponse as AppAskResponse,
   AskSayIt as AppAskSayIt,
   AskToken as AppAskToken,
   Entry,
@@ -96,11 +111,21 @@ describe('the contract restates types that live in lib/types.ts', () => {
     expect([...RECALL_GRADES]).toEqual([1, 2, 3, 4]);
   });
 
-  it('agrees on the token, match and phrase shapes', () => {
+  it('agrees on the token, match, phrase and answer shapes', () => {
     const sameToken: Exact<AppAskToken, AskToken> = true;
     const sameMatch: Exact<AppAskMatch, AskMatch> = true;
     const sameSayIt: Exact<AppAskSayIt, AskSayIt> = true;
-    expect([sameToken, sameMatch, sameSayIt]).toEqual([true, true, true]);
+    const sameAnswer: Exact<AppAskResponse, AskResponse> = true;
+    expect([sameToken, sameMatch, sameSayIt, sameAnswer]).toEqual([true, true, true, true]);
+  });
+
+  it('agrees with provider.ts on AskContext and ProviderName', () => {
+    // Both also live in lib/ai/provider.ts, which wave-zero.md §5 moves into
+    // this same package. A field added to one copy and not the other is
+    // accepted by the prompt builder and stripped by the edge validator.
+    const sameContext: Exact<ProviderAskContext, ContractAskContext> = true;
+    const sameProvider: Exact<ProviderProviderName, ContractProviderName> = true;
+    expect([sameContext, sameProvider]).toEqual([true, true]);
   });
 });
 
@@ -168,8 +193,42 @@ describe('Entry is structurally assignable to RetrievedEntry', () => {
     // entryLine() renders id, simp, trad, pinyinMarked, the HSK band and the
     // glosses, and touches nothing else. A seventh field here would be a claim
     // that the model sees something it does not.
-    const keys: (keyof RetrievedEntry)[] = ['id', 'simp', 'trad', 'pinyinMarked', 'hskBand', 'glosses'];
-    expect(keys).toHaveLength(6);
+    //
+    // RETRIEVED_ENTRY_KEYS is `as const satisfies readonly (keyof
+    // RetrievedEntry)[]`, so a field REMOVED from the interface breaks the
+    // compile. A field ADDED is caught here, by count — which is the direction
+    // a hand-written array of key names could not catch on its own.
+    expect([...RETRIEVED_ENTRY_KEYS]).toEqual(['id', 'simp', 'trad', 'pinyinMarked', 'hskBand', 'glosses']);
+    expect(RETRIEVED_ENTRY_KEYS).toHaveLength(6);
+  });
+
+  it('projects a full Entry down to those six, because assignability is not a wire fact', () => {
+    // `const retrieved: RetrievedEntry = entry` compiles and then JSON.stringify
+    // sends all fifteen fields. toRetrieved() is what makes the wire shape true
+    // at runtime, and this is the assertion that says so.
+    const entry: Entry = {
+      id: '打算|打算[da3 suan4]',
+      simp: '打算',
+      trad: '打算',
+      pinyinNum: 'da3 suan4',
+      pinyinMarked: 'dǎsuàn',
+      glosses: ['to plan'],
+      classifiers: ['个'],
+      properNoun: false,
+      isVariant: false,
+      surname: false,
+      pos: 'v',
+      hskBand: 3,
+      freqRank: 1234,
+      freq: 9876,
+    };
+    expect(Object.keys(JSON.parse(JSON.stringify(entry)))).toHaveLength(14);
+    expect(Object.keys(toRetrieved(entry)).sort()).toEqual([...RETRIEVED_ENTRY_KEYS].sort());
+  });
+
+  it('omits hskBand rather than sending it as undefined, so the wire has one shape', () => {
+    const banded = toRetrieved({ id: 'a', simp: 'a', trad: 'a', pinyinMarked: 'a', glosses: [] });
+    expect('hskBand' in banded).toBe(false);
   });
 });
 
@@ -190,6 +249,19 @@ describe('the caps agree with the values already in the app', () => {
   it('keeps the request caps the routes enforce today', () => {
     expect(MAX_QUERY_CHARS).toBe(400);
     expect(MAX_KNOWN_SAMPLE).toBe(200);
+  });
+
+  it('reuses the provider’s example-sentence cap — it is also the prompt’s ceiling', () => {
+    // examplesUserPrompt asks for `count = 3` under this; if provider.ts's copy
+    // rises and the frozen one does not, the edge rejects as `provider-invalid`
+    // the sixth sentence its own prompt asked for.
+    expect(MAX_EXAMPLE_SENTENCES).toBe(PROVIDER_MAX_EXAMPLE_SENTENCES);
+  });
+
+  it('bounds bytes and not only counts, because 40 rows is not a size', () => {
+    // backend.md B7 writes its limiter against "the body-size and entry-count
+    // caps B2 introduced". Counts alone leave `retrieved` unbounded in bytes.
+    expect(MAX_GLOSSES_PER_ENTRY).toBeGreaterThan(0);
   });
 });
 
@@ -212,6 +284,17 @@ describe('the answer shape is the ungrounded one', () => {
   it('is the same four fields askResponseSchema validates', () => {
     const answer: AskResponse = { interpretation: '', matches: [], sayIt: [], notes: [] };
     expect(Object.keys(answer).sort()).toEqual(['interpretation', 'matches', 'notes', 'sayIt']);
+  });
+
+  it('keeps RawExampleSentence distinct from the GROUNDED ExampleSentence', () => {
+    // lib/ai/examples.ts exports `ExampleSentence = GroundedSayIt` — grounded,
+    // filtered, cache-safe, with `register` and `unverified`. Both types land in
+    // packages/ai under wave-zero §5. If the raw one were assignable to the
+    // grounded one, the ungrounded array could be written into `ask_cache`
+    // through `AskCache.set(key, response: unknown)` with nothing complaining,
+    // and the licence boundary goes with it.
+    const rawIsNotGrounded: Assignable<RawExampleSentence, GroundedExampleSentence> = false;
+    expect(rawIsNotGrounded).toBe(false);
   });
 });
 

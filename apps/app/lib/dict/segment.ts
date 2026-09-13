@@ -56,7 +56,15 @@ interface SegmentIndex {
 /** Keyed off the index object, so `resetDictCache()` drops this with everything else. */
 const STATS = new WeakMap<DictIndex, SegmentIndex>();
 
-function headwordFreq(index: DictIndex, ids: readonly EntryId[]): number {
+/**
+ * The frequency the DP scores a headword at, and the value `words.freq` holds in
+ * the artifact. Exported because `scripts/build-data.ts` and
+ * `scripts/verify-data.ts` must *call* it rather than re-implement it: SQL
+ * `MAX(freq)` and replaying `compareEntries` give a different answer wherever a
+ * jieba frequency is 0 or absent, and the symptom is a sentence nobody wrote a
+ * segmentation case for (data.md §6).
+ */
+export function headwordFreq(index: DictIndex, ids: readonly EntryId[]): number {
   // Ids are stored frequency-descending, so the first one carries the word's freq.
   const first = ids.length > 0 ? index.entries.get(ids[0]) : undefined;
   return first?.freq ?? 1;

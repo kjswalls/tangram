@@ -61,9 +61,14 @@ CREATE TABLE entries (
 -- query-time stemmers cannot drift. `tokenchars ''''` keeps the apostrophe
 -- inside a token ("one's"). is_variant rows are NOT indexed, exactly as
 -- index.ts skips them today.
+-- `columnsize=0` drops the `gloss_fts_docsize` shadow table, measured at 1.20 MB
+-- against this corpus. It is only read by `bm25()` and `columnsize()`, and
+-- `bm25()` returns 0 for every row on a contentless `detail=none` table anyway
+-- (measured on SQLite 3.51.2 and 3.45.1) — the ranking is `glossTier`, in TS.
 CREATE VIRTUAL TABLE gloss_fts USING fts5(
   text,
   content='',
+  columnsize=0,
   tokenize="unicode61 tokenchars ''''",
   detail=none
 );
@@ -112,4 +117,10 @@ CREATE INDEX        entries_simp   ON entries(simp);
 CREATE INDEX        entries_trad   ON entries(trad);
 CREATE INDEX        entries_py_tl  ON entries(py_toneless);
 CREATE INDEX        entries_py_td  ON entries(py_toned);
-CREATE INDEX        entries_hsk    ON entries(hsk_band, hsk_sort);
+-- Partial: 113,160 of the 124,188 rows have no band, and an unrestricted index
+-- stores them all for 1.26 MB. SQLite proves `hsk_band = ?` implies
+-- `hsk_band IS NOT NULL` and uses this as a COVERING INDEX for the band query
+-- (verified with EXPLAIN QUERY PLAN), so the ordering is still a plain index
+-- scan and the implicit rowid tail supplies the `ORDER BY hsk_sort, rowid`
+-- tie-break for free.
+CREATE INDEX        entries_hsk    ON entries(hsk_band, hsk_sort) WHERE hsk_band IS NOT NULL;

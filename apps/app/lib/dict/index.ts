@@ -7,6 +7,7 @@
  * pointing into the single parsed copy of the dictionary, never copies of entries.
  */
 import { dictCache, getDict } from './load';
+import { compareEntries } from './rank';
 import { hasUnknownReading, normalizePinyin, readingKeys } from './pinyin';
 import type { DictEntry, DictMeta, EntryId, HskBand } from './types';
 
@@ -28,20 +29,6 @@ export interface DictIndex {
   /** Stemmed gloss token → ids. Variants are left out; they are not real words. */
   byGloss: Map<string, EntryId[]>;
   byHsk: Map<HskBand, EntryId[]>;
-}
-
-/**
- * Frequency first — that is the order every list in the UI wants. Entries of one
- * headword share a jieba frequency, so the tiebreaks decide between readings:
- * ordinary words before proper nouns before variants, then the id for determinism.
- */
-function compareEntries(a: DictEntry, b: DictEntry): number {
-  return (
-    (b.freq ?? -1) - (a.freq ?? -1) ||
-    Number(a.isVariant) - Number(b.isVariant) ||
-    Number(a.properNoun) - Number(b.properNoun) ||
-    (a.id < b.id ? -1 : 1)
-  );
 }
 
 function push(map: Map<string, EntryId[]>, key: string, id: EntryId): void {

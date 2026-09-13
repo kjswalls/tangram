@@ -1,0 +1,23 @@
+{
+  "name": "@tangram/ai",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.22"
+  },
+  "//": "docs/plans/wave-zero.md §5 creates this package and moves the ten existing lib/ai/** modules into it. That move (wave 0 deliverable 5) has NOT run — README.md V6 flags it as not executable as written, because it names ten modules and none of the 33 files with 74 import sites that break. This package therefore contains exactly one file: schemas.ts, the frozen ask contract that is backend.md B2's first commit. Nothing has moved and nothing is re-exported. The `exports` map points at TypeScript source because the only consumers today import types, which `verbatimModuleSyntax` erases; whoever runs deliverable 5 has to decide the build-and-exports story for runtime consumption from apps/server, and that decision is not forced by this file. See HANDOFF.md.",
+  "exports": {
+    "./schemas": "./schemas.ts"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "eslint": "^9.39.5",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.70.0"
+  }
+}

@@ -32,7 +32,18 @@ tangram/
 ```
 
 `data/` and `scripts/` stay at the root because three deployables consume `pnpm data`'s output.
-`web.md` W0 already documents the trap this creates — `build-data.ts` resolves its own directory and
+
+> **Correction, from the session that executed W0.** An earlier version of this section claimed "no
+> change needed to W0 for this ruling; it is confirmation." That was wrong, and the build session
+> caught it. W0's Files list put `scripts/` *inside* the `git mv`, and its prose and path-arithmetic
+> table both depended on having done so. The two documents described different trees. The ruling
+> stands — `scripts/` stays at the workspace root, with this document and `STACK.md` §5 against W0's
+> list — and the session paid the cost rather than dropping it: the four root scripts left the app's
+> TypeScript and eslint projects, so the workspace root gained its own configs and the root build
+> typechecks everything it typechecked before. `TANGRAM_DATA_DIR` is the authoritative mechanism;
+> `lib/dict/load.ts`'s default is no longer working-directory-relative. See `HANDOFF.md` under W0.
+
+`web.md` W0 also documents the trap this creates — `build-data.ts` resolves its own directory and
 `load.ts` resolves the working directory, so a naive move relocates the artifact while every test
 still passes — and its remedy (both honour `TANGRAM_DATA_DIR`; the root scripts set it to the
 absolute workspace-root path) stands. No change needed to W0 for this ruling; it is confirmation.

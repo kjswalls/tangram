@@ -33,6 +33,7 @@ import { nodeRunner } from '@/lib/dict/runners/node';
 import { segment } from '@/lib/dict/segment';
 import { SqliteDictStore } from '@/lib/dict/sqlite-store';
 import type { GroundContext, RawAskResponse } from '@/lib/ai/ground';
+import type { DictStore } from '@/lib/dict/store';
 import type { Entry } from '@/lib/types';
 import { dictArtifactPath, requireDictData } from '../dict/data-required';
 
@@ -227,6 +228,37 @@ describe('groundWithStore — the same answer, reached asynchronously', () => {
       },
       store,
       retrieved,
+    );
+    expect(grounded.matches).toEqual([]);
+  });
+
+  it('closes even if ground() asks for an id the store cannot answer', async () => {
+    // The case the `asked` set exists for, driven directly. `ground()` happens
+    // to drop an id outside the retrieved set *before* asking, so this path is
+    // not reachable through it today — which is why the guard is on the loop's
+    // shape rather than on that behaviour. Here the store answers nothing at
+    // all: if the guard were "did we find it" rather than "did we ask", the
+    // fixed point would never close and this would throw.
+    const blind: DictStore = {
+      status: { state: 'ready', version: 'x' },
+      subscribe: () => () => {},
+      open: async () => {},
+      entries: async () => [],
+      search: (query, options) => store.search(query, options),
+      segment: (text, options) => store.segment(text, options),
+      hskBand: async () => [],
+      readingCount: async () => 0,
+      wordsContaining: async () => [],
+    };
+    const grounded = await groundWithStore(
+      {
+        interpretation: 'Nothing resolvable.',
+        matches: [{ entryId: '打算|打算[da3 suan4]', senseIndex: 0, whyThisOne: 'cited' }],
+        sayIt: [{ tokens: [{ text: '随' }, { text: '看' }], en: 'x', register: 'neutral' }],
+        notes: [],
+      },
+      blind,
+      [],
     );
     expect(grounded.matches).toEqual([]);
   });

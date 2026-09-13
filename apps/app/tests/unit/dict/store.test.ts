@@ -133,6 +133,28 @@ describe('entries — the store answers what getEntries answers', () => {
     expect(Object.hasOwn(got, 'classifiers')).toBe(true);
   });
 
+  it('returns thousands of ids in order, across chunk boundaries', async () => {
+    // `IN (…)` lists are chunked because SQLite's parameter ceiling is a
+    // compile-time option and the three runtimes are three different builds —
+    // 999 before SQLite 3.32, 32,766 on this one, unverified on `sqlite-wasm`
+    // and the SQLCipher pod. A list this long crosses several chunks, and the
+    // chunk boundaries must be invisible: same entries, same order.
+    const all = [...getDictIndex().entries.keys()];
+    const ids = Array.from({ length: 2_500 }, (_, i) => all[(i * 7919) % all.length]);
+    const fromStore = await store.entries(ids);
+    expect(fromStore).toEqual(getEntries(ids));
+    expect(fromStore.length).toBe(new Set(ids).size);
+    // …and one round trip, because the chunks ride in the same batch.
+    const counting = countingRunner();
+    const spiedStore = new SqliteDictStore({ connect: async () => counting.runner });
+    await spiedStore.open();
+    const before = counting.calls();
+    await spiedStore.entries(ids);
+    expect(counting.calls() - before).toBe(1);
+    expect(counting.batches()[counting.batches().length - 1].length).toBeGreaterThan(1);
+    await spiedStore.close();
+  });
+
   it('answers an empty id list without touching the runner', async () => {
     const counting = countingRunner();
     const quiet = new SqliteDictStore({ connect: async () => counting.runner });

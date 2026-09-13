@@ -161,6 +161,17 @@ export async function groundWithStore(
   const segments = new Map<string, Token[]>();
   const entries = new Map<EntryId, Entry>();
   const readings = new Map<string, number>();
+  /**
+   * Every id already put to the store, found or not.
+   *
+   * Without it a citation the dictionary does not have would be requested again
+   * on every round and the loop would run to its bound and throw. `ground()`
+   * happens to drop an id outside the retrieved set *before* asking, so today
+   * nothing reaches that state — which is exactly why the guard is on the shape
+   * of the loop rather than on that behaviour: the loop's termination must not
+   * depend on a detail of the function it is driving.
+   */
+  const asked = new Set<EntryId>();
   for (const entry of retrieved) entries.set(entry.id, entry);
 
   for (let round = 0; round < MAX_GROUND_ROUNDS; round += 1) {
@@ -178,7 +189,7 @@ export async function groundWithStore(
       },
       entry: (id) => {
         const known = entries.get(id);
-        if (!known) wantEntries.add(id);
+        if (!known && !asked.has(id)) wantEntries.add(id);
         return known;
       },
       readings: (simp) => {
@@ -198,10 +209,8 @@ export async function groundWithStore(
         segments.set(text, (await store.segment(text)).tokens);
       }),
       (async () => {
+        for (const id of wantEntries) asked.add(id);
         for (const entry of await store.entries([...wantEntries])) entries.set(entry.id, entry);
-        // An id the dictionary does not have must not be asked for again, or the
-        // fixed point never closes. `ground()` drops it either way.
-        for (const id of wantEntries) if (!entries.has(id)) entries.set(id, MISSING);
       })(),
       ...[...wantReadings].map(async (simp) => {
         readings.set(simp, await store.readingCount(simp));
@@ -213,24 +222,3 @@ export async function groundWithStore(
   // time, which `ground()` cannot do — it is a bug here, not a slow convergence.
   throw new Error('grounding did not converge; see lib/ai/retrieve.ts');
 }
-
-/**
- * The stand-in for an id the dictionary does not have.
- *
- * `entries.set(id, MISSING)` is how the fixed point remembers "asked, answered
- * no" — without it, an uncited id the model invented would be requested on every
- * round and the loop would never close. `entry()` hands it to `ground()`, which
- * drops a citation whose entry is not in the retrieved set anyway.
- */
-const MISSING = Object.freeze({
-  id: '',
-  simp: '',
-  trad: '',
-  pinyinNum: '',
-  pinyinMarked: '',
-  glosses: [],
-  classifiers: [],
-  properNoun: false,
-  isVariant: false,
-  surname: false,
-}) as Entry;

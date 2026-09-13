@@ -80,20 +80,52 @@ export function holes(count: number): string {
   return Array.from({ length: count }, () => '?').join(',');
 }
 
-/** Entries for a set of ids. The caller restores the order it asked for. */
-export function entriesByIds(ids: readonly EntryId[]): SqlQuery {
-  return {
-    sql: `SELECT ${ENTRY_COLUMNS} FROM entries WHERE id IN (${holes(ids.length)})`,
-    params: [...ids],
-  };
+/**
+ * How many values one statement may bind.
+ *
+ * SQLite's `SQLITE_MAX_VARIABLE_NUMBER` is a **compile-time option**, and the
+ * three runtimes this store must run on are three different builds: Node's
+ * bundled SQLite measures 32,766 here, the default was **999** before SQLite
+ * 3.32, and neither `@sqlite.org/sqlite-wasm` nor the SQLCipher pod behind
+ * `@capacitor-community/sqlite` has been checked. So every unbounded `IN (…)`
+ * is chunked at a number that is under the oldest default, and the chunks go in
+ * the same batch — **a batch is the round trip**, so this costs nothing the
+ * round-trip budget is protecting.
+ *
+ * This is not hypothetical. `candidateSubstrings` returns every distinct
+ * ≤16-character substring of every hanzi run, so a 2,100-hanzi passage produces
+ * ~32,800 of them and `store.segment()` threw a raw `too many SQL variables`
+ * where the JSON segmenter it replaces handled 20,000 characters — the limit
+ * `app/api/dict/segment/route.ts` documents for the route D6 re-points at the
+ * store.
+ */
+export const MAX_BOUND_PARAMS = 900;
+
+/** Split a list so no statement binds more than `size` values. */
+export function chunked<T>(items: readonly T[], size: number = MAX_BOUND_PARAMS): T[][] {
+  if (items.length <= size) return items.length > 0 ? [[...items]] : [];
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+/**
+ * Entries for a set of ids, as one statement per chunk. The caller restores the
+ * order it asked for, so the chunk boundaries are invisible above this layer.
+ */
+export function entriesByIds(ids: readonly EntryId[]): SqlQuery[] {
+  return chunked(ids).map((batch) => ({
+    sql: `SELECT ${ENTRY_COLUMNS} FROM entries WHERE id IN (${holes(batch.length)})`,
+    params: batch,
+  }));
 }
 
 /** Entries at a set of rowids, in rowid order — the `char_words` second step. */
-export function entriesByRowids(rowids: readonly number[]): SqlQuery {
-  return {
-    sql: `SELECT ${ENTRY_COLUMNS} FROM entries WHERE rowid IN (${holes(rowids.length)}) ORDER BY rowid`,
-    params: [...rowids],
-  };
+export function entriesByRowids(rowids: readonly number[]): SqlQuery[] {
+  return chunked(rowids).map((batch) => ({
+    sql: `SELECT ${ENTRY_COLUMNS} FROM entries WHERE rowid IN (${holes(batch.length)}) ORDER BY rowid`,
+    params: batch,
+  }));
 }
 
 /**
@@ -103,11 +135,11 @@ export function entriesByRowids(rowids: readonly number[]): SqlQuery {
  * headword's other readings; the caller filters on `trad`, since 干 splits into
  * three traditional headwords that share one simplified form.
  */
-export function readingsOfHeadwords(simps: readonly string[]): SqlQuery {
-  return {
-    sql: `SELECT ${ENTRY_COLUMNS} FROM entries WHERE simp IN (${holes(simps.length)}) ORDER BY rowid`,
-    params: [...simps],
-  };
+export function readingsOfHeadwords(simps: readonly string[]): SqlQuery[] {
+  return chunked(simps).map((batch) => ({
+    sql: `SELECT ${ENTRY_COLUMNS} FROM entries WHERE simp IN (${holes(batch.length)}) ORDER BY rowid`,
+    params: batch,
+  }));
 }
 
 /** How many *readings* a simplified headword has — the polyphone warning. */

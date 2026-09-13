@@ -4162,3 +4162,93 @@ an `IRREGULAR` key, so its forms are `{men, man}` and today's code unions both l
 that as `("men" OR "man")`, which is the exact string D3 forbids. So the union is expressed as one
 statement per form combination and unioned in TypeScript, which is provably the same set, bounded at
 four combinations, and emits no `OR`.
+
+### What D3's adversarial review changed
+
+Five lenses (plan compliance; what breaks that no test covers; is the answer actually the same; the
+`retrieve.ts` seam; the SQL, the caps and the platform), then two refuters per finding, refuting by
+default. 17 findings, 12 verified, and **four survived both refuters — all four the same bug.**
+
+#### The blocking one: `store.segment()` threw on a long passage
+
+`candidateSubstrings` returns every distinct ≤16-character substring of every hanzi run — Θ(16n) and
+unbounded — and `wordCandidates` bound the whole list as `?` placeholders. SQLite's
+`SQLITE_MAX_VARIABLE_NUMBER` is **32,766** on the shipped `node:sqlite`, so a passage of about 2,100
+varied hanzi threw a raw `too many SQL variables`. Four independent verifiers reproduced it: 2,000
+hanzi segmented in 152 ms, 2,200 threw, 20,000 threw. The JSON segmenter it replaces returns 9,471
+tokens for 20,000 characters — which is exactly the limit
+`app/api/dict/segment/route.ts` documents (`MAX_TEXT_CHARS = 20_000`) for the route D6 re-points at
+the store, and `lib/stores/reader.ts` posts a whole pasted paragraph with no client cap.
+
+Worse than the throw: the suite asserted the opposite. `gloss.test.ts` claimed "segmentation is two
+round trips **whatever the passage length**" using a 66-character passage, and the HANDOFF section
+above repeated it.
+
+**Every unbounded `IN (…)` is now chunked** — `entriesByIds`, `entriesByRowids`,
+`readingsOfHeadwords`, `wordCandidates` and `readingsOfWords` — at 900 values, which is under the
+**999** that was SQLite's default before 3.32 and that neither `@sqlite.org/sqlite-wasm` nor the
+SQLCipher pod has been checked against. The limit is a compile-time option and the three runtimes are
+three different builds, so the number is chosen for the oldest of them rather than for the one that
+happens to be running the tests. **The chunks ride in the same batch, so the round-trip count does
+not move** — which is the whole reason this costs nothing. 20,000 hanzi now segments in 785 ms and
+matches the JSON segmenter token for token.
+
+Chunking then produced a second bug within the hour, and the new test caught it immediately:
+`readingsOfWords` binds its list **twice** (`simp IN (…) OR trad IN (…)`), so an entry whose `simp`
+falls in one chunk and whose `trad` falls in another is returned by both — 着 came back with eight
+readings instead of four. Results from a chunked query are now deduped and re-sorted by rowid
+centrally, because `ORDER BY rowid` orders rows *within* a statement and a chunked query is several.
+
+#### The blind spot the `rank.ts` and DP sharing creates
+
+The inversion made `planSegments`/`route` shared by both implementations — which is what stops them
+disagreeing about the cutting, and is also why **no differential can see a change to the DP**. Three
+mutations passed the entire suite: flipping jieba's `(score, end)` tie-break so a shorter word wins,
+doubling the unknown-word floor, and ignoring `maxLen`. The plan names all three as things that must
+survive the port, and nothing pinned any of them.
+
+`segment.test.ts` now drives `planSegments` directly with a hand-made `freqOf` and constants chosen so
+the decision sits exactly on the edge — no dictionary, no store, no arithmetic that drifts with the
+data. The tie-break case gives the long word a frequency of exactly `1/total`, which makes the two
+paths equal to the last bit so the tie-break alone decides; the floor case sets `a = 50, b = c = 7`,
+so the unknown-crossing path wins by one and loses by a mile if the floor moves.
+
+**And the cross-script candidate precedence had exactly one guarding case.** Inverting the two
+`wordCandidates` statements — so the *other* script wins a collision instead of the chosen one —
+passed everything, because a collision is rare: there are exactly **60** headwords in this snapshot
+that exist in both scripts with a different `headwordFreq`. Six texts that separate the two orders
+were found by running the DP with both maps over every headword containing a collision character
+(干么, 特么, 中宁, 乾安, 藉由, 大夥) and are now asserted by value and against the JSON implementation.
+
+There was also **no differential of the store's segmenter against the JSON one at all** — the plan's
+cases are all fixed literals, so both implementations could be wrong the same way. A 138-sentence
+corpus built from the dictionary's own headwords now compares them field for field, in both script
+forcings.
+
+#### Three smaller ones, fixed
+
+- **Every three-letter English query ran the same 5,000-row FTS statement twice.** `plan` ranks
+  `"plan"` and then probes `"plan"` for `isGlossToken` — the same SQL, run again, per keystroke. The
+  probe now reads the ranked statement's result when the MATCH string is identical, and still issues
+  its own where the two genuinely differ (`women` ranks `"woman"` and probes `{women, woman}`).
+- **The 200-query corpus asserted only that nothing was lost**, so a store that returned the whole
+  dictionary for every query would have passed. It now also checks that every group the store *adds*
+  is a real gloss match for the query's own words.
+- **The fixed point's answered-no memo was unfalsifiable and its `MISSING` sentinel unreachable.**
+  Deleting the memo left every test green, because `ground()` drops an id outside the retrieved set
+  *before* asking. The guard is now a set of ids already **asked** rather than a fake `Entry` for ids
+  not **found** — so the loop's termination does not depend on a detail of the function it is
+  driving — and a test drives it through a store that answers nothing at all. `truncatedForms`, a
+  field set and never read, is gone.
+
+#### A gotcha worth more than the bug it hid
+
+**`pnpm exec tsc --noEmit` at the workspace root is not the app's typecheck.** The root `tsconfig.json`
+includes `scripts/**` only, so it sees the 16 app modules the scripts import transitively and nothing
+else — `sqlite-store.ts` among the missing. A `ReferenceError: bySimp is not defined` survived a
+clean root `tsc` and was caught by the test suite instead. `pnpm typecheck` runs both projects and is
+the one to use; the short form looks like a full check and is a partial one.
+
+And one process note, paid for in lost work: **do not use `git checkout <file>` to restore a mutated
+file during mutation testing.** Three of these fixes were uncommitted when a mutation script reverted
+`query/entries.ts` that way, and the chunking had to be written twice. Copy the file aside first.

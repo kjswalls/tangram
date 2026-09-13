@@ -5,7 +5,7 @@
  * words' entry ids. The `chars` table the DP's `detectScript` needs was already
  * read whole by `open()`, which is what keeps that function synchronous.
  */
-import { ENTRY_COLUMNS, holes } from './entries';
+import { ENTRY_COLUMNS, MAX_BOUND_PARAMS, chunked, holes } from './entries';
 import type { SqlQuery } from '../sql';
 import type { SegmentScript } from '../segment';
 
@@ -42,11 +42,16 @@ export function candidateSubstrings(runs: readonly string[]): string[] {
  * statement against **1.8 ms** for the two. Both forms are one round trip,
  * because a batch is the round trip. See HANDOFF.md, D3.
  */
-export function wordCandidates(script: SegmentScript, words: readonly string[]): SqlQuery {
-  return {
-    sql: `SELECT word, freq FROM words WHERE script = ? AND word IN (${holes(words.length)})`,
-    params: [script, ...words],
-  };
+export function wordCandidates(script: SegmentScript, words: readonly string[]): SqlQuery[] {
+  // Chunked: `candidateSubstrings` is Θ(16n) and unbounded, so a 2,100-hanzi
+  // passage produces more placeholders than SQLite will bind — and the limit is
+  // a compile-time option that differs between the three runtimes this has to
+  // run on. See `MAX_BOUND_PARAMS`. The chunks ride in the same batch, so the
+  // round-trip count does not move.
+  return chunked(words, MAX_BOUND_PARAMS - 1).map((batch) => ({
+    sql: `SELECT word, freq FROM words WHERE script = ? AND word IN (${holes(batch.length)})`,
+    params: [script, ...batch],
+  }));
 }
 
 /**
@@ -56,12 +61,15 @@ export function wordCandidates(script: SegmentScript, words: readonly string[]):
  * traditional headword can be chosen while segmenting as simplified, which is
  * the fallback `segment.test.ts`'s 學習 case depends on.
  */
-export function readingsOfWords(words: readonly string[]): SqlQuery {
-  const list = holes(words.length);
-  return {
-    sql:
-      `SELECT ${ENTRY_COLUMNS} FROM entries ` +
-      `WHERE simp IN (${list}) OR trad IN (${list}) ORDER BY rowid`,
-    params: [...words, ...words],
-  };
+export function readingsOfWords(words: readonly string[]): SqlQuery[] {
+  // Half the chunk size, because the list is bound TWICE.
+  return chunked(words, Math.floor(MAX_BOUND_PARAMS / 2)).map((batch) => {
+    const list = holes(batch.length);
+    return {
+      sql:
+        `SELECT ${ENTRY_COLUMNS} FROM entries ` +
+        `WHERE simp IN (${list}) OR trad IN (${list}) ORDER BY rowid`,
+      params: [...batch, ...batch],
+    };
+  });
 }

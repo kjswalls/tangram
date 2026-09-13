@@ -95,6 +95,29 @@ function text(value: SqlValue): string {
 /** `text` under another name, for the places where a parameter shadows it. */
 const text_ = text;
 
+/**
+ * Flatten a chunked result set back into one rowid-ordered list, deduped.
+ *
+ * `ORDER BY rowid` orders rows *within* a statement, and a chunked query is
+ * several statements — so the concatenation is only globally ordered by
+ * accident of how the chunks were cut. Rowid order IS frequency order (D1), and
+ * every caller of these queries depends on it, so it is restored explicitly
+ * rather than reasoned about per call site. The dedupe matters for the one query
+ * that binds its list twice (`simp IN (…) OR trad IN (…)`), where an entry can
+ * be returned by two different chunks.
+ */
+function byRowid(results: readonly SqlRow[][]): SqlRow[] {
+  const seen = new Set<number>();
+  const rows: SqlRow[] = [];
+  for (const row of results.flat()) {
+    const rowid = int(row.rowid);
+    if (seen.has(rowid)) continue;
+    seen.add(rowid);
+    rows.push(row);
+  }
+  return rows.sort((a, b) => int(a.rowid) - int(b.rowid));
+}
+
 function int(value: SqlValue): number {
   if (typeof value !== 'number') throw new TypeError(`expected INTEGER, got ${typeof value}`);
   return value;
@@ -270,24 +293,26 @@ const MAX_FORM_COMBINATIONS = 4;
 interface EnglishPlan {
   queryWords: string[];
   batch: SqlQuery[];
-  /** How many of `batch` are the ranked path; the rest are `isGlossToken`'s. */
+  /** How many of `batch` are the ranked path. */
   rankedStatements: number;
-  /** Set when the form combinations were capped, for the phase writeup. */
-  truncatedForms: boolean;
+  /** Which statements `isGlossToken` reads — possibly ones the ranked path already ran. */
+  glossTokenAt: number[];
 }
 
 /** Every combination of one form per query word, at most `MAX_FORM_COMBINATIONS`. */
-function formCombinations(queryWords: readonly string[]): { combos: string[][]; truncated: boolean } {
+function formCombinations(queryWords: readonly string[]): string[][] {
   const perWord = queryWords.map((word) => [...new Set([stemToken(word), lemma(word)])]);
   const total = perWord.reduce((product, forms) => product * forms.length, 1);
-  if (total > MAX_FORM_COMBINATIONS) {
-    return { combos: [perWord.map((forms) => forms[0])], truncated: true };
-  }
+  // Above the bound, the first form of each word. Reaching it needs three query
+  // words that are each a plural of an irregular plural ("mens womens peoples"),
+  // and the consequence is that one of the two form-unions is not taken — the
+  // same shape of narrowing today's code has everywhere else.
+  if (total > MAX_FORM_COMBINATIONS) return [perWord.map((forms) => forms[0])];
   let combos: string[][] = [[]];
   for (const forms of perWord) {
     combos = combos.flatMap((prefix) => forms.map((form) => [...prefix, form]));
   }
-  return { combos, truncated: false };
+  return combos;
 }
 
 /**
@@ -303,7 +328,7 @@ function formCombinations(queryWords: readonly string[]): { combos: string[][]; 
 function englishPlan(query: string): EnglishPlan | null {
   const queryWords = lemmas(query);
   if (queryWords.length === 0) return null;
-  const { combos, truncated } = formCombinations(queryWords);
+  const combos = formCombinations(queryWords);
   const batch: SqlQuery[] = [];
   for (const combo of combos) {
     const match = buildMatch(combo);
@@ -313,16 +338,32 @@ function englishPlan(query: string): EnglishPlan | null {
   const rankedStatements = batch.length;
 
   const token = query.trim().toLowerCase();
+  const glossTokenAt: number[] = [];
   if (/^[a-z']{3,}$/.test(token)) {
     // `forms` over the RAW token, not the lemmatised one — `isGlossToken`'s own
     // spelling, which is what gives `women` two forms where the ranked path has
     // one.
     for (const form of new Set([stemToken(token), lemma(token)])) {
       const match = buildMatch([form]);
-      if (match) batch.push(glossCandidates(match, MAX_GLOSS_CANDIDATES));
+      if (!match) continue;
+      // A single-word query's ranked statement is usually the SAME statement:
+      // `plan` ranks `"plan"` and probes `"plan"`. Running it twice costs a
+      // second 5,000-row scan per keystroke for a result that is already in
+      // hand — measured at roughly double the gloss cost on a common token —
+      // so the probe reuses the ranked statement's index when it matches.
+      const existing = batch.findIndex(
+        (statement) => statement.sql === glossCandidates(match, MAX_GLOSS_CANDIDATES).sql &&
+          statement.params?.[0] === match,
+      );
+      if (existing !== -1) {
+        glossTokenAt.push(existing);
+        continue;
+      }
+      glossTokenAt.push(batch.length);
+      batch.push(glossCandidates(match, MAX_GLOSS_CANDIDATES));
     }
   }
-  return { queryWords, batch, rankedStatements, truncatedForms: truncated };
+  return { queryWords, batch, rankedStatements, glossTokenAt };
 }
 
 /** A gloss candidate row → the facts ranking needs, plus the glosses `glossTier` reads. */
@@ -365,7 +406,7 @@ function englishCandidates(plan: EnglishPlan, results: readonly SqlRow[][]): Gro
  * reordered by relevance.
  */
 function isGlossToken(plan: EnglishPlan, results: readonly SqlRow[][]): boolean {
-  for (let i = plan.rankedStatements; i < plan.batch.length; i += 1) {
+  for (const i of plan.glossTokenAt) {
     for (const row of results[i] ?? []) {
       const { glosses } = toGlossCandidate(row);
       if (glossTier({ glosses } as DictEntry, plan.queryWords) <= 1) return true;
@@ -511,8 +552,8 @@ export class SqliteDictStore implements DictStore {
   async entries(ids: readonly EntryId[]): Promise<DictEntry[]> {
     if (ids.length === 0) return [];
     return this.#cache.take(`entries:${ids.join(',')}`, async () => {
-      const [rows] = await this.#run([entriesByIds(ids)]);
-      const byId = new Map(rows.map((row) => [text(row.id), rowToEntry(row)]));
+      const results = await this.#run(entriesByIds(ids));
+      const byId = new Map(results.flat().map((row) => [text(row.id), rowToEntry(row)]));
       // In the order asked for, unknown ids dropped — `getEntries`'s contract.
       const out: DictEntry[] = [];
       for (const id of ids) {
@@ -575,8 +616,7 @@ export class SqliteDictStore implements DictStore {
       }
       const rowids = decodeRowids(blob).slice(0, limit);
       if (rowids.length === 0) return [];
-      const [entryRows] = await this.#run([entriesByRowids(rowids)]);
-      return entryRows.map(rowToEntry);
+      return byRowid(await this.#run(entriesByRowids(rowids))).map(rowToEntry);
     });
   }
 
@@ -713,8 +753,7 @@ export class SqliteDictStore implements DictStore {
 
     const readings = new Map<string, DictEntry[]>();
     if (simps.length > 0) {
-      const [rows] = await this.#run([readingsOfHeadwords(simps)], signal);
-      for (const row of rows) {
+      for (const row of byRowid(await this.#run(readingsOfHeadwords(simps), signal))) {
         const entry = rowToEntry(row);
         const list = readings.get(entry.simp);
         if (list) list.push(entry);
@@ -792,23 +831,33 @@ export class SqliteDictStore implements DictStore {
       const candidates = new Map<string, number>();
       if (substrings.length > 0) {
         const other: SegmentScript = script === 'simp' ? 'trad' : 'simp';
-        // The chosen script second, so its frequency wins on collision — the
-        // map is written in the order the fallback resolves.
-        const [fromOther, fromScript] = await this.#run([
-          wordCandidates(other, substrings),
-          wordCandidates(script, substrings),
-        ]);
-        for (const row of fromOther) candidates.set(text_(row.word), int(row.freq));
-        for (const row of fromScript) candidates.set(text_(row.word), int(row.freq));
+        // The chosen script's statements come second, so its frequency wins on
+        // a collision — the map is written in the order the fallback resolves.
+        // Each script's list is chunked, so the split is `otherChunks` results
+        // followed by `scriptChunks` results, all in ONE batch and therefore one
+        // round trip.
+        const forOther = wordCandidates(other, substrings);
+        const forScript = wordCandidates(script, substrings);
+        const results = await this.#run([...forOther, ...forScript]);
+        for (const row of results.slice(0, forOther.length).flat()) {
+          candidates.set(text_(row.word), int(row.freq));
+        }
+        for (const row of results.slice(forOther.length).flat()) {
+          candidates.set(text_(row.word), int(row.freq));
+        }
       }
 
       const plan = planSegments(text, { script, stats, freqOf: (word) => candidates.get(word) });
       if (plan.words.length === 0) return attachIds(plan, () => []);
 
-      const [rows] = await this.#run([readingsOfWords(plan.words)]);
       const bySimp = new Map<string, EntryId[]>();
       const byTrad = new Map<string, EntryId[]>();
-      for (const row of rows) {
+      // Deduped and re-sorted by rowid: the statement is chunked and binds its
+      // list TWICE (`simp IN (…) OR trad IN (…)`), so an entry whose `simp`
+      // falls in one chunk and whose `trad` in another is returned by both —
+      // 着 came back with eight readings instead of four, which the
+      // 20,000-character test caught the moment it was written.
+      for (const row of byRowid(await this.#run(readingsOfWords(plan.words)))) {
         const entry = rowToEntry(row);
         (bySimp.get(entry.simp) ?? bySimp.set(entry.simp, []).get(entry.simp) as EntryId[]).push(entry.id);
         (byTrad.get(entry.trad) ?? byTrad.set(entry.trad, []).get(entry.trad) as EntryId[]).push(entry.id);

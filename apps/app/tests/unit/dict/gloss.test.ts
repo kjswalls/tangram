@@ -25,9 +25,10 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { getDict } from '@/lib/dict/load';
-import { glossTokens } from '@/lib/dict/rank';
+import { glossTier, glossTokens, lemmas } from '@/lib/dict/rank';
 import { nodeRunner } from '@/lib/dict/runners/node';
-import { search as jsonSearch } from '@/lib/dict/search';
+import { search as jsonSearch, type SearchGroup, type SearchResult } from '@/lib/dict/search';
+import { segment as jsonSegment } from '@/lib/dict/segment';
 import { SqliteDictStore } from '@/lib/dict/sqlite-store';
 import { buildMatch, quoteToken } from '@/lib/dict/query/gloss';
 import type { SqlQuery, SqlRunner } from '@/lib/dict/sql';
@@ -75,10 +76,34 @@ async function spied(work: (store: SqliteDictStore) => Promise<unknown>): Promis
 /** A page big enough that neither implementation's section is cut by paging. */
 const WHOLE = { limit: 100_000 };
 
+/**
+ * A long passage of *varied* hanzi.
+ *
+ * Varied matters: `candidateSubstrings` dedupes, so repeating one phrase 2,000
+ * times produces a few hundred substrings and proves nothing about scale. Real
+ * prose has near-unique five-grams, which is what the headword walk imitates.
+ */
+function longPassage(chars: number): string {
+  const headwords = [...new Set(getDict().entries.map((entry) => entry.simp))].filter(
+    (word) => [...word].length >= 2 && [...word].length <= 4,
+  );
+  let out = '';
+  let i = 0;
+  while ([...out].length < chars) {
+    out += headwords[(i * 37) % headwords.length];
+    i += 1;
+  }
+  return [...out].slice(0, chars).join('');
+}
+
 function keysOf(result: { sections: { source: string; groups: { key: string }[] }[] }, source: string): string[] {
   return result.sections
     .filter((part) => part.source === source)
     .flatMap((part) => part.groups.map((group) => group.key));
+}
+
+function sectionGroups(result: SearchResult, source: string): SearchGroup[] {
+  return result.sections.filter((part) => part.source === source).flatMap((part) => part.groups);
 }
 
 // ---------------------------------------------------------------------------
@@ -256,6 +281,25 @@ describe('the 200-query differential corpus', () => {
       // — and it only ever adds. A query where the store returns FEWER groups
       // than the JSON index is not explained by that, and is a bug.
       expect(narrower).toEqual([]);
+
+      // …and "wider" is not a licence to return anything: every group the store
+      // adds must be a real gloss match for the query's own words. Without this
+      // the test has only one direction and a store that returned the whole
+      // dictionary for every query would pass it.
+      const unexplained: string[] = [];
+      for (const query of [...wider].slice(0, 8)) {
+        const queryWords = lemmas(query);
+        const mine = sectionGroups(await store.search(query, WHOLE), 'english');
+        const theirs = new Set(keysOf(jsonSearch(query, WHOLE), 'english'));
+        for (const group of mine) {
+          if (theirs.has(group.key)) continue;
+          const tier = Math.min(
+            ...group.entries.map((entry) => glossTier(entry, queryWords)),
+          );
+          if (!Number.isFinite(tier)) unexplained.push(`${query} → ${group.key}`);
+        }
+      }
+      expect(unexplained).toEqual([]);
     })();
   }, 120_000);
 
@@ -389,10 +433,17 @@ describe('the budget still holds with the English half in', () => {
     expect(withoutToken.length).toBe(2);
     const glossStatements = (batches: SqlQuery[][]) =>
       batches[0].filter((statement) => statement.sql.includes('gloss_fts MATCH')).length;
-    // `sun`: one ranked statement plus one for `isGlossToken`.
-    expect(glossStatements(withToken)).toBe(2);
+    // `sun`: ONE statement. The ranked path matches `"sun"` and the gloss-token
+    // probe wants `"sun"` too, so the probe reads the ranked statement's result
+    // rather than running a second 5,000-row scan per keystroke.
+    expect(glossStatements(withToken)).toBe(1);
     // `to plan`: two lemmatised words, one ranked statement, no gloss-token probe.
     expect(glossStatements(withoutToken)).toBe(1);
+    // …and where the two genuinely differ, both statements are there: `women`
+    // lemmatises to `woman` for the ranked path while the probe keeps the raw
+    // token's forms, `{women, woman}`.
+    const irregular = await spied((instance) => instance.search('women'));
+    expect(glossStatements(irregular)).toBe(2);
   });
 
   it('segmentation is two round trips whatever the passage length', async () => {
@@ -404,12 +455,33 @@ describe('the budget still holds with the English half in', () => {
     );
     expect(short.length).toBe(2);
     expect(long.length).toBe(2);
-    // Two statements in the first batch, one per script — not one statement with
-    // `word IN (…)` across both, which cannot use the `(script, word)` primary
-    // key and measured 45.7 ms against 1.8 ms. See HANDOFF.md, D3.
-    expect(long[0].length).toBe(2);
-    expect(long[1].length).toBe(1);
+    // One statement per script per chunk, and never `word IN (…)` across both
+    // scripts in one statement — that form cannot use the `(script, word)`
+    // primary key and measured 45.7 ms against 1.8 ms. See HANDOFF.md, D3.
+    expect(long[0].length).toBeGreaterThanOrEqual(2);
+    expect(long[0].length % 2).toBe(0);
+    for (const statement of long[0]) expect(statement.sql).toMatch(/script = \? AND word IN/);
   });
+
+  it('segments a 20,000-character passage — the route’s documented limit', async () => {
+    // `app/api/dict/segment/route.ts` sets `MAX_TEXT_CHARS = 20_000` and its
+    // header says the reader posts whole paragraphs, so that is the contract the
+    // store is porting. Before the `IN (…)` lists were chunked this threw a raw
+    // `too many SQL variables` at about 2,100 hanzi: `candidateSubstrings` is
+    // Θ(16n) and SQLite's parameter ceiling is a compile-time option that
+    // differs between the three runtimes this store has to run on.
+    const text = longPassage(20_000);
+    const batches = await spied(async (instance) => {
+      const result = await instance.segment(text);
+      expect(result.tokens.length).toBeGreaterThan(5_000);
+      // …and it is the same segmentation the JSON implementation gives.
+      expect(result.tokens).toEqual(jsonSegment(text).tokens);
+    });
+    // Still two round trips. The chunks ride in the same batch, which is the
+    // whole reason chunking is free here.
+    expect(batches.length).toBe(2);
+    expect(batches[0].length).toBeGreaterThan(2);
+  }, 120_000);
 
   it('a passage with no hanzi spends no trip on candidates', async () => {
     const batches = await spied((instance) => instance.segment('hello, world!'));

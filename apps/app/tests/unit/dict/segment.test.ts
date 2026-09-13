@@ -32,6 +32,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { getDictIndex } from '@/lib/dict/index';
+import { planSegments, segment as jsonSegment } from '@/lib/dict/segment';
 import { nodeRunner } from '@/lib/dict/runners/node';
 import { SqliteDictStore, detectScriptFrom } from '@/lib/dict/sqlite-store';
 import { dictArtifactPath, requireDictData } from './data-required';
@@ -186,5 +187,180 @@ describe('script', () => {
     const words = result.tokens.filter((token) => token.kind === 'word');
     expect(words.map((token) => token.text)).toEqual(['学习']);
     expect(words[0].via).toBe('entry');
+  });
+});
+
+/**
+ * The store's segmenter against the JSON one, token for token (added after D3's
+ * adversarial review).
+ *
+ * Everything above this point is the plan's fixed cases. None of them is a
+ * *differential*: they assert literals, so the store and the JSON implementation
+ * can both be wrong in the same way, and the cross-script candidate precedence —
+ * the chosen script must win a collision, which is `primary.get(word) ??
+ * secondary.get(word)` — has exactly one fixed case guarding it. Inverting the
+ * two statements in `sqlite-store.ts` passed the whole suite.
+ *
+ * So: a corpus built from the dictionary's own headwords, compared field for
+ * field. It is the test that fails when the two implementations disagree about
+ * anything at all.
+ */
+describe('the store segments identically to the JSON implementation', () => {
+  /** Sentences built from real headwords, so the DP has real decisions to make. */
+  function corpus(): string[] {
+    const index = getDictIndex();
+    const simp = [...index.bySimp.keys()].filter((word) => [...word].length >= 2);
+    const trad = [...index.byTrad.keys()].filter((word) => [...word].length >= 2);
+    const out: string[] = [
+      // The fixed cases, so a regression in them shows up here too.
+      '我打算明天去北京',
+      '他有意见',
+      '研究生命的起源',
+      '他把手表给我了',
+      '中华人民共和国',
+      '我随便看看',
+      '你好吗？',
+      '买了 3 个 iPhone！',
+      '我𠮟了',
+      // Shapes the fixed cases do not cover.
+      '',
+      '   ',
+      'hello, world!',
+      '123 456',
+      '學習中文很有意思，你覺得呢？',
+      '我今天买了一个iPhone 15 Pro Max，花了 9999 元！',
+      '𩽾𩾌是一种鱼',
+      '打打打打打打打打打打打打打打打打打打打打',
+      '一二三四五六七八九十一二三四五六七八九十',
+    ];
+    // 120 machine-built sentences: alternating scripts, punctuation and Latin,
+    // deterministic so a failure is reproducible.
+    for (let i = 0; i < 120; i += 1) {
+      const pick = (list: string[], n: number) =>
+        Array.from({ length: n }, (_, k) => list[(i * 97 + k * 31) % list.length]).join('');
+      out.push(
+        i % 3 === 0
+          ? pick(simp, 6)
+          : i % 3 === 1
+            ? `${pick(trad, 5)}，${pick(trad, 3)}。`
+            : `${pick(simp, 3)} OK ${pick(trad, 3)}！`,
+      );
+    }
+    return out;
+  }
+
+  it('agrees on every token of every sentence', async () => {
+    const sentences = corpus();
+    expect(sentences.length).toBeGreaterThan(130);
+    const disagreements: string[] = [];
+    for (const text of sentences) {
+      const mine = await store.segment(text);
+      const theirs = jsonSegment(text);
+      if (JSON.stringify(mine) !== JSON.stringify(theirs)) {
+        disagreements.push(
+          `${JSON.stringify(text.slice(0, 40))}\n  store ${JSON.stringify(mine.tokens.map((t) => [t.text, t.via, t.entryIds.length]))}\n  json  ${JSON.stringify(theirs.tokens.map((t) => [t.text, t.via, t.entryIds.length]))}`,
+        );
+      }
+      if (disagreements.length >= 3) break;
+    }
+    expect(disagreements).toEqual([]);
+  }, 120_000);
+
+  it('agrees when the script is forced the wrong way round', async () => {
+    // Where the cross-script fallback does its work: a traditional passage
+    // segmented as simplified and back again.
+    for (const script of ['simp', 'trad'] as const) {
+      for (const text of ['學習中文', '学习中文', '我打算明天去學習', '他有意見']) {
+        const mine = await store.segment(text, { script });
+        const theirs = jsonSegment(text, { script });
+        expect(mine, `${text} as ${script}`).toEqual(theirs);
+      }
+    }
+  });
+});
+
+/**
+ * The DP itself, pinned by hand (added after D3's adversarial review).
+ *
+ * The inversion made `planSegments`/`route` **shared** by the store and the JSON
+ * implementation — which is what stops the two disagreeing about the cutting,
+ * and is also why no differential can see a change to the DP: it changes both
+ * sides at once. Verified: flipping jieba's `(score, end)` tie-break so a
+ * shorter word wins, and doubling the unknown-word floor, each passed every
+ * other test in the suite.
+ *
+ * These drive `planSegments` with a hand-made `freqOf` and constants chosen so
+ * the decision sits exactly on the edge. No dictionary, no store, no arithmetic
+ * that could drift with the data.
+ */
+describe('the max-probability DP, on a knife edge', () => {
+  const TOTAL = 100;
+  const stats = { logTotal: Math.log(TOTAL), maxLen: 3 };
+  const cut = (text: string, freqs: Record<string, number>): string =>
+    planSegments(text, { script: 'simp', stats, freqOf: (word) => freqs[word] })
+      .tokens.filter((token) => token.kind === 'word')
+      .map((token) => token.text)
+      .join('/');
+
+  it('gives an exact tie to the LONGER word, which is jieba’s rule', () => {
+    // 甲乙 is worth exactly what 甲 + (the rest) is worth: with `f = 1/total`,
+    // `log f - logTotal + best[2]` equals `floor + best[1]` to the last bit. The
+    // tie-break is the only thing that decides, and jieba compares `(score,
+    // end)` — so the two-character word wins.
+    expect(cut('甲乙丙', { 甲乙: 1 / TOTAL })).toBe('甲乙/丙');
+    // …and when the long word is worth a hair more or less, the tie-break is
+    // not what decided it, which is what makes the case above meaningful.
+    expect(cut('甲乙丙', { 甲乙: 2 / TOTAL })).toBe('甲乙/丙');
+    expect(cut('甲乙丙', { 甲乙: 0.5 / TOTAL })).toBe('甲/乙/丙');
+  });
+
+  it('weights an unknown character at exactly log(1/total)', () => {
+    // One path crosses an unknown character and the other does not, so only the
+    // floor separates them: 甲乙+丙(unknown) beats 甲+乙丙 iff `a > b·c`, which
+    // 50 > 49 satisfies by one. Double the floor and the unknown-crossing path
+    // loses by a mile.
+    expect(cut('甲乙丙', { 甲乙: 50, 甲: 7, 乙丙: 7 })).toBe('甲乙/丙');
+    expect(cut('甲乙丙', { 甲乙: 48, 甲: 7, 乙丙: 7 })).toBe('甲/乙丙');
+  });
+
+  it('never emits a multi-character token the candidates do not contain', () => {
+    expect(cut('甲乙丙', {})).toBe('甲/乙/丙');
+    expect(cut('甲乙丙', { 甲乙丙: 1000 })).toBe('甲乙丙');
+  });
+
+  it('bounds the scan at maxLen', () => {
+    // `甲乙丙丁` is known and four characters long, but `maxLen` is 3, so the DP
+    // never tries it — `statsFor`'s quirk, carried into `meta.max_len_*`.
+    expect(cut('甲乙丙丁', { 甲乙丙丁: 1e6 })).toBe('甲/乙/丙/丁');
+  });
+});
+
+/**
+ * The cross-script candidate precedence (added after the same review).
+ *
+ * `segment()` looks a word up in the chosen script's headwords and falls back to
+ * the other script's, and the store must fold its two per-script result sets in
+ * the same order. Inverting them passed the entire suite, because a collision —
+ * a headword that exists in BOTH scripts with a DIFFERENT `headwordFreq` — is
+ * rare: there are exactly 60 in this snapshot.
+ *
+ * These are texts where the two orders give a different cut, found by running
+ * the DP with both maps over every headword containing a collision character.
+ */
+describe('the chosen script wins a cross-script collision', () => {
+  const SEPARATING: [string, string][] = [
+    ['干么', '干/么'],
+    ['特么', '特/么'],
+    ['中宁', '中/宁'],
+    ['乾安', '乾安'],
+    ['藉由', '藉由'],
+    ['大夥', '大夥'],
+  ];
+
+  it.each(SEPARATING)('%s cuts as %s under the chosen script', async (text, expected) => {
+    const mine = await store.segment(text, { script: 'simp' });
+    expect(mine.tokens.filter((t) => t.kind === 'word').map((t) => t.text).join('/')).toBe(expected);
+    // …and it is the JSON implementation's answer, not just a literal.
+    expect(mine).toEqual(jsonSegment(text, { script: 'simp' }));
   });
 });

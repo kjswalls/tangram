@@ -29,9 +29,13 @@ import {
   CandidateSet,
   SECTION_LABELS,
   dedupeSections,
+  glossTier,
   hasCjk,
+  lemma,
+  lemmas,
   materialise,
   pageWindow,
+  stemToken,
   type GroupCandidate,
   type MatchSource,
 } from './rank';
@@ -44,6 +48,8 @@ import {
   hanziPrefix,
 } from './query/hanzi';
 import { MAX_PINYIN_PREFIX_IDS, pinyinExact, pinyinPrefix } from './query/pinyin';
+import { MAX_GLOSS_CANDIDATES, buildMatch, glossCandidates } from './query/gloss';
+import { candidateSubstrings, readingsOfWords, wordCandidates } from './query/segment';
 import { hskBandQuery } from './query/hsk';
 import {
   entriesByIds,
@@ -55,7 +61,7 @@ import {
   type SqlRow,
 } from './query/entries';
 import type { SearchOptions, SearchResult, SearchSection } from './search';
-import type { SegmentOptions, SegmentResult, SegmentScript } from './segment';
+import { attachIds, planSegments, type SegmentOptions, type SegmentResult, type SegmentScript } from './segment';
 import type { SqlQuery, SqlRunner, SqlValue } from './sql';
 import type { DictStatus, DictStore } from './store';
 import type { DictEntry, EntryId, HskBand } from './types';
@@ -85,6 +91,9 @@ function text(value: SqlValue): string {
   if (typeof value !== 'string') throw new TypeError(`expected TEXT, got ${typeof value}`);
   return value;
 }
+
+/** `text` under another name, for the places where a parameter shadows it. */
+const text_ = text;
 
 function int(value: SqlValue): number {
   if (typeof value !== 'number') throw new TypeError(`expected INTEGER, got ${typeof value}`);
@@ -228,6 +237,141 @@ class ResultCache {
     this.#done.clear();
     this.#inFlight.clear();
   }
+}
+
+// ---------------------------------------------------------------------------
+// The English gloss route (docs/plans/data.md D3)
+// ---------------------------------------------------------------------------
+
+/**
+ * One query word can have two lookup forms, and the pool is their **union**.
+ *
+ * `englishGroups` computes `forms = {stemToken(word), lemma(word)}` over the
+ * *already lemmatised* word, which collapses to a singleton almost always — but
+ * not for a plural of a plural. `lemmas('mens')` is `['men']`, and `men` is
+ * itself an `IRREGULAR` key, so its forms are `{men, man}` and today's code
+ * unions both posting lists.
+ *
+ * FTS5 could say that as `("men" OR "man")`, and D3 forbids ` OR ` in a MATCH
+ * string outright — the guard against an irregular-plural OR group creeping into
+ * the *ranked* path and widening recall. So the union is expressed as one
+ * statement per form combination instead, and the results are unioned in
+ * TypeScript. That is exactly equal: an id matching every word under some choice
+ * of forms is in that choice's intersection, and every choice's intersection is
+ * inside the union-of-forms intersection.
+ *
+ * The combinations are `prod(|forms_i|)`, which is 1 for every ordinary query.
+ * Above four the fallback is the first form of each word, recorded rather than
+ * silent, because a three-word query with two double-plural misspellings is not
+ * worth a sixteen-statement batch.
+ */
+const MAX_FORM_COMBINATIONS = 4;
+
+interface EnglishPlan {
+  queryWords: string[];
+  batch: SqlQuery[];
+  /** How many of `batch` are the ranked path; the rest are `isGlossToken`'s. */
+  rankedStatements: number;
+  /** Set when the form combinations were capped, for the phase writeup. */
+  truncatedForms: boolean;
+}
+
+/** Every combination of one form per query word, at most `MAX_FORM_COMBINATIONS`. */
+function formCombinations(queryWords: readonly string[]): { combos: string[][]; truncated: boolean } {
+  const perWord = queryWords.map((word) => [...new Set([stemToken(word), lemma(word)])]);
+  const total = perWord.reduce((product, forms) => product * forms.length, 1);
+  if (total > MAX_FORM_COMBINATIONS) {
+    return { combos: [perWord.map((forms) => forms[0])], truncated: true };
+  }
+  let combos: string[][] = [[]];
+  for (const forms of perWord) {
+    combos = combos.flatMap((prefix) => forms.map((form) => [...prefix, form]));
+  }
+  return { combos, truncated: false };
+}
+
+/**
+ * The statements an English query needs, or null when nothing survives cleaning.
+ *
+ * `isGlossToken` gets **its own statements at its own limit**, riding in the same
+ * batch. It is the `sun`/`can`/`women`-versus-`shi` rule that decides which
+ * section leads, and it is not the ranked path: sharing a smaller cap with it
+ * would make it return false where it returns true today and silently reroute
+ * queries. It runs only for a single Latin token of three letters or more, so it
+ * is not on the path of a typical multi-word English query.
+ */
+function englishPlan(query: string): EnglishPlan | null {
+  const queryWords = lemmas(query);
+  if (queryWords.length === 0) return null;
+  const { combos, truncated } = formCombinations(queryWords);
+  const batch: SqlQuery[] = [];
+  for (const combo of combos) {
+    const match = buildMatch(combo);
+    if (match) batch.push(glossCandidates(match, MAX_GLOSS_CANDIDATES));
+  }
+  if (batch.length === 0) return null;
+  const rankedStatements = batch.length;
+
+  const token = query.trim().toLowerCase();
+  if (/^[a-z']{3,}$/.test(token)) {
+    // `forms` over the RAW token, not the lemmatised one — `isGlossToken`'s own
+    // spelling, which is what gives `women` two forms where the ranked path has
+    // one.
+    for (const form of new Set([stemToken(token), lemma(token)])) {
+      const match = buildMatch([form]);
+      if (match) batch.push(glossCandidates(match, MAX_GLOSS_CANDIDATES));
+    }
+  }
+  return { queryWords, batch, rankedStatements, truncatedForms: truncated };
+}
+
+/** A gloss candidate row → the facts ranking needs, plus the glosses `glossTier` reads. */
+function toGlossCandidate(row: SqlRow): { facts: ReturnType<typeof rowToRank>; glosses: string[] } {
+  return { facts: rowToRank(row), glosses: JSON.parse(text(row.glosses)) as string[] };
+}
+
+function englishCandidates(plan: EnglishPlan, results: readonly SqlRow[][]): GroupCandidate[] {
+  const candidates = new CandidateSet();
+  const seen = new Set<string>();
+  // Union across form combinations, in rowid order within each. Deduped by id,
+  // because two combinations can admit the same row.
+  for (let i = 0; i < plan.rankedStatements; i += 1) {
+    for (const row of results[i] ?? []) {
+      const { facts, glosses } = toGlossCandidate(row);
+      if (seen.has(facts.id)) continue;
+      seen.add(facts.id);
+      const tier = glossTier({ glosses } as DictEntry, plan.queryWords);
+      if (!Number.isFinite(tier)) continue;
+      candidates.add(facts, tier);
+    }
+  }
+  return candidates.ordered();
+}
+
+/**
+ * True when the raw query is itself an English **word** — the `sun`/`can`/`women`
+ * rule.
+ *
+ * "Appears somewhere in a gloss" is not that test. `shi` appears as a token in 39
+ * glosses ("jiang shi" for 殭屍, "lüshi form" for 排律) because CC-CEDICT
+ * romanises inside its English, and taking that as an English word buried 是, 事,
+ * 十 — every HSK 1–2 reading of the syllable — under the reserved rows of a
+ * section that had nothing a learner typing `shi` wanted. So the query has to be
+ * a whole *sense* of some entry (tier 0 or 1), which is what "the English word"
+ * means: 太阳 is "sun", 女人 is "woman", and no entry is "shi".
+ *
+ * "First candidate that matches" is only meaningful in frequency order, so the
+ * statement is `ORDER BY rowid` like every other one and this walk must not be
+ * reordered by relevance.
+ */
+function isGlossToken(plan: EnglishPlan, results: readonly SqlRow[][]): boolean {
+  for (let i = plan.rankedStatements; i < plan.batch.length; i += 1) {
+    for (const row of results[i] ?? []) {
+      const { glosses } = toGlossCandidate(row);
+      if (glossTier({ glosses } as DictEntry, plan.queryWords) <= 1) return true;
+    }
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -484,11 +628,22 @@ export class SqliteDictStore implements DictStore {
       }
 
       const pinyin = normalizePinyin(trimmed);
+      const english = englishPlan(trimmed);
       if (!pinyin.fullyParsed) {
-        // English-only. D3 fills this in; until then there is nothing to say.
-        return this.#emptyResult(trimmed, 'english', opened.meta.dictVersion);
+        if (!english) return this.#emptyResult(trimmed, 'english', opened.meta.dictVersion);
+        const rows = await this.#run(english.batch, signal);
+        return this.#page(
+          trimmed,
+          'english',
+          [{ source: 'english', candidates: englishCandidates(english, rows) }],
+          options,
+          opened.meta.dictVersion,
+          signal,
+        );
       }
 
+      // Both sections always run; only their order is in question, and the loser
+      // still shows — that is what makes `he` answer with 和 *and* 他.
       const toned = pinyin.syllables.some((syllable) => syllable.tone !== null);
       const batch: SqlQuery[] = [];
       if (toned) batch.push(pinyinExact(pinyin.toned, true));
@@ -496,6 +651,8 @@ export class SqliteDictStore implements DictStore {
       batch.push(
         pinyinPrefix(toned ? pinyin.toned : pinyin.toneless, toned, MAX_PINYIN_PREFIX_IDS),
       );
+      const pinyinStatements = batch.length;
+      if (english) batch.push(...english.batch);
       const results = await this.#run(batch, signal);
       const candidates = new CandidateSet();
       let at = 0;
@@ -503,10 +660,20 @@ export class SqliteDictStore implements DictStore {
       if (toned) candidates.addAll(results[at++].map(rowToRank), 0);
       candidates.addAll(results[at++].map(rowToRank), 1);
       candidates.addAll(results[at].map(rowToRank), 2);
+
+      const asPinyin = { source: 'pinyin' as MatchSource, candidates: candidates.ordered() };
+      const asEnglish = {
+        source: 'english' as MatchSource,
+        candidates: english ? englishCandidates(english, results.slice(pinyinStatements)) : [],
+      };
+      const ordered =
+        english && isGlossToken(english, results.slice(pinyinStatements))
+          ? [asEnglish, asPinyin]
+          : [asPinyin, asEnglish];
       return this.#page(
         trimmed,
         'pinyin+english',
-        [{ source: 'pinyin', candidates: candidates.ordered() }],
+        toned ? [asPinyin, asEnglish] : ordered,
         options,
         opened.meta.dictVersion,
         signal,
@@ -587,18 +754,68 @@ export class SqliteDictStore implements DictStore {
   }
 
   /**
-   * The segmenter is D3's: `lib/dict/segment.ts` is inverted there, and the
-   * `words` and `chars` tables it needs are already in the artifact.
+   * Segment a passage (D3).
    *
-   * It rejects rather than returning an empty result, because an empty
-   * segmentation is a legitimate answer for an empty string and a caller cannot
-   * tell "no tokens" from "not built yet".
+   * Two round trips. The first batch asks `words` for the frequency of every
+   * ≤16-character substring of every hanzi run, **once per script**; the second
+   * fetches the readings of the words the DP actually chose. `detectScript` needs
+   * no trip at all, because `open()` already read the whole `chars` table — which
+   * is the reason it did.
+   *
+   * The candidate map spans both scripts with the chosen one winning on
+   * collision. That is `segment.ts`'s own `primary.get(word) ?? secondary.get(word)`
+   * fallback, and a regression case depends on it: 學習 is a traditional headword,
+   * so `segment('學習', { script: 'simp' })` finds it only that way.
    */
-  segment(text: string, options?: SegmentOptions): Promise<SegmentResult> {
-    void text;
-    void options;
-    return Promise.reject(
-      new Error('DictStore.segment arrives with the segmenter inversion in data.md D3'),
-    );
+  async segment(text: string, options: SegmentOptions = {}): Promise<SegmentResult> {
+    const { opened } = this.#ready();
+    const key = `segment:${options.script ?? ''}:${text}`;
+    return this.#cache.take(key, async () => {
+      const script = options.script ?? detectScriptFrom(opened.chars, text);
+      const stats = {
+        logTotal: Math.log(opened.meta.wordsTotal[script] || 1),
+        maxLen: opened.meta.maxLen[script],
+      };
+
+      const runs: string[] = [];
+      let run = '';
+      for (const char of text) {
+        if (hasCjk(char)) run += char;
+        else if (run) {
+          runs.push(run);
+          run = '';
+        }
+      }
+      if (run) runs.push(run);
+
+      const substrings = candidateSubstrings(runs);
+      const candidates = new Map<string, number>();
+      if (substrings.length > 0) {
+        const other: SegmentScript = script === 'simp' ? 'trad' : 'simp';
+        // The chosen script second, so its frequency wins on collision — the
+        // map is written in the order the fallback resolves.
+        const [fromOther, fromScript] = await this.#run([
+          wordCandidates(other, substrings),
+          wordCandidates(script, substrings),
+        ]);
+        for (const row of fromOther) candidates.set(text_(row.word), int(row.freq));
+        for (const row of fromScript) candidates.set(text_(row.word), int(row.freq));
+      }
+
+      const plan = planSegments(text, { script, stats, freqOf: (word) => candidates.get(word) });
+      if (plan.words.length === 0) return attachIds(plan, () => []);
+
+      const [rows] = await this.#run([readingsOfWords(plan.words)]);
+      const bySimp = new Map<string, EntryId[]>();
+      const byTrad = new Map<string, EntryId[]>();
+      for (const row of rows) {
+        const entry = rowToEntry(row);
+        (bySimp.get(entry.simp) ?? bySimp.set(entry.simp, []).get(entry.simp) as EntryId[]).push(entry.id);
+        (byTrad.get(entry.trad) ?? byTrad.set(entry.trad, []).get(entry.trad) as EntryId[]).push(entry.id);
+      }
+      const primary = script === 'simp' ? bySimp : byTrad;
+      const secondary = script === 'simp' ? byTrad : bySimp;
+      return attachIds(plan, (word) => primary.get(word) ?? secondary.get(word) ?? []);
+    });
   }
 }

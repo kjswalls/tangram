@@ -3991,3 +3991,174 @@ Three smaller ones fixed with them: the `node:fs` guard only matched single-quot
 `xx5` test could not fail, because `xx` does not parse as pinyin so the query never reached the
 pinyin index — it now asserts against the columns, and checks a real `xx5` headword (働) is still
 findable by hanzi with an empty `pinyinMarked`.
+
+---
+
+## `data.md` D3 — gloss search, the inverted segmenter, and `retrieve.ts`
+
+One commit. `lib/dict/query/gloss.ts` and `lib/dict/query/segment.ts` are the new SQL;
+`lib/dict/segment.ts` is inverted; `lib/dict/rank.ts` gains the `glossTier` machinery;
+`lib/ai/retrieve.ts` is new. `tests/unit/dict/gloss.test.ts` (57 tests) and
+`tests/unit/ai/retrieve.test.ts` (38) are new, and `search.test.ts` and `segment.test.ts` are
+re-pointed at the store.
+
+### The two behavioural changes D3 budgets for, measured
+
+A 200-query English corpus — 180 gloss tokens taken from the dictionary in rowid order so the corpus
+is not a list of words somebody thought of, plus 20 multi-word phrases — compared group-set for
+group-set against the JSON index at a page large enough that paging cannot confound it:
+
+```
+183 identical, 17 wider, 0 narrower
+wider: the, for, and, to plan, to eat, to go to, to be able to, a lot of, to look at,
+       to make a, in front of, point of view, to take care of, to be born, to get up,
+       south of the, to come back
+```
+
+**Nothing is ever lost**, which is the assertion the test makes; "wider" is D3's change 1 and it
+only adds. The multi-word entries are the predicted case exactly: today's code intersects per-word
+posting lists that were each truncated to 5,000 *before* the intersection, so `to go to` came back
+with 38 fewer groups than the dictionary actually contains.
+
+**Three of the seventeen are single words — `the`, `for`, `and` — and D3 says that cannot happen.**
+Its text is explicit: *"for a single-word query, FTS5 plus `LIMIT 5000` is the same pool today's code
+has, and recall does not move at all."* It is not, and the reason is the difference D1's review
+turned up: `index.byGloss` pushes an entry id into a token's posting list **once per gloss**, so a
+list there can carry the same id several times, while an FTS5 index carries a rowid once per term.
+Measured: 4,603 tokens carry 44,265 duplicate postings, and nine tokens exceed the 5,000 cap (`of`,
+`to`, `a`, `the`, `in`, `and`, `or`, `for`, `idiom`). For those nine the JSON `slice(0, 5000)` spends
+places on duplicates and the FTS `LIMIT 5000` does not, so the pools differ and the store's is
+strictly larger. **`data.md` D3's sentence is wrong for those nine tokens.** The direction is
+harmless — more recall on a query for `the` — but a later session comparing the two should expect it
+rather than chase it.
+
+`da` and `to` paged to the end with `nextCursor`:
+
+```
+paging "da": store 12 pages / 592 groups / total 592;  json 12 pages / 590 groups / total 590
+paging "to": store 95 pages / 4718 groups / total 4718; json 38 pages / 1854 groups / total 1854
+```
+
+`to` is the cap's shadow made visible: the JSON walk terminates at 1,854 groups because its pool was
+truncated, the store's at 4,718 because FTS5's intersection is exact. `total` is constant across
+both walks, every group is visited exactly once, and `keys.length === total` on both sides — which
+is what would catch a `:cap` lowered quietly, as a shorter walk rather than as a wrong answer.
+
+**`:cap` stays at 5,000, matching `MAX_GLOSS_CANDIDATES`.** D3 required this to be an explicit
+decision rather than a default. Measured native cost at that cap: 0.4 ms for `"plan"`, 0.6 ms for
+`"to" AND "plan"`, and **25 ms for `"to"` alone**, which is the worst single common token and the
+only one anywhere near D4's 50 ms interactive threshold. At `LIMIT 400` the same query is 12 ms, so
+the lever exists — but taking it would make this a redesign rather than a port (`glossTier` would
+rank only what the cap admits, `total` would become a capped count, and `nextCursor` would terminate
+early), so it is D4's to take with the measurement in hand.
+
+### Four places D3's text does not survive contact
+
+1. **`SELECT script, word, freq FROM words WHERE word IN (…)` across both scripts is a full table
+   scan.** `words` is `PRIMARY KEY (script, word)` on a `WITHOUT ROWID` table, so there is no other
+   B-tree and `word IN (…)` alone cannot use an index. Measured on a 67-hanzi paragraph (937
+   distinct substrings): **45.7 ms** for the one statement D3 prints, **1.8 ms** for two
+   `script = ? AND word IN (…)` statements. Both are **one round trip**, because a batch is the round
+   trip — so the fix costs nothing D3 was buying. (D3's own 1.37 ms figure was measured
+   single-script, which is the form that uses the index; the two-script form it then mandates is the
+   form that does not.)
+
+2. **`SegmentInput` as printed cannot express the two round trips D3 also mandates.** It carries
+   `idsFor: (word) => EntryId[]`, and the chosen words are not known until the DP has run — which is
+   the call `idsFor` is an argument to. So `segment.ts` exposes `planSegments()` (cut the text, no
+   ids needed) and `attachIds()` (fill each token's readings), with `segmentWith(text, input)` kept
+   as D3's named entry point for a caller that already holds both halves. The store uses the two
+   halves; the JSON `segment()` drives the same `planSegments`, so the two cannot disagree about the
+   cutting, only about which candidates they were given.
+
+3. **`segment.test.ts`'s suggested oracle is wrong and taking it would have weakened the test.** D3
+   permits replacing `getDictIndex().bySimp.get('了')` with "the ids behind `store.search('了')`'s
+   exact hanzi group, which D1 guarantees is `bySimp.get('了')` in the same order". It is not: a
+   search *group* is one `trad|simp` headword, while `bySimp.get('了')` spans every traditional form
+   of the simplified one — 了 has four entries across 了 and 瞭. The suggested oracle returns two ids
+   where the token carries four. `lib/dict/index.ts` is alive until D6, so the two oracles stay as
+   they are and D6 freezes them into fixtures.
+
+4. **`retrieve.ts` lands at `lib/ai/retrieve.ts`, not `packages/ai/retrieve.ts`.** D3 assumes wave
+   0's deliverable 5 has run; `README.md`'s register V6 records it as not executable as written and
+   this session was scoped out of it, so `packages/ai/` does not exist. The file moves with its nine
+   neighbours when someone specifies that move. `README.md`'s own §7 uses the pre-move spelling for
+   exactly this file.
+
+### The synchronous/asynchronous seam, and what it cost
+
+`GroundContext.segment` is `(text: string) => Token[]`; `DictStore.segment` returns a promise. D3's
+resolution — await the segments up front, build a `Map<string, Token[]>`, pass
+`(text) => map.get(text) ?? []` — is right about the shape and **misses that the strings are not
+knowable in advance**: `ground()` segments each phrase it has *rendered from the cited entries*, and
+the rendering happens inside it. Re-implementing that rendering in `retrieve.ts` would put two copies
+of the thing that decides what a learner sees into the tree.
+
+So `ground()` is run as a **fixed point**. Each round hands it maps and records what it asked for and
+could not be told; the store answers those; the round runs again. It closes in three (segments, then
+the entry ids the segmenter produced, then nothing), it is bounded at four, and `ground()` is pure so
+running it three times costs microseconds against a model call that has a 30-second budget. One
+detail is load-bearing: an id the dictionary does not have is remembered as *answered no*, or an
+invented citation would be re-requested every round and the loop would never close. There is a test
+for that.
+
+**`ground.ts` is unmodified**, which was the point. `tests/unit/ai/retrieve.test.ts` proves the
+grounded answer is identical whichever way the dictionary was reached, over an ordinary answer, an
+invented citation, a phrase built out of the model's own text (随看随买), a mixed phrase, and an empty
+response.
+
+### What was not done, and why
+
+**`tests/unit/ai/helpers.ts` is not re-pointed at the store.** `data.md` **D6**'s disposition table
+says it is re-pointed "in D3, not here", but D3's own criterion 9 asks only that `tests/unit/ai/`
+passes with the segment map pre-awaited and `ground.ts` unmodified — which it does. Re-pointing the
+helpers makes `entriesFor`/`entryFor`/`readingOf` async and churns roughly 2,000 lines of ask tests
+that are about grounding rules, for no behavioural gain while `lib/dict/index.ts` is still alive. The
+trigger for that churn is D6's deletion of the JSON path, and it belongs in the commit that deletes
+it. **D6 should expect to do it.**
+
+`app/api/ask/route.ts` gains two `export` keywords, on `mergedSearch` and `candidateEntries`, so the
+differential test compares against the real originals rather than against a re-implementation that
+could be wrong in the same way. D6 deletes both with the route.
+
+### Test disposition (criterion 1 and 3)
+
+- **`segment.test.ts`** — rewritten mechanically, **no expected value changed**, two cases added
+  (criterion 2). Permitted edits only: the import block, `async`/`await`, `store.segment` for
+  `segment`, `detectScriptFrom(chars, text)` for `detectScript(index, text)`. The two added cases
+  assert the *cut* rather than the returned script for the cross-script fallback, because the
+  existing case checks the label and a single-script candidate query would still produce the right
+  label while splitting 學習 into two characters.
+- **`search.test.ts`** — re-pointed at the store, **28 assertions, zero changed**. The edits are the
+  import block, `async`/`await`, and `store.search`/`store.entries` behind the same `search` and
+  `getEntry` names so no call site moved. The store reproduces the JSON implementation's entire
+  acceptance suite: routing, tier order, the polyphone grouping, the ü/v/`u:` folding, the neutral
+  tone, `he`/`long`/`sun`/`women`, the paging contract, and "a real word above a variant of it".
+- **`index.test.ts`, `pinyin.test.ts`, `cold-start.test.ts`, and every suite under `tests/unit/ai/`
+  and `tests/unit/lists/`** — unedited and passing.
+
+### Round trips (criterion 8)
+
+Unchanged with the English half in: an English query is two, a pinyin query runs **both** sections in
+the same two, and `isGlossToken`'s statements ride in the existing batch without raising the count.
+`segment` is two whatever the passage length, and a passage with no hanzi spends none. All asserted
+against a spy runner, which also checks that the two per-script word statements go in one array
+rather than one call each.
+
+### The MATCH string
+
+Building it is a security-shaped problem rather than a formatting one — FTS5 has its own query
+syntax and an unescaped learner query is an injection into it. Every term is one token matching
+`[a-z0-9']`, double-quoted, joined with ` AND `, and a 35-case fuzz corpus (`"`, `*`, `^`, `:`,
+`NEAR`, `NOT`, unbalanced quotes, a 200-character query, Cyrillic, an emoji) asserts that nothing
+ever reaches SQLite as a syntax error. Two spy assertions hold the line D3 draws: **no phrase query
+is ever constructed** — on a `detail=none` table that raises rather than returning nothing — and **no
+MATCH string contains ` OR `**.
+
+The OR guard needed a decision D3 does not anticipate. `englishGroups` takes the union of
+`{stemToken(word), lemma(word)}` over each *already lemmatised* word, which collapses to a singleton
+almost always — but not for a plural of a plural: `lemmas('mens')` is `['men']`, and `men` is itself
+an `IRREGULAR` key, so its forms are `{men, man}` and today's code unions both lists. FTS5 would say
+that as `("men" OR "man")`, which is the exact string D3 forbids. So the union is expressed as one
+statement per form combination and unioned in TypeScript, which is provably the same set, bounded at
+four combinations, and emits no `OR`.

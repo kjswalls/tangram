@@ -483,18 +483,27 @@ describe('pinyin search — the section matches the JSON one', () => {
     const mineKeys = mine.map((group) => group.key);
     const theirKeys = theirs.map((group) => group.key);
 
+    // The store's pinyin CANDIDATE set is fully determined — the exact tiers plus
+    // the 600 lowest-rowid prefix matches — but the pinyin SECTION is not the
+    // candidate set: since D3 both implementations run an English section
+    // alongside, and `dedupe` gives a headword to whichever ranked it higher. So
+    // the oracle is checked against the whole result, in both directions.
+    const oracle = expectedPinyinKeys(query);
+    const everywhere = new Set([...mineKeys, ...sectionOf(fromStore, 'english').map((g) => g.key)]);
+    expect(
+      [...oracle].filter((key) => !everywhere.has(key)),
+      `${query}: the store lost pinyin candidates entirely`,
+    ).toEqual([]);
+    expect(
+      mineKeys.filter((key) => !oracle.has(key)),
+      `${query}: the pinyin section holds groups no pinyin query could have found`,
+    ).toEqual([]);
+
     if (pinyinPrefixIds(query) >= MAX_PINYIN_PREFIX_IDS) {
-      // At the cap the two candidate sets differ by design, but the store's is
-      // still fully determined — the exact tiers plus the 600 lowest-rowid
-      // prefix matches — so it is asserted against its own oracle rather than
-      // against the JSON side.
+      // At the cap the two implementations' candidate sets differ by design.
       expect(mine.length).toBeGreaterThan(0);
-      expect(new Set(mineKeys)).toEqual(expectedPinyinKeys(query));
       return;
     }
-    // Under the cap the oracle and the JSON side must agree with each other too,
-    // which is what makes the oracle trustworthy in the branch above.
-    expect(new Set(mineKeys)).toEqual(expectedPinyinKeys(query));
 
     // Containment. This is the assertion the LIMIT-1 mutation fails immediately.
     const missing = theirKeys.filter((key) => !mineKeys.includes(key));
@@ -984,12 +993,6 @@ describe('open() and the meta constants', () => {
     await watched.open();
     expect(seen).toEqual(['preparing', 'ready', 'absent']);
     await watched.close();
-  });
-});
-
-describe('the segmenter is D3’s', () => {
-  it('says so rather than answering wrongly', async () => {
-    await expect(store.segment('我打算明天去北京')).rejects.toThrow(/D3/);
   });
 });
 

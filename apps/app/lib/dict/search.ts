@@ -25,7 +25,10 @@ import {
   CandidateSet,
   SECTION_LABELS,
   dedupeSections,
+  glossTier,
   hasCjk,
+  lemma,
+  lemmas,
   materialise,
   pageWindow,
   stemToken,
@@ -43,6 +46,14 @@ import type { DictEntry, EntryId, HskBand } from './types';
  */
 export { CJK_PATTERN, hasCjk, SEARCH_PAGE_SIZE } from './rank';
 export type { MatchSource } from './rank';
+
+/**
+ * The gloss tiers, the lemmatiser and the stopword list are `lib/dict/rank.ts`'s
+ * as of D3, so the store ranks FTS5's candidates with the same function this
+ * module ranks its posting lists with. Re-exported because `search.test.ts` and
+ * the ask pipeline import them from here.
+ */
+export { glossSenses, glossTier, lemma } from './rank';
 
 /**
  * The two prefix caps come from the query modules rather than being declared
@@ -148,120 +159,6 @@ function headwords(index: DictIndex): HeadwordIndexes {
     HEADWORDS.set(index, cached);
   }
   return cached;
-}
-
-// ---------------------------------------------------------------------------
-// English glosses
-// ---------------------------------------------------------------------------
-
-/**
- * Words that carry no meaning of their own in a gloss. Dropping them is what makes
- * "to plan" the same shape as "plan" — one tier apart, not unrelated.
- */
-const GLOSS_STOPWORDS = new Set(['to', 'a', 'an', 'the', 'be', 'of', 'sth', 'sb', "one's"]);
-
-/**
- * The irregular plurals a learner actually types. `stemToken` handles `-s`, which
- * covers almost everything; without these, `women` misses 女人 and `people` misses
- * 人 — and PLAN.md §3.2 names `women` as a query that must work.
- */
-const IRREGULAR: Record<string, string> = {
-  women: 'woman',
-  men: 'man',
-  children: 'child',
-  people: 'person',
-  feet: 'foot',
-  teeth: 'tooth',
-  mice: 'mouse',
-  geese: 'goose',
-  wives: 'wife',
-  knives: 'knife',
-  leaves: 'leaf',
-};
-
-/** One English word → its lookup form. Applied to the query and to every gloss. */
-export function lemma(word: string): string {
-  return IRREGULAR[word] ?? stemToken(word);
-}
-
-function words(text: string): string[] {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9']+/g, ' ')
-    .split(' ')
-    .map((token) => token.replace(/^'+|'+$/g, ''))
-    .filter(Boolean);
-}
-
-function lemmas(text: string): string[] {
-  return words(text).map(lemma);
-}
-
-/**
- * One CC-CEDICT gloss → the senses a query can match whole.
- *
- * CC-CEDICT packs near-synonyms into one gloss with semicolons and prefixes them
- * with register notes: 他 is `"(third-person singular) (…) he; him; his"`. Split on
- * the semicolons and drop the parentheticals and `he` is a whole-gloss match, which
- * is the difference between 他 and 怹 answering a search for "he".
- */
-export function glossSenses(gloss: string): string[] {
-  return gloss
-    .split(';')
-    .map((sense) => {
-      let text = sense.trim();
-      let previous = '';
-      while (text !== previous) {
-        previous = text;
-        text = text.replace(/^\([^()]*\)\s*/, '').replace(/\s*\([^()]*\)$/, '').trim();
-      }
-      return text;
-    })
-    .filter(Boolean);
-}
-
-function equalSequence(a: readonly string[], b: readonly string[]): boolean {
-  return a.length === b.length && a.every((value, i) => value === b[i]);
-}
-
-function containsRun(haystack: readonly string[], needle: readonly string[]): boolean {
-  if (needle.length === 0 || needle.length > haystack.length) return false;
-  for (let i = 0; i <= haystack.length - needle.length; i += 1) {
-    let hit = true;
-    for (let j = 0; j < needle.length; j += 1) {
-      if (haystack[i + j] !== needle[j]) {
-        hit = false;
-        break;
-      }
-    }
-    if (hit) return true;
-  }
-  return false;
-}
-
-/**
- * The gloss tiers of PLAN.md §3.2, best first:
- *   0 whole-gloss match (`plan` → "plan")
- *   1 the whole gloss once the grammar words are dropped (`plan` → "to plan")
- *   2 the query as a contiguous phrase inside a longer gloss
- *   3 the query's words scattered through a phrase
- * `Infinity` when the gloss does not match at all.
- */
-export function glossTier(entry: DictEntry, queryWords: readonly string[]): number {
-  const queryCore = queryWords.filter((word) => !GLOSS_STOPWORDS.has(word));
-  let best = Infinity;
-  for (const gloss of entry.glosses) {
-    for (const sense of glossSenses(gloss)) {
-      const senseWords = lemmas(sense);
-      if (senseWords.length === 0) continue;
-      if (equalSequence(senseWords, queryWords)) return 0;
-      const senseCore = senseWords.filter((word) => !GLOSS_STOPWORDS.has(word));
-      if (queryCore.length > 0 && equalSequence(senseCore, queryCore)) best = Math.min(best, 1);
-      else if (containsRun(senseWords, queryWords)) best = Math.min(best, 2);
-      else if (queryWords.every((word) => senseWords.includes(word))) best = Math.min(best, 3);
-    }
-  }
-  return best;
 }
 
 /**

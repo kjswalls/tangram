@@ -414,3 +414,123 @@ export function pageWindow(
     ...(counts.some((count, i) => ends[i] < count) ? { nextCursor: ends.join('.') } : {}),
   };
 }
+
+// ---------------------------------------------------------------------------
+// English glosses (docs/plans/data.md D3)
+// ---------------------------------------------------------------------------
+
+// Moved here from `search.ts` so the store can rank FTS5's candidates with the
+// same function the JSON index ranks its posting lists with. `glossTier` is why
+// Tangram does not need `bm25()` — which is just as well, since `bm25()` returns
+// 0 for every row on a contentless `detail=none` table — and two copies of a
+// four-tier ranking rule would be two rankings.
+/**
+ * Words that carry no meaning of their own in a gloss. Dropping them is what makes
+ * "to plan" the same shape as "plan" — one tier apart, not unrelated.
+ */
+export const GLOSS_STOPWORDS = new Set(['to', 'a', 'an', 'the', 'be', 'of', 'sth', 'sb', "one's"]);
+
+/**
+ * The irregular plurals a learner actually types. `stemToken` handles `-s`, which
+ * covers almost everything; without these, `women` misses 女人 and `people` misses
+ * 人 — and PLAN.md §3.2 names `women` as a query that must work.
+ */
+export const IRREGULAR: Record<string, string> = {
+  women: 'woman',
+  men: 'man',
+  children: 'child',
+  people: 'person',
+  feet: 'foot',
+  teeth: 'tooth',
+  mice: 'mouse',
+  geese: 'goose',
+  wives: 'wife',
+  knives: 'knife',
+  leaves: 'leaf',
+};
+
+/** One English word → its lookup form. Applied to the query and to every gloss. */
+export function lemma(word: string): string {
+  return IRREGULAR[word] ?? stemToken(word);
+}
+
+export function words(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9']+/g, ' ')
+    .split(' ')
+    .map((token) => token.replace(/^'+|'+$/g, ''))
+    .filter(Boolean);
+}
+
+/** A query → its words, each in its lookup form. Applied to the query only. */
+export function lemmas(text: string): string[] {
+  return words(text).map(lemma);
+}
+
+/**
+ * One CC-CEDICT gloss → the senses a query can match whole.
+ *
+ * CC-CEDICT packs near-synonyms into one gloss with semicolons and prefixes them
+ * with register notes: 他 is `"(third-person singular) (…) he; him; his"`. Split on
+ * the semicolons and drop the parentheticals and `he` is a whole-gloss match, which
+ * is the difference between 他 and 怹 answering a search for "he".
+ */
+export function glossSenses(gloss: string): string[] {
+  return gloss
+    .split(';')
+    .map((sense) => {
+      let text = sense.trim();
+      let previous = '';
+      while (text !== previous) {
+        previous = text;
+        text = text.replace(/^\([^()]*\)\s*/, '').replace(/\s*\([^()]*\)$/, '').trim();
+      }
+      return text;
+    })
+    .filter(Boolean);
+}
+
+function equalSequence(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((value, i) => value === b[i]);
+}
+
+function containsRun(haystack: readonly string[], needle: readonly string[]): boolean {
+  if (needle.length === 0 || needle.length > haystack.length) return false;
+  for (let i = 0; i <= haystack.length - needle.length; i += 1) {
+    let hit = true;
+    for (let j = 0; j < needle.length; j += 1) {
+      if (haystack[i + j] !== needle[j]) {
+        hit = false;
+        break;
+      }
+    }
+    if (hit) return true;
+  }
+  return false;
+}
+
+/**
+ * The gloss tiers of PLAN.md §3.2, best first:
+ *   0 whole-gloss match (`plan` → "plan")
+ *   1 the whole gloss once the grammar words are dropped (`plan` → "to plan")
+ *   2 the query as a contiguous phrase inside a longer gloss
+ *   3 the query's words scattered through a phrase
+ * `Infinity` when the gloss does not match at all.
+ */
+export function glossTier(entry: DictEntry, queryWords: readonly string[]): number {
+  const queryCore = queryWords.filter((word) => !GLOSS_STOPWORDS.has(word));
+  let best = Infinity;
+  for (const gloss of entry.glosses) {
+    for (const sense of glossSenses(gloss)) {
+      const senseWords = lemmas(sense);
+      if (senseWords.length === 0) continue;
+      if (equalSequence(senseWords, queryWords)) return 0;
+      const senseCore = senseWords.filter((word) => !GLOSS_STOPWORDS.has(word));
+      if (queryCore.length > 0 && equalSequence(senseCore, queryCore)) best = Math.min(best, 1);
+      else if (containsRun(senseWords, queryWords)) best = Math.min(best, 2);
+      else if (queryWords.every((word) => senseWords.includes(word))) best = Math.min(best, 3);
+    }
+  }
+  return best;
+}

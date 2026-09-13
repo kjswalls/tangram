@@ -1,0 +1,14 @@
+{
+  "//": "The emitting project: src/ only, into dist/, which `pnpm -F server start` runs with plain `node`. docs/plans/backend.md B0.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": false,
+    "sourceMap": true,
+    "outDir": "dist",
+    "rootDir": "src",
+    "tsBuildInfoFile": "dist/.tsbuildinfo"
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist", "tests", "scripts"]
+}

@@ -53,7 +53,12 @@ describe('the workspace layout', () => {
     };
     // Root scripts/ AND the app: W1 gave the app its own `tsc --noEmit` once
     // `next build` — the repo's only typechecker until then — went away.
-    expect(root.scripts.typecheck).toBe('tsc --noEmit && pnpm -F app typecheck');
+    // Asserted as parts rather than as one literal string, because
+    // `backend.md` B0 appends `apps/server` to the same script and a later
+    // package will append itself again: what must stay true is that the root
+    // typechecks its own `scripts/` AND every package, not the exact spelling.
+    expect(root.scripts.typecheck).toMatch(/(^|\s)tsc --noEmit(\s|$)/);
+    expect(root.scripts.typecheck).toMatch(/-F app typecheck/);
     expect(root.scripts.build).toMatch(/typecheck/);
     expect(root.scripts.lint).toMatch(/eslint \./);
   });

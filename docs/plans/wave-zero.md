@@ -186,6 +186,42 @@ still introduces new words on a different screen from the one that reviews them.
 | 16d | **`ios.md`'s reading of the C2 gate governs:** I0–I3 consume nothing from `TTSProvider` and can run without it. `core.md` C2's "must land before any mobile plan starts" is wrong. | `core.md` C2; `android.md` A4 |
 | 16e | **The design canvas is illustrative; the plans govern.** `core.md` extracts the layout facts its phases depend on into its own text so no phase depends on a source a build session cannot open. | `core.md` §1 |
 
+## 10a. The access gate matches by PREFIX — SETTLED (raised by the server build session)
+
+The session building `backend.md` B0–B2 stopped and asked which plan owns how the access gate matches,
+and it was right to. The answer has a security consequence.
+
+The gate's path list is `['/api/ask', '/api/examples', '/api/recall']`, and the only code that ever
+matched a request against it was the middleware `web.md` W1 deleted:
+
+```ts
+GATED_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`))
+```
+
+A **prefix** match. `web.md` W4's disposition table lists the path list as "unchanged, moved" and says
+nothing about matching; `backend.md` B1 inherits the same silence. B2 then adds `/api/ask/propose` and
+`/api/ask/answer` — **the two routes that actually spend money**. An exact-string gate leaves both of
+them open while `TANGRAM_ACCESS_SECRET` is set and every existing test passes.
+
+**Rulings.**
+
+1. **The match is by prefix**, exactly as the deleted middleware did it. This is not a preference; an
+   exact match is a silent authentication bypass on the only two routes with a bill attached.
+2. **The enforcing gate is server-side and belongs to `backend.md` B1**, because that is where the
+   three routes now live. `web.md` W4 owns only the client half — sending the header — and its
+   disposition table should say so rather than implying it owns the check.
+3. **The rule lives in the frozen ask contract and is asserted by the contract test**, which is what
+   the build session did on its own initiative and is the right call: the contract is the one artifact
+   both halves share, and neither W4's owner nor B1's owns the other's test file.
+4. **The assertion must name `/api/ask/propose` and `/api/ask/answer` explicitly**, not just the three
+   parent paths. A test that only proves the parents are gated is the test that would have passed
+   while both children were open.
+
+This is the second time in this build that a config-shaped change matched fewer things than it looked
+like it matched, with every local gate green — the first was the dictionary tracing globs in W0. Both
+were caught by an adversarial reviewer rather than by a test, and in both cases the fix included a new
+test that can catch the next one.
+
 ## 11. `ios.md`'s contested-surfaces table — DELETE IT (issue 4)
 
 `android.md` is correct on all three rows and `ios.md` misquotes it on all three. Verified at HEAD:

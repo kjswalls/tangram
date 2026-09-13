@@ -70,7 +70,23 @@ export function headwordFreq(index: DictIndex, ids: readonly EntryId[]): number 
   return first?.freq ?? 1;
 }
 
-function statsFor(index: DictIndex, map: Map<string, EntryId[]>): ScriptStats {
+/**
+ * The two numbers the DP needs about a script, before the log is taken:
+ * the summed head frequency of every headword, and the longest headword the
+ * scan will try.
+ *
+ * Exported for the same reason `headwordFreq` is. `scripts/build-data.ts`
+ * writes both into `meta` and `scripts/verify-data.ts` checks them, and D2
+ * replaces this function with a `meta` read — so all three have to agree about
+ * `maxLen`'s quirk (a headword longer than `MAX_WORD_CHARS` does not raise it)
+ * and about summing `headwordFreq` rather than raw `freq`. Two re-implementations
+ * of a nine-line loop is how the segmenter's floor quietly shifts.
+ */
+export function headwordTotals(
+  index: DictIndex,
+  script: SegmentScript,
+): { total: number; maxLen: number } {
+  const map = script === 'simp' ? index.bySimp : index.byTrad;
   let total = 0;
   let maxLen = 1;
   for (const [word, ids] of map) {
@@ -78,13 +94,18 @@ function statsFor(index: DictIndex, map: Map<string, EntryId[]>): ScriptStats {
     const length = [...word].length;
     if (length > maxLen && length <= MAX_WORD_CHARS) maxLen = length;
   }
+  return { total, maxLen };
+}
+
+function statsFor(index: DictIndex, script: SegmentScript): ScriptStats {
+  const { total, maxLen } = headwordTotals(index, script);
   return { logTotal: Math.log(total || 1), maxLen };
 }
 
 function segmentIndex(index: DictIndex): SegmentIndex {
   let cached = STATS.get(index);
   if (!cached) {
-    cached = { simp: statsFor(index, index.bySimp), trad: statsFor(index, index.byTrad) };
+    cached = { simp: statsFor(index, 'simp'), trad: statsFor(index, 'trad') };
     STATS.set(index, cached);
   }
   return cached;

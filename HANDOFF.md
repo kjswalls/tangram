@@ -3483,3 +3483,235 @@ assertion false it fails and has to be rewritten into the real one.
   and the build is clean; they are left in place rather than swept, because `core.md` C7 restructures
   these components anyway and a 41-file no-op diff would bury that one.
 
+
+
+---
+
+## `data.md` D1 — one prebuilt SQLite dictionary, and a verifier that proves it
+
+Three commits on `claude/build-dictionary`, on top of `3d3b817`:
+
+- `test: two session suites render a <Link> without a router, so pnpm test exits 1`
+- `data: freeze DictStore, SqlRunner, DictStatus and the artifact schema (D1, first commit)`
+- `data: pnpm data emits the SQLite dictionary, and pnpm data:verify proves it (D1)`
+
+`pnpm data` now writes `data/dict-1-<snapshot>.sqlite` and `data/dict-manifest.json` beside
+`dict.json`, which keeps being written: it is the differential oracle D2 and D3 compare the store
+against, and it is `verify-data.ts`'s input. D6 decides its fate, not this phase.
+
+### The gate was already red, and that is why the first commit is a test fix
+
+`pnpm test` at `3d3b817` printed **"89 passed, 915 passed"** and then **exited 1**. Vitest counts
+unhandled errors separately from failures, and `tests/unit/ai/recall-session.test.tsx` and
+`tests/unit/review/production-session.test.tsx` were rendering components containing a `<Link>`
+through the unwrapped `@testing-library/react` render — `TypeError: Cannot destructure property
+'basename' of 'React$1.useContext(...)' as it is null`. That is exactly what W1 added
+`tests/unit/render.tsx` for; W1's own HANDOFF section names five files re-pointed at the helper and
+these two were missed. Every assertion passed, so the gate table read green while the command's exit
+status did not. One import specifier each.
+
+**Lesson for the next phase: read the exit status, not the summary line.** A suite that passes and
+exits 1 is a suite nobody is checking.
+
+### What D1's own figures came out at — one table is wrong in the plan
+
+Every **structural** figure in `data.md` D1 reproduces exactly, which is a good sign for the rest of
+the document: 124,188 entries; 242,087 `words` rows (120,448 simp + 121,639 trad); 14,625 `chars`;
+23,052 `char_words` rows holding 636,088 postings; `words_total_simp` 55,422,515 and
+`words_total_trad` 64,124,174, both at `max_len` 15; 51 banded entries with no `freqRank`, six of
+them in HSK 1; 71,232 of 120,448 simplified headwords one or two characters long.
+
+**The compressed figures do not.** Measured here, on the schema that ships, after VACUUM:
+
+| | `data.md` D1 | measured 2026-09-13 (this phase) |
+|---|---|---|
+| raw | 43.1 MB | **43.2 MB** |
+| gzip -9 | 19.5 MB | **21.1 MB** |
+| brotli q11 | 13.9 MB | **15.3 MB** (14.7 MB at `lgwin=24`) |
+
+Raw matches; both compressed figures are about 8-10% larger than D1 says, and `lgwin` does not
+explain the gap. Three documents quote the old numbers and need correcting by whoever owns them:
+
+- **`data.md` D5a's 63 MB two-copy on-device budget is ~64.3 MB** (21.1 packaged + 43.2 expanded).
+  `ios.md` and `android.md` adopt that budget verbatim, and D5a already says the packaged half is a
+  `gzip -9` proxy resting on STACK register #16 — it is now a *measured* proxy that is 1.6 MB larger.
+  Still 2% of Play's 200 MB base-module cap; nothing is at risk, but the number two plans quote is
+  stale.
+- **`data.md` D4's web transfer is ~15.3 MB brotli, not 13.9.**
+- **STACK §3's dictionary-artifacts table** carries D1's 43.1 / 19.5 / 13.9 row as "measured against
+  the schema that ships". Only the first of the three is.
+
+The committed budget is 50 MB raw / 18 MB brotli (`verify-data.ts`), checked on every
+`pnpm data:verify --sizes`. 43.2 / 15.3 sit inside it with room.
+
+### Two schema changes against D1's printed block, both measured
+
+D1's schema block would have produced a **45.5 MB** file. Two changes bring it to 43.2, and both are
+in `schema.sql` with their measurements beside them:
+
+- **`gloss_fts` gains `columnsize=0`**, dropping the `gloss_fts_docsize` shadow table: **1.20 MB**
+  for a column only `bm25()` and `columnsize()` read. D3 already establishes that `bm25()` returns 0
+  for every row on a contentless `detail=none` table (reproduced here on 3.51.2), and the ranking is
+  `glossTier` in TypeScript. MATCH, AND-queries and the `tokenchars` apostrophe case all verified
+  working with it.
+- **`entries_hsk` is partial**, `WHERE hsk_band IS NOT NULL`: **1.26 MB down to 0.11 MB**, because
+  113,160 of the 124,188 rows have no band. SQLite proves `hsk_band = ?` implies
+  `hsk_band IS NOT NULL` and still picks it — `SEARCH entries USING INDEX entries_hsk (hsk_band=?)`,
+  and `USING COVERING INDEX` when the projection allows — so the `ORDER BY hsk_sort, rowid`
+  tie-break is still a plain index scan.
+
+**Was that a freeze violation?** The three TypeScript declarations `core.md` and `ios.md` gate on
+(`DictStore`, `SqlRunner`, `DictStatus`) landed in the first commit and have not been touched since.
+The SQL moved in the second commit, and `data.md` D1 scopes the SQL's freeze to the end of the phase
+— *"it does not change after D1 without a `SCHEMA_VERSION` bump"* — so authoring the schema inside
+the phase that owns it is not the thing CLAUDE.md forbids. It is still a sharper edge than it looks,
+so **`store-contract.test.ts` now pins `schema.sql`'s sha256 to `SCHEMA_VERSION`**: the next edit to
+that file fails a test that asks, in the same commit, whether the version needs bumping. Nothing else
+in the tree notices a schema change — the artifact rebuilds happily, `PRAGMA user_version` still says
+1, and every store goes on trusting a file whose shape moved under it.
+
+### Two places D1's text is wrong, found by building it
+
+1. **`SCHEMA_VERSION` cannot both live in `schema.sql` and be "read from one place".** D1 prints
+   `PRAGMA user_version = 1` and `PRAGMA application_id = 0x54474D31` inside the SQL, and also tells
+   an adversarial review to check "whether `SCHEMA_VERSION` is actually read from one place". Both
+   stores validate an opened file against those two numbers at runtime, so they are
+   `lib/dict/artifact.ts` constants applied by the builder, and the SQL asserts neither.
+   `store-contract.test.ts` fails if the SQL ever re-assigns one.
+
+2. **`meta.sources` must not be `dict.meta.sources` verbatim.** D1 says to copy it so `/settings`
+   renders attribution from the data. That list exists because `decomp.json` comes out of the same
+   build, and it names Make Me a Hanzi — LGPL-3.0-or-later. The SQLite dictionary derives nothing
+   from it. A CC BY-SA artifact carrying an LGPL provenance it does not have is the opposite of the
+   boundary PLAN.md §5 draws, so the builder filters that source out and the boundary is asserted
+   rather than assumed: no decomposition-shaped schema name, no Make Me a Hanzi in `meta.sources`,
+   and **no IDS character** (⿰⿱⿲…, a Unicode block that appears nowhere in CC-CEDICT) anywhere in the
+   43 MB. `data/ATTRIBUTION.md` is committed, covers all three artifacts, and says so.
+
+### What the verifier is, and what it caught
+
+`pnpm data:verify` (10 s) is D1 criterion 4 in full, against `dict.json` parsed in the same process —
+not a golden file, and not a second implementation of the build. All 124,188 entries deep-equal their
+JSON row with glosses order intact and a NULL `classifiers` column rebuilding as `[]`; rowid order
+equals `compareEntries` re-derived independently; both pinyin key columns equal `LazyDictIndex`'s own
+keys entry by entry (and the `readingKeys() ?? normalizePinyin()` expression separately, 742 readings
+on the slow path); all 242,087 `words.freq` equal `headwordFreq()`; all 14,625 `chars` verdicts equal
+`detectScript`'s; the `char_words` row set is exactly the 23,052 pairs, checked *separately* from the
+636,088 postings because indexing only single-character headwords passes the postings check; all
+seven HSK bands equal `hskBand()` in full including the 51 rankless entries at the tail; all 47,125
+gloss tokens' posting lists match. `--sizes` adds the cumulative table and the compressed figures
+(~2 min — brotli q11 over 43 MB).
+
+It earned itself on the first run by failing on one character. **𰻞 (biáng, U+30EDE)** is a headword
+in CJK extension G, and `search.ts`'s `CJK_PATTERN` stops at U+2EBEF: `detectScript` skips the
+character entirely while the `chars` table has a row for it. The check now applies the same
+`hasCjk` gate the code does, so the table and the code agree by construction.
+
+**The gap is bigger than that one character, and it is left open deliberately.** Measured:
+`CJK_PATTERN` covers ext A/B/C/D/E/F and the compatibility ideographs but **not ext G
+(U+30000–U+3134A) or ext H (U+31350–U+323AF)**. Thirty-nine `chars` rows fall outside the pattern;
+twenty-seven are Latin letters, `々`, `〇`, the Suzhou numerals and the Japanese era ligatures, which
+carry no script evidence and should not. **Twelve are ext-G hanzi that do**: 𰦭 𰻝 𰻞 𱃲 𱅒 𱇏 𱇩 𱇭 𱉝 𱉵
+𱌶 𱌹. 486 entries contain a character the pattern does not match. Widening the pattern is a
+behavioural change to segmentation and search routing — those twelve characters would stop passing
+through as `text` tokens — and D2 and D3 have a stated budget of two behavioural changes between
+them, both already spent. **It is not in D1's scope and it is not D3's third change. Someone should
+own it.**
+
+### `data:ensure` had to change, and that is the phase's quiet blocking bug
+
+`scripts/build-data.ts` returned early when `data/dict.json` existed, and `pnpm build` runs
+`data:ensure`. After D1 that means **any tree that already held the JSON would never generate the
+`.sqlite`** — `pnpm build` ships an app with no dictionary and every local gate stays green, because
+`pnpm dev`, the unit suite and the e2e suite all read `data/` off local disk. That is the same shape
+as W0's `outputFileTracingIncludes` incident, so the guard is driven by *running* it
+(`build-data.ts --print-artifact-status`) rather than by re-deriving its logic in a test, and the
+four cases are: the real directory (present), `dict.json` with no artifact (absent), a manifest
+naming a schema version this tree does not build (absent), and an artifact truncated to the wrong
+length (absent).
+
+**What the guard deliberately does not check: the CC-CEDICT snapshot.** It compares
+`manifest.schemaVersion` against `SCHEMA_VERSION`, not `manifest.dictVersion` against
+`cedictVersion()`. So bumping the `cedict-json` dependency and running `pnpm build` rebuilds nothing,
+and the app ships the previous snapshot — internally consistent and truthfully labelled
+(`meta.dict_version`, the manifest and the filename all name the snapshot the rows actually came
+from), just older than the dependency. This predates D1: the old guard had no version test at all.
+`data:ensure`'s documented contract is "generate only if missing" (CLAUDE.md, PLAN.md §3.1) and
+`pnpm data` is the fix, so widening it here would have been a silent contract change. **Recorded as
+an open question rather than taken.**
+
+### Decisions the plan did not settle
+
+- **`headwordTotals(index, script)` is exported from `segment.ts`**, alongside `headwordFreq`. D1's
+  Files list only asks for `headwordFreq`, but the builder and the verifier both need `statsFor`'s
+  loop, and three copies of a nine-line loop with a `MAX_WORD_CHARS = 16` literal in each is how the
+  segmenter's unknown-word floor quietly shifts. D2 replaces the function with a `meta` read; until
+  then all three callers share one definition.
+- **The varint posting codec lives in `lib/dict/artifact.ts`**, not a module of its own. It is the
+  artifact's own encoding and the builder, the verifier and every store need it; `artifact.ts` was
+  already the module all three import.
+- **`schema.sql` splits on a `-- >>> indexes` marker.** Indexes are created after the rows so 124k
+  inserts do not each maintain six live B-trees, and there is still exactly one schema file.
+- **Tests that open the artifact run under `// @vitest-environment node`.** Vite refuses to bundle
+  `node:sqlite` for the jsdom default — *"Cannot bundle Node.js built-in"*. **D2's store tests will
+  need the same docblock**, and this is a five-minute confusion if nobody says so.
+- **The size report is read off `dbstat`**, not produced by seven separate builds as D1's table was.
+  After a VACUUM the freelist is empty, so the per-object page bytes sum to the file and the
+  cumulative table is the same information, in the same row order, for seven fewer builds.
+
+### What the adversarial review changed
+
+Five independent lenses (plan compliance; what breaks that no test covers; the attacks D1 itself
+names plus the freeze discipline; will the file work on the other three runtimes; is the data right
+independently of the verifier), then two refuters per finding — one on correctness, one on
+consequence — instructed to refute by default. 20 findings, 12 verified. None survived both refuters,
+but four were confirmed factually by the correctness verifier and are fixed here:
+
+1. **No HANDOFF section existed** — raised by five of the twenty findings, and correctly: two shipped
+   source comments said something "is recorded in HANDOFF.md" when it was not. This section is the
+   fix, and the rule it teaches is *append the HANDOFF section in the phase's own commit*, not at the
+   end of the session.
+2. **Nothing asserted that the six indexes exist in the built file.** An artifact built from a schema
+   that lost every index passes every content check and every unit test; the symptom is a dictionary
+   that is merely slow. `verify-data.ts` now parses `schema.sql` for its declared objects and
+   compares against `sqlite_master`, checks `gloss_fts` still carries all four of its options and
+   `entries_hsk` its `WHERE` clause, and checks the freelist is empty. Proved by dropping
+   `entries_simp` from a copy and watching it go red.
+3. **`statsFor` was re-implemented in the builder and again in the verifier** — see
+   `headwordTotals` above.
+4. **`.gitignore` did not cover the builder's own temp file.** `<artifact>.sqlite.tmp-<pid>` does not
+   match `/data/*.sqlite`, so an interrupted `pnpm data` left a 43 MB binary one `git add -A` from
+   the history.
+
+And one finding that is **real, refuted as out of D1's scope, and load-bearing for D3**:
+
+> **`gloss_fts` dedupes what `index.byGloss` duplicates.** `LazyDictIndex` pushes an entry id into a
+> token's posting list **once per gloss**, so a list there can carry the same id several times; an
+> FTS5 index carries a rowid once per term. Measured: 4,603 tokens carry 44,265 duplicate postings,
+> and nine tokens exceed the 5,000-candidate cap (`of`, `to`, `a`, `the`, `in`, `and`, `or`, `for`,
+> `idiom`). For those nine the JSON `slice(0, 5000)` spends places on duplicates and the FTS `LIMIT
+> 5000` does not, so **the two candidate pools are not the same pool at the cap.** `data.md` D3 says
+> *"for a single-word query, FTS5 plus `LIMIT 5000` is the same pool today's code has, and recall
+> does not move at all"* — that sentence is wrong for those nine tokens. D3's differential test must
+> expect it rather than be surprised by it. `verify-data.ts`'s check is now labelled for what it
+> actually compares.
+
+Two more recorded and not acted on:
+
+- **`char_words.rowids` is the only BLOB in the artifact, and the frozen `SqlValue` promises
+  `Uint8Array`.** Whether `@capacitor-community/sqlite` returns a BLOB as a `Uint8Array` — rather
+  than base64, or a number array — is unverified, and `SqlValue` is a frozen surface.
+  **D5a should probe this in the same device session as register entries 6 and 18**, and if the
+  plugin does not return `Uint8Array` the runner converts at the bridge rather than the frozen type
+  changing.
+- **D5b's four-probe list is now incomplete.** `data.md` D5b probes `WITHOUT ROWID`, FTS5,
+  `content=''` with `detail=none`, and unicode61 `tokenchars`. The artifact now also uses
+  `columnsize=0` and a **partial index**. Both are old features (partial indexes date to SQLite
+  3.8.0) and probe 3 exercises `columnsize=0` by construction since it MATCHes the shipped table, but
+  the list should say so.
+
+### Gates
+
+`pnpm lint`, `pnpm typecheck`, `pnpm test` (90 files, 931 tests), `pnpm build` and
+`PORT=3000 pnpm e2e` (110 passed) all green. Two consecutive `pnpm data` runs produce the same
+sha256, so criterion 7 holds as specified rather than aspirationally.

@@ -15,6 +15,10 @@ next-env.d.ts
 # failure whose other symptom is that everything passes.
 /data/*.json
 /data/*.sqlite
+# The builder writes `<artifact>.sqlite.tmp-<pid>` and renames it into place, so
+# an interrupted `pnpm data` leaves a 43 MB binary behind that the rule above
+# does not match. A stale temp file is dead weight, never something to commit.
+/data/*.sqlite.tmp-*
 /data/raw/
 
 # `data/dict-manifest.json` is covered by the rule above and stays ignored

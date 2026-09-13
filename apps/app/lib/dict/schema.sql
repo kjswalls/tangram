@@ -10,8 +10,9 @@
 -- deliberately NOT here: they are `lib/dict/artifact.ts` constants, applied by
 -- the builder, because the browser and native stores validate an opened file
 -- against the same two numbers and a version that lives in two files is a
--- version that drifts. `tests/unit/dict/schema.test.ts` asserts this file
--- never assigns either.
+-- version that drifts. `tests/unit/dict/store-contract.test.ts` asserts this
+-- file never assigns either, and pins its text to SCHEMA_VERSION so an edit
+-- here cannot land without a deliberate decision about the version number.
 --
 -- Everything below the index marker near the foot of this file is created
 -- AFTER the rows are inserted: the builder splits the file there so 124k

@@ -33,7 +33,7 @@ import {
   readingKeys,
   toMarked,
 } from '../apps/app/lib/dict/pinyin';
-import { headwordFreq } from '../apps/app/lib/dict/segment';
+import { headwordFreq, headwordTotals } from '../apps/app/lib/dict/segment';
 import { dirOf, workspaceRoot } from '../apps/app/lib/server/roots';
 
 import type { SegmentScript } from '../apps/app/lib/dict/segment';
@@ -617,24 +617,12 @@ function insertCharWords(
  * The segmenter's constants, which are constants of the *snapshot* rather than of
  * the code — which is why they are data. `logTotal` is `Math.log()` of
  * `words_total_*`, so the DP's scores stay bit-identical to today's; `max_len_*`
- * keeps `statsFor()`'s quirk that a headword longer than 16 characters does not
- * raise it.
+ * keeps `headwordTotals()`'s quirk that a headword longer than `MAX_WORD_CHARS`
+ * does not raise it. Both come from `segment.ts` itself rather than from a copy
+ * of its loop.
  */
 function segmentConstants(index: DictIndex): Record<SegmentScript, { total: number; maxLen: number }> {
-  const MAX_WORD_CHARS = 16;
-  const out = {} as Record<SegmentScript, { total: number; maxLen: number }>;
-  for (const script of ['simp', 'trad'] as const) {
-    const map = script === 'simp' ? index.bySimp : index.byTrad;
-    let total = 0;
-    let maxLen = 1;
-    for (const [word, ids] of map) {
-      total += headwordFreq(index, ids);
-      const length = [...word].length;
-      if (length > maxLen && length <= MAX_WORD_CHARS) maxLen = length;
-    }
-    out[script] = { total, maxLen };
-  }
-  return out;
+  return { simp: headwordTotals(index, 'simp'), trad: headwordTotals(index, 'trad') };
 }
 
 function insertMeta(

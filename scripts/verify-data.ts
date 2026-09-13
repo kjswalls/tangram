@@ -35,7 +35,7 @@ import { getDictIndex, glossTokens, hskBand } from '../apps/app/lib/dict/index';
 import { hasUnknownReading, normalizePinyin, readingKeys } from '../apps/app/lib/dict/pinyin';
 import { compareEntries } from '../apps/app/lib/dict/rank';
 import { hasCjk } from '../apps/app/lib/dict/search';
-import { detectScript, headwordFreq } from '../apps/app/lib/dict/segment';
+import { detectScript, headwordFreq, headwordTotals } from '../apps/app/lib/dict/segment';
 import { dirOf, workspaceRoot } from '../apps/app/lib/server/roots';
 
 import type { DictEntry, EntryId, HskBand } from '../apps/app/lib/dict/types';
@@ -49,8 +49,9 @@ const wantSizes = process.argv.includes('--sizes');
 
 /**
  * The committed budget (data.md D1 criterion 5). Headroom over the measured
- * 43.2 MB / 13.9 MB, because the point of a budget is to catch a schema change
- * that doubles the file, not to fail on a CC-CEDICT snapshot that grew.
+ * 43.2 MB raw / 15.3 MB brotli q11 — D1's table says 13.9 MB and the real file
+ * does not reach it, see HANDOFF.md — because the point of a budget is to catch
+ * a schema change that doubles the file, not to fail on a snapshot that grew.
  */
 const BUDGET_RAW_BYTES = 50_000_000;
 const BUDGET_BROTLI_BYTES = 18_000_000;
@@ -190,6 +191,72 @@ function checkPragmas({ db, manifest }: Artifact): void {
   check('user_version is SCHEMA_VERSION', read('user_version') === SCHEMA_VERSION ? [] : [String(read('user_version'))]);
   check('page_size is 4096', read('page_size') === 4096 ? [] : [String(read('page_size'))]);
   check('manifest schemaVersion agrees', manifest.schemaVersion === SCHEMA_VERSION ? [] : [String(manifest.schemaVersion)]);
+}
+
+/**
+ * Every object `schema.sql` declares is actually in the file, with the options
+ * it declares (criterion 4, and the "silently matched nothing" lens).
+ *
+ * Without this, an artifact built from a schema that lost all six indexes passes
+ * every other check in this script and every unit test: the content is
+ * identical, only the B-trees are gone, and the symptom is a dictionary that is
+ * merely slow. The frozen schema file is the oracle, so a dropped index or a
+ * changed FTS5 option is a failure here rather than a discovery on a phone.
+ */
+function checkSchemaObjects({ db }: Artifact): void {
+  section('schema objects — the built file carries what schema.sql declares');
+  const schema = readFileSync(new URL('../apps/app/lib/dict/schema.sql', import.meta.url), 'utf8');
+  const declared = new Map<string, string>();
+  for (const match of schema.matchAll(
+    /CREATE\s+(?:VIRTUAL\s+)?(?:UNIQUE\s+)?(TABLE|INDEX)\s+([A-Za-z_][A-Za-z0-9_]*)/g,
+  )) {
+    declared.set(match[2], match[1].toLowerCase());
+  }
+  const present = new Map(
+    (db.prepare('SELECT name, type FROM sqlite_master').all() as Row[]).map((row) => [
+      text(row.name),
+      text(row.type),
+    ]),
+  );
+  const missing: string[] = [];
+  for (const [name, type] of declared) {
+    const got = present.get(name);
+    if (got === undefined) missing.push(`${type} ${name} is declared and absent`);
+    else if (got !== type) missing.push(`${name} is a ${got}, schema.sql says ${type}`);
+  }
+  check('every table and index in schema.sql is in the file', missing, `${declared.size} objects`);
+
+  // The FTS5 options decide whether a phrase query errors, whether an apostrophe
+  // stays inside a token, and whether the 1.20 MB docsize shadow table exists.
+  // SQLite stores the CREATE statement verbatim, so they are readable back out.
+  const ftsRow = db.prepare("SELECT sql FROM sqlite_master WHERE name = 'gloss_fts'").get() as
+    | Row
+    | undefined;
+  const ftsSql = ftsRow && typeof ftsRow.sql === 'string' ? ftsRow.sql : '';
+  const wanted = ["content=''", 'columnsize=0', 'detail=none', "tokenchars ''''"];
+  check(
+    'gloss_fts keeps its four declared options',
+    wanted.filter((option) => !ftsSql.includes(option)).map((option) => `${option} is gone`),
+  );
+
+  // Partial, and partial on the exact predicate. An unrestricted rebuild would
+  // still answer every query, 1.15 MB larger, and nothing else would notice.
+  const hskRow = db.prepare("SELECT sql FROM sqlite_master WHERE name = 'entries_hsk'").get() as
+    | Row
+    | undefined;
+  const hskSql = hskRow && typeof hskRow.sql === 'string' ? hskRow.sql : '';
+  check(
+    'entries_hsk is still the partial index',
+    /WHERE\s+hsk_band\s+IS\s+NOT\s+NULL/i.test(hskSql) ? [] : [`entries_hsk is ${hskSql || 'absent'}`],
+  );
+
+  // A VACUUMed file has no freelist. Free pages are file size nobody is using,
+  // and they are also what would make the size report a lie.
+  const freelist = Object.values(db.prepare('PRAGMA freelist_count').get() as Row)[0];
+  check(
+    'the file was VACUUMed — no free pages',
+    freelist === 0 ? [] : [`${String(freelist)} free pages`],
+  );
 }
 
 function checkEntries({ db }: Artifact, ordered: readonly DictEntry[]): void {
@@ -347,12 +414,14 @@ function checkChars({ db }: Artifact): void {
     // simplified, which is the app default.
     //
     // Gated on `hasCjk` because `detectScript` is: it skips any character the
-    // CJK pattern does not match, and one headword in the snapshot — 𰻞
-    // (biáng, U+30EDE, CJK extension G) — is outside `CJK_PATTERN`'s ranges.
-    // The table carries a row for it, correctly; today's code never consults
-    // it, and a store that applies the same gate never will either. This check
-    // found that, which is what it is for; the pattern's coverage is a separate
-    // question and is recorded in HANDOFF.md rather than changed here.
+    // CJK pattern does not match, and `CJK_PATTERN` stops at U+2EBEF — it does
+    // not cover CJK extension G (U+30000-U+3134A) or H. Twelve single-character
+    // headwords in this snapshot are ext-G hanzi carrying real script evidence
+    // (𰦭 𰻝 𰻞 𱃲 𱅒 𱇏 𱇩 𱇭 𱉝 𱉵 𱌶 𱌹); the table has correct rows for all twelve and
+    // today's code can never consult them. A store applying the same gate
+    // behaves identically, so this is not a porting risk — but widening the
+    // pattern is a behavioural change to segmentation and routing, out of D1's
+    // scope and beyond D2/D3's stated budget of two. See HANDOFF.md, D1.
     if (!hasCjk(ch)) continue;
     const fromTable = int(row.trad_evidence) > int(row.simp_evidence) ? 'trad' : 'simp';
     if (fromTable !== detectScript(index, ch)) verdicts.push(`${ch}: table says ${fromTable}`);
@@ -486,7 +555,15 @@ function checkGlossFts({ db }: Artifact, ordered: readonly DictEntry[]): void {
       if (problems.length < 50) problems.push(`token ${token}: ${got.length} rows vs ${want.length}`);
     }
   }
-  check('every gloss token’s posting list is exactly the JSON index’s', problems, `${wanted.size} tokens`);
+  // "the JSON index's" up to one difference that is deliberate and is D3's to
+  // account for: `index.byGloss` pushes an id once PER GLOSS, so a posting list
+  // there can carry the same id several times, while an FTS5 index carries a
+  // rowid once per term. The comparison above is against the DEDUPED expansion
+  // of `byGloss`, which is what the artifact can represent. Where it bites is
+  // the 5,000-candidate slice: for a handful of very common tokens the JSON
+  // slice spends places on duplicates and the FTS one does not, so the two
+  // candidate pools differ at the cap. See HANDOFF.md.
+  check('every gloss token’s posting list equals the deduped JSON posting list', problems, `${wanted.size} tokens`);
 
   for (const rowid of seenRows) {
     if (!expectedRows.has(rowid)) variants.push(`rowid ${rowid} is indexed and should not be`);
@@ -526,18 +603,12 @@ function checkMeta({ db }: Artifact, ordered: readonly DictEntry[]): void {
   );
 
   // The segmenter's constants: the client takes Math.log() of words_total_*, so
-  // the DP's scores are bit-identical to today's only if these are exact.
-  const MAX_WORD_CHARS = 16;
+  // the DP's scores are bit-identical to today's only if these are exact. Read
+  // from `segment.ts`'s own exported `headwordTotals`, not from a copy of its
+  // loop — a verifier that re-implements what it verifies cannot see drift.
   const constantProblems: string[] = [];
   for (const script of ['simp', 'trad'] as const) {
-    const map = script === 'simp' ? index.bySimp : index.byTrad;
-    let total = 0;
-    let maxLen = 1;
-    for (const [word, ids] of map) {
-      total += headwordFreq(index, ids);
-      const length = [...word].length;
-      if (length > maxLen && length <= MAX_WORD_CHARS) maxLen = length;
-    }
+    const { total, maxLen } = headwordTotals(index, script);
     if (meta.get(`words_total_${script}`) !== String(total)) {
       constantProblems.push(`words_total_${script}: ${String(meta.get(`words_total_${script}`))} vs ${total}`);
     }
@@ -656,6 +727,7 @@ function main(): void {
   try {
     checkManifest(artifact);
     checkPragmas(artifact);
+    checkSchemaObjects(artifact);
     checkEntries(artifact, ordered);
     checkPinyinKeys(artifact, dict.entries);
     checkWords(artifact);

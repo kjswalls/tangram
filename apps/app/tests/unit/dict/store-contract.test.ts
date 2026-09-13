@@ -10,6 +10,7 @@
  *
  * There is no CI (CLAUDE.md), so this is where that rule lives.
  */
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -21,6 +22,7 @@ import * as storeModule from '@/lib/dict/store';
 import type { DecompCharacter, DecompStore } from '@/lib/dict/decomp-store';
 import type { SqlQuery, SqlRunner, SqlValue } from '@/lib/dict/sql';
 import type { DictStatus, DictStore } from '@/lib/dict/store';
+import { SCHEMA_VERSION } from '@/lib/dict/artifact';
 import { appRoot } from '@/lib/server/roots';
 
 /** Exactly what a sibling plan writes on the day this commit lands. */
@@ -114,6 +116,26 @@ describe('the frozen schema', () => {
 
   it('leaves the index creation below a marker the builder can split on', () => {
     expect(schema.split(/^-- >>> indexes$/m)).toHaveLength(2);
+  });
+
+  it('is pinned to SCHEMA_VERSION, so a change here is a decision and not a slip', () => {
+    // There is no CI, the schema is a settle-first surface, and an edit to it
+    // changes the bytes of a 43 MB file that three platforms cache by filename.
+    // Nothing else in the tree fails when the SQL changes and the version does
+    // not — the artifact rebuilds happily, `PRAGMA user_version` still says 1,
+    // and every store goes on trusting a file whose shape moved under it.
+    //
+    // So the text is pinned. When this fails: decide whether the change needs a
+    // SCHEMA_VERSION bump in `lib/dict/artifact.ts` (it does if any store's
+    // queries or an existing installed file are affected), then update the
+    // digest below in the same commit.
+    expect({
+      schemaVersion: SCHEMA_VERSION,
+      sha256: createHash('sha256').update(schema).digest('hex'),
+    }).toEqual({
+      schemaVersion: 1,
+      sha256: '461972e05ab170ec54930cbfa1de96c73d96bf9a767adb4ecd346ca21bb4b6d1',
+    });
   });
 
   it('never assigns user_version or application_id', () => {

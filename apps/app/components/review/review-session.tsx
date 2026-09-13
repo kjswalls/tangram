@@ -1,6 +1,6 @@
 'use client';
 
-import Link from 'next/link';
+import { Link } from 'react-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { AddReverse } from '@/components/review/add-reverse';
@@ -214,11 +214,11 @@ export function ReviewSession() {
         ) : null}
         {/* Never a dead end: the one place that says what there is to do today. */}
         <p className="mt-3 text-sm text-muted">
-          <Link href="/" className="text-accent underline underline-offset-2">
+          <Link to="/" className="text-accent underline underline-offset-2">
             Back to Today
           </Link>{' '}
           for what is left, or{' '}
-          <Link href="/lookup" className="text-accent underline underline-offset-2">
+          <Link to="/lookup" className="text-accent underline underline-offset-2">
             look a word up
           </Link>
           .

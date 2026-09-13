@@ -1,7 +1,7 @@
 import { LookupView } from '@/components/lookup/lookup-view';
 import { PageHeader } from '@/components/shell/page-header';
 
-export default function LookupPage() {
+export function LookupRoute() {
   return (
     <>
       <PageHeader title="Lookup">

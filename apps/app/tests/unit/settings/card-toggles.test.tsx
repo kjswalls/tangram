@@ -7,7 +7,7 @@
  * `getSettings` returns the stored row as it stands; and adding them needed no
  * Dexie version bump, because `settings` indexes `id` and nothing else.
  */
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '../render';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { SettingsForm } from '@/app/settings/settings-form';

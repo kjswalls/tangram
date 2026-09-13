@@ -3,16 +3,21 @@
  * mean more than "does nothing in dev".
  *
  * Service-worker registrations are per **origin** and outlive the server that
- * installed them, and `pnpm start -p 3000` (the e2e webServer) and `next dev`
- * share port 3000. A production worker installed there keeps answering
- * navigations under `next dev` from its own cache — a dev server serving
- * yesterday's page, which is the exact symptom the gate exists to prevent. So
- * the dev branch has to tear the worker down, not merely decline to add one.
+ * installed them, and `pnpm preview` (the e2e webServer) and `pnpm dev` share a
+ * port. A production worker installed there keeps answering navigations under
+ * the dev server from its own cache — a dev server serving yesterday's page,
+ * which is the exact symptom the gate exists to prevent. So the dev branch has
+ * to tear the worker down, not merely decline to add one.
+ *
+ * **And it does not register inside a native WebView** (docs/plans/web.md W1,
+ * wave-zero.md §10 ruling 12). `shouldRegister` is the whole predicate, exported
+ * because the branch has no other observable output; `ios.md` I1 asserts the
+ * same thing on a real device.
  */
 import { render } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { RegisterServiceWorker } from '@/components/pwa/register-sw';
+import { RegisterServiceWorker, shouldRegister } from '@/components/pwa/register-sw';
 
 function installFakes() {
   const unregister = vi.fn(async () => true);
@@ -39,8 +44,8 @@ afterEach(() => {
 
 describe('<RegisterServiceWorker /> outside production', () => {
   it('unregisters every worker on this origin and drops its caches', async () => {
-    // vitest runs with NODE_ENV=test, which is the branch under test.
-    expect(process.env.NODE_ENV).not.toBe('production');
+    // vitest runs with import.meta.env.PROD false, which is the branch under test.
+    expect(import.meta.env.PROD).toBe(false);
     const { unregister, register, del } = installFakes();
 
     render(<RegisterServiceWorker />);
@@ -54,5 +59,92 @@ describe('<RegisterServiceWorker /> outside production', () => {
 
   it('survives a browser with no serviceWorker and no CacheStorage', () => {
     expect(() => render(<RegisterServiceWorker />)).not.toThrow();
+  });
+});
+
+describe('the native gate', () => {
+  const web = {
+    isProduction: true,
+    protocol: 'https:',
+    isSecureContext: true,
+    hasNativeBridge: false,
+  };
+
+  it('registers on a production https origin — the deployed web build', () => {
+    expect(shouldRegister(web)).toBe(true);
+  });
+
+  it('registers on http://localhost, which is a secure context', () => {
+    // This is `pnpm preview` and therefore the whole e2e suite. W1 specifies
+    // the test as `protocol === 'https:'`, which would hang every spec that
+    // waits on navigator.serviceWorker.ready. See the component's header.
+    expect(shouldRegister({ ...web, protocol: 'http:', isSecureContext: true })).toBe(true);
+  });
+
+  it('refuses a plain http origin that is NOT a secure context', () => {
+    expect(shouldRegister({ ...web, protocol: 'http:', isSecureContext: false })).toBe(false);
+  });
+
+  it("refuses iOS's capacitor:// scheme", () => {
+    expect(shouldRegister({ ...web, protocol: 'capacitor:', isSecureContext: true })).toBe(false);
+  });
+
+  it('refuses an Android WebView, whose origin is indistinguishable from preview', () => {
+    // http://localhost, secure context, everything the web build looks like.
+    // Only the injected Capacitor bridge tells them apart, which is why the
+    // predicate tests for it rather than for the URL.
+    expect(
+      shouldRegister({
+        isProduction: true,
+        protocol: 'http:',
+        isSecureContext: true,
+        hasNativeBridge: true,
+      }),
+    ).toBe(false);
+  });
+
+  it('refuses a Tauri shell and a file:// origin', () => {
+    expect(shouldRegister({ ...web, protocol: 'tauri:' })).toBe(false);
+    expect(shouldRegister({ ...web, protocol: 'file:', isSecureContext: false })).toBe(false);
+  });
+
+  it('registers nowhere outside production, secure context or not', () => {
+    expect(shouldRegister({ ...web, isProduction: false })).toBe(false);
+  });
+
+  it('is what the component actually calls: a production secure origin registers', async () => {
+    const { register } = installFakes();
+    vi.stubEnv('PROD', true);
+    const secure = Object.getOwnPropertyDescriptor(window, 'isSecureContext');
+    Object.defineProperty(window, 'isSecureContext', { configurable: true, value: true });
+    try {
+      render(<RegisterServiceWorker />);
+      await vi.waitFor(() => expect(register).toHaveBeenCalledWith('/sw.js', { scope: '/' }));
+    } finally {
+      vi.unstubAllEnvs();
+      if (secure) Object.defineProperty(window, 'isSecureContext', secure);
+      else Reflect.deleteProperty(window, 'isSecureContext');
+    }
+  });
+
+  it('is what the component actually calls: a Capacitor bridge does not', async () => {
+    const { register, unregister } = installFakes();
+    vi.stubEnv('PROD', true);
+    const secure = Object.getOwnPropertyDescriptor(window, 'isSecureContext');
+    Object.defineProperty(window, 'isSecureContext', { configurable: true, value: true });
+    Object.defineProperty(window, 'Capacitor', { configurable: true, value: {} });
+    try {
+      render(<RegisterServiceWorker />);
+      await new Promise((done) => setTimeout(done, 20));
+      expect(register).not.toHaveBeenCalled();
+      // Nor does it tear anything down: inside a WebView there is no stale
+      // worker to undo and the caches are the app's.
+      expect(unregister).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+      Reflect.deleteProperty(window, 'Capacitor');
+      if (secure) Object.defineProperty(window, 'isSecureContext', secure);
+      else Reflect.deleteProperty(window, 'isSecureContext');
+    }
   });
 });

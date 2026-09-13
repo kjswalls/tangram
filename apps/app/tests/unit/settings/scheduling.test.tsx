@@ -9,7 +9,7 @@
  * before any of them existed reads back as the default rather than as `false`
  * or a blank control.
  */
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '../render';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { SettingsForm } from '@/app/settings/settings-form';

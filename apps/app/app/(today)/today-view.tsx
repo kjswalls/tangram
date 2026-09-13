@@ -1,6 +1,6 @@
 'use client';
 
-import Link from 'next/link';
+import { Link } from 'react-router';
 import { useEffect, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
@@ -130,7 +130,7 @@ export function TodayView() {
         ) : null}
 
         <div className="mt-4 flex flex-wrap items-center gap-3">
-          <Link href="/review" data-testid="start-review">
+          <Link to="/review" data-testid="start-review">
             <Button disabled={!ready}>Start review</Button>
           </Link>
           {summary ? (
@@ -143,7 +143,7 @@ export function TodayView() {
         {summary && !ready ? (
           <p className="mt-3 text-sm text-muted">
             Nothing waiting. Look a word up, or raise the daily new count in{' '}
-            <Link href="/settings" className="text-accent underline underline-offset-2">
+            <Link to="/settings" className="text-accent underline underline-offset-2">
               settings
             </Link>
             .

@@ -26,6 +26,8 @@ const root = appRoot(import.meta.dirname);
 const manifest = JSON.parse(readFileSync(resolve(root, 'public/manifest.webmanifest'), 'utf8'));
 // `scripts/` is at the WORKSPACE root, not the app's (docs/plans/wave-zero.md §1).
 const sw = readFileSync(resolve(workspaceRoot(import.meta.dirname), 'scripts/sw.template.js'), 'utf8');
+// The entry document carries what Next's `metadata`/`viewport` exports emitted.
+const html = readFileSync(resolve(root, 'index.html'), 'utf8');
 
 describe('manifest.webmanifest', () => {
   it('carries the fields an install prompt requires', () => {
@@ -45,8 +47,13 @@ describe('manifest.webmanifest', () => {
 
   it('ships a raster icon for the platforms that refuse SVG', () => {
     // iOS ignores the manifest for the home-screen tile and takes a screenshot
-    // without an apple-touch-icon; Next emits the link from app/apple-icon.png.
-    expect(existsSync(resolve(root, 'app/apple-icon.png'))).toBe(true);
+    // without an apple-touch-icon. Next emitted the link from the
+    // app/apple-icon.png file convention; index.html carries it now, so the
+    // assertion reads the document rather than the convention — and checks the
+    // file it points at is really on disk, which the convention never did.
+    const appleIcon = /<link[^>]+rel="apple-touch-icon"[^>]+href="([^"]+)"/.exec(html);
+    expect(appleIcon, 'index.html must link an apple-touch-icon').not.toBeNull();
+    expect(existsSync(resolve(root, 'public', appleIcon![1].replace(/^\//, '')))).toBe(true);
     const png = manifest.icons.filter((icon: { type?: string }) => icon.type === 'image/png');
     expect(png.map((icon: { sizes: string }) => icon.sizes)).toEqual(
       expect.arrayContaining(['192x192', '512x512']),
@@ -65,9 +72,26 @@ describe('manifest.webmanifest', () => {
     );
   });
 
-  it('is linked from the root layout', () => {
-    const layout = readFileSync(resolve(root, 'app/layout.tsx'), 'utf8');
-    expect(layout).toContain("manifest: '/manifest.webmanifest'");
+  it('is linked from the entry document', () => {
+    // Next emitted this from `metadata.manifest` in app/layout.tsx. There is no
+    // metadata source now; index.html is the document that carries it.
+    expect(html).toMatch(/<link[^>]+rel="manifest"[^>]+href="\/manifest\.webmanifest"/);
+  });
+
+  it('declares viewport-fit=cover, without which every safe-area inset is zero', () => {
+    // ios.md I5's safe-area work and android.md A2's inset work both build
+    // against a constant without it (docs/plans/wave-zero.md §10, ruling 12).
+    // One attribute, two blocked mobile phases, so it is asserted not remembered.
+    const viewport = /<meta[^>]+name="viewport"[^>]+content="([^"]+)"/.exec(html);
+    expect(viewport, 'index.html must have a viewport meta').not.toBeNull();
+    expect(viewport![1]).toContain('viewport-fit=cover');
+  });
+
+  it('declares lang="zh-Hans" on the document', () => {
+    // Han unification: a device in a Japanese locale renders Japanese glyph
+    // forms for the same code points without it, and a Chromium WebView
+    // regression stopped synthesising bold for CJK (STACK §2.1, core.md C0 r2).
+    expect(html).toMatch(/<html[^>]+lang="zh-Hans"/);
   });
 });
 

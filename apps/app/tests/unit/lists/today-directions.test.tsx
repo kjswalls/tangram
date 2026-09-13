@@ -6,7 +6,7 @@
  * production card to say it about, because a split with a zero on one side is
  * just noise on the page of a learner who never turned it on.
  */
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '../render';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { TodayView } from '@/app/(today)/today-view';

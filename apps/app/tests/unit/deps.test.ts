@@ -21,11 +21,10 @@ const loaders: Record<string, () => Promise<Record<string, unknown>>> = {
   dexie: () => import('dexie'),
   'dexie-react-hooks': () => import('dexie-react-hooks'),
   'lucide-react': () => import('lucide-react'),
-  // `next` has no useful root export; the routes' entry point is what must load.
-  next: () => import('next/server'),
   'pinyin-pro': () => import('pinyin-pro'),
   react: () => import('react'),
   'react-dom': () => import('react-dom/client'),
+  'react-router': () => import('react-router'),
   'ts-fsrs': () => import('ts-fsrs'),
   zod: () => import('zod'),
   zustand: () => import('zustand'),

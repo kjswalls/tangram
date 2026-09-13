@@ -10,6 +10,10 @@
     "skipLibCheck": true,
     "strict": true,
     "noEmit": true,
+    // vite.config.ts and its plugin graph are loaded by Rolldown directly, which
+    // warns on extensionless relative imports; those files carry `.ts` and this
+    // is what lets TypeScript read them. Safe only with noEmit, which is set.
+    "allowImportingTsExtensions": true,
     "esModuleInterop": true,
     "module": "esnext",
     "moduleResolution": "bundler",
@@ -19,27 +23,24 @@
     "jsx": "react-jsx",
     "incremental": true,
     "types": [
-      "node"
-    ],
-    "plugins": [
-      {
-        "name": "next"
-      }
+      "node",
+      "vite/client"
     ],
     "paths": {
       "@/*": [
         "./*"
+      ],
+      "@data/*": [
+        "../../data/*"
       ]
     }
   },
   "include": [
-    "next-env.d.ts",
     "**/*.ts",
-    "**/*.tsx",
-    ".next/types/**/*.ts",
-    ".next/dev/types/**/*.ts"
+    "**/*.tsx"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    "dist"
   ]
 }

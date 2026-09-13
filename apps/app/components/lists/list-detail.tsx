@@ -1,7 +1,6 @@
 'use client';
 
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { Link, useNavigate } from 'react-router';
 import { useEffect, useState } from 'react';
 
 import { ProductionListToggle } from '@/components/lists/production-list-toggle';
@@ -100,7 +99,7 @@ export function ListDetail({ listId }: { listId: string }) {
   // Deleting a list is two clicks, not a `confirm()`: it is the one destructive
   // control on the page and there is no undo behind it.
   const [confirmingDelete, setConfirmingDelete] = useState(false);
-  const router = useRouter();
+  const navigate = useNavigate();
 
   useEffect(() => {
     let cancelled = false;
@@ -129,7 +128,7 @@ export function ListDetail({ listId }: { listId: string }) {
       <Card title="Not found">
         <p className="text-sm text-muted">
           That list does not exist.{' '}
-          <Link href="/lists" className="text-accent underline underline-offset-2">
+          <Link to="/lists" className="text-accent underline underline-offset-2">
             Back to lists
           </Link>
           .
@@ -141,7 +140,7 @@ export function ListDetail({ listId }: { listId: string }) {
   return (
     <div className="flex flex-col gap-4">
       <p className="text-sm text-muted">
-        <Link href="/lists" className="text-accent underline underline-offset-2">
+        <Link to="/lists" className="text-accent underline underline-offset-2">
           ← All lists
         </Link>
       </p>
@@ -265,7 +264,7 @@ export function ListDetail({ listId }: { listId: string }) {
                 onClick={() => {
                   void getRepository()
                     .deleteList(list.id)
-                    .then(() => router.push('/lists'));
+                    .then(() => navigate('/lists'));
                 }}
               >
                 Delete list

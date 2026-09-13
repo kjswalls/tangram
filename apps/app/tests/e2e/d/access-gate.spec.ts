@@ -3,16 +3,36 @@
  *
  * The rest of the suite runs with `TANGRAM_ACCESS_SECRET` unset, which is the
  * point — the gate must be invisible without it. So this spec starts a *second*
- * `next start` on its own port with the variable set, reusing the `.next` build
- * the suite already made, and drives the whole phone flow through it: refused,
- * `?key=`, cookie, admitted.
+ * preview server on its own port with the variable set, reusing the `dist/` the
+ * suite already built, and drives what is left of the flow through it.
  *
- * It is the only place the gate is exercised end to end. A unit test can prove
- * the handler returns 401; only a server can prove that middleware runs, that
- * the redirect strips the key, that the cookie comes back with the right
- * attributes, and that the dictionary and the pages stay open.
+ * **HALF OF THIS SPEC IS GONE BETWEEN W1 AND W4 AND THAT IS A DEPLOYMENT FACT,
+ * NOT A TEST DETAIL** (docs/plans/web.md W1, W4). `middleware.ts` is what did
+ * the `?key=` → cookie exchange, and Next is what invoked it; there is no
+ * middleware in a Vite SPA, so until W4 rebuilds the gate as a header check
+ * there is no way to authorise a device at all. On any deployment made in this
+ * window with the secret set, `/api/ask`, `/api/examples` and `/api/recall` are
+ * unusable and cannot be authorised from a phone.
+ *
+ * What was removed, each mapped to the W4 criterion that restores it:
+ *
+ *  1. `?key=<secret>` → 303 with `access=granted`, the key stripped from the
+ *     Location, and a `tangram_access` cookie carrying HttpOnly / SameSite=Lax
+ *     / Path=/ (and no `Secure` over plain HTTP).   → W4's authorise flow.
+ *  2. A wrong `?key=` → 303 with `access=denied`, the key stripped, and the
+ *     existing cookie actively cleared.             → W4's revoke-on-wrong-key.
+ *  3. The cookie, once set, admitting a POST to `/api/ask`.
+ *                                                   → W4's admitted-request.
+ *
+ * What survives, and is still worth running every time: with the secret set,
+ * the three paid routes still refuse — `requireAccess` in `lib/server/access.ts`
+ * is untouched by this phase and is the half that never depended on Next — and
+ * the five dictionary routes, the pages, the manifest, `sw.js` and
+ * `/offline.html` all stay open. Those are the assertions that prove the gate
+ * is a gate and not a wall, and they are exactly the ones W4 must not break.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { appRoot } from '../../../lib/server/roots';
@@ -42,11 +62,17 @@ async function waitForServer(timeoutMs = 120_000): Promise<void> {
 }
 
 test.beforeAll(async () => {
-  server = spawn('node_modules/.bin/next', ['start', '-p', String(PORT)], {
-    cwd: REPO_ROOT,
-    env: { ...process.env, TANGRAM_ACCESS_SECRET: SECRET, PORT: String(PORT) },
-    stdio: 'ignore',
-  });
+  // The same preview entry the main webServer uses, on its own port with the
+  // secret set. `tsx` because the API adapter has to import `.ts` handlers.
+  server = spawn(
+    resolve(REPO_ROOT, 'node_modules/.bin/tsx'),
+    [resolve(REPO_ROOT, '..', '..', 'scripts/preview.ts')],
+    {
+      cwd: REPO_ROOT,
+      env: { ...process.env, TANGRAM_ACCESS_SECRET: SECRET, PORT: String(PORT) },
+      stdio: 'ignore',
+    },
+  );
   await waitForServer();
   // `maxRedirects: 0` — the redirect *is* the behaviour under test.
   api = await playwrightRequest.newContext({ baseURL: BASE, maxRedirects: 0 });
@@ -84,46 +110,20 @@ test.describe('with TANGRAM_ACCESS_SECRET set', () => {
     }
   });
 
-  test('a wrong ?key= is refused, and takes the key back out of the URL', async () => {
-    const response = await api.get(`/?key=${SECRET}-wrong`);
-    expect(response.status()).toBe(303);
-    const location = response.headers().location as string;
-    expect(location).toContain('access=denied');
-    expect(location).not.toContain('key=');
-    // It also revokes whatever this device had: a wrong key is an attempt to
-    // change the key, and silently keeping the old one is worse.
-    const cookies = response.headersArray().filter((h) => h.name.toLowerCase() === 'set-cookie');
-    expect(cookies.some((h) => /tangram_access=;/.test(h.value))).toBe(true);
-  });
-
-  test('the right ?key= leaves a cookie behind, and the cookie opens the routes', async () => {
+  /**
+   * The `?key=` exchange, the cookie and the admitted request lived here. They
+   * were middleware's, middleware was Next's, and both are gone until W4 — see
+   * the three numbered items in this file's header for what each becomes.
+   *
+   * They are NOT replaced with a weaker assertion, and they are not skipped
+   * with `test.skip`: a skipped test reads as "temporarily flaky" in a report
+   * and this is a capability the product does not currently have.
+   */
+  test('cannot authorise a device at all: there is no ?key= exchange in this window', async () => {
+    // Stated as a passing assertion rather than a comment so that the day W4
+    // makes it false, this test fails and has to be rewritten into the real one.
     const response = await api.get(`/?key=${SECRET}`);
-    expect(response.status()).toBe(303);
-    const location = response.headers().location as string;
-    expect(location).toContain('access=granted');
-    // The secret must not survive in the address bar, the history or a Referer.
-    expect(location).not.toContain('key=');
-    expect(location).not.toContain(SECRET);
-
-    const setCookie = response
-      .headersArray()
-      .filter((h) => h.name.toLowerCase() === 'set-cookie')
-      .map((h) => h.value)
-      .find((value) => value.startsWith('tangram_access='));
-    expect(setCookie).toBeDefined();
-    expect(setCookie).toContain('HttpOnly');
-    expect(setCookie).toContain('SameSite=Lax');
-    expect(setCookie).toContain('Path=/');
-    // Plain HTTP here, so `Secure` is correctly absent — with it the cookie
-    // would never be stored and this local check could not exist.
-    expect(setCookie).not.toContain('Secure');
-
-    // Same context, so the cookie it just stored travels with the next call.
-    const admitted = await api.post('/api/ask', {
-      data: { query: '你好', profile: { estimatedBand: 1, knownSample: [] } },
-    });
-    expect(admitted.status()).toBe(200);
-    const body = (await admitted.json()) as { response?: unknown };
-    expect(body.response).toBeDefined();
+    expect(response.status(), 'W4 makes this a 303 — rewrite this test then').not.toBe(303);
+    expect((await api.post('/api/ask', { data: { query: 'x' } })).status()).toBe(401);
   });
 });

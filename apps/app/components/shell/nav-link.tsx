@@ -1,16 +1,16 @@
-'use client';
-
-import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { Link, useLocation } from 'react-router';
 
 import { cn } from '@/lib/cn';
 
 export function NavLink({ href, label }: { href: string; label: string }) {
-  const pathname = usePathname();
+  // `usePathname()` was Next's; `useLocation()` is React Router's, and unlike
+  // `NavLink` from the same package it leaves the "is this active" rule here —
+  // which matters, because "/" is exact and everything else is a prefix.
+  const { pathname } = useLocation();
   const active = href === '/' ? pathname === '/' : pathname.startsWith(href);
   return (
     <Link
-      href={href}
+      to={href}
       aria-current={active ? 'page' : undefined}
       className={cn(
         // Tight enough that six links fit one phone row; py-2 gives the link a

@@ -1,7 +1,7 @@
 import { PageHeader } from '@/components/shell/page-header';
 import { StatsView } from '@/components/stats/stats-view';
 
-export default function StatsPage() {
+export function StatsRoute() {
   return (
     <>
       <PageHeader title="Stats">

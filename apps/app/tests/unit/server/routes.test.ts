@@ -18,7 +18,7 @@ import { describe, expect, it } from 'vitest';
 
 import { appRoot } from '@/lib/server/roots';
 import { NAV_ITEMS } from '@/components/shell/nav';
-import nextConfig from '@/next.config';
+import { OUTPUT_FILE_TRACING_INCLUDES } from '@/tracing.config';
 import {
   discoverApiRoutes,
   readsDictionary,
@@ -65,11 +65,11 @@ describe('the route inventory', () => {
 
 describe('tracing coverage', () => {
   it('ships data/ to every route that reads it', () => {
-    const includes = nextConfig.outputFileTracingIncludes ?? {};
+    const includes = OUTPUT_FILE_TRACING_INCLUDES;
     const untraced = untracedDictRoutes(discoverApiRoutes(ROOT), includes, ROOT);
     expect(
       untraced.map((route) => route.path),
-      'add an outputFileTracingIncludes entry in next.config.ts for these',
+      'add an OUTPUT_FILE_TRACING_INCLUDES entry in tracing.config.ts for these',
     ).toEqual([]);
   });
 
@@ -78,17 +78,17 @@ describe('tracing coverage', () => {
     // read `./data/**`, which Next resolves from the PROJECT directory, and
     // `apps/app/data/` does not exist. Every key still matched its route, the
     // test above still passed, and the dictionary was in no bundle.
-    const includes = nextConfig.outputFileTracingIncludes ?? {};
+    const includes = OUTPUT_FILE_TRACING_INCLUDES;
     expect(
       unmatchedTracingIncludes(includes, ROOT),
-      'an outputFileTracingIncludes glob in next.config.ts matches nothing on disk',
+      'an OUTPUT_FILE_TRACING_INCLUDES glob in tracing.config.ts matches nothing on disk',
     ).toEqual([]);
   });
 
   it('traces the workspace marker, not only the data', () => {
     // `dataDir()` finds the workspace root by walking up for pnpm-workspace.yaml.
     // A bundle carrying data/ but not the marker resolves to the wrong directory.
-    const includes = nextConfig.outputFileTracingIncludes ?? {};
+    const includes = OUTPUT_FILE_TRACING_INCLUDES;
     for (const [key, globs] of Object.entries(includes)) {
       expect(globs, `${key} must trace pnpm-workspace.yaml alongside data/`).toContain(
         '../../pnpm-workspace.yaml',

@@ -34,6 +34,10 @@ const appDir = resolve(workspaceRoot(dirOf(import.meta.url)), 'apps/app');
 
 export const TEMPLATE_PATH = resolve(dirOf(import.meta.url), 'sw.template.js');
 export const OUTPUT_PATH = resolve(appDir, 'public/sw.js');
+// Next wrote this; a Vite build does not (docs/STACK.md §2.2), so from W1 until
+// W3 restamps from a hash of Vite's own output, `readBuildId` always falls back
+// to DEV_BUILD_ID. The path is kept rather than deleted so that the fallback is
+// visibly a fallback and not a design.
 export const BUILD_ID_PATH = resolve(appDir, '.next/BUILD_ID');
 
 /** What the template carries where the build's id belongs. */

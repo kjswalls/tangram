@@ -10,7 +10,7 @@
  * which is what left an e2e clicking a button for thirty seconds. The state is
  * on the element so it does not have to be guessed from the label.
  */
-import { render, screen } from '@testing-library/react';
+import { render, screen } from '../render';
 import { describe, expect, it } from 'vitest';
 
 import { ListCard } from '@/components/lists/list-card';

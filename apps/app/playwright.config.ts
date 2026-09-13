@@ -24,7 +24,14 @@ export default defineConfig({
     // `pnpm -w build` is the WORKSPACE root's build: it runs `data:ensure` at the
     // root, where `data/` lives, and only then builds the app. The app's own
     // `build` deliberately does not generate data (docs/plans/web.md W0).
-    command: `pnpm -w build && pnpm start -p ${PORT}`,
+    //
+    // `pnpm -w preview` is `scripts/preview.ts` under tsx, not `vite preview`,
+    // and the difference is load-bearing: the preview server has no transform
+    // pipeline, so the API adapter cannot import a `.ts` route handler without
+    // tsx's loader hook (docs/plans/web.md W1). PORT rather than a flag because
+    // that is what the script reads and what `pnpm smoke` already passes.
+    command: 'pnpm -w build && pnpm -w run preview',
+    env: { PORT: String(PORT) },
     url: baseURL,
     reuseExistingServer: true,
     timeout: 600_000,

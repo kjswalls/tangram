@@ -1,0 +1,44 @@
+<!doctype html>
+<!--
+  The entry document. What Next's `metadata` and `viewport` exports used to emit
+  from app/layout.tsx now lives here, because there is no framework to emit it.
+
+  `lang="zh-Hans"` is core.md C0 rule 2, and it is not cosmetic: Han unification
+  means a device in a Japanese locale renders Japanese glyph forms for the same
+  code points unless the document declares which language it is, and a Chromium
+  WebView regression in builds 139-140 stopped synthesising bold for CJK without
+  it (docs/STACK.md §2.1). The UI text is English; the hanzi is what this decides.
+-->
+<html lang="zh-Hans">
+  <head>
+    <meta charset="utf-8" />
+    <!--
+      `viewport-fit=cover` is required by ios.md I5's safe-area work and
+      android.md A2's inset work: without it every `env(safe-area-inset-*)` a
+      layout reads is zero, so both build against a constant. It costs one
+      attribute here and is free on the web, where there are no insets to inset
+      (docs/plans/wave-zero.md §10, ruling 12). Asserted by
+      tests/unit/pwa/manifest.test.ts rather than remembered.
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0f766e" />
+    <title>Tangram</title>
+    <meta name="description" content="Look it up in context, keep it, review it." />
+
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <!--
+      iOS ignores the manifest for the home-screen tile and takes a screenshot
+      without this. Next emitted it from the app/apple-icon.png file convention.
+    -->
+    <link rel="apple-touch-icon" href="/apple-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Tangram" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  </head>
+  <body class="min-h-dvh">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

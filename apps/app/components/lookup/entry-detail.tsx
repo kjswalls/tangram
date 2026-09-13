@@ -13,7 +13,7 @@
  * Decomposition comes from its own route because it comes from its own file under
  * its own licence (CLAUDE.md); it is displayed and never written onto the card.
  */
-import Link from 'next/link';
+import { Link } from 'react-router';
 import { useEffect, useState } from 'react';
 
 import { SpeakButton } from '@/components/tts/speak-button';
@@ -287,11 +287,11 @@ export function EntryDetail({
         ) : null}
         {settled ? (
           <span className="text-sm text-muted">
-            <Link href="/review" className="text-accent underline underline-offset-2">
+            <Link to="/review" className="text-accent underline underline-offset-2">
               Review now
             </Link>{' '}
             ·{' '}
-            <Link href="/" className="text-accent underline underline-offset-2">
+            <Link to="/" className="text-accent underline underline-offset-2">
               see it on Today
             </Link>
           </span>

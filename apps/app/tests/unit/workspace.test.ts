@@ -51,7 +51,9 @@ describe('the workspace layout', () => {
     const root = JSON.parse(readFileSync(resolve(WORKSPACE, 'package.json'), 'utf8')) as {
       scripts: Record<string, string>;
     };
-    expect(root.scripts.typecheck).toBe('tsc --noEmit');
+    // Root scripts/ AND the app: W1 gave the app its own `tsc --noEmit` once
+    // `next build` — the repo's only typechecker until then — went away.
+    expect(root.scripts.typecheck).toBe('tsc --noEmit && pnpm -F app typecheck');
     expect(root.scripts.build).toMatch(/typecheck/);
     expect(root.scripts.lint).toMatch(/eslint \./);
   });

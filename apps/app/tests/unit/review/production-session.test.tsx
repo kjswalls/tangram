@@ -12,12 +12,6 @@
  *     the grade the learner pressed, which is deliberately a different one;
  *  3. the twin's schedule is untouched by any of it.
  */
-// Through `tests/unit/render.tsx`, not straight from testing-library: this file
-// mounts `<ReviewSession>`, which reaches a `<Link>` on a late render. Without a
-// router context that `useContext` returns null and React reports an unhandled
-// error *after* the assertions have already passed — a green test file and a red
-// run. `tests/unit/srs/review-session.test.tsx` mounts the same component through
-// the helper already.
 import { fireEvent, render, screen, waitFor } from '../render';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 

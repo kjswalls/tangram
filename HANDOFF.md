@@ -3715,3 +3715,156 @@ Two more recorded and not acted on:
 `pnpm lint`, `pnpm typecheck`, `pnpm test` (90 files, 931 tests), `pnpm build` and
 `PORT=3000 pnpm e2e` (110 passed) all green. Two consecutive `pnpm data` runs produce the same
 sha256, so criterion 7 holds as specified rather than aspirationally.
+
+---
+
+## `data.md` D2 — `DictStore` over a `SqlRunner`, in Node
+
+One commit. `lib/dict/sqlite-store.ts` is the one implementation of `DictStore`, written entirely
+against `SqlRunner`; `lib/dict/runners/node.ts` is the first runner; `lib/dict/query/{entries,hanzi,
+pinyin,hsk}.ts` are the SQL builders. `tests/unit/dict/store.test.ts` is 107 tests comparing the
+store against the JSON index in the same process.
+
+`segment()` is D3's and rejects with a message saying so — deliberately, rather than returning an
+empty result, because an empty segmentation is a legitimate answer for an empty string and a caller
+cannot tell "no tokens" from "not built yet". The English half of `search()` is D3's for the same
+reason and returns an empty English section until then.
+
+### The refactor D2 needed and the plan did not name
+
+`data.md` D2 says *"everything interesting (routing, ranking, grouping, paging, the DP) lives in
+`sqlite-store.ts` and is written once for all three platforms"*. Written once — and there are now
+**two** implementations answering a search, because D2's and D3's tests are differential and D6 is
+what deletes the JSON one. If the store re-implemented grouping, the five-key sort, the section
+allocation and the cursor, every one of those tests would be comparing two rankers as well as two
+candidate sets, and a difference in either would look like a difference in the other.
+
+So `lib/dict/rank.ts` grew from D1's `compareEntries` into the shared pure layer: `CJK_PATTERN` and
+`hasCjk`, `stemToken`, `glossTokens` and `parseIdList` (D2's Files list already moved these out of
+`index.ts`), plus `CandidateSet`, `materialise`, `dedupeSections`, `allocate`, `parseCursor` and
+`pageWindow`. `lib/dict/search.ts` imports them back and re-exports the three symbols other modules
+already took from it, so **`index.test.ts`, `pinyin.test.ts`, `search.test.ts`, `segment.test.ts`
+and `cold-start.test.ts` all pass unedited** — which is the evidence that the extraction changed no
+behaviour. D2's criterion 1 asked for two of those; all five hold.
+
+One ordering change fell out of it and is worth naming because it is what makes the store cheap:
+**dedupe, page, and only then attach entries.** `search.ts` used to materialise every group —
+possibly 5,000 of them — and page afterwards. Both implementations now page first, so the store's
+second round trip fetches full rows for at most fifty headwords instead of five thousand. The JSON
+side is unaffected either way, since its entries are already in memory.
+
+### The round-trip budget, and the one row of D2's table that is wrong
+
+`store.test.ts` counts `SqlRunner.query` calls against a spy runner. Measured:
+
+| method | trips | D2's table |
+|---|---|---|
+| `open` | 1 (a batch of 2 statements) | 1 |
+| `entries`, `hskBand`, `readingCount` | 1 | 1 |
+| `search` | 2 (3 statements, then 1) | 2 |
+| `wordsContaining` | **2** | **1** |
+
+**`wordsContaining` cannot be one round trip, and the table is wrong rather than the code.**
+`char_words.rowids` is a delta-varint BLOB — that shape is what makes the infix capability cost
++1.4 MB instead of +22.4 MB, which is the decision D1 took to close STACK §5.6 — and only
+TypeScript can decode it, so the entry rowids are not known until the first result is back. The
+one-trip alternatives were measured: `instr(simp, ?) > 0 ORDER BY rowid LIMIT 30` costs **2.6 ms**
+for a common character and **12.9 ms** for a rare one (it scans to the end of the table), against
+**0.1 ms** for the two steps here. A third option — storing the postings as a JSON array so
+`json_each` could join them in one statement — would put roughly 3 MB back on the artifact.
+
+It is also not on the keystroke path: `wordsContaining` is the character sheet's panel, opened on a
+tap. The budget exists to stop per-keystroke bridge chatter and `search` and `segment` are where
+that matters. **`data.md` D2's budget table should say 2, and D5a should measure this one on a real
+device** rather than assume 2 × 1–5 ms is fine.
+
+### Latency, re-measured at the shipped limits
+
+D2 required this: the plan's table was measured at `LIMIT 50`/`LIMIT 200` while the shipped limits
+are 400 (hanzi, per script) and 600 (pinyin), and it flagged its own extrapolation as a hypothesis.
+Measured through the store, native SQLite 3.51.2, warm, cache disabled, mean of 20 runs:
+
+| call | ms |
+|---|---|
+| `open()` — `meta` + the whole `chars` table | **39.6** (once) |
+| `search('打算')` — hanzi exact, 2 trips | 0.26 |
+| `search('打')` — hanzi prefix, `LIMIT 400` per script | 4.2 |
+| `search('中')` — hanzi prefix, `LIMIT 400` per script | 5.1 |
+| `search('dasuan')` / `search('da3suan4')` — pinyin exact | 0.20 / 0.18 |
+| `search('da')` — pinyin prefix, `LIMIT 600` | 6.4 |
+| `entries()` — 50 ids | 0.08 |
+| `hskBand(1)` — the whole band | 3.6 |
+| `hskBand(7, {limit:50, offset:100})` | 0.36 |
+| `readingCount('看')` | 0.02 |
+| `wordsContaining('算', {limit:50})` — 2 trips | 0.55 |
+
+**The plan's hypothesis about prefix cost is wrong.** It guessed that "the range scan sorts its whole
+matching range by rowid before the `LIMIT` applies, so the cost should track the range rather than
+the limit". It tracks the **limit**: the same pinyin prefix costs 0.42 ms at `LIMIT 50`, 1.6 ms at
+200 and 3.4 ms at 600, on an unchanged range. Which is good news — the limits are a lever D4 can
+pull if WASM latency bites — and it means the plan's 1.18 / 1.59 ms figures were low because they
+were measured at a fraction of the shipped limit, not because the shipped limit is free.
+
+**Two numbers for D4 to carry.** `open()` at 39.6 ms is the biggest single cost in the layer and it
+is almost entirely the 14,625-row `chars` read. At STACK's extrapolated 2–5× that is 80–200 ms in
+WASM, once per session, before the first lookup can be answered. If that hurts, the lever is to load
+`chars` lazily on the first `segment()` rather than in `open()` — at the cost of making
+`detectScript` asynchronous, which is exactly what D3 goes to some trouble to avoid. **Measure it in
+D4 before changing anything.** And the worst interactive call is 6.4 ms, so the 50 ms threshold D4
+stops at has about 8× of headroom at 2–5×.
+
+### The prefix range trap, and why the obvious test for it proves the wrong thing
+
+`data.md` D2 names it: a prefix scan's upper bound must be the prefix with its **last code point
+incremented**, never the prefix with `U+FFFF` appended, because SQLite's `BINARY` collation compares
+UTF-8 bytes where `U+FFFF` is `EF BF BF` and any astral character is `F0 …`.
+
+The trap has a second edge the plan does not mention, and it cost time: **a test written in
+JavaScript can "prove" the naive bound is fine.** JavaScript compares strings by UTF-16 code units,
+where a surrogate lead (`0xD867`) is *below* `U+FFFF`, so `'𩽾𩾌' < '𩽾￿'` is `true` in JS and
+`false` in SQLite. The test therefore issues both range queries against the real artifact and asserts
+that the naive bound drops 𩽾𩾌 (ānkāng, the anglerfish — both characters astral) while the correct
+one keeps it. A JS-only assertion here is worse than no assertion.
+
+### The behavioural change D2 is allowed, stated as it landed
+
+**Prefix truncation changes from key order to frequency order.** The JSON `prefixIds` walks the
+sorted key array and emits whole key buckets in *lexicographic key order* until the cap is reached;
+`ORDER BY rowid LIMIT n` keeps the *n most frequent* across all matching keys. This is the one
+behavioural diff D2 budgets for, and the tests are written to expose it rather than absorb it: for a
+query whose candidate set falls under the cap the two implementations must agree exactly, entries
+included; for one that hits it, only that the exact headword still leads and every group is a real
+prefix match.
+
+### Decisions the plan did not settle
+
+- **`AbortSignal` rides in `SearchOptions`, not as a third parameter.** `DictStore.search` is frozen
+  at two parameters by D1's first commit, and D2 wants cancellation. `SearchOptions` is this layer's
+  own type, so `signal` goes there; the JSON implementation ignores it, being synchronous.
+- **A call carrying a signal does not join an in-flight promise.** It reads the result cache and
+  fills it, but sharing one promise between callers with different signals means one caller's abort
+  rejects the other's live request, and a refcount over participants is more machinery than a
+  debounced search box needs. Signal-less calls coalesce as normal.
+- **`open()` failure is `reason: 'corrupt'`.** The four `DictStatus` failure reasons are D4's to
+  distinguish properly — it is the phase that fetches bytes and can tell a truncated download from a
+  file that is not this artifact. The Node runner has none of those failure modes, so it reports the
+  one that means "the file did not open as this dictionary" and D4 refines it.
+- **The store exposes `close()` and `opened`**, neither of which is on the frozen `DictStore`.
+  `close()` is what a test needs to not leak a file handle; `opened` is how a caller reaches the
+  `meta` constants and the `chars` table without a second query. Both are additions to the class, not
+  to the interface, so the freeze holds.
+- **`hskBand()` with an `offset` and no `limit` passes `LIMIT -1`**, which is SQLite's "no limit" —
+  it will not take an `OFFSET` without one.
+
+### Tests worth knowing about
+
+- `store.test.ts` carries **D2 criterion 6 as an assertion**: it walks `lib/dict/**` and fails on any
+  `node:fs` or `node:sqlite` import outside `load.ts` and `runners/node.ts`. That rule protects a
+  browser worker and a WebView from a build failure nobody would see in this container, so it is a
+  test rather than a convention.
+- `wordsContaining` has no counterpart in the JSON index, so its oracle is brute force: for twenty
+  characters, including one in a single headword (𩽾), several of the commonest, and four
+  simplified/traditional pairs that differ, it scans `dict.json` for every entry whose headword
+  contains the character and compares the whole list in rowid order.
+- All seven HSK bands are compared **in full**, not sampled — the 51 rankless entries are the only
+  rows where the two orderings can disagree and six of them are in band 1.

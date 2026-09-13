@@ -17,12 +17,30 @@
  * Everything here reads the indexes built in `lib/dict/index.ts`; nothing re-reads
  * `data/dict.json`.
  */
-import { exactIds, getDictIndex, prefixIds, stemToken, type DictIndex, type SortedIndex } from './index';
+import { exactIds, getDictIndex, prefixIds, type DictIndex, type SortedIndex } from './index';
 import { normalizePinyin, type NormalizedPinyin } from './pinyin';
+import {
+  CandidateSet,
+  SECTION_LABELS,
+  dedupeSections,
+  hasCjk,
+  materialise,
+  pageWindow,
+  stemToken,
+  type GroupCandidate,
+  type MatchSource,
+} from './rank';
 import type { DictEntry, EntryId, HskBand } from './types';
 
-/** Which index answered. The UI labels every result with it. */
-export type MatchSource = 'hanzi' | 'pinyin' | 'english';
+/**
+ * The grouping, the five-key sort, the section allocation and the cursor are
+ * `lib/dict/rank.ts`'s, shared with `lib/dict/sqlite-store.ts` (data.md D2).
+ * The two implementations differ in which rows are candidates — that is what
+ * D2's and D3's differential tests are for — and must not differ in what
+ * happens to them afterwards.
+ */
+export { CJK_PATTERN, hasCjk, SEARCH_PAGE_SIZE } from './rank';
+export type { MatchSource } from './rank';
 
 /** Which router branch ran — useful in tests and in the API response. */
 export type SearchRoute = 'hanzi' | 'pinyin+english' | 'english';
@@ -73,34 +91,24 @@ export interface SearchOptions {
   limit?: number;
   /** Opaque page marker from `nextCursor`. */
   cursor?: string;
+  /**
+   * Drop a superseded keystroke's work rather than rendering it
+   * (docs/plans/data.md D2). Ignored by the JSON implementation, which is
+   * synchronous; honoured by `lib/dict/sqlite-store.ts` and passed to the
+   * runner, where on the Capacitor bridge it is the difference between a queued
+   * round trip and a cancelled one.
+   *
+   * It rides in the options rather than as a third parameter because
+   * `DictStore.search` is a frozen surface with two (data.md D1's first commit)
+   * and `SearchOptions` is this layer's own.
+   */
+  signal?: AbortSignal;
 }
-
-export const SEARCH_PAGE_SIZE = 50;
-
-const SECTION_LABELS: Record<MatchSource, string> = {
-  hanzi: 'Hanzi',
-  pinyin: 'Pinyin',
-  english: 'English',
-};
 
 const MAX_HANZI_PREFIX_IDS = 400;
 const MAX_PINYIN_PREFIX_IDS = 600;
 /** Guard on one gloss token's posting list; the lists are frequency-ordered. */
 const MAX_GLOSS_CANDIDATES = 5000;
-
-const NO_BAND = 8;
-const NO_RANK = Number.MAX_SAFE_INTEGER;
-
-/**
- * CJK ideographs, including the extensions that live outside the BMP. Kept in one
- * place because `segment.ts` needs exactly the same answer to "is this hanzi".
- */
-export const CJK_PATTERN =
-  /[㐀-䶿一-鿿豈-﫿\u{20000}-\u{2A6DF}\u{2A700}-\u{2EBEF}\u{2F800}-\u{2FA1F}]/u;
-
-export function hasCjk(text: string): boolean {
-  return CJK_PATTERN.test(text);
-}
 
 // ---------------------------------------------------------------------------
 // Headword prefix index
@@ -277,141 +285,69 @@ function isGlossToken(index: DictIndex, query: string): boolean {
 // Candidate collection
 // ---------------------------------------------------------------------------
 
-interface Candidate {
-  tier: number;
-  matched: EntryId[];
-  seen: Set<EntryId>;
-}
-
-/** Groups keyed by `trad|simp`, each keeping the best tier any of its readings hit. */
-class Candidates {
-  private readonly index: DictIndex;
-  private readonly groups = new Map<string, Candidate>();
-
-  constructor(index: DictIndex) {
-    this.index = index;
-  }
-
-  add(id: EntryId, tier: number): void {
-    const entry = this.index.entries.get(id);
-    if (!entry) return;
-    const key = `${entry.trad}|${entry.simp}`;
-    const existing = this.groups.get(key);
-    if (!existing) {
-      this.groups.set(key, { tier, matched: [id], seen: new Set([id]) });
-      return;
-    }
-    existing.tier = Math.min(existing.tier, tier);
-    if (!existing.seen.has(id)) {
-      existing.seen.add(id);
-      existing.matched.push(id);
-    }
-  }
-
-  addAll(ids: readonly EntryId[], tier: number): void {
-    for (const id of ids) this.add(id, tier);
-  }
-
-  get size(): number {
-    return this.groups.size;
-  }
-
-  entries(): [string, Candidate][] {
-    return [...this.groups];
+/**
+ * Grouping, the five-key sort and materialisation are `lib/dict/rank.ts`'s,
+ * shared with the store. This side only has to turn ids into the eight facts
+ * ranking needs, and to say which readings a headword has — both of which the
+ * index answers directly.
+ */
+function collect(index: DictIndex, ids: readonly EntryId[], tier: number, into: CandidateSet): void {
+  for (const id of ids) {
+    const entry = index.entries.get(id);
+    if (!entry) continue;
+    into.add(
+      {
+        id: entry.id,
+        simp: entry.simp,
+        trad: entry.trad,
+        isVariant: entry.isVariant,
+        properNoun: entry.properNoun,
+        ...(entry.hskBand === undefined ? {} : { hskBand: entry.hskBand }),
+        ...(entry.freqRank === undefined ? {} : { freqRank: entry.freqRank }),
+      },
+      tier,
+    );
   }
 }
 
-function quality(entry: DictEntry): number {
-  // PLAN.md §3.2: real words > variants > proper nouns.
-  if (!entry.isVariant && !entry.properNoun) return 0;
-  return entry.isVariant ? 1 : 2;
+/** Every reading of one headword, in the index's frequency order. */
+function readingsOf(index: DictIndex, candidate: GroupCandidate): DictEntry[] {
+  return (index.bySimp.get(candidate.simp) ?? [])
+    .map((id) => index.entries.get(id) as DictEntry)
+    .filter((entry) => entry.trad === candidate.trad);
 }
 
-function buildGroup(
-  index: DictIndex,
-  key: string,
-  candidate: Candidate,
-  source: MatchSource,
-): { group: SearchGroup; sortKey: [number, number, number, number, string] } {
-  const [trad, simp] = key.split('|');
-  // Every reading of the headword, in the index's frequency order, matched first.
-  const all = (index.bySimp.get(simp) ?? []).filter(
-    (id) => (index.entries.get(id) as DictEntry).trad === trad,
-  );
-  const matched = candidate.matched;
-  const rest = all.filter((id) => !candidate.seen.has(id));
-  const orderedIds = [...matched, ...rest];
-  const entries = orderedIds.map((id) => index.entries.get(id) as DictEntry);
-  const matchedEntries = matched.map((id) => index.entries.get(id) as DictEntry);
-
-  let bestQuality = 3;
-  let bestBand = NO_BAND;
-  let bestRank = NO_RANK;
-  for (const entry of matchedEntries) {
-    bestQuality = Math.min(bestQuality, quality(entry));
-    bestBand = Math.min(bestBand, entry.hskBand ?? NO_BAND);
-    bestRank = Math.min(bestRank, entry.freqRank ?? NO_RANK);
-  }
-  const groupBand = entries.reduce<number>(
-    (low, entry) => Math.min(low, entry.hskBand ?? NO_BAND),
-    NO_BAND,
-  );
-
-  return {
-    group: {
-      key,
-      simp,
-      trad,
-      source,
-      matchedIds: matched,
-      entries,
-      ...(groupBand === NO_BAND ? {} : { hskBand: groupBand as HskBand }),
-    },
-    sortKey: [candidate.tier, bestQuality, bestBand, bestRank, key],
-  };
-}
-
-function rank(index: DictIndex, candidates: Candidates, source: MatchSource): SearchGroup[] {
-  const rows = candidates
-    .entries()
-    .map(([key, candidate]) => buildGroup(index, key, candidate, source));
-  rows.sort((a, b) => {
-    for (let i = 0; i < 4; i += 1) {
-      const diff = (a.sortKey[i] as number) - (b.sortKey[i] as number);
-      if (diff !== 0) return diff;
-    }
-    return a.sortKey[4] < b.sortKey[4] ? -1 : a.sortKey[4] > b.sortKey[4] ? 1 : 0;
-  });
-  return rows.map((row) => row.group);
+function toGroup(index: DictIndex, candidate: GroupCandidate, source: MatchSource): SearchGroup {
+  return materialise(candidate, readingsOf(index, candidate), source);
 }
 
 // ---------------------------------------------------------------------------
 // The three sources
 // ---------------------------------------------------------------------------
 
-function hanziGroups(index: DictIndex, query: string): SearchGroup[] {
-  const candidates = new Candidates(index);
-  candidates.addAll(index.bySimp.get(query) ?? [], 0);
-  candidates.addAll(index.byTrad.get(query) ?? [], 0);
+function hanziCandidates(index: DictIndex, query: string): GroupCandidate[] {
+  const candidates = new CandidateSet();
+  collect(index, index.bySimp.get(query) ?? [], 0, candidates);
+  collect(index, index.byTrad.get(query) ?? [], 0, candidates);
   const { simp, trad } = headwords(index);
-  candidates.addAll(prefixIds(simp, query, MAX_HANZI_PREFIX_IDS), 1);
-  candidates.addAll(prefixIds(trad, query, MAX_HANZI_PREFIX_IDS), 1);
-  return rank(index, candidates, 'hanzi');
+  collect(index, prefixIds(simp, query, MAX_HANZI_PREFIX_IDS), 1, candidates);
+  collect(index, prefixIds(trad, query, MAX_HANZI_PREFIX_IDS), 1, candidates);
+  return candidates.ordered();
 }
 
-function pinyinGroups(index: DictIndex, pinyin: NormalizedPinyin): SearchGroup[] {
-  const candidates = new Candidates(index);
+function pinyinCandidates(index: DictIndex, pinyin: NormalizedPinyin): GroupCandidate[] {
+  const candidates = new CandidateSet();
   const toned = pinyin.syllables.some((syllable) => syllable.tone !== null);
   // Tone-exact beats toneless beats prefix (PLAN.md §3.2).
-  if (toned) candidates.addAll(exactIds(index.byPinyinToned, pinyin.toned), 0);
-  candidates.addAll(exactIds(index.byPinyinToneless, pinyin.toneless), 1);
+  if (toned) collect(index, exactIds(index.byPinyinToned, pinyin.toned), 0, candidates);
+  collect(index, exactIds(index.byPinyinToneless, pinyin.toneless), 1, candidates);
   const prefixIndex = toned ? index.byPinyinToned : index.byPinyinToneless;
   const prefixKey = toned ? pinyin.toned : pinyin.toneless;
-  candidates.addAll(prefixIds(prefixIndex, prefixKey, MAX_PINYIN_PREFIX_IDS), 2);
-  return rank(index, candidates, 'pinyin');
+  collect(index, prefixIds(prefixIndex, prefixKey, MAX_PINYIN_PREFIX_IDS), 2, candidates);
+  return candidates.ordered();
 }
 
-function englishGroups(index: DictIndex, query: string): SearchGroup[] {
+function englishCandidates(index: DictIndex, query: string): GroupCandidate[] {
   const queryWords = lemmas(query);
   if (queryWords.length === 0) return [];
 
@@ -429,14 +365,15 @@ function englishGroups(index: DictIndex, query: string): SearchGroup[] {
     if (pool.length === 0) return [];
   }
 
-  const candidates = new Candidates(index);
+  const candidates = new CandidateSet();
   for (const id of pool ?? []) {
     const entry = index.entries.get(id);
     if (!entry) continue;
     const tier = glossTier(entry, queryWords);
-    if (Number.isFinite(tier)) candidates.add(id, tier);
+    if (!Number.isFinite(tier)) continue;
+    collect(index, [id], tier, candidates);
   }
-  return rank(index, candidates, 'english');
+  return candidates.ordered();
 }
 
 // ---------------------------------------------------------------------------
@@ -461,99 +398,54 @@ function pinyinFirst(index: DictIndex, query: string, pinyin: NormalizedPinyin):
   return true;
 }
 
-function section(source: MatchSource, groups: SearchGroup[]): SearchSection {
-  return { source, label: SECTION_LABELS[source], groups };
+interface CandidateSection {
+  source: MatchSource;
+  candidates: GroupCandidate[];
 }
 
 /**
- * A headword both indexes matched belongs to whichever ranked it higher — 孫 is
- * `sun` the reading far more than it is the "Sun" inside "surname Sun", and 龍 the
- * same for `long`. Ties go to the leading section.
+ * Rank, dedupe, page, and only then attach entries.
  *
- * This has to happen before paging, not during it: assigning per page would let
- * page 2 repeat what page 1 already showed, and claiming the group while ranking
- * would let the leading section take it and then cut it at the cap, which is how
- * 孙 vanished from a search for `sun` entirely.
+ * The order matters and is shared with the store: deduping before paging is what
+ * stops page 2 repeating page 1, and materialising after paging is what lets the
+ * store fetch full rows for ≤50 groups instead of up to 5,000. Here every entry
+ * is already in memory, so materialising late costs nothing and keeps the two
+ * implementations the same shape.
  */
-function dedupe(sections: SearchSection[]): SearchSection[] {
-  if (sections.length < 2) return sections;
-  const owner = new Map<string, { section: number; position: number }>();
-  sections.forEach((part, index) =>
-    part.groups.forEach((group, position) => {
-      const held = owner.get(group.key);
-      if (!held || position < held.position) owner.set(group.key, { section: index, position });
-    }),
-  );
-  return sections.map((part, index) =>
-    section(
-      part.source,
-      part.groups.filter((group) => owner.get(group.key)?.section === index),
-    ),
-  );
-}
-
-/**
- * Split one page between the sections.
- *
- * A flat "first 50 of the concatenation" would bury the second section entirely:
- * `he` has hundreds of readings before 他's gloss is reached, and `sun` hundreds
- * of glosses before 孙. Both answers are the point of running both indexes, so
- * every trailing section is reserved a share of the page and the leading section
- * takes what is left — which is still most of it.
- */
-function allocate(counts: readonly number[], limit: number): number[] {
-  const share = Math.floor(limit / (counts.length + 1));
-  const reserved = counts.map((count, i) => (i === 0 ? 0 : Math.min(count, share)));
-  let left = limit;
-  const takes: number[] = [];
-  for (let i = 0; i < counts.length; i += 1) {
-    const forOthers = reserved.slice(i + 1).reduce((sum, value) => sum + value, 0);
-    const take = Math.max(0, Math.min(counts[i], left - forOthers));
-    takes.push(take);
-    left -= take;
-  }
-  return takes;
-}
-
-/** `"12.4"` — how far into each section this page starts. */
-function parseCursor(cursor: string | undefined, sections: number): number[] {
-  const starts = new Array<number>(sections).fill(0);
-  if (!cursor) return starts;
-  cursor.split('.').forEach((part, i) => {
-    const value = Number(part);
-    if (i < sections && Number.isFinite(value) && value > 0) starts[i] = Math.floor(value);
-  });
-  return starts;
-}
-
 function paginate(
   query: string,
   route: SearchRoute,
-  ordered: SearchSection[],
+  ordered: readonly CandidateSection[],
   options: SearchOptions,
   dictVersion: string,
+  index: DictIndex,
 ): SearchResult {
-  const limit = Math.max(1, options.limit ?? SEARCH_PAGE_SIZE);
-  const starts = parseCursor(options.cursor, ordered.length);
-  const rest = ordered.map((part, i) => part.groups.slice(starts[i]));
-  const takes = allocate(rest.map((groups) => groups.length), limit);
-
-  const ends = starts.map((start, i) => start + takes[i]);
-  const sections = ordered
-    .map((part, i) => section(part.source, rest[i].slice(0, takes[i])))
-    .filter((part) => part.groups.length > 0);
-  const total = ordered.reduce((sum, part) => sum + part.groups.length, 0);
-  const more = ordered.some((part, i) => ends[i] < part.groups.length);
+  const deduped = dedupeSections(ordered.map((part) => part.candidates));
+  const window = pageWindow(
+    deduped.map((groups) => groups.length),
+    options,
+  );
+  const sections: SearchSection[] = [];
+  deduped.forEach((groups, i) => {
+    const { start, end } = window.slices[i];
+    const page = groups.slice(start, end);
+    if (page.length === 0) return;
+    sections.push({
+      source: ordered[i].source,
+      label: SECTION_LABELS[ordered[i].source],
+      groups: page.map((candidate) => toGroup(index, candidate, ordered[i].source)),
+    });
+  });
 
   return {
     query,
     route,
     groups: sections.flatMap((part) => part.groups),
     sections,
-    total,
+    total: window.total,
     dictVersion,
-    offset: starts.reduce((sum, start) => sum + start, 0),
-    ...(more ? { nextCursor: ends.join('.') } : {}),
+    offset: window.offset,
+    ...(window.nextCursor === undefined ? {} : { nextCursor: window.nextCursor }),
   };
 }
 
@@ -565,23 +457,41 @@ export function search(rawQuery: string, options: SearchOptions = {}): SearchRes
   const query = rawQuery.trim();
   const index = getDictIndex();
   const version = index.meta.version;
-  if (!query) return paginate(query, 'english', [], options, version);
+  if (!query) return paginate(query, 'english', [], options, version, index);
 
   if (hasCjk(query)) {
-    return paginate(query, 'hanzi', [section('hanzi', hanziGroups(index, query))], options, version);
+    return paginate(
+      query,
+      'hanzi',
+      [{ source: 'hanzi', candidates: hanziCandidates(index, query) }],
+      options,
+      version,
+      index,
+    );
   }
 
   const pinyin = normalizePinyin(query);
   if (pinyin.fullyParsed) {
     // Both sections always run; only their order is in question, and the loser
     // still shows — that is what makes `he` answer with 和 *and* 他.
-    const asPinyin = section('pinyin', pinyinGroups(index, pinyin));
-    const asEnglish = section('english', englishGroups(index, query));
-    const ordered = dedupe(
-      pinyinFirst(index, query, pinyin) ? [asPinyin, asEnglish] : [asEnglish, asPinyin],
-    );
-    return paginate(query, 'pinyin+english', ordered, options, version);
+    const asPinyin: CandidateSection = {
+      source: 'pinyin',
+      candidates: pinyinCandidates(index, pinyin),
+    };
+    const asEnglish: CandidateSection = {
+      source: 'english',
+      candidates: englishCandidates(index, query),
+    };
+    const ordered = pinyinFirst(index, query, pinyin) ? [asPinyin, asEnglish] : [asEnglish, asPinyin];
+    return paginate(query, 'pinyin+english', ordered, options, version, index);
   }
 
-  return paginate(query, 'english', [section('english', englishGroups(index, query))], options, version);
+  return paginate(
+    query,
+    'english',
+    [{ source: 'english', candidates: englishCandidates(index, query) }],
+    options,
+    version,
+    index,
+  );
 }

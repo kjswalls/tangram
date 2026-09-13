@@ -7,9 +7,18 @@
  * pointing into the single parsed copy of the dictionary, never copies of entries.
  */
 import { dictCache, getDict } from './load';
-import { compareEntries } from './rank';
+import { compareEntries, glossTokens, stemToken } from './rank';
 import { hasUnknownReading, normalizePinyin, readingKeys } from './pinyin';
 import type { DictEntry, DictMeta, EntryId, HskBand } from './types';
+
+/**
+ * `stemToken`, `glossTokens` and `parseIdList` are `lib/dict/rank.ts`'s now —
+ * they are pure, the SQLite builder and both stores need them, and nothing pure
+ * should sit behind a 35 MB `node:fs` loader. Re-exported so every existing
+ * importer and `tests/unit/dict/index.test.ts` are unaffected; they leave with
+ * this module in D6.
+ */
+export { glossTokens, parseIdList, stemToken } from './rank';
 
 /** Parallel arrays sorted by `keys`, so a prefix is one binary search plus a walk. */
 export interface SortedIndex {
@@ -35,56 +44,6 @@ function push(map: Map<string, EntryId[]>, key: string, id: EntryId): void {
   const list = map.get(key);
   if (list) list.push(id);
   else map.set(key, [id]);
-}
-
-/** Trivial English stemming, applied identically at build and query time. */
-export function stemToken(token: string): string {
-  if (token.length > 5 && token.endsWith('ing')) return token.slice(0, -3);
-  if (token.length > 4 && token.endsWith('ed')) return token.slice(0, -2);
-  if (token.length > 3 && token.endsWith('s') && !token.endsWith('ss')) return token.slice(0, -1);
-  return token;
-}
-
-/** `a-z`, `0-9` or an apostrophe — the alphabet a gloss token is made of. */
-function isTokenChar(code: number): boolean {
-  return (code >= 97 && code <= 122) || (code >= 48 && code <= 57) || code === 39;
-}
-
-/**
- * A gloss → the stemmed tokens it is indexed under, deduped, in order.
- *
- * One scan over the lowercased string rather than replace-split-map-filter.
- * It is called 195,550 times while the gloss index is built and again on every
- * English query, and the four intermediate arrays were most of its cost.
- * `tests/unit/server/cold-start.test.ts` checks the two agree on every gloss in the
- * built dictionary, so this is a faster spelling of the same function and not a
- * different one.
- */
-export function glossTokens(gloss: string): string[] {
-  const lower = gloss.toLowerCase();
-  const out: string[] = [];
-  const seen = new Set<string>();
-  const length = lower.length;
-  let i = 0;
-  while (i < length) {
-    if (!isTokenChar(lower.charCodeAt(i))) {
-      i += 1;
-      continue;
-    }
-    let start = i;
-    while (i < length && isTokenChar(lower.charCodeAt(i))) i += 1;
-    let end = i;
-    // A leading or trailing apostrophe is punctuation, not part of the word.
-    while (start < end && lower.charCodeAt(start) === 39) start += 1;
-    while (end > start && lower.charCodeAt(end - 1) === 39) end -= 1;
-    if (end <= start) continue;
-    const token = stemToken(lower.slice(start, end));
-    if (token && !seen.has(token)) {
-      seen.add(token);
-      out.push(token);
-    }
-  }
-  return out;
 }
 
 function toSorted(groups: Map<string, EntryId[]>): SortedIndex {
@@ -360,29 +319,6 @@ export function prefixIds(index: SortedIndex, prefix: string, limit = 200): Entr
     }
   }
   return out;
-}
-
-/**
- * Split a comma-separated id list, e.g. from `?ids=`. An id is `trad|simp[pinyin]`
- * and the pinyin of a proverb contains commas (`yi1 bu4 zuo4 , er4 bu4 xiu1`), so
- * only commas outside the brackets separate ids.
- */
-export function parseIdList(value: string): EntryId[] {
-  const out: string[] = [];
-  let depth = 0;
-  let current = '';
-  for (const ch of value) {
-    if (ch === '[') depth += 1;
-    else if (ch === ']') depth = Math.max(0, depth - 1);
-    if (ch === ',' && depth === 0) {
-      out.push(current);
-      current = '';
-      continue;
-    }
-    current += ch;
-  }
-  out.push(current);
-  return out.map((id) => id.trim()).filter(Boolean);
 }
 
 /** Ids whose glosses contain `word` (stemmed the same way the index was built). */

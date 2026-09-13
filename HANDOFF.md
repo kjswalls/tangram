@@ -3334,3 +3334,152 @@ independent agent per finding instructed to refute it, defaulting to refuted whe
   now buys one correct version of a document that has two more rewrites coming. **It is wrong today
   and a deploy from this commit would be misconfigured by it.** Whoever runs W2 owns it.
 
+
+---
+
+## `web.md` W1 — Vite builds it, React Router routes it
+
+One commit: `build: Vite builds it, React Router routes it, and the eight handlers keep answering`.
+
+`pnpm build` emits `apps/app/dist/` — static files, no framework runtime. Next 16 is out of
+`package.json` and `grep -rn "from 'next"` over the app returns nothing.
+
+### The decisions W1 asks to be written down, all four
+
+**Tailwind: `@tailwindcss/vite`, not the PostCSS path.** STACK §7 names this as unchecked and W1
+says to try the Vite plugin first and record which way it went. It was not a free choice in the end:
+Vite reads `postcss.config.mjs` natively, the two configurations conflict, and the first build died
+on `Failed to load PostCSS config … Invalid PostCSS Plugin found at: plugins[0]`. So
+`postcss.config.mjs` and `@tailwindcss/postcss` are deleted with it. If a later phase wants the
+PostCSS path back it is `@tailwindcss/postcss` plus that file, and the Vite plugin has to go in the
+same commit — they cannot both be present.
+
+**The adapter's preview loading mechanism: (a), `tsx`.** The preview server has no transform
+pipeline, so `await import('<app>/app/api/ask/route.ts')` from Node is a bare resolution error.
+`scripts/preview.ts` runs under `tsx`, whose loader hook compiles the handler modules on import.
+`tsx` is already a direct devDependency and is already how `pnpm data`, `pnpm sw` and `pnpm smoke`
+execute TypeScript, so it adds no dependency and no second build step. Mechanism (b) — a second
+esbuild/Rollup pass emitting the handlers as one Node-loadable bundle — would have added a build
+artifact whose only consumer is a bridge that `data.md` D6 and `backend.md` B2 are going to delete.
+
+**`base` is `'/'`, and the router's `basename` is `import.meta.env.BASE_URL`.** The default build is
+unaffected. The point is the *subpath* invocation: `vite build --base=/sub/` emits correctly
+prefixed asset URLs, but without the basename React Router would match `/sub/` against `/`, find
+nothing, and render its own 404 — assets all 200, page blank. Verified in a real browser behind a
+`/sub/` prefix: nav renders, heading renders, every nav href is `/sub/…`.
+
+**Bundle and build time, the first Vite numbers anyone has.** `dist/` is **720 KB** without
+sourcemaps and 3.4 MB with them: one **654 KB** entry chunk (**200 KB gzipped**) and 27 KB of CSS.
+The whole root `pnpm build` — typecheck, `data:ensure`, `sw`, `vite build` — is **8.1 s** wall,
+of which `vite build` itself is **~1.5 s**, against Next's measured **28 s** for
+`next build` + `pnpm sw` (`docs/deploy.md`). Rolldown warns that the entry chunk is over 500 KB and
+suggests code splitting; nothing is split yet and W6 owns the first-load budget.
+
+### Two places where `web.md` W1 is wrong, and what was done instead
+
+**1. The service-worker native gate. W1's predicate is wrong twice over.** W1 says register only
+when `import.meta.env.PROD` **and** the origin is `https:`.
+
+- `http://localhost` is a **secure context** by specification and service workers register there.
+  `pnpm preview` — which the whole e2e suite runs against, in production mode — serves exactly that.
+  An https-only test stops the worker registering in every end-to-end run, and
+  `tests/e2e/p6/pwa.spec.ts` and `tests/e2e/c/sw-version.spec.ts` both await
+  `navigator.serviceWorker.ready` and hang for 30 s. **This was observed, not predicted:** the
+  predicate was implemented as written, the two specs went red, and that is how it was found. W1
+  lists both specs as surviving the phase unchanged, so the plan did not notice.
+- It does not do what it is for. Capacitor serves `capacitor://localhost` on iOS, which an https
+  test does exclude — but **`http://localhost` on Android**, which is origin-identical to the
+  preview server. No test on the URL alone can separate an Android WebView from a local production
+  server.
+
+The predicate is now **production AND a secure context AND no native bridge**, with the custom
+schemes (`capacitor:`, `tauri:`, `file:`, `ionic:`) refused outright as well. Capacitor injects a
+`Capacitor` global into the WebView before any app code runs and nothing does that on the web, so
+that is the discriminator. It registers on `https://` and on the preview server and refuses both
+native WebViews. Eleven unit tests drive it, including the Android case the URL cannot answer.
+`ios.md` I0 can still re-point the call site at `lib/platform/native.ts` without changing observable
+behaviour — `shouldRegister` takes a plain `RegisterEnvironment` value, so I0 changes only where the
+four fields come from.
+
+**2. `middleware.ts` cannot be kept as dead code, and W1 asks for both.** W1 says to keep it with a
+one-line header until W4 deletes it, and in the same phase requires `next` out of `package.json` and
+`grep -rn "from 'next"` to return nothing. `middleware.ts` imports `NextResponse` and `NextRequest`;
+with `next` uninstalled it fails `tsc` and vitest's module graph. It is deleted. Its other half,
+`lib/server/access.ts`, never imported from `next/*` — its own header says so, deliberately — and is
+untouched. That is the half W4 rebuilds the gate on, so nothing W4 needs is gone.
+
+### The gate is down between W1 and W4
+
+The `?key=` → cookie exchange has no replacement until W4 builds the header one. **On any deployment
+made in this window with `TANGRAM_ACCESS_SECRET` set, `/api/ask`, `/api/examples` and `/api/recall`
+are unusable and cannot be authorised from a phone.** With the secret unset — local dev, the whole
+suite — nothing changes. The plan's order assumes no deployment happens in it; if one does, move W4
+ahead of W2 and W3.
+
+`tests/e2e/d/access-gate.spec.ts` loses exactly three assertions, and its own header carries the map:
+
+| Removed | Restored by |
+|---|---|
+| `?key=<secret>` → 303 `access=granted`, key stripped from Location, `tangram_access` cookie with HttpOnly / SameSite=Lax / Path=/ and no `Secure` over plain HTTP | W4's authorise flow |
+| a wrong `?key=` → 303 `access=denied`, key stripped, existing cookie actively cleared | W4's revoke-on-wrong-key |
+| the cookie, once set, admitting a `POST /api/ask` | W4's admitted-request |
+
+What survives is what proves the gate is a gate and not a wall: with the secret set the three paid
+routes still refuse, and the five dictionary routes, the pages, the manifest, `sw.js` and
+`/offline.html` stay open. The removed behaviour is replaced by a **passing** assertion that it is
+absent, not by `test.skip` — a skipped test reads as "temporarily flaky", and the day W4 makes that
+assertion false it fails and has to be rewritten into the real one.
+
+### Known regressions this phase ships, on purpose, each owned by a later phase
+
+- **The service worker's cache name is `dev` on every build.** `.next/BUILD_ID` is gone and
+  `scripts/build-sw.ts` falls back to its dev stamp, so the name no longer *changes* when the output
+  does and `activate` purges nothing — which is precisely the bug `tests/e2e/c/sw-version.spec.ts`
+  was written to catch, now latent. The spec says so in its own header and asserts what is left (the
+  worker is stamped, and the running worker keeps exactly one cache). **`web.md` W3 owns the fix.**
+  One trap for W3 in how this was left: the app's `build` is `pnpm -w run sw && vite build`, so the
+  worker is stamped *before* the build and Vite copies `public/sw.js` into `dist/`. A stamp derived
+  from Vite's output has to run *after*, and `build.emptyOutDir` is on — so W3 must either write
+  into `dist/` directly or re-order and re-copy. It is one line either way, but it is not the order
+  that is there now.
+- **`pnpm smoke`'s page cases are unfalsifiable.** With the SPA fallback, every path that is not a
+  real file returns 200 `index.html`, so a status-only check passes against a build whose entry
+  chunk 404s and against routes that no longer exist. This is `web.md` R7 and **W2 owns it** — it
+  asserts rendered per-route markers and proves them by deleting the entry chunk and watching the
+  smoke fail. Until then `pnpm smoke` is meaningful for the API routes and decorative for the pages.
+- **`lib/dict/client.ts` uses root-absolute `/api/…` paths**, which do not pick up a non-`/` `base`.
+  Visible in the subpath check above: the app booted under `/sub/` and its dictionary calls went to
+  `/api/dict/hsk`, not `/sub/api/dict/hsk`. Irrelevant to the default build and to Capacitor, which
+  serves from a scheme root — but **W4 owns "the configured API base"** and is where this is
+  settled, because the same change is what points the client at a different origin.
+
+### Smaller things worth knowing
+
+- **`tests/unit/render.tsx` is new and five unit files now import `render` from it.** Every
+  component carrying a `<Link>` needs a React Router context to render at all; without one
+  `useContext` returns null and the component throws before an assertion runs. `next/link` needed no
+  provider, so this is new work that will keep applying: a component test that renders anything with
+  a link goes through this helper.
+- **`app/icon.svg` and `app/apple-icon.png` were Next *file conventions*** that generated
+  `/icon.svg` and `/apple-icon.png` routes. They are in `public/` now and the URLs are unchanged.
+  `tests/unit/pwa/manifest.test.ts` asserts the `apple-touch-icon` link **and that the file it points
+  at exists**, which the convention never checked.
+- **`/settings`'s attribution is a build-time `?raw` import** of the committed `data/ATTRIBUTION.md`,
+  through a new `@data` alias (`vite.config.ts` resolves it once, so no call site counts `..`). It
+  was a per-request `readFile` from a `force-dynamic` server component. That trades away runtime
+  `TANGRAM_DATA_DIR` relocation of the attribution text, which is acceptable because the file is
+  committed rather than generated — and it is the licence-correct pairing anyway: the notice ships
+  with the code it describes. The missing-file branch is gone with it; the build now fails instead,
+  which for a licence obligation is the better failure.
+- **`eslint-config-next` is replaced** by typescript-eslint plus the two react-hooks rules, which is
+  what it was actually earning. Two rules had to be configured rather than inherited:
+  `no-irregular-whitespace` with `skipRegExps`, because `lib/ai/ground.ts` and `lib/ai/fake.ts` have
+  U+3000 as a legitimate endpoint inside CJK character classes; and `public/sw.js` ignored in the
+  app because the workspace root already lints `scripts/sw.template.js`, its source.
+- **`tsconfig.json` gained `allowImportingTsExtensions`.** Vite loads `vite.config.ts` and its
+  plugin graph through Rolldown directly, which warns on extensionless relative imports; those three
+  files carry `.ts` and this is what lets TypeScript read them. Safe only with `noEmit`, which is set.
+- The `use client` directives in 41 files are now inert. Rolldown neither errors nor warns on them
+  and the build is clean; they are left in place rather than swept, because `core.md` C7 restructures
+  these components anyway and a 41-file no-op diff would bury that one.
+

@@ -3126,3 +3126,211 @@ list below.
 7. **Fail two cards at the end of a session.** The empty state should tell you to
    stay on the page; the cards come back on their own about a minute later, with
    nothing to press and no reload.
+
+---
+
+## Wave 0 deliverable 3 and `web.md` W0 — the CLAUDE.md rewrite and the workspace move
+
+Two commits, in this order, on `claude/build-web-shell`:
+
+- `docs: rewrite CLAUDE.md for the workspace, the SPA and the commit-freeze rule`
+- `build: one pnpm workspace, the app under apps/app, data and scripts at the root`
+
+Nothing from `wave-zero.md`'s deliverables **4** (the `Repository` interface diff) or **5**
+(`packages/ai/`) is here. `README.md`'s verification register V5 and V6 say both are not executable
+as written, and they are not: V5 asks wave 0 to freeze a signature whose type (`SyncedStore`) is
+defined by `backend.md` B4 many waves downstream, and V6 names ten modules to move and none of the
+33 files with 74 import sites that break. They need a specification pass before a session runs them.
+Deliverable 3 was unaffected and is done.
+
+### The final layout, since five plans write files into it
+
+```
+tangram/
+  package.json          workspace scripts, engines, the pnpm settings
+  pnpm-workspace.yaml   apps/*  packages/*
+  tsconfig.json         scripts/** only  —  "@/*" → ./apps/app/*
+  eslint.config.mjs     scripts/** only  —  typescript-eslint, no Next preset
+  .npmrc                engine-strict=true
+  .nvmrc                22.22
+  apps/app/             everything that was at the repo root, minus the below
+  packages/             declared, empty; wave 0 deliverable 5 and W4 fill it
+  data/                 generated, gitignored, read by three deployables
+  scripts/              build-data.ts, build-sw.ts, smoke.ts, sw.template.js
+  docs/  PLAN.md  HANDOFF.md  CLAUDE.md
+```
+
+`packages/` is in the workspace globs but not in git — git does not track empty directories and
+nothing was invented to make it appear. `pnpm install` is content with that; a plan that adds a
+package there gets a directory that is already declared.
+
+### `web.md` W0 and `wave-zero.md` §1 disagree about `scripts/`, and it is not a small disagreement
+
+W0's **Files** list puts `scripts/` inside the `git mv` into `apps/app/`, and its own prose depends
+on having done so — *"Under `apps/app/scripts/` it writes `apps/app/data/`"*, and its path-arithmetic
+table lists `scripts/build-sw.ts` and `scripts/smoke.ts` as files needing one more `..`, which is
+only true if they moved.
+
+`wave-zero.md` §1 says the opposite, twice: the layout block reads *"`scripts/` build-data.ts and
+friends — **STAYS AT THE ROOT**"*, and the prose under it repeats *"`data/` and `scripts/` stay at
+the root"*. `STACK.md` §5's workspace row repeats it a third time. And wave-zero then asserts *"No
+change needed to W0 for this ruling; it is confirmation"* — which is the part that is wrong. It is
+not confirmation; the two documents describe different trees, and wave-zero's author appears not to
+have read W0's Files list against their own layout block.
+
+**`scripts/` stays at the workspace root**, because wave-zero governs and two documents back it
+against one. What that decision actually cost, paid rather than dropped:
+
+- `scripts/*.ts` now import app modules as `../apps/app/lib/...`. That is a wart, and a temporary
+  one by design: W2 rewrites `smoke.ts` and W3 rewrites `build-sw.ts`, and `data.md` D1 rewrites
+  `build-data.ts` to emit SQLite — at which point it is a genuinely workspace-level artifact
+  producer sitting at the workspace level, which is the shape wave-zero was after.
+- Those four files left `apps/app`'s TypeScript project and eslint config, where `next build` had
+  been typechecking them. **That would have been a silent loss**, so the workspace root gained its
+  own `tsconfig.json` and `eslint.config.mjs`, the root `lint` runs both configs, `typecheck` is a
+  root script, and the root `build` runs `typecheck` before anything else — so building still
+  typechecks everything it typechecked before the move. `tests/unit/workspace.test.ts` asserts all
+  of it.
+- `apps/app/tests/**` reach `scripts/` by relative specifier (`../../../../../scripts/smoke`), not
+  through the `@` alias, which stops at `apps/app`. A wrong specifier fails loudly at module load,
+  which is the opposite of the failure mode the rest of this phase is about.
+
+**The other thing W0 asks to be written down: which of the two data-directory mechanisms is
+authoritative.** `TANGRAM_DATA_DIR` is. The root `data` and `data:ensure` scripts set it to the
+absolute workspace-root `data/`, and that wins wherever it is set. Both files' *defaults* are the
+safety net underneath it, and they are not the same defaults as before:
+
+- `scripts/build-data.ts` resolves the workspace root by walking up for `pnpm-workspace.yaml`
+  rather than by `..`. Because the file stayed at the root, its old `resolve(dirname(...), '..')`
+  would have kept working — the marker walk is there so that it keeps working if it ever moves.
+- `lib/dict/load.ts`'s default **is no longer `<cwd>/data`**. That is the change this phase could
+  most easily have got wrong invisibly. `pnpm -F app dev`, `next start`, vitest and the Playwright
+  web server all run with cwd `apps/app/`, none of them goes through a script that sets the
+  variable, and a cwd-relative default would have read `apps/app/data` — which, paired with a
+  writer that had also drifted, is the exact failure W0 describes: *the artifact relocated while
+  every acceptance criterion still passes.*
+
+Both halves were checked by running them, not by reading them, in all four combinations (variable
+set and unset × cwd at the root and at `apps/app/`), and are now asserted by
+`tests/unit/workspace.test.ts` — which asks the writer where it would write by executing it
+(`build-data.ts --print-data-dir`) rather than re-deriving its arithmetic, because re-deriving the
+arithmetic in the test is how the test drifts with the code it is guarding.
+
+### Two roots, named separately
+
+`apps/app/lib/server/roots.ts` is new. There are now two roots and they mean different things:
+`appRoot()` walks up to a `package.json`, `workspaceRoot()` to `pnpm-workspace.yaml`. Nothing counts
+`..` to find a root any more. The six files W0 lists as needing "one more `..`" mostly wanted the
+**app** root, not the workspace root — W0 frames all six as the same arithmetic, and they are not.
+
+### `.gitignore`
+
+`data/*.json` is deliberately left anchored to the workspace root and **not** re-anchored to match
+at any depth. If a future path regression writes `apps/app/data/`, that pattern does not match it
+and `git status` offers 35 MB of untracked JSON — the loudest cheap alarm available for a failure
+whose other symptom is that everything passes. `public/sw.js` *is* re-anchored, to
+`apps/app/public/sw.js`, because there it is only noise.
+
+### Gates
+
+| | before the move | after |
+|---|---|---|
+| `pnpm lint` | clean | clean (root `scripts/` **and** the app) |
+| `pnpm typecheck` | did not exist | clean — new this phase |
+| `pnpm test` | 87 files, 880 tests | 88 files, 893 tests |
+| `pnpm build` | clean | clean |
+| `PORT=3000 pnpm e2e` | 108 passed | 108 passed |
+| `pnpm smoke` | 21 routes ok | 21 routes ok |
+
+W0 says *"a changed test count is a failed phase: this phase changes no behaviour."* The 880
+pre-existing tests are the same 880 and all pass; the 13 added are
+`apps/app/tests/unit/workspace.test.ts`, which turns W0's own hand-checked acceptance criteria into
+standing assertions. No existing test changed its behaviour — five changed an import specifier or a
+root expression and nothing else. Reading the criterion as forbidding *added* coverage would forbid
+writing down the thing the phase is most likely to lose.
+
+### Review
+
+Both commits went through an adversarial review: independent reviewers on separate lenses, then an
+independent agent per finding instructed to refute it, defaulting to refuted when uncertain.
+
+- **CLAUDE.md** — four lenses (literal compliance with `wave-zero.md` §2's six requirements;
+  factual accuracy of every claim against the repo; what the document makes a fresh session do
+  wrong; omissions and staleness against the file it replaced). 37 findings raised, **0 survived**.
+  The refutations are the useful record: several reviewers read requirement 2's migration note as
+  under-specified and were refuted on the ground that §2 explicitly forbids documenting a state
+  that does not exist yet; several read the settle-first table as claiming deliverables 4 and 5 had
+  landed and were refuted on §2 item 4's wording, which enumerates the list rather than the
+  progress. One finding — that CLAUDE.md's *"`scripts/` … stay at the workspace root"* line was
+  inherited from wave-zero rather than checked — was refuted as correct-as-written, and it is: it
+  was the **plan**, not the document, that disagreed. That is what sent the W0 `scripts/` decision
+  back for a second look, which is the finding above.
+
+- **W0** — five lenses (the six acceptance criteria checked by running them; what breaks that no
+  test covers; the consequences of keeping `scripts/` at the root; what the next phase hits; whether
+  the commit message tells the truth). 46 findings raised, **7 survived**, reducing to three
+  distinct defects. All three are fixed in the commit.
+
+  1. **`outputFileTracingIncludes` was silently emptied by the move — blocking, and the best find in
+     the session.** Four of the five reviewers reached it independently. The four globs read
+     `./data/**`; Next resolves them with cwd set to the Next *project* directory, which the move
+     changed from the workspace root to `apps/app/`, where there is no `data/` and must not be. So
+     all four matched nothing and the dictionary was traced into no route bundle — every dictionary
+     route would have 503'd in the deployment. This is the *same incident* that put those four keys
+     in `next.config.ts` in the first place (`/api/examples` and `/api/recall` shipped untraced and
+     a human found it), reintroduced by a different mechanism, and with every local gate green
+     because `next dev`, `next start`, `pnpm smoke` and the e2e suite all read `data/` off local
+     disk.
+
+     Worth recording how the builder got this wrong twice before getting it right. The first check
+     read a **stale `.next/`** and appeared to show the data traced, which contradicted the
+     reviewers; a clean build settled it their way. The first fix then used `../data/**`, which is
+     the workspace root only if `apps/app` is one level down — it is two. The correct value is
+     `../../data/**`, plus `outputFileTracingRoot` set to the workspace root, without which Next
+     will not copy a file from outside the project directory at all. Verified by reading the emitted
+     `.nft.json` for all eight routes.
+
+     `../../pnpm-workspace.yaml` is traced alongside the data because `dataDir()` finds the
+     workspace root by walking up for that marker: a bundle carrying the dictionary but not the
+     marker resolves to the wrong directory and 503s anyway. One reviewer raised exactly this as a
+     second-order risk on their own finding.
+
+     **The guard could not have caught it, and that is the durable lesson.**
+     `untracedDictRoutes()` asks whether a *key* matches the route and never looks at the value, so
+     a well-formed glob matching zero files passed. `unmatchedTracingIncludes()` now resolves each
+     glob against the filesystem from the directory Next resolves it from, and
+     `routes.test.ts` fails on any entry that matches nothing. Proved by restoring the broken glob
+     and watching the new test fail.
+
+  2. **`cedict-json` resolved only by accident.** `scripts/build-data.ts` stayed at the workspace
+     root and resolves the package with `createRequire` from there; it is a devDependency of
+     `apps/app` alone, so pnpm links it into `apps/app/node_modules` and the root's resolution fell
+     through to the hoisted store. Declared at the root too.
+
+  3. **The commit message undercounted the edited test files** (five, against six on disk).
+     Corrected, and the history was rewritten for a larger version of the same problem the review
+     found: `git mv` stages automatically, so all 272 renames had landed in the **CLAUDE.md**
+     commit, whose message described only the rewrite. The two commits were re-split so each
+     contains what its message claims.
+
+  Two further real findings came out of the refuted set and were fixed anyway, because "refuted as
+  out of W0's scope" is not the same as "harmless":
+
+  - **`scripts/sw.template.js` was linted by nothing.** It sat inside the app's eslint scope before
+     the move; the root config had ignored it because it needs service-worker globals. A
+     syntax-broken worker would have passed lint, typecheck (`allowJs: false`), the two tests that
+     read it as text, and the build that copies it — and then failed to install in a browser. It is
+     linted again, with the globals declared.
+  - **`build-data.ts`'s raw downloads had moved into `data/`.** The branch that puts them beside the
+     data when `TANGRAM_DATA_DIR` is set was harmless while nothing set it; the new root scripts
+     always do, so 8.2 MB of upstream sources landed inside the directory `next.config.ts` traces
+     wholesale into all eight bundles. They go back to `.cache/tangram/raw` unconditionally, which
+     is also what `PLAN.md` §3.1 and `README.md` document.
+
+  And one that was refuted and is **left open on purpose**, recorded here rather than fixed:
+  `docs/deploy.md` describes the pre-move repository — the Vercel root directory, the build command,
+  the Node floor, and `TANGRAM_DATA_DIR`'s default. Every one of those is about to change again in
+  W1 and W2 (`web.md` W2 writes `apps/app/vercel.json` and owns the host rules), so rewriting it
+  now buys one correct version of a document that has two more rewrites coming. **It is wrong today
+  and a deploy from this commit would be misconfigured by it.** Whoever runs W2 owns it.
+

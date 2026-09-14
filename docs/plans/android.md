@@ -534,9 +534,13 @@ Four consequences, and all four make this phase cheaper:
    C1's `TabBar` already carries `pb-[env(safe-area-inset-bottom)]` and `Sheet` the same — **both are
    correct as written and `core.md` needs no change for A2.** That is also what closes register
    **V1**'s "the shell's inset variable" gate row: the artifact A2 needed turns out to be `TabBar`
-   itself. `'css'` *does* publish `--safe-area-inset-*`, and this phase pins that value rather than
-   leaving it defaulted, so that a later `core.md` phase writing `var(--safe-area-inset-bottom)` gets
-   a value instead of nothing. Which mode is pinned is a cross-plan contract, not a preference.
+   itself. `'css'` does publish `--safe-area-inset-*`, and this phase pins that value rather
+   than leaving it defaulted — but **for the opposite reason an earlier draft gave.** Those variables
+   are injected by Capacitor's *Android* plugin and exist on **Android native and nowhere else**, so
+   inviting `core.md` to write `var(--safe-area-inset-bottom)` in shared UI would resolve to nothing
+   on iOS and the web. **Shared UI uses `env(safe-area-inset-*)`**, which is what `TabBar` and `Sheet`
+   already do. The pin is a guard against a Capacitor upgrade changing the default; the variables are
+   for reading a value in the WebView inspector, which is what this phase's criterion 3 does.
 2. **The keyboard bug is handled there too**, so A2's criterion 2 tests Capacitor's workaround rather
    than the engine's bug.
 3. **No `MainActivity` edit.** `EdgeToEdge.enable(this)` is the *community* plugin's requirement;
@@ -548,12 +552,26 @@ Four consequences, and all four make this phase cheaper:
    branches on the OS version.
 4. **What is left for this phase is configuration, plus one module for the thing configuration cannot
    do**: the system bars' icon contrast, which must follow the *app's* theme and not the device's,
-   because Inkstone is the default on a dark-mode phone (`wave-zero.md` §10c). See the Files list.
+   because Inkstone is the default on a dark-mode phone — the ruling relayed to this session and
+   recorded in `HANDOFF.md`, since **`wave-zero.md` carries no §10c**, and implemented in `core.md`
+   C0's `tokens.css`. See the Files list.
 
 `ios.md` I5 is unaffected: it takes `env()` directly on iOS, which is now also what Android does.
-**`@capacitor/status-bar` is a separate question and is recorded in `HANDOFF.md` rather than acted on
-here** — I0 owns the dependency set, and on Android at `targetSdk` 36 that plugin's colour half is
-inert by its own logic while its `setOverlaysWebView()` fights the inset handler.
+
+**`@capacitor/status-bar` is a live second owner of the same window, and this phase configures it
+rather than only recording it.** An earlier draft of this correction said it was *"inert at
+`targetSdk` 36 by its own logic"* — **wrong, and wrong in the reassuring direction.**
+`StatusBar.shouldSetStatusBarColor()` branches on `Build.VERSION.SDK_INT`, the **device's** API level,
+not on `targetSdk`, and it gates only `setBackgroundColor`; `setStyle` is ungated and
+`StatusBar.load()` calls it on every launch with a config default of `DEFAULT` — *"based on the device
+appearance"*. Left unconfigured, two plugins write the same `WindowInsetsControllerCompat` at launch
+and the later one wins, which on a dark-mode phone is precisely the failure `SystemBars.style` was set
+to prevent; and `StatusBar.updateStyle()` re-applies its own remembered style on every configuration
+change, so a rotation would undo a theme change made through `SystemBars` alone. Removing the package
+is **not** this phase's call (the dependency set is I0's, and `CLAUDE.md`'s rule is to write the need
+down and continue) — but **plugin configuration is**, which is what A2's Files list grants. So both are
+set to `LIGHT`, `lib/platform/system-bars.ts` sets both at runtime, and they agree instead of racing.
+`setOverlaysWebView()` remains the call nothing in the Android build may make.
 
 **The keyboard is the half that will actually break, and getting a pre-144 WebView to test it on is
 not free.** The lookup box is the first thing on the Look up tab and a practice write-card is an
@@ -599,6 +617,13 @@ see the correction above. `apps/app/index.html` is `web.md` W1's and is not edit
 
 1. Screenshots on at least two devices with different notch/gesture-bar geometry: the tab bar sits
    above the gesture bar, the header clears the status bar, and no content is under either.
+   **The status-bar half of this cannot pass yet and the reason is not Android's.** `grep -rn
+   "safe-area" apps/app` finds `env(safe-area-inset-bottom)` on `core.md` C1's `TabBar` and `Sheet`
+   and **nothing for the top edge at all** — no `padding-top: env(safe-area-inset-top)` on the shell
+   header or the screen container, on any branch. Under edge-to-edge the header draws under the status
+   bar. That is a `core.md` change, not an Android one: the inset arrives correctly, nothing consumes
+   it. Recorded as an obligation in `HANDOFF.md` beside the theme-switch one, and this half of the
+   criterion is **blocked on it** rather than failing.
 2. With the keyboard open on a post-144 WebView, the focused input is visible and the tab bar is not
    floating in the middle of the screen. Repeated on any pre-144 device in A0's matrix, or on an
    emulator image old enough to supply one; if neither exists, `HANDOFF.md` records that the pre-144

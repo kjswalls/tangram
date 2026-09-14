@@ -31,10 +31,16 @@ const read = (relative: string) => readFileSync(resolve(ANDROID, relative), 'utf
  * `key = 24` / `key 24` / `key "24"`, which Gradle spells all three ways.
  *
  * **Anchored to the start of a line and refusing a comment**, because the naive
- * form takes the *first* occurrence anywhere in the file: a hand edit that
- * changes `applicationId` and leaves a `// was com.kjswalls.tangram` above it
- * reads the comment and passes. `^` with the `m` flag plus the comment guard is
- * what makes the assertion about the declaration rather than about the text.
+ * form takes the *first* occurrence anywhere in the file. The mutation that
+ * demonstrates it — run against a copy, not reasoned about — is a commented-out
+ * declaration above the real one:
+ *
+ *     // applicationId "com.evil.old"
+ *     applicationId "com.kjswalls.tangram"
+ *
+ * The naive regex returns `com.evil.old`; this one returns the declaration. A
+ * comment that does not repeat the key is harmless either way, which is why the
+ * example has to be this shape.
  */
 function gradleValue(source: string, key: string): string | undefined {
   const match = new RegExp(`^(?!\\s*(?://|#))\\s*(?:ext\\.)?${key}\\b\\s*=?\\s*["']?([\\w.]+)["']?`, 'm').exec(source);
@@ -76,10 +82,14 @@ describe('SDK levels (A1 criterion 3)', () => {
     // And that no literal sits beside the reference. Asserting the reference
     // exists is not the same claim: `minSdkVersion 21` added on the line below
     // would win, and the loop above would still pass.
-    expect(app, 'a literal min/targetSdkVersion overrides the shared one').not.toMatch(
-      /(?:min|target)SdkVersion\s+\d/,
+    //
+    // One pattern, covering every spelling Gradle accepts — `minSdkVersion 21`,
+    // `minSdk = 21`, `compileSdkVersion 33`, `targetSdk 34`, quoted or not. Two
+    // narrower patterns were tried first and between them missed
+    // `compileSdkVersion <n>` and every `= <n>` form.
+    expect(app, 'a literal SDK level overrides the shared one').not.toMatch(
+      /(?:min|target|compile)Sdk(?:Version)?\s*=?\s*["']?\d/,
     );
-    expect(app, 'a literal compileSdk overrides the shared one').not.toMatch(/compileSdk\s*=?\s*\d/);
   });
 });
 

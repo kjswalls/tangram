@@ -5560,3 +5560,103 @@ unit test fails if they come back.
    times here for work that is now C5a's or C5b's, and A6's criterion 3 names a spec id that no longer
    exists. A6's gate row is fixed; **the body of A6 is not**, because A6 is out of this session's
    scope. A session running A6 should expect to fix those citations first.
+
+### The adversarial review of A2 and A3, and four corrections to what I wrote above
+
+Same four lenses, same two skeptics per finding. Six survived, and two of them correct claims made in
+the A2 section above. **Read these as superseding what that section says**, since this file is
+append-only.
+
+**1. `@capacitor/status-bar` is NOT inert, and the sentence above saying it is was wrong in the
+reassuring direction.** `StatusBar.shouldSetStatusBarColor()` branches on `Build.VERSION.SDK_INT` —
+the **device's** API level — not on `targetSdk`, and it gates only `setBackgroundColor`. `setStyle`
+is ungated, and `StatusBar.load()` calls it on **every launch** with a config default of `DEFAULT`
+("based on the device appearance"). So with both plugins installed and one configured, two of them
+write the same `WindowInsetsControllerCompat` at launch and the later wins — on a dark-mode phone,
+exactly the failure `SystemBars.style: 'LIGHT'` was set to prevent. Worse, `StatusBar.updateStyle()`
+re-applies its own remembered style on every **configuration change**, so a rotation would have undone
+a theme change made through `SystemBars` alone.
+
+**Acted on rather than only recorded, because the fix is configuration and A2's Files list grants
+that.** `capacitor.config.ts` now carries `StatusBar: { style: 'LIGHT' }` beside the `SystemBars`
+block — its `Style.Light` means the same thing, dark content for a light background — and
+`applySystemBarsStyle` sets **both** at runtime. They agree instead of racing. Removing the package is
+still not this plan's call: I0 owns the dependency set and the rule is to write the need down and
+continue, which is what the paragraph above this one does.
+
+**2. `--safe-area-inset-*` exists on Android native and nowhere else, so the reason given above for
+pinning `insetsHandling: 'css'` was backwards.** Those variables are injected by Capacitor's Android
+plugin; iOS and the web have `env()` and nothing else. Offering them to `core.md` as a cross-plan
+contract would have invited shared UI to write `var(--safe-area-inset-bottom)` and get **nothing** on
+two of the three platforms — a worse bug than the one it was meant to prevent. The value is still
+`'css'`, because that is the shipped default and pinning it guards against an upgrade changing the
+layout silently, but the justification is now: **shared UI uses `env(safe-area-inset-*)`**, which
+`TabBar` and `Sheet` already do, and the variables are for reading a value in the WebView inspector,
+which is what A2's device checklist item 3 does with them.
+
+**3. "Nothing else. `TabBar` and `Sheet` are correct as written" was too small a claim. The top inset
+has no owner at all.** `grep -rn "safe-area" apps/app` over both this branch and
+`origin/claude/build-core` finds `env(safe-area-inset-bottom)` on those two components and **nothing
+for the top edge on any branch** — no `padding-top: env(safe-area-inset-top)` on the shell header or
+the screen container. Under edge-to-edge the header draws under the status bar, which is A2's
+criterion 1, unmet, for a reason that is `core.md`'s rather than Android's: the inset arrives
+correctly and nothing consumes it. That half of criterion 1 is **blocked on core**, not failing.
+
+Two more surfaces in the same class, both already in the repo and neither owned by any phase in the
+set: `components/reader/reader-lookup.tsx:143` — `fixed inset-x-0 bottom-0 …`, which holds the "Mark
+known" row — and `components/review/review-session.tsx:336` — `sticky bottom-0 …`, the grade buttons.
+Both sit on the gesture bar on a phone. They need `pb-[env(safe-area-inset-bottom)]` the way `TabBar`
+does.
+
+**So the obligations left with `core.md` are four, not one:**
+
+| # | What | Why it cannot be done here |
+|---|---|---|
+| 1 | Call `applySystemBarsStyle(ground)` from the theme control, on every change and once at start | The theme control is C0's/C7's; A2 owns the function, not its caller |
+| 2 | `pt-[env(safe-area-inset-top)]` on the shell header or screen container | `components/shell/**` and the token layer are `core.md`'s |
+| 3 | `pb-[env(safe-area-inset-bottom)]` on `reader-lookup.tsx`'s fixed panel and `review-session.tsx`'s sticky grade row | `lib/reader/**` and the review screens are `core.md`'s (`wave-zero.md` §7) |
+| 4 | Derive `ground` correctly from all **four** `data-theme` readings | Only C0 knows the theme model |
+
+**On (4), because the obligation as first written was too narrow.** C0's control takes
+`['unset', 'light', 'dark', 'system']`, and `tokens.css` reads them as: unset → Inkstone, `light` →
+Inkstone pinned, `dark` → the dark variant, `system` → follow `prefers-color-scheme`. So
+`ground` is `'light'` for unset and `light`, `'dark'` for `dark`, and for `system` it is
+`matchMedia('(prefers-color-scheme: dark)').matches`. **And in the `system` case there is no theme
+*change* event to hang the call on** — the ground can change while the app is open, with no user
+action — so that case also needs the media query's own `change` listener. A2 cannot write this: it is
+C0's theme model and C0's control.
+
+**4. Three smaller things, all landed.**
+
+- **`wave-zero.md` §10c was cited by number in shipped code** — `capacitor.config.ts`,
+  `lib/platform/system-bars.ts`, `tests/unit/platform/system-bars.test.ts` and `android.md` — in the
+  same session whose HANDOFF section says that section does not exist. They now cite the ruling as
+  relayed, recorded here, and implemented in `core.md` C0's `tokens.css`. (`core.md` C0 has the same
+  citation in `tokens.css` itself; that is C0's to fix, and it is another reason to land the ruling.)
+- **The SDK-literal assertion caught one spelling of three.** `/(?:min|target)SdkVersion\s+\d/` and
+  `/compileSdk\s*=?\s*\d/` between them miss `compileSdkVersion 33` and every `= <n>` form. One
+  pattern now covers all of them, and six mutations — `minSdkVersion 21`, `minSdk = 21`,
+  `compileSdkVersion 33`, `targetSdk 34`, `compileSdk = 30`, `minSdkVersion "21"` — were each run
+  against a copy and each fails the test.
+- **The `gradleValue` comment gave a mutation that would not reproduce.** The comment example has to
+  repeat the key (`// applicationId "com.evil.old"`); a comment that does not is harmless either way.
+  Corrected to the mutation that was actually run.
+
+### Where the Android track stands, and what the next session should not assume
+
+- **A0 is blocked, not complete**, on the Play Console (owner's identity and payment; the policy pages
+  are egress-blocked) and on the device matrix (no phones). Jobs one and the reachable parts of two
+  are done and are above.
+- **A1 is complete apart from its device checklist**, which is written out above. The one criterion
+  that needed a device and got an answer anyway is criterion 7: there is no compile-only gate and
+  there cannot be one in this container.
+- **A2 is complete apart from its device checklist**, with two criteria explicitly blocked on
+  `core.md` — criterion 5 on obligation 1 above, and criterion 1's status-bar half on obligation 2.
+- **A3 is blocked on `web.md` W6**, which has landed on no branch. What could be done without it is
+  done.
+- **A4 onward is not started**, as scoped.
+- The bundle numbers in the A1 section were measured at that commit. At the head of this branch
+  `dist/assets/index-*.js` is **662,145 B** with `grep -c androidBridge` → **0**, and the two
+  Capacitor chunks (7,898 B and 842 B) are still unreferenced by `dist/index.html`.
+- `pnpm lint`, `pnpm typecheck`, `pnpm test` and `pnpm build` are green, `pnpm e2e` is 112 passed, and
+  `git status` is clean after `pnpm run android:sync`.

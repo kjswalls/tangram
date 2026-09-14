@@ -17,15 +17,22 @@ import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const setStyle = vi.fn(() => Promise.resolve());
+const setStatusBarStyle = vi.fn(() => Promise.resolve());
 
 /**
- * The plugin, faked at the module boundary. The real `@capacitor/core` installs
- * the `Capacitor` global as an import side effect and its web `SystemBars` is a
- * stub, so neither the call nor its argument would be observable without this.
+ * Both plugins, faked at the module boundary. The real `@capacitor/core`
+ * installs the `Capacitor` global as an import side effect and its web
+ * `SystemBars` is a stub, so neither the call nor its argument would be
+ * observable without this.
  */
 vi.mock('@capacitor/core', () => ({
   SystemBars: { setStyle },
   SystemBarsStyle: { Dark: 'DARK', Light: 'LIGHT', Default: 'DEFAULT' },
+}));
+
+vi.mock('@capacitor/status-bar', () => ({
+  StatusBar: { setStyle: setStatusBarStyle },
+  Style: { Dark: 'DARK', Light: 'LIGHT', Default: 'DEFAULT' },
 }));
 
 import capacitorConfig from '@/capacitor.config';
@@ -43,6 +50,7 @@ const systemBars = (capacitorConfig.plugins?.SystemBars ?? {}) as {
 afterEach(() => {
   Reflect.deleteProperty(globalThis, 'Capacitor');
   setStyle.mockClear();
+  setStatusBarStyle.mockClear();
 });
 
 describe('SystemBars owns the insets, and nothing else does', () => {
@@ -121,9 +129,19 @@ describe('the manifest does not opt out of edge-to-edge', () => {
 describe('the system bars start legible against the Inkstone ground', () => {
   it("pins 'LIGHT' rather than following the device", () => {
     // `DEFAULT` means "follow the device's dark mode". Inkstone is the default
-    // theme on every device including a dark-preferring one (wave-zero §10c), so
-    // DEFAULT paints white icons over #f8f4ec for anyone whose phone is dark.
+    // theme on every device including a dark-preferring one — the ruling relayed
+    // to this session and recorded in HANDOFF.md, since wave-zero.md carries no
+    // §10c, implemented in core.md C0's tokens.css. So DEFAULT paints white icons
+    // over #f8f4ec for anyone whose phone is dark.
     expect(systemBars.style).toBe('LIGHT');
+  });
+
+  it('gives @capacitor/status-bar the same value, so the two do not race', () => {
+    // StatusBar.load() calls setStyle(config.getStyle()) on every launch and that
+    // path is ungated; its config default is DEFAULT. Left unset, two plugins
+    // write the same WindowInsetsControllerCompat at launch and the later wins.
+    const statusBar = capacitorConfig.plugins?.StatusBar as { style?: string } | undefined;
+    expect(statusBar?.style).toBe(systemBars.style);
   });
 
   it("inverts the vendor's naming exactly once, here", () => {
@@ -142,6 +160,7 @@ describe('the system bars start legible against the Inkstone ground', () => {
     await expect(applySystemBarsStyle('dark')).resolves.toBeUndefined();
     await expect(applySystemBarsStyle('light')).resolves.toBeUndefined();
     expect(setStyle).not.toHaveBeenCalled();
+    expect(setStatusBarStyle).not.toHaveBeenCalled();
   });
 
   it('sets DARK on Android when the app ground is dark, and LIGHT when it is light', async () => {
@@ -153,9 +172,13 @@ describe('the system bars start legible against the Inkstone ground', () => {
 
     await applySystemBarsStyle('dark');
     expect(setStyle).toHaveBeenLastCalledWith({ style: 'DARK' });
+    // And the second owner, or a rotation would snap the bars back: StatusBar
+    // re-applies its own remembered style on every configuration change.
+    expect(setStatusBarStyle).toHaveBeenLastCalledWith({ style: 'DARK' });
 
     await applySystemBarsStyle('light');
     expect(setStyle).toHaveBeenLastCalledWith({ style: 'LIGHT' });
+    expect(setStatusBarStyle).toHaveBeenLastCalledWith({ style: 'LIGHT' });
     // No `bar`, which the plugin reads as both.
     const options = setStyle.mock.calls.map((call) => (call as unknown as [Record<string, unknown>])[0]);
     expect(options).toHaveLength(2);
@@ -169,6 +192,7 @@ describe('the system bars start legible against the Inkstone ground', () => {
       value: { getPlatform: () => 'android', isNativePlatform: () => true },
     });
     setStyle.mockRejectedValueOnce(new Error('not implemented'));
+    setStatusBarStyle.mockRejectedValueOnce(new Error('not implemented'));
 
     await expect(applySystemBarsStyle('dark')).resolves.toBeUndefined();
   });

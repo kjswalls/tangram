@@ -6,8 +6,10 @@
  * safe-area insets and the keyboard — turned out to need no app code: Capacitor
  * 8.5's own `SystemBars` plugin handles it, and `capacitor.config.ts` records
  * the decision. Icon contrast is the part it cannot do for us, and the reason is
- * `wave-zero.md` §10c: **Inkstone, the warm paper palette, is the default on
- * every device, including a dark-preferring one.** So the system bars' own
+ * the Inkstone ruling — relayed to this session and recorded in `HANDOFF.md`,
+ * because **`wave-zero.md` carries no §10c**, and implemented in `core.md` C0's
+ * `tokens.css`: **Inkstone, the warm paper palette, is the default on every
+ * device, including a dark-preferring one.** So the system bars' own
  * `DEFAULT` style — *"based on the device appearance … if the device is using
  * Dark mode, the system bars content will be light"* — puts white icons over a
  * `#f8f4ec` page on any phone set to dark mode, which is the failure criterion 5
@@ -33,14 +35,30 @@
  * the bridge in the web bundle and install the `Capacitor` global in every
  * browser, for a plugin only Android has.
  *
- * **Not `@capacitor/status-bar`,** which I0 pinned for `ios.md` I5 and which is
- * still installed. On Android at `targetSdk` 36 that plugin's colour half is
- * inert by its own logic — `StatusBar.shouldSetStatusBarColor()` returns false
- * outright when the app targets 16 — and its `setOverlaysWebView()` drives the
- * deprecated `setSystemUiVisibility` decor flags, which is exactly the window
- * state `SystemBars` is managing. Two owners of one window is the bug. iOS is
- * unaffected and I5 keeps its choice; this is an Android note, and it is in
- * `HANDOFF.md` rather than acted on, because the dependency set is I0's.
+ * ## `@capacitor/status-bar` is installed, and it is a *live* second owner
+ *
+ * I0 pinned it at 8.0.3 for `ios.md` I5. An earlier version of this comment said
+ * it was inert on Android at `targetSdk` 36 — **that was wrong, and the mistake
+ * is worth keeping visible because it is the kind that reads as reassuring.**
+ * `StatusBar.shouldSetStatusBarColor()` branches on `Build.VERSION.SDK_INT`, the
+ * **device's** API level, not on `targetSdk`; and it gates only
+ * `setBackgroundColor`. `setStyle` is ungated, and `StatusBar.load()` calls it on
+ * every launch with a config default of `DEFAULT` — *"the style is based on the
+ * device appearance"*. So with both plugins installed and only one configured,
+ * two things set the same `WindowInsetsControllerCompat` at launch and the later
+ * one wins, which on a dark-mode phone is the exact failure `SystemBars`'s
+ * `style: 'LIGHT'` was set to prevent. `StatusBar.updateStyle()` re-applies its
+ * own `currentStyle` on every configuration change, so a rotation would undo a
+ * runtime change made only through `SystemBars`.
+ *
+ * Removing the package is not this phase's call — the dependency set is I0's,
+ * and `CLAUDE.md`'s rule is to write the need down and continue. What is this
+ * phase's call is **plugin configuration**, which `android.md` A2's Files list
+ * grants, so both are configured to `LIGHT` and this function sets both. They
+ * agree instead of racing, and it costs one config key and four lines.
+ * `setOverlaysWebView()` is still the thing nothing may call: it drives the
+ * deprecated `setSystemUiVisibility` decor flags, which is the window state
+ * `SystemBars` is managing.
  */
 import { isAndroid } from '@/lib/platform/native';
 
@@ -65,14 +83,25 @@ export function barStyleFor(ground: AppGround): 'LIGHT' | 'DARK' {
 export async function applySystemBarsStyle(ground: AppGround): Promise<void> {
   if (!isAndroid()) return;
 
+  const wanted = barStyleFor(ground);
+
   try {
     const { SystemBars, SystemBarsStyle } = await import('@capacitor/core');
-    const style = barStyleFor(ground) === 'DARK' ? SystemBarsStyle.Dark : SystemBarsStyle.Light;
     // No `bar`, which the plugin reads as "both".
-    await SystemBars.setStyle({ style });
+    await SystemBars.setStyle({ style: wanted === 'DARK' ? SystemBarsStyle.Dark : SystemBarsStyle.Light });
   } catch {
     // An unavailable plugin leaves the bars at whatever the theme gave them,
     // which is legible-by-default rather than wrong. Never a thrown error in a
     // theme switch.
+  }
+
+  try {
+    // The second owner. Not belt and braces: `StatusBar` re-applies its own
+    // remembered style on every configuration change, so without this a rotation
+    // in the dark variant would snap the bars back to the launch value.
+    const { StatusBar, Style } = await import('@capacitor/status-bar');
+    await StatusBar.setStyle({ style: wanted === 'DARK' ? Style.Dark : Style.Light });
+  } catch {
+    // Same reasoning. If I5 ever removes the package this becomes a no-op.
   }
 }

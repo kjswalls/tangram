@@ -110,14 +110,22 @@ const config: CapacitorConfig = {
   plugins: {
     SystemBars: {
       /**
-       * `'css'` is also the shipped default; it is pinned because it is a
-       * cross-plan contract, not a preference. It gives **both** answers —
-       * `env(safe-area-inset-*)`, which `core.md` C1's `TabBar` and `Sheet`
-       * already use, **and** `--safe-area-inset-*` variables. `'native'` is the
-       * vendor's "recommended" and is lighter (no `evaluateJavascript` on every
-       * inset change), but it provides only `env()`, so a later `core.md` phase
-       * writing `var(--safe-area-inset-bottom)` would silently get nothing. A
-       * silent failure in another plan's file is worth more than the round trip.
+       * **`'css'` is the shipped default, pinned rather than relied on**, so a
+       * Capacitor upgrade that changes the default cannot change this app's
+       * layout without a diff. `'native'` is the vendor's "recommended" and is
+       * lighter — no `evaluateJavascript` on every inset change, keyboard shows
+       * and hides included — and it would also be correct here.
+       *
+       * **What `'css'` adds is `--safe-area-inset-*` on `documentElement`, and
+       * those variables exist on Android native and nowhere else.** An earlier
+       * version of this comment had that backwards and offered them to
+       * `core.md` as a cross-plan contract; writing
+       * `var(--safe-area-inset-bottom)` in shared UI would resolve to nothing on
+       * iOS and on the web, which is worse than the failure it was meant to
+       * prevent. **Shared UI uses `env(safe-area-inset-*)`** — which is what
+       * `core.md` C1's `TabBar` and `Sheet` already do, on every platform. The
+       * variables are for reading a value in the WebView inspector, which is
+       * what A2's device checklist does with them.
        *
        * `'disable'` is the one value that breaks the app on a phone: it hands
        * the insets back to code that does not exist.
@@ -136,15 +144,41 @@ const config: CapacitorConfig = {
        * The initial icon contrast, and it is **not** `DEFAULT`.
        *
        * `DEFAULT` follows the *device's* dark mode. Inkstone is the default
-       * theme on every device including a dark-preferring one
-       * (`wave-zero.md` §10c), so `DEFAULT` paints white icons over `#f8f4ec`
-       * for every learner whose phone is in dark mode. `LIGHT` means "dark
-       * content on a light background", which is the warm paper ground.
+       * theme on every device including a dark-preferring one — the ruling
+       * relayed to this session and recorded in `HANDOFF.md`, since
+       * **`wave-zero.md` carries no §10c**, and implemented in `core.md` C0's
+       * `tokens.css` — so `DEFAULT` paints white icons over `#f8f4ec` for every
+       * learner whose phone is in dark mode. `LIGHT` means "dark content on a
+       * light background", which is the warm paper ground.
        *
        * This is the value at launch. `lib/platform/system-bars.ts` is what keeps
        * it right when the learner chooses the dark variant, and `core.md`'s
        * theme control is what calls it.
        */
+      style: 'LIGHT',
+    },
+    /**
+     * **`StatusBar` is a second owner of the same window, so it is configured to
+     * agree rather than to race.**
+     *
+     * I0 pinned `@capacitor/status-bar` for `ios.md` I5 and the dependency set
+     * is I0's, so A2 does not remove it. But it is **not** inert on Android:
+     * `StatusBar.load()` calls `setStyle(config.getStyle())` on every launch,
+     * that path is ungated (only `setBackgroundColor` is gated, and on the
+     * *device's* API level rather than on `targetSdk`), and the config default
+     * is `DEFAULT` — "based on the device appearance". So leaving it unset means
+     * two plugins write the same `WindowInsetsControllerCompat` at launch and the
+     * later one wins, which on a dark-mode phone is exactly the failure the
+     * `SystemBars.style` above exists to prevent. Its `Style.Light` means the
+     * same thing as `SystemBarsStyle.Light` — dark content for a light
+     * background — so one value serves both.
+     *
+     * `lib/platform/system-bars.ts` sets both at runtime for the same reason:
+     * `StatusBar.updateStyle()` re-applies its own remembered style on every
+     * configuration change, so a rotation would otherwise undo a theme change
+     * made through `SystemBars` alone.
+     */
+    StatusBar: {
       style: 'LIGHT',
     },
     /**

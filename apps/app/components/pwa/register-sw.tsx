@@ -46,12 +46,15 @@
  * with the two custom schemes rejected outright as well. That registers on
  * `https://` and on the preview server, and refuses both native WebViews.
  *
- * The predicate is still written inline and dependency-free on purpose:
- * `lib/platform/native.ts` is `ios.md` I0's module to create, and I0 re-points
- * this one call site at it without changing the observable behaviour.
+ * **I0 has now landed `lib/platform/native.ts` and this call site reads it**, as
+ * the sentence that stood here said it would. `shouldRegister` is unchanged and
+ * so is its test: the only edit is that the bridge question is asked in one
+ * place for the whole app instead of inline here.
  */
 
 import { useEffect } from 'react';
+
+import { isNativePlatform } from '@/lib/platform/native';
 
 export const SW_URL = '/sw.js';
 
@@ -69,11 +72,11 @@ export interface RegisterEnvironment {
    *
    * Not "does a `Capacitor` global exist". `@capacitor/core` assigns that global
    * the moment it is *imported*, and there is one build for all three platforms
-   * — so as soon as `ios.md` I0 adds the dependency and anything imports it, the
-   * global exists in the web bundle too and a bare presence test would switch
-   * the web PWA's worker off. `isNativePlatform()` is the question that means
-   * what it says, and the presence test is only the fallback for a bridge too
-   * old to answer it.
+   * — so once anything in the bundle imports it, which it will at the first
+   * plugin call, the global exists in the web bundle too and a bare presence
+   * test would switch the web PWA's worker off. (Not yet: I0 added the
+   * dependency but no module imports it, and the built bundle carries none of
+   * it.) `lib/platform/native.ts` is where that distinction is made and tested.
    */
   isNativePlatform: boolean;
 }
@@ -102,19 +105,13 @@ export function shouldRegister(env: RegisterEnvironment): boolean {
   return env.isSecureContext;
 }
 
-interface CapacitorBridge {
-  isNativePlatform?: () => boolean;
-}
-
 function readEnvironment(): RegisterEnvironment {
-  const bridge = (window as Window & { Capacitor?: CapacitorBridge }).Capacitor;
   return {
     isProduction: import.meta.env.PROD,
     protocol: window.location.protocol,
     hostname: window.location.hostname,
     isSecureContext: window.isSecureContext,
-    isNativePlatform:
-      typeof bridge?.isNativePlatform === 'function' ? bridge.isNativePlatform() : bridge !== undefined,
+    isNativePlatform: isNativePlatform(),
   };
 }
 

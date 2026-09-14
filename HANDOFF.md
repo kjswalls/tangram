@@ -4730,3 +4730,275 @@ all now with a regression test:
 - Three restated declarations were unpinned (`ProviderName`, `AskContext`, `MAX_EXAMPLE_SENTENCES`).
   Pinned. `MAX_EXAMPLE_SENTENCES` is the sharp one: it is simultaneously the edge validator's cap and
   the ceiling `examplesUserPrompt`'s `count = 3` sits under.
+
+## `ios.md` I0 — the shared Capacitor surface, and the facts nobody had read
+
+**Scope of this session: I0 and I1 only.** I2 is the WKWebView crash check and it needs a physical
+iOS 26 device, which this container does not have and cannot simulate. Everything past I1 waits for
+it; the device checklist is at the end of the I1 section below.
+
+### What landed
+
+| File | What it is |
+|---|---|
+| `apps/app/capacitor.config.ts` | `appId` / `appName` / `webDir: 'dist'`. The header carries the deployment-target decision and the three CSS floors that chose it. |
+| `apps/app/lib/platform/native.ts` | The platform seam: `getPlatform()`, `isNativePlatform()`, `isIOS()`, `isAndroid()`, plus `Platform` and `NativePlatform` types. |
+| `apps/app/tests/unit/platform/native.test.ts` | The seam's behaviour, and the criterion-3 rule that no other module reads the `Capacitor` global. |
+| `apps/app/tests/unit/platform/capacitor-config.test.ts` | The CLI-cwd invariant (below), and that `webDir` cannot drift from Vite's `build.outDir`. |
+| `apps/app/package.json` | Seven Capacitor packages pinned, plus `cap` / `cap:sync:ios` / `cap:open:ios`. |
+| `apps/app/tests/unit/deps.test.ts` | Loaders for the six that ship JS; two specs for the two that do not. |
+| `apps/app/components/pwa/register-sw.tsx` | Re-pointed at the seam. Its own header said I0 would do this; `shouldRegister` and its test are unchanged. |
+
+Gates: `pnpm lint`, `pnpm typecheck`, `pnpm test` (1212 app + 75 server), `pnpm build` all green.
+The web bundle went **659.53 kB → 659.70 kB** (+170 bytes) and contains no Capacitor code —
+`grep -c androidBridge apps/app/dist/assets/*.js` → 0. Nothing imports `@capacitor/core` yet; the
+seam reads the global instead, for the reasons in its header.
+
+### Register #12 — the facts, with where each was read
+
+STACK §4 calls this "a five-minute task ... it validates a whole cluster of facts at once", on the
+assumption that the official docs would be readable from an unblocked network. **They are not:
+`capacitorjs.com` is egress-blocked in this container too**, exactly as it was during the audits
+(`EGRESS_BLOCKED` from the proxy, 2026-09-14). So the facts were read from two sources that are
+better than a docs page anyway — **the shipped packages in `node_modules`** and **Apple's own
+release notes** — and the two rows that only a docs page could answer are still open and are marked
+so. Every row was read on **2026-09-14**.
+
+| Fact | Answer | Read from |
+|---|---|---|
+| Capacitor 8.5.x minimum iOS deployment target | **iOS 15.0** (the search snippet was right) | `@capacitor/ios@8.5.2` `Capacitor.podspec` `s.ios.deployment_target = '15.0'`; both Xcode templates' `IPHONEOS_DEPLOYMENT_TARGET = 15.0`; `ios-spm-template` `Package.swift` `platforms: [.iOS(.v15)]`; `@capacitor/cli@8.5.2` `dist/config.js` `minVersion: '15.0'` |
+| Capacitor 8.5.2's Xcode requirement | **STILL UNREAD.** Nothing in the shipped packages states it; `capacitorjs.com` is blocked. The podspec's `swift_version = '5.1'` and the SPM template's `swift-tools-version: 5.9` are floors for *Swift*, not a statement about Xcode. | — |
+| UIScene adoption in 8.5, and what the generated project contains | **Confirmed in the template, ahead of I1's device pass.** `ios/App/App/Info.plist` carries `UIApplicationSceneManifest` → `UISceneConfigurations` → `UIWindowSceneSessionRoleApplication` with `UISceneConfigurationName = Default Configuration`, `UISceneDelegateClassName = $(PRODUCT_MODULE_NAME).SceneDelegate`, `UISceneStoryboardFile = Main`. `SceneDelegate.swift` implements `scene(_:willConnectTo:options:)` and forwards to `SceneDelegateProxy.shared`; `AppDelegate.swift` implements `application(_:configurationForConnecting:options:)`; the framework ships `CAPSceneDelegateProxy.swift`. | both `ios-pods-template.tar.gz` and `ios-spm-template.tar.gz` inside `@capacitor/cli@8.5.2/assets/`, and `@capacitor/ios@8.5.2/Capacitor/Capacitor/` |
+| The official `@capacitor/*` plugin list | **PARTIAL.** Not enumerated from an official page (blocked). The four I5 needs exist on the registry under the `@capacitor` scope at 8.x and are installed: `@capacitor/keyboard` 8.0.5 (keyboard), `@capacitor/status-bar` 8.0.3 (status bar), `@capacitor/splash-screen` 8.0.2 (launch/splash), `@capacitor/app` 8.1.1 (lifecycle: `appStateChange`, `backButton`, `appUrlOpen`). What is unread is whether the official list holds a *fifth* plugin I5 would want. | npm registry `dist-tags.latest`, 2026-09-14 |
+| `@capacitor-community/text-to-speech` 8.0.2's actual API | **Confirmed, and wider than AUDIT 1 recorded.** `speak(TTSOptions)`, `stop()`, `getSupportedLanguages()`, `getSupportedVoices()`, `isLanguageSupported()`, `openInstall()` (Android only), and `addListener('onRangeStart', (info: {start: number; end: number; spokenWord: string}) => void)`. `TTSOptions` = `{text, lang?, rate?, pitch?, volume?, voice?: number, category?: 'ambient'|'playback', queueStrategy?: QueueStrategy}` where `QueueStrategy.Flush = 0` (default) and `Add = 1`. No `pause`/`resume`. | `dist/esm/definitions.d.ts` in the installed package |
+| Does the CLI require `ios/` and `android/` to be siblings of `capacitor.config.ts`, and how is `webDir` resolved? | **Neither. The CLI resolves everything from `process.cwd()`** — see the next section. | `@capacitor/cli@8.5.2` `dist/config.js` |
+| Which Safari ships with which iOS | **Safari 18.2 → iOS 18.2; 17.2 → iOS 17.2; 16.4 → iOS 16.4.** | Apple release notes: [18.2](https://developer.apple.com/documentation/safari-release-notes/safari-18_2-release-notes), [17.2](https://developer.apple.com/documentation/safari-release-notes/safari-17_2-release-notes), [16.4](https://developer.apple.com/documentation/safari-release-notes/safari-16_4-release-notes) |
+| Can a free personal team install a debug build on a registered device? | **Yes, with limits that bite.** Verbatim: *"To install and test your apps on a personal device, you'll need to sign in to your Apple Account in Xcode. If your account is not associated with a developer program membership, Xcode will indicate it's a Personal Team."* — *"You can register up to 3 devices, which expire after 7 days."* — *"You can install up to 3 apps per device. Provisioning profiles that enable apps to be installed on a device will expire 7 days from issuance. You'll need to rebuild and reinstall your app to your device after expiration."* TestFlight and App Store Connect are listed as membership-only. | [developer.apple.com/support/compare-memberships](https://developer.apple.com/support/compare-memberships/) |
+| Does a blob / `<a download>` save work inside a Capacitor WKWebView? | **STILL UNREAD.** No primary source found that is not a blocked docs page. It stays I7's device check (`ios.md` R9), and `web.md` W5's export remains untested on iOS. | — |
+
+**Two rows are still open and they are not soft.** The Xcode requirement decides the toolchain and
+the blob-download answer decides whether the v1 durability story works on a phone. Both need either
+an unblocked network or the device. Do not let a later phase quietly treat them as settled.
+
+### The CLI resolves everything from `process.cwd()` — the one rule that keeps the layout working
+
+`@capacitor/cli@8.5.2` `dist/config.js`:
+
+```js
+const appRootDir = process.cwd();
+const conf = await loadExtConfig(appRootDir);   // resolve(rootDir, 'capacitor.config.ts') — NO upward walk
+webDirAbs:      resolve(appRootDir, webDir)
+platformDirAbs: resolve(rootDir, extConfig.ios?.path ?? 'ios')
+```
+
+So the config file's own location is never consulted, `ios/` and `android/` are siblings of it only
+because both resolve from the same cwd, and `ios.path` could move them. **What makes
+`webDir: 'dist'` correct is that the CLI is always run with cwd `apps/app/`** — which is what the
+`cap*` scripts in `apps/app/package.json` are for. `tests/unit/platform/capacitor-config.test.ts`
+holds the rule, including a root-script guard that judges the *cwd* rather than the token, so
+`pnpm -F app cap sync android` (the line `android.md` A1 adds) passes and a bare `cap sync` at the
+root fails.
+
+One correction to what an earlier draft of that file claimed: running the CLI from the workspace
+root is **not** silent. `checkWebDir` (`dist/common.js`) refuses a `webDir` that is missing or has no
+`index.html`, and the sync stops with `[error] Could not find the web assets directory: ./www` —
+run in this repo to check. The failure that *is* silent is drift between `webDir` and Vite's
+`build.outDir` while a stale `dist/` is still on disk, since `dist/` is gitignored and survives an
+`outDir` change. That is what the test covers.
+
+### The deployment target: iOS 18.2
+
+Set from the three CSS floors the reader depends on, highest wins (`ios.md` I0's floor table):
+`ruby-align`/`ruby-overhang`/unprefixed `ruby-position` needs Safari 18.2 → **iOS 18.2**; the CSS
+Custom Highlight API needs 17.2 → iOS 17.2; `user-select: none` excluded from copy needs 16.4 → iOS
+16.4. Capacitor's own floor is 15.0, so nothing in the toolchain objects. There are no users to
+strand and raising a target is free today and expensive later. The cost, stated rather than hidden:
+iOS 18.2 shipped December 2024 and every device that cannot run it is excluded. It is one build
+setting (`IPHONEOS_DEPLOYMENT_TARGET`) if the owner wants it lower — and if he does, the three floors
+above are what he is trading away, in that order.
+
+**`-webkit-ruby-position` is not emitted** — the question `core.md` C3 handed to this phase by name.
+Unprefixed `ruby-position` shipped in Safari 18.2 and the target is 18.2, so the prefix would be dead
+bytes on every supported device.
+
+### The shared surface `android.md` inherits
+
+`android.md` §2 takes this side of the bargain: whichever mobile plan lands the surface records it
+here and the other reviews and extends it. It is settled as follows, and **A1 should treat it as
+given**:
+
+- **`apps/app/capacitor.config.ts`**, with `apps/app/ios/` and `apps/app/android/` beside it and
+  `webDir: 'dist'` — exactly what `android.md` §2 already says. The cwd rule above is the reason.
+- **`apps/app/lib/platform/native.ts`** exports `getPlatform(): 'ios' | 'android' | 'web'`,
+  `isNativePlatform(): boolean`, `isIOS()`, `isAndroid()`, and the types `Platform` /
+  `NativePlatform`. It reads the `Capacitor` global rather than importing `@capacitor/core`, because
+  that package installs the global as an *import side effect* in any runtime including Node, and the
+  module has to stay importable under Node and jsdom with no Capacitor present.
+  - **One deliberate asymmetry, pinned by a test:** for an unknown native platform (a bridge
+    reporting, say, `'electron'`), `isNativePlatform()` is `true` — so no service worker — while
+    `getPlatform()` reports `'web'`, because the web implementation is the only one this build has
+    for it. Each answer degrades safely for its own callers. Do not "fix" one to match the other.
+- **The TTS adapter is one file for both platforms, `apps/app/lib/tts/capacitor.ts`**, created by I4
+  and extended by A4. This phase did not create it and must not (`wave-zero.md` §11).
+- **Reading the `Capacitor` global outside the seam is a test failure.** *Importing*
+  `@capacitor/core` for something that is not platform detection — `convertFileSrc`,
+  `registerPlugin`, which `data.md` D5a will need — stays legal. The rule is that the *platform
+  question* has one answer-site.
+- `@capacitor/android` is **not** installed here. A1 adds it; the five plugins and `@capacitor/core`
+  are already pinned and need no second decision.
+
+### The plugins, pinned
+
+| Package | Version | For | Section |
+|---|---|---|---|
+| `@capacitor/core` | 8.5.2 | the bridge | dependency |
+| `@capacitor/cli` | 8.5.2 | `cap add` / `cap sync` | devDependency |
+| `@capacitor/ios` | 8.5.2 | native sources + podspecs; **no importable JS entry point** | devDependency |
+| `@capacitor-community/sqlite` | 8.1.1 | I3, the bundled dictionary | dependency |
+| `@capacitor-community/text-to-speech` | 8.0.2 | I4 | dependency |
+| `@capacitor/keyboard` | 8.0.5 | I5 | dependency |
+| `@capacitor/status-bar` | 8.0.3 | I5 | dependency |
+| `@capacitor/splash-screen` | 8.0.2 | I5/I6 | dependency |
+| `@capacitor/app` | 8.1.1 | I5 lifecycle | dependency |
+
+Every version matches STACK §6 exactly; all were re-checked against the npm registry on 2026-09-14
+(`@capacitor-community/safe-area` is 8.0.1, which STACK §6 records as "version not recorded" — it is
+`android.md`'s to install, so it is noted here rather than added).
+
+`@capacitor/ios` and `@capacitor/cli` are devDependencies because they export no JavaScript the
+bundle can import; `deps.test.ts` asserts both directions. **The section they sit in does not affect
+`cap sync`**: `@capacitor/cli` `dist/plugin.js` `getDependencies()` concatenates `dependencies` and
+`devDependencies`. An earlier version of that comment said "dependencies only", which was a
+case-sensitive grep for `dependencies` failing to match `devDependencies`; it is corrected in the
+file and recorded here because a plausible false fact about a build tool outlives its author.
+
+### The device matrix — every role unavailable
+
+`ios.md` §4.2 requires this table and says that an unassigned role means the dependent phases are
+**blocked, not softened**. This session is a Linux container with no Apple hardware of any kind.
+
+| Role | Device | State | Blocks |
+|---|---|---|---|
+| **The primary** | **NONE** | — | I1's device pass, I2, I3, I4, I5, I6 |
+| **The clean target** | **NONE** | — | I7 criterion 2 (must never have had a development build) |
+| **The smallest** | **NOT DECIDED** — this is a decision, not a device, and it needs the owner | — | I5 criterion 3 |
+| **The oldest** | **NONE** | — | R5, I3's cold-start number |
+| device state: **wiped** | **NONE** | — | I3 criterion 1 |
+| device state: **near-full** | **NONE** | — | register #18's storage half |
+
+Also missing: **a Mac with Xcode 26**. Without it there is no iOS build at all.
+
+The owner fills this table in. One row of it is cheap and worth doing before the hardware arrives:
+**"the smallest supported device", as a point size.** I5 invents it otherwise.
+
+### The Apple Developer Program
+
+**Not submitted — this session cannot.** Enrolment needs the owner's Apple ID, his legal identity and
+a payment, and none of that belongs to an automated build session. It is the longest non-hardware
+lead time in the plan and it gates I7.
+
+What this phase *could* settle, and did, is the question that decides whether I1 must wait for it:
+**it need not.** A free personal team installs a debug build on a registered device (quoted above),
+so I1 can run as soon as there is a Mac and a phone. The limits are real and belong in the plan:
+3 devices, 3 apps per device, and **profiles expire 7 days from issuance** — so an unpaid I1 build
+stops launching a week later and must be rebuilt. Note also that §4.2's matrix wants up to four
+device roles and the free tier registers three.
+
+### The `appId` is provisional, and it is the one thing here that is hard to undo
+
+`com.kjswalls.tangram`. **No document in this repo records a domain** — `docs/` and the manifest have
+no apex, and the reverse-DNS id is conventionally one the owner controls. This is a placeholder keyed
+to the GitHub account, not a decision this session could make, and after the first App Store Connect
+upload it can never change (`ios.md` I6).
+
+To change it, before I7: `apps/app/capacitor.config.ts` (`appId`) and then `pnpm -F app cap sync ios`
+— the CLI rewrites `PRODUCT_BUNDLE_IDENTIFIER` in `ios/App/App.xcodeproj/project.pbxproj` and
+`ios/App/App/capacitor.config.json` from the config. On Android the same `appId` becomes
+`applicationId` and the `namespace`, which is why it is recorded here rather than in an iOS-only note.
+
+### What I found wrong in `ios.md`, `wave-zero.md` and `STACK.md`
+
+1. **`wave-zero.md` has no §10b and no §10c.** This session was handed two rulings by those numbers —
+   *C7 is not gated on C5b*, and *the default theme is Inkstone, the warm paper palette, with the
+   desktop palette shell deferred indefinitely*. Neither is in `docs/plans/wave-zero.md` at HEAD,
+   whose §10 ends at row 16e, and neither phrase appears anywhere in the repo (`grep -rn
+   "10b\|10c\|Inkstone" docs/ HANDOFF.md` → nothing). Both rulings are recorded here so they are not
+   lost, but **the rulings document does not carry them**, and a session that reads only
+   `wave-zero.md` will not find them. Somebody with authority over that file should land them; the
+   C7/C5b one is the unresolved half of verification-register **V1**, which `docs/plans/README.md`
+   calls the most expensive scheduling mistake available.
+2. **I0 never names `@capacitor/ios`,** although it tells the builder to name the plugins "all of
+   them, here", and `cap add ios` cannot run without it. Installed at 8.5.2.
+3. **I6 says the bundle identifier is "fixed at I0". I0 never mentions `appId`.** Handled above.
+4. **I1 says to "record which dependency manager the generated project uses", as if it were a fact to
+   read off. It is a choice the CLI makes for you.** `cap add ios` in 8.5.2 defaults to the **SPM**
+   template; `--packagemanager CocoaPods` selects the Pods template. Decided in I1 below.
+5. **I0 criterion 3's grep names three source directories and the app has four.** `apps/app/app/`
+   survived the Vite move and still holds live view components (`app/(today)/today-view.tsx`,
+   `app/settings/settings-form.tsx`, `app/settings/attribution.tsx`, all imported by `src/routes/`)
+   plus the API route contracts. The test walks every app source directory instead of the three.
+6. **STACK §4's "five-minute task" for register #12 assumes an unblocked network.** `capacitorjs.com`
+   is blocked here too. The installed packages answered more of it than a docs page would have, and
+   two rows remain open (above).
+7. **STACK §6's `@capacitor/core` row said `iOS 15+ *(search)*`.** The iOS floor is now verified
+   against the shipped artifacts and the row is updated; the *Xcode 26* half of the same cell is
+   still search-sourced and now says so.
+8. **`ios.md` I4's own open questions are partly answerable without a device, and two of its premises
+   are wrong.** Recorded in the I4 note below rather than acted on — this session does not own I4.
+
+### A note for I4, since the reading pass turned it up anyway
+
+Read from the installed `@capacitor-community/text-to-speech@8.0.2` Swift sources
+(`ios/Sources/TextToSpeechPlugin/`), not from a device. **Confirm all of it on hardware before
+building on it**, but do not re-derive it:
+
+- **`speak()` resolves when the utterance *finishes*, not when it is queued** — `didFinish` and
+  `didCancel` both call `resolveCurrentCall()`. That is the opposite of `lib/tts/provider.ts`'s
+  current documented semantics, which `core.md` C2 is widening.
+- **Calling `speak()` while speaking does not error.** `queueStrategy` defaults to `Flush`, which
+  calls `stopSpeaking(at: .immediate)` first; `Add` enqueues.
+- **The pending calls are a plain FIFO array** (`calls`), resolved one per delegate callback. Reading
+  the code, two hazards follow and both land exactly on I4's per-character slow mode: a `Flush` that
+  cancels utterance *n* resolves whichever call is at the head of that array, and utterances that are
+  queued but never started may produce no delegate callback at all — so a stopped sequence can leave
+  promises that never settle. **This is a code reading, not a measurement.** It is the first thing to
+  test on a device, and it is what R8's "pre-queue the whole sequence in one call" would run into.
+- **`rate` is remapped**: `rate < 1` becomes `rate * AVSpeechUtteranceDefaultSpeechRate`. So product
+  rule 3's 0.6× is 0.6 × 0.5 = 0.3 in `AVSpeechUtterance` terms, not 0.6.
+- **The documented `category: 'ambient' | 'playback'` option is dead on iOS in 8.0.2.** It is parsed,
+  passed to `TextToSpeech.speak(...)`, and then never used: there is no `AVAudioSession` reference
+  anywhere in the plugin's iOS sources (`grep -rn "AVAudioSession\|setCategory" ios/` → nothing), and
+  the synthesizer is constructed with `usesApplicationAudioSession = false`. AUDIT 1 recorded the
+  community plugin's audio session as "unstated" and `@capgo/capacitor-speech-synthesis` as the
+  alternative with explicit control; the plugin is worse than unstated — it advertises the option.
+  R7's mitigation is more likely to be needed than R7 assumes.
+- `getSupportedVoices()` returns a voice list and `TTSOptions.voice` is an **index into it**, so
+  I4's enhanced-voice selection is possible; whether the list distinguishes compact from enhanced is
+  still a device question.
+
+### The adversarial review
+
+Four independent lenses (acceptance criteria; what breaks that no test covers; the seam with
+`android.md`/`data.md`/`core.md`; is every claim actually supported), then two skeptics per finding —
+one trying to refute the facts, one judging whether the fix was worth landing. 21 findings raised,
+12 survived, 9 killed. What the survivors changed, deduplicated:
+
+- **This whole HANDOFF section did not exist.** Four findings across three lenses said so. Criteria 1,
+  5 and 6 are HANDOFF deliverables, `HANDOFF.md` is in I0's Files list, `android.md` §2 expects the
+  surface recorded here, and `capacitor.config.ts` pointed at a section that was not written.
+- **The root-script guard banned the token `cap`,** which fails `pnpm -F app cap sync android` — the
+  line `android.md` A1 adds. It judges cwd now, and a table of commands pins what it discriminates.
+- **`deps.test.ts` stated as fact that `cap sync` ignores `devDependencies`.** It does not (above).
+- **`capacitor.config.ts` claimed the wrong-cwd failure is silent.** It is not; the genuinely silent
+  case is narrower and is what the test now says it covers.
+- **The seam-scan covered three of four source directories.**
+- **`register-sw.tsx` was edited into a false present tense** — "the global exists in the web bundle
+  too" — when nothing imports `@capacitor/core` yet, which the bundle evidence in this very section
+  disproves. The conditional is restored.
+- **"`@capacitor/ios` ships no JavaScript at all"** — it ships the 53 KB `native-bridge.js` that
+  `native.ts` cites by path. The supportable claim is "no importable entry point".
+
+Killed, with reasons in the run: that the seam test should also ban `import { Capacitor } from
+'@capacitor/core'` (it would block `convertFileSrc`, which `data.md` D5a needs); that the `cap`
+script set needs per-subcommand aliases (`"cap": "cap"` already passes everything through); that the
+`appId` remediation note was iOS-only (`android.md` A6a owns its half and says so).

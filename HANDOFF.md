@@ -5442,8 +5442,11 @@ is already asserted by `tests/unit/pwa/manifest.test.ts:100`. Not duplicated.
 
 Four independent lenses — acceptance criteria; what breaks that no test covers; the seams with
 `core.md`, `web.md` and `ios.md`; is every claim actually supported — then two skeptics per finding,
-one trying to refute the fact and one judging whether the fix belonged to this session at all. What
-the survivors changed, deduplicated:
+one trying to refute the fact and one judging whether the fix belonged to this session at all.
+**24 findings raised, 4 survived both skeptics**, and that ratio needs a caveat rather than a boast:
+most of the twenty were killed by the *judge* on the ground that the fix had already landed while the
+review was still running, because the findings were acted on as they arrived rather than at the end.
+Every one of the four survivors is fixed too. What the findings changed, deduplicated:
 
 **The model was wrong in four ways, and only one of them was visible from inside it.**
 

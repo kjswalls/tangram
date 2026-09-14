@@ -14,7 +14,7 @@
  * — and treating it as generated means every edit is lost on the next
  * regeneration.
  */
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
@@ -27,10 +27,23 @@ const ANDROID = resolve(APP, 'android');
 
 const read = (relative: string) => readFileSync(resolve(ANDROID, relative), 'utf8');
 
-/** `key = 24` / `key 24` / `key "24"`, which Gradle spells all three ways. */
+/**
+ * `key = 24` / `key 24` / `key "24"`, which Gradle spells all three ways.
+ *
+ * **Anchored to the start of a line and refusing a comment**, because the naive
+ * form takes the *first* occurrence anywhere in the file: a hand edit that
+ * changes `applicationId` and leaves a `// was com.kjswalls.tangram` above it
+ * reads the comment and passes. `^` with the `m` flag plus the comment guard is
+ * what makes the assertion about the declaration rather than about the text.
+ */
 function gradleValue(source: string, key: string): string | undefined {
-  const match = new RegExp(`\\b${key}\\b\\s*=?\\s*["']?([\\w.]+)["']?`).exec(source);
+  const match = new RegExp(`^(?!\\s*(?://|#))\\s*(?:ext\\.)?${key}\\b\\s*=?\\s*["']?([\\w.]+)["']?`, 'm').exec(source);
   return match?.[1];
+}
+
+/** How many times a key is *declared* (not mentioned) in a Gradle file. */
+function gradleDeclarations(source: string, key: string): number {
+  return source.match(new RegExp(`^(?!\\s*(?://|#))\\s*(?:ext\\.)?${key}\\b\\s*=?\\s*["']?[\\w.]`, 'gm'))?.length ?? 0;
 }
 
 describe('SDK levels (A1 criterion 3)', () => {
@@ -47,6 +60,9 @@ describe('SDK levels (A1 criterion 3)', () => {
     ['targetSdkVersion', '36'],
   ])('declares %s = %s', (key, expected) => {
     expect(gradleValue(variables, key)).toBe(expected);
+    // Exactly one declaration: a second one further down would be the value
+    // Gradle actually uses and the first is what this test would have read.
+    expect(gradleDeclarations(variables, key), `${key} declared more than once`).toBe(1);
   });
 
   it('makes the app module read them rather than restating them', () => {
@@ -57,6 +73,13 @@ describe('SDK levels (A1 criterion 3)', () => {
     for (const key of ['compileSdkVersion', 'minSdkVersion', 'targetSdkVersion']) {
       expect(app, key).toMatch(new RegExp(`rootProject\\.ext\\.${key}`));
     }
+    // And that no literal sits beside the reference. Asserting the reference
+    // exists is not the same claim: `minSdkVersion 21` added on the line below
+    // would win, and the loop above would still pass.
+    expect(app, 'a literal min/targetSdkVersion overrides the shared one').not.toMatch(
+      /(?:min|target)SdkVersion\s+\d/,
+    );
+    expect(app, 'a literal compileSdk overrides the shared one').not.toMatch(/compileSdk\s*=?\s*\d/);
   });
 });
 
@@ -178,6 +201,30 @@ describe('the gitignore rules that keep large and secret files out (A1 criterion
   });
 });
 
+describe("Capacitor's example tests are gone, and must not come back", () => {
+  /**
+   * `cap add android` ships two of them, and **one is guaranteed red**:
+   * `ExampleInstrumentedTest.useAppContext()` asserts
+   * `assertEquals("com.getcapacitor.app", appContext.getPackageName())` against
+   * a project whose `applicationId` is this app's. The other asserts that
+   * 2 + 2 is 4.
+   *
+   * They are deleted rather than corrected. `android.md` §7 puts automated
+   * device testing out of scope for v1 in terms — *"unit-tested adapters in the
+   * container, a compile-only gate if A1 can install the SDK, and written
+   * per-phase device checklists … say that out loud rather than implying
+   * coverage that does not exist"* — and a corrected version of either would
+   * assert nothing about this app while implying a native test story that has
+   * not been built. A red that means nothing is worse than no test: the first
+   * person to run `connectedAndroidTest` spends an afternoon on it.
+   */
+  it('ships no com.getcapacitor.myapp sources', () => {
+    for (const dir of ['app/src/androidTest', 'app/src/test']) {
+      expect(existsSync(resolve(ANDROID, dir)), `${dir} is back`).toBe(false);
+    }
+  });
+});
+
 describe('the build command is one command', () => {
   const rootScripts = (
     JSON.parse(readFileSync(resolve(APP, '..', '..', 'package.json'), 'utf8')) as {
@@ -191,6 +238,12 @@ describe('the build command is one command', () => {
     // A5 inserts its asset copy between the build and the sync.
     const sync = rootScripts['android:sync'];
     expect(sync).toBeDefined();
+    // Presence first. `indexOf` returns -1 for a missing step, so an ordering
+    // assertion alone is vacuously true for exactly the step whose loss matters
+    // most: delete `data:ensure` and -1 < everything, green.
+    for (const step of ['data:ensure', '-F app build', 'cap sync android']) {
+      expect(sync, `android:sync no longer runs ${step}`).toContain(step);
+    }
     expect(sync.indexOf('data:ensure')).toBeLessThan(sync.indexOf('-F app build'));
     expect(sync.indexOf('-F app build')).toBeLessThan(sync.indexOf('cap sync android'));
   });

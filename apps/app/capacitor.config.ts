@@ -78,6 +78,85 @@ const config: CapacitorConfig = {
   appId: 'com.kjswalls.tangram',
   appName: 'Tangram',
   webDir: 'dist',
+
+  /**
+   * Plugin configuration — `android.md` A2's half of this file. I0 owns the
+   * three keys above; A2's Files list claims "plugin configuration only".
+   *
+   * **`SystemBars` is Capacitor 8.5's own plugin and it is the whole of A2's
+   * inset story.** `android.md` A2 was written against
+   * `@capacitor-community/safe-area`, on the reading that a plugin would publish
+   * inset values for the shell to read from CSS variables. Neither half survived
+   * contact with the shipped code:
+   *
+   * - The community plugin publishes nothing. Its entire JS API is
+   *   `setSystemBarsStyle` / `showSystemBars` / `hideSystemBars`; it is a
+   *   *polyfill*, which pads the WebView below Chromium 140 and lets `env()`
+   *   through above it.
+   * - **Capacitor core already does exactly that**, in
+   *   `@capacitor/android@8.5.2` `plugin/SystemBars.java`:
+   *   `WEBVIEW_VERSION_WITH_SAFE_AREA_FIX = 140`, a `viewport-fit=cover` probe
+   *   evaluated against the live document, `setPadding(0, 0, 0, keyboardVisible
+   *   ? imeInsets.bottom : 0)` for the keyboard, and — in `css` mode —
+   *   `--safe-area-inset-{top,right,bottom,left}` set on `documentElement`.
+   *   Installing the community plugin on top of it would put two owners on one
+   *   window, which is why that plugin's own README tells you to set
+   *   `insetsHandling: 'disable'` first.
+   *
+   * So the Android dependency STACK §2.1 calls mandatory is **not installed**,
+   * and A2 is configuration plus one module for the thing configuration cannot
+   * do (`lib/platform/system-bars.ts`).
+   */
+  plugins: {
+    SystemBars: {
+      /**
+       * `'css'` is also the shipped default; it is pinned because it is a
+       * cross-plan contract, not a preference. It gives **both** answers —
+       * `env(safe-area-inset-*)`, which `core.md` C1's `TabBar` and `Sheet`
+       * already use, **and** `--safe-area-inset-*` variables. `'native'` is the
+       * vendor's "recommended" and is lighter (no `evaluateJavascript` on every
+       * inset change), but it provides only `env()`, so a later `core.md` phase
+       * writing `var(--safe-area-inset-bottom)` would silently get nothing. A
+       * silent failure in another plan's file is worth more than the round trip.
+       *
+       * `'disable'` is the one value that breaks the app on a phone: it hands
+       * the insets back to code that does not exist.
+       */
+      insetsHandling: 'css',
+      /**
+       * We *know* the meta tag says `cover` — `index.html` sets it and
+       * `tests/unit/pwa/manifest.test.ts` holds it there — and the plugin's
+       * probe cannot run until the document commits. Telling it up front is
+       * purely to stop the first paint laying out at the wrong inset and then
+       * jumping. `tests/unit/platform/system-bars.test.ts` fails if this and the
+       * meta tag ever disagree.
+       */
+      initialViewportFitValueHint: 'cover',
+      /**
+       * The initial icon contrast, and it is **not** `DEFAULT`.
+       *
+       * `DEFAULT` follows the *device's* dark mode. Inkstone is the default
+       * theme on every device including a dark-preferring one
+       * (`wave-zero.md` §10c), so `DEFAULT` paints white icons over `#f8f4ec`
+       * for every learner whose phone is in dark mode. `LIGHT` means "dark
+       * content on a light background", which is the warm paper ground.
+       *
+       * This is the value at launch. `lib/platform/system-bars.ts` is what keeps
+       * it right when the learner chooses the dark variant, and `core.md`'s
+       * theme control is what calls it.
+       */
+      style: 'LIGHT',
+    },
+    /**
+     * **`Keyboard` gets no configuration, and that is the configuration.**
+     * `SystemBars.warnAboutUnsupportedConfigurationValues()` logs a warning when
+     * `Keyboard.resizeOnFullScreen` is set alongside any non-`disable`
+     * `insetsHandling`, because both would then resize for the keyboard. The
+     * plugin is installed (I0 pinned it for `ios.md` I5) and is simply left
+     * unconfigured here. A unit test holds that, because the symptom is a layout
+     * that is wrong only while a keyboard is open on a device.
+     */
+  },
 };
 
 export default config;

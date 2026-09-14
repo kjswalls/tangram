@@ -122,13 +122,26 @@ describe('rule 2 — pop the current tab before leaving it', () => {
     expect(nav.snapshot().depth).toBe(1);
   });
 
-  it('re-entering a tab root resets that tab to its root', () => {
-    const nav = createBackNavigation(THREE);
-    nav.visit('/library');
-    nav.visit('/library/hsk-1');
-    nav.visit('/library');
+  it('treats re-entering a tab root as the ordinary history entry it is', () => {
+    // Tapping the tab you are already on pushes, so back returns to the page you
+    // left — which is what the browser would do and what the router reports. A
+    // shell that wants "tap the current tab to go home" navigates with `replace`,
+    // and the model collapses that instead of leaving a duplicate to pop through.
+    const push = createBackNavigation(THREE);
+    push.visit('/library');
+    push.visit('/library/hsk-1');
+    push.visit('/library');
+    // Two entries below, both in this tab: the detail page and the first visit
+    // to the root. `depth` counts the run, not one step of it.
+    expect(push.snapshot().depth).toBe(2);
+    expect(push.handleBack({ overlayOpen: false })).toEqual({ type: 'pop' });
 
-    expect(nav.snapshot().depth).toBe(0);
+    const replace = createBackNavigation(THREE);
+    replace.visit('/library');
+    replace.visit('/library/hsk-1');
+    replace.visit('/library', 'REPLACE');
+    expect(replace.snapshot()).toMatchObject({ depth: 0, historyDepth: 0 });
+    expect(replace.handleBack({ overlayOpen: false })).toEqual({ type: 'background' });
   });
 
   it('ignores a repeated arrival at the same path', () => {
@@ -250,5 +263,115 @@ describe("the seven-route shell A1 actually ships against", () => {
 
   it('refuses an empty tab list rather than deciding nothing', () => {
     expect(() => createBackNavigation([])).toThrow(/at least one tab/);
+  });
+});
+
+describe('the four hazards that only show up on a device', () => {
+  it('never claims a pop the router cannot perform — a cold start below a tab root', () => {
+    // A deep link, or a restored session, lands straight on /lists/abc. The tab
+    // has a page below its root and `navigate(-1)` has nowhere to go: pressing
+    // back would do nothing at all, which reads as a broken button.
+    const nav = createBackNavigation(SEVEN);
+    nav.visit('/lists/abc', 'POP');
+
+    expect(nav.snapshot()).toMatchObject({ current: '/lists', depth: 0, historyDepth: 0 });
+    expect(nav.handleBack({ overlayOpen: false })).toEqual({ type: 'background' });
+  });
+
+  it('does not promise a pop that would land in a different tab', () => {
+    // /lists/N entered straight from /stats: the *tab* has a page below it, but
+    // the history entry below is /stats. A model that answered "pop" here would
+    // promise to stay in the tab and leave it. Repeated, so a stale per-tab
+    // stack would also show up as an unbounded depth.
+    const nav = createBackNavigation(SEVEN);
+    nav.visit('/', 'POP');
+    for (let i = 0; i < 5; i += 1) {
+      nav.visit('/stats');
+      nav.visit(`/lists/${i}`);
+      expect(nav.snapshot().depth, `cycle ${i}`).toBe(0);
+      expect(nav.handleBack({ overlayOpen: false })).toEqual({ type: 'switch-tab', to: '/stats' });
+      nav.visit('/stats'); // the echo of the switch
+    }
+    expect(nav.snapshot()).toMatchObject({ current: '/stats', depth: 0 });
+  });
+
+  it('does promise a pop when the entry below really is in this tab', () => {
+    const nav = createBackNavigation(SEVEN);
+    nav.visit('/', 'POP');
+    nav.visit('/lists');
+    nav.visit('/lists/abc');
+
+    expect(nav.snapshot()).toMatchObject({ current: '/lists', depth: 1 });
+    expect(nav.handleBack({ overlayOpen: false })).toEqual({ type: 'pop' });
+  });
+
+  it('does not send the learner back to the tab they are standing in', () => {
+    // Today -> Look up -> Review -> Look up. Back must walk out through Review
+    // and Today, never returning to Look up on the way.
+    const nav = createBackNavigation(SEVEN);
+    nav.visit('/', 'POP');
+    nav.visit('/lookup');
+    nav.visit('/review');
+    nav.visit('/lookup');
+
+    const walk: string[] = [];
+    for (let press = 0; press < 6; press += 1) {
+      const action = nav.handleBack({ overlayOpen: false });
+      if (action.type !== 'switch-tab') {
+        walk.push(action.type);
+        break;
+      }
+      walk.push(action.to);
+      nav.visit(action.to); // the router echo the mount produces
+    }
+
+    expect(walk).toEqual(['/review', '/', 'background']);
+  });
+
+  it("files a path under no tab root with the learner's tab, not with '/'", () => {
+    // '/' is a tab root, not a namespace. As a prefix it matches everything, so
+    // an entry opened from Look up would be filed under Today and back would
+    // leave the tab.
+    const nav = createBackNavigation(SEVEN);
+    nav.visit('/', 'POP');
+    nav.visit('/lookup');
+    nav.visit('/entry/中文');
+
+    expect(nav.snapshot()).toMatchObject({ current: '/lookup', depth: 1 });
+    expect(nav.handleBack({ overlayOpen: false })).toEqual({ type: 'pop' });
+  });
+
+  it('ignores a query string and a hash', () => {
+    // A search box that writes ?q= on every keystroke must not look like a
+    // history entry per character.
+    const nav = createBackNavigation(SEVEN);
+    nav.visit('/', 'POP');
+    nav.visit('/lookup');
+    nav.visit('/lookup?q=%E4%BD%A0');
+    nav.visit('/lookup?q=%E4%BD%A0%E5%A5%BD');
+    nav.visit('/lookup#results');
+
+    expect(nav.snapshot()).toMatchObject({ current: '/lookup', depth: 0 });
+    expect(nav.handleBack({ overlayOpen: false })).toEqual({ type: 'switch-tab', to: '/' });
+  });
+});
+
+describe('two presses before the router answers the first', () => {
+  it('re-issues the same switch instead of popping two tabs', () => {
+    // A phone delivers two presses inside one frame happily enough, and
+    // `handleBack` mutates: without this, one arrival consumes two entries of
+    // the most-recently-visited stack, a tab is skipped on the way out, and the
+    // app backgrounds a press early.
+    const nav = createBackNavigation(THREE);
+    nav.visit('/lookup');
+    nav.visit('/library');
+    nav.visit('/practice');
+
+    expect(nav.handleBack({ overlayOpen: false })).toEqual({ type: 'switch-tab', to: '/library' });
+    expect(nav.handleBack({ overlayOpen: false })).toEqual({ type: 'switch-tab', to: '/library' });
+
+    nav.visit('/library'); // the one arrival both presses produce
+    expect(nav.snapshot().mru).toEqual(['/lookup']);
+    expect(nav.handleBack({ overlayOpen: false })).toEqual({ type: 'switch-tab', to: '/lookup' });
   });
 });

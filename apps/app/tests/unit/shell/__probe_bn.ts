@@ -10,8 +10,7 @@
  * rather than writing a second one — see `HANDOFF.md`.
  *
  * **Nothing here is Android-specific and nothing here imports Capacitor.** The
- * model is a plain state machine over (the history, the current tab, the
- * most-recently-visited tabs),
+ * model is a plain state machine over (tab, depth, most-recently-visited tabs),
  * which is what makes it testable in the container — the only thing this repo
  * can do for a device feature it cannot run. `components/shell/hardware-back-button.tsx`
  * is the thin mount that wires it to `@capacitor/app`'s `backButton` event and
@@ -44,27 +43,8 @@
  * **`canGoBack` on the event payload is not the answer to rule 2.**
  * `@capacitor/app`'s `BackButtonListenerEvent` carries the WebView's own
  * `canGoBack`, which is true whenever *any* previous entry exists — including
- * one in a different tab. Rule 2 is about the current tab, so the model keeps its
- * own record of the history and the payload is ignored.
- *
- * **Rule 2 has to promise only what `navigate(-1)` can deliver.** The mount's
- * only way to pop is a history traversal, and history is global. So "the current
- * tab's own history stack is deeper than its root" is answered as *the entry
- * below this one is in this tab* — which is the same claim, made against the
- * thing that will actually happen. An earlier version of this model kept a stack
- * per tab, which could report depth 1 for `/lists/abc` entered straight from
- * `/stats` and then leave the tab on a press that promised not to. The component
- * test caught it; the model could not see it, because the bug was in the
- * relationship between the model and the router rather than inside either.
- *
- * **Four more, each found by driving this rather than by reading it**, and each
- * stated at the line that handles it: `'/'` is a tab root and not a namespace
- * (`tabOf`); a query string is not a history entry (`normalise`); the first
- * arrival is not poppable however the router labels it (`visit`); and a tab the
- * learner has just arrived at must leave the most-recently-visited stack, or
- * backing out revisits it (`touchMru`). Every one of them is a wrong answer on a
- * phone and a green test suite otherwise, which is why they are in
- * `tests/unit/shell/back-navigation.test.ts` under their own heading.
+ * one in a different tab. Rule 2 is about the current tab's stack, so the model
+ * keeps its own per-tab depth and the payload is ignored.
  *
  * **Listening disables the platform default.** `@capacitor/app`'s own docs:
  * *"Listening for this event will disable the default back button behaviour, so
@@ -95,40 +75,19 @@ export interface BackDecisionContext {
   overlayOpen: boolean;
 }
 
-/**
- * Reduce a location to the thing tabs and depth are about: its path.
- *
- * A query string and a hash are dropped — `/lookup?q=你` is the Look up tab at
- * its root, not a page below it, and treating it otherwise would make every
- * keystroke in the search box look like a history entry to pop. React Router's
- * `location.pathname` never carries either, so the mount cannot hit this; the
- * function is public and a caller with a full URL can.
- *
- * A trailing slash goes too, so `/lookup/` and `/lookup` are one tab root.
- */
+/** Strip a trailing slash so `/lookup/` and `/lookup` are the same tab root. */
 function normalise(path: string): string {
-  const bare = path.split(/[?#]/, 1)[0];
-  const withSlash = bare.startsWith('/') ? bare : `/${bare}`;
-  const trimmed = withSlash.replace(/\/+$/, '');
+  if (!path.startsWith('/')) path = `/${path}`;
+  const trimmed = path.replace(/\/+$/, '');
   return trimmed === '' ? '/' : trimmed;
 }
 
 export interface BackNavigationSnapshot {
   current: string | null;
-  /**
-   * How many entries directly below this one are in the same tab. This is the
-   * quantity rule 2 asks about, counted over the real history rather than over a
-   * per-tab stack — see the header.
-   */
+  /** Depth of the current tab's stack beyond its root. */
   depth: number;
   /** Most-recently-visited tabs, oldest first, current excluded. */
   mru: readonly string[];
-  /**
-   * How many entries this session has recorded below the current one — what
-   * `navigate(-1)` has to work with. Zero on a cold start, however deep the
-   * route it started on.
-   */
-  historyDepth: number;
 }
 
 export interface BackNavigation {
@@ -153,19 +112,8 @@ export function createBackNavigation(tabs: readonly string[]): BackNavigation {
   const roots = tabs.map(normalise);
   if (roots.length === 0) throw new Error('createBackNavigation needs at least one tab');
 
-  /**
-   * The history stack as this session observed it, oldest first.
-   *
-   * **One list, not a stack per tab**, and that is the correction the component
-   * test forced. A per-tab stack can say "this tab has a page below its root"
-   * while the entry `navigate(-1)` would actually land on belongs to a different
-   * tab — enter `/lists/abc` straight from `/stats` and the tab's depth is 1 but
-   * the entry underneath is `/stats`. Rule 2 then promises to stay in the tab and
-   * leaves it. Keeping the real order makes the question answerable exactly:
-   * rule 2 fires only when the entry below is in the same tab, which is what
-   * makes `navigate(-1)` safe.
-   */
-  let entries: string[] = [];
+  /** Per-tab path stack; index 0 is always the tab root. */
+  const stacks = new Map<string, string[]>();
   let mru: string[] = [];
   let current: string | null = null;
   let pendingBackTo: string | null = null;
@@ -173,39 +121,31 @@ export function createBackNavigation(tabs: readonly string[]): BackNavigation {
   /**
    * Which tab a path belongs to: the longest root that is a prefix of it.
    *
-   * Longest wins, so `/lists` claims `/lists/abc` rather than a shorter root
-   * doing it. Two cases are worth stating because getting either wrong is
-   * invisible until someone presses back:
-   *
-   * - **`'/'` matches only itself.** It is a tab root, not a namespace. As a
-   *   prefix it matches every path in the app, so `/entry/你好` would be filed
-   *   under the Today tab — and a learner who opened that entry from Look up
-   *   would find back taking them to Today. Every shell in this plan has a `/`
-   *   tab at A1, so this is the common case, not the exotic one.
-   * - **A path under no root is filed under the tab the learner is in.** A 404,
-   *   or a detail route the tab list does not enumerate, is somewhere they
-   *   navigated *from* a tab; rule 2 should pop it, not leave the tab.
+   * Longest wins so that a `/` tab does not swallow `/lookup`. A path under no
+   * tab at all (a 404, a detail route the tab list does not cover) is attributed
+   * to the tab the learner is already in, which is what keeps rule 2 working for
+   * routes nobody enumerated.
    */
   function tabOf(path: string): string | null {
     let best: string | null = null;
     for (const root of roots) {
-      const matches = root === '/' ? path === '/' : path === root || path.startsWith(`${root}/`);
-      if (matches && (best === null || root.length > best.length)) best = root;
+      if (path === root || (root === '/' ? path.startsWith('/') : path.startsWith(`${root}/`))) {
+        if (best === null || root.length > best.length) best = root;
+      }
     }
     return best ?? current;
   }
 
-  /**
-   * The stack is "tabs I could go back to", so the tab being arrived at leaves
-   * it and the tab being left goes on top.
-   *
-   * Removing the arriving tab is not tidiness. Look up → Review → Look up, then
-   * back: without it the stack still holds Look up from the first visit, so the
-   * second press returns to the tab the learner is standing in and the walk out
-   * takes one press more than it should, revisiting a tab on the way.
-   */
+  function stackOf(tab: string): string[] {
+    let stack = stacks.get(tab);
+    if (!stack) {
+      stack = [tab];
+      stacks.set(tab, stack);
+    }
+    return stack;
+  }
+
   function touchMru(leaving: string | null, arriving: string) {
-    mru = mru.filter((tab) => tab !== arriving);
     if (leaving === null || leaving === arriving) return;
     mru = mru.filter((tab) => tab !== leaving);
     mru.push(leaving);
@@ -216,24 +156,26 @@ export function createBackNavigation(tabs: readonly string[]): BackNavigation {
       const path = normalise(rawPath);
       const tab = tabOf(path);
       if (tab === null) return;
+      const stack = stackOf(tab);
 
-      if (entries.length === 0) {
-        // The first arrival is the entry the app opened on. It is not poppable,
-        // whatever the router calls it: a cold start reports POP.
-        entries = [path];
+      if (path === tab) {
+        // Arriving at a tab root always resets that tab to its root, whichever
+        // way the arrival happened. This is what makes "tap the tab you are on"
+        // behave like every phone app: it goes home within the tab.
+        stack.length = 0;
+        stack.push(tab);
       } else if (kind === 'POP') {
-        if (entries.length > 1) entries.pop();
-        // Resync if the router went somewhere this model did not record — a
-        // multi-entry traversal, or a restore. The observed location always wins.
-        if (entries[entries.length - 1] !== path) entries = [path];
+        // Walk back to the entry if we have it; otherwise this is a deep link
+        // into a tab with no recorded history, so the tab root plus it is the
+        // honest stack.
+        const at = stack.lastIndexOf(path);
+        if (at >= 0) stack.length = at + 1;
+        else stack.splice(0, stack.length, tab, path);
       } else if (kind === 'REPLACE') {
-        // A replace onto the entry below it collapses rather than duplicating —
-        // otherwise rule 2 offers a pop that lands on the same page.
-        if (entries.length > 1 && entries[entries.length - 2] === path) entries.pop();
-        else entries[entries.length - 1] = path;
-      } else if (entries[entries.length - 1] !== path) {
-        // A re-render that re-reports the same location is not a navigation.
-        entries.push(path);
+        if (stack.length === 1) stack.push(path);
+        else stack[stack.length - 1] = path;
+      } else if (stack[stack.length - 1] !== path) {
+        stack.push(path);
       }
 
       if (pendingBackTo !== null && pendingBackTo === tab) {
@@ -252,20 +194,7 @@ export function createBackNavigation(tabs: readonly string[]): BackNavigation {
       if (overlayOpen) return { type: 'close-overlay' };
 
       const tab = current ?? roots[0];
-
-      // Rule 2, stated as the thing `navigate(-1)` can actually deliver: there
-      // is an entry below, and it is in this tab. If it is in another tab this
-      // is not "the current tab's own history stack", and rule 3 decides where
-      // to go instead.
-      const below = entries.length > 1 ? entries[entries.length - 2] : undefined;
-      if (below !== undefined && tabOf(below) === tab) return { type: 'pop' };
-
-      // A second press before the router has reported the first switch must
-      // re-issue it, not decide again. `handleBack` mutates — it pops the
-      // most-recently-visited stack — and a phone will happily deliver two
-      // presses inside one frame, which would pop two tabs for one arrival and
-      // background the app a press early, skipping a tab on the way out.
-      if (pendingBackTo !== null) return { type: 'switch-tab', to: pendingBackTo };
+      if (stackOf(tab).length > 1) return { type: 'pop' };
 
       const previous = mru[mru.length - 1];
       if (tab !== roots[0] && previous !== undefined) {
@@ -278,18 +207,11 @@ export function createBackNavigation(tabs: readonly string[]): BackNavigation {
     },
 
     snapshot() {
-      let depth = 0;
-      while (
-        entries.length - 2 - depth >= 0 &&
-        tabOf(entries[entries.length - 2 - depth]) === current
-      ) {
-        depth += 1;
-      }
+      const tab = current;
       return {
-        current,
-        depth,
+        current: tab,
+        depth: tab === null ? 0 : stackOf(tab).length - 1,
         mru: [...mru],
-        historyDepth: Math.max(0, entries.length - 1),
       };
     },
   };

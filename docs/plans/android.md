@@ -183,11 +183,11 @@ evidence is in `HANDOFF.md`.
 |---|---|
 | A0 | **Two halves with different preconditions.** The Play Console visit and the register-#12 docs read need only network access and a payment method, and run first. The device matrix needs **every phone in the hardware table above, in hand** — a WebView version and a UA string are read off a handset, not out of a spec. See A0. |
 | A1 | `web.md` **W1** — a Vite build that emits `dist/` and boots from a non-`/` origin. `web.md` **W0**'s workspace layout, so `dist/` has a stable path. `ios.md` **I0** — the shared Capacitor surface (§2): the config file at `apps/app/capacitor.config.ts`, the `@capacitor/*` dependencies and `lib/platform/native.ts`. Most of I0 runs in the container and needs no Mac, so it is not blocked by Apple hardware even though it lives in the iOS plan. If A1 runs first, A1 creates that surface at I0's paths and I0 becomes a review. **Nothing from `core.md`** — A1 boots whatever shell W1 produced and re-baselines its checklist at C7, exactly as `ios.md` I1 does; see A1. |
-| A2 | **Artifacts, not phases** (`wave-zero.md` §10b, closing register **V1**). Named as ranges, this row swept in `core.md` C5b, which is hard-gated on a physical iPhone, and put Android's inset work behind Apple hardware. What A2 actually needs is: the **`TabBar` primitive** (`components/ui/tab-bar.tsx`, `core.md` **C1**) and **an element that consumes a bottom inset**, which `TabBar` is — it carries `pb-[env(safe-area-inset-bottom)]` itself. It does **not** need the assembled phone shell (C7). `web.md` **W1**'s `viewport-fit=cover` on `apps/app/index.html`'s viewport meta, without which every `env(safe-area-inset-*)` is zero — **landed and asserted**, see A0. |
+| A2 | **Artifacts, not phases** (the orchestrator's ruling relayed to this session — **`wave-zero.md` carries no §10b; see `HANDOFF.md`** — closing register **V1** in [`README.md`](README.md)). Named as ranges, this row swept in `core.md` C5b, which is hard-gated on a physical iPhone, and put Android's inset work behind Apple hardware. What A2 actually needs is: the **`TabBar` primitive** (`components/ui/tab-bar.tsx`, `core.md` **C1**) and **an element that consumes a bottom inset**, which `TabBar` is — it carries `pb-[env(safe-area-inset-bottom)]` itself. It does **not** need the assembled phone shell (C7). `web.md` **W1**'s `viewport-fit=cover` on `apps/app/index.html`'s viewport meta, without which every `env(safe-area-inset-*)` is zero — **landed and asserted**, see A0. |
 | A3 | `core.md` **C0** — the token layer, the `lang="zh-Hans"` root rule, and `pnpm font:coverage`'s output for the faces the visual language actually uses. `web.md` **W6** — the self-hosted subsets and its cmap coverage assertion. A3 measures what W6's files cost in a package; it does not choose a different set of files. |
-| A4 | `core.md` **C2** — `TTSProvider` widened with `stop()`, utterance identity, an event surface and `supportsBoundary`. **C2 gates A4 and nothing earlier.** An earlier draft of this row quoted `core.md`'s "before any mobile plan starts"; that reading is retired. A1–A3 consume nothing from `TTSProvider`, exactly as `ios.md` says of I0–I3, and `core.md` §4 now says the same. `core.md` **C6** — the hold-to-slow control and `lib/tts/sequence.ts` as a working interaction; C2 creates the sequencer file but C6 is what gives it a hold gesture and a highlight to advance, and A4's slow-mode criterion exercises C6, not C2. `ios.md` **I4** if iOS ran first, because A4 extends `lib/tts/capacitor.ts` rather than creating it. **Stated as artifacts** (`wave-zero.md` §10b): the file `lib/tts/sequence.ts` with a hold gesture driving it, and the widened `TTSProvider` declaration. Neither is C5b, so this row does not route through Apple hardware. |
+| A4 | `core.md` **C2** — `TTSProvider` widened with `stop()`, utterance identity, an event surface and `supportsBoundary`. **C2 gates A4 and nothing earlier.** An earlier draft of this row quoted `core.md`'s "before any mobile plan starts"; that reading is retired. A1–A3 consume nothing from `TTSProvider`, exactly as `ios.md` says of I0–I3, and `core.md` §4 now says the same. `core.md` **C6** — the hold-to-slow control and `lib/tts/sequence.ts` as a working interaction; C2 creates the sequencer file but C6 is what gives it a hold gesture and a highlight to advance, and A4's slow-mode criterion exercises C6, not C2. `ios.md` **I4** if iOS ran first, because A4 extends `lib/tts/capacitor.ts` rather than creating it. **Stated as artifacts** (same ruling; `wave-zero.md` carries no §10b — see `HANDOFF.md`): the file `lib/tts/sequence.ts` with a hold gesture driving it, and the widened `TTSProvider` declaration. Neither declaration is C5b. **The residual is worth naming rather than waving away:** C6's per-character highlight is painted by the same reader surface C5b rewrites, so A4's *device* criterion 2 waits on whatever `core.md` ships that highlight in, while A4's unit-level half — the adapter against the sequencer with fake timers — does not. A4 already splits that criterion in two for exactly this reason. |
 | A5 | `data.md` **D1** (the artifact, its manifest and the `data/*.sqlite` gitignore rule) and **D5a only** — `lib/dict/runners/capacitor.ts`, the `open()`/copy logic and the manifest contract. D5a's hardware precondition is an Android phone; **D5b** is the iOS half and A5 does not wait for it. See the note below. |
-| A6 | **The engine-feature list `core.md` C5a measures**, not the range C3–C6 (`wave-zero.md` §10b, register **V1**; and register **V3**, which notes that this plan cites `C5` ten times for work that is now C5a's or C5b's). The floor is decided by which engine features the reader ships against and which of them already degrade, and **C5a — the gallery harness, desktop Chromium, no production reader file — is what measures them**. C5b is the production rewrite and A6 does not wait for it; what A6 needs from C5b is a device re-run of a degrade C5a has already specified. |
+| A6 | **The engine-feature list `core.md` C5a measures**, not the range C3–C6 (same ruling, recorded in `HANDOFF.md` because `wave-zero.md` carries no §10b; register **V1**; and register **V3**, which notes that this plan cites `C5` ten times for work that is now C5a's or C5b's). The floor is decided by which engine features the reader ships against and which of them already degrade, and **C5a — the gallery harness, desktop Chromium, no production reader file — is what measures them**. C5b is the production rewrite and **A6's floor decision** does not wait for it. Two residuals, named rather than hidden: A6's **criterion 3** re-runs C5's committed degrade *inside the app*, which needs whichever surface ships it — C5a's standalone harness if `core.md` keeps one reachable on a device, C5b otherwise; and A6's **criterion 4** walks C3–C6 feature by feature, so the walk is complete only once those phases are. The row is narrowed to what blocks the *decision*, which is what V1 asked for. |
 | A6a | A1 (a project to put an icon in) and `core.md` **C0** (the ground colour the launch theme uses). Otherwise independent — the icon set is generated in the container. |
 | A7, A8 | Everything above, plus A0's account in a usable, verified state. A8 additionally needs `web.md` **W7** — the Astro site's `/privacy` and `/support` pages, live at the apex with their exact URLs in `HANDOFF.md`. Play's listing will not accept a submission without the privacy policy URL, and this plan does not write the page. |
 | — | **Nothing from `backend.md`.** The app is usable offline with the AI answer disabled; `web.md` W4's header-based gate and the API base are what make it reachable when the server exists. A1 and A7 record the origin and prove or defer one real call — see A1 and A7. |
@@ -491,43 +491,65 @@ STACK §6 records the row as "version not recorded by the audit".
 > published value. The variable is defined in `core.md`'s token file by agreement; this phase writes
 > the Android runtime that fills it.**
 
-**A0/A2 correction, 2026-09-14. `@capacitor-community/safe-area@8.0.1` publishes no inset values at
-all.** Its whole JS API is `setSystemBarsStyle`, `showSystemBars` and `hideSystemBars`
-(`dist/esm/definitions.d.ts`); there is no `getSafeAreaInsets` and nothing to override a variable
-with. It is a **polyfill, not a publisher**, and its own README opens by saying so: *"If a user has a
-Chromium version lower than 140, this plugin makes sure the webview gets the safe area as a padding.
-The `env(safe-area-inset-*)` values will be set to `0px`. … For all other versions, the developer
-should handle the safe area insets just as he would on web or iOS."* The Android source is explicit
-— `SafeAreaPlugin.java`:
+**A2 correction, 2026-09-14, in two parts. Neither the mechanism nor the dependency is what this
+phase assumed.**
+
+**One: `@capacitor-community/safe-area@8.0.1` publishes no inset values at all.** Its whole JS API is
+`setSystemBarsStyle`, `showSystemBars` and `hideSystemBars` (`dist/esm/definitions.d.ts`); there is no
+`getSafeAreaInsets` and nothing to override a variable with. It is a **polyfill, not a publisher**,
+and its README opens by saying so: *"If a user has a Chromium version lower than 140, this plugin
+makes sure the webview gets the safe area as a padding. The `env(safe-area-inset-*)` values will be
+set to `0px`. … For all other versions, the developer should handle the safe area insets just as he
+would on web or iOS."*
+
+**Two, and this is the one that removes the dependency: Capacitor 8.5 ships the same thing in core.**
+`@capacitor/android@8.5.2` `capacitor/src/main/java/com/getcapacitor/plugin/SystemBars.java` is a
+**built-in plugin**, registered unconditionally by `Bridge.registerAllPlugins()`, configured under
+`plugins.SystemBars`:
 
 ```java
-private static final int WEBVIEW_VERSION_WITH_SAFE_AREA_CORE_FIX = 140;      // crbug 40699457
-private static final int WEBVIEW_VERSION_WITH_SAFE_AREA_KEYBOARD_FIX = 144;  // crbug 457682720
-boolean shouldPassthroughInsets = webViewMajorVersion >= WEBVIEW_VERSION_WITH_SAFE_AREA_CORE_FIX
+private static final int WEBVIEW_VERSION_WITH_SAFE_AREA_FIX = 140;   // the same threshold
+boolean shouldPassthroughInsets = webViewMajorVersion >= WEBVIEW_VERSION_WITH_SAFE_AREA_FIX
                                   && hasMetaViewportCover;
+v.setPadding(0, 0, 0, keyboardVisible ? imeInsets.bottom : 0);        // the keyboard workaround
+injectSafeAreaCSS(newInsets);                                        // --safe-area-inset-* in 'css' mode
 ```
 
+`insetsHandling` is `'native' | 'css' | 'disable'` and **defaults to `'css'`**. The community
+plugin's own README tells you to set `SystemBars.insetsHandling: 'disable'` before using it — i.e.
+the two are alternatives, and running both is two owners of one window. **So the third "mandatory
+Android dependency" in STACK §2.1 is not installed**, and the Chromium issue ids no audit had come
+from the community plugin's source anyway: `crbug 40699457` for the 0 px bug, `crbug 457682720` for
+the keyboard inset fixed in 144.
+
 So the discriminator problem this phase agonised over — *0 px is both the broken answer and the
-correct answer* — **is solved in the plugin, by the only code that can see the WebView's version
+correct answer* — **is solved inside Capacitor, by the only code that can see the WebView's version
 number, and the app never has to ask.** Below 140 `env()` is deliberately zero *and correct*, because
 the WebView itself has already been inset by padding. Above it, `env()` is the truth on Android
 exactly as it is on iOS and the web.
 
-Three consequences, and all three make this phase cheaper:
+Four consequences, and all four make this phase cheaper:
 
-1. **There is no inset CSS variable and this phase must not invent one.** A variable whose value is
-   `env(...)` on every platform is indirection with no second case. `core.md` C1's `TabBar` already
-   carries `pb-[env(safe-area-inset-bottom)]` and `Sheet` the same — **both are correct as written**
-   and `core.md` needs no change for A2. This is also what closes register **V1**'s "the shell's
-   inset variable" gate row: the artifact A2 needed turns out to be `TabBar` itself.
-2. **The keyboard bug is the plugin's too.** It resizes the WebView on keyboard visibility and
-   applies the bottom IME inset below 144 — `v.setPadding(0, 0, 0, keyboardVisible ? imeInsets.bottom
-   : 0)` — so A2's criterion 2 tests the plugin's workaround rather than the engine's bug.
-3. **What is left for this phase is native-side wiring, not a JS runtime**: `EdgeToEdge.enable(this)`
-   in `MainActivity`, the config keys the plugin requires, and the settings that would silently fight
-   it. Those are listed in the Files section below.
+1. **There is no inset CSS variable for this phase to fill, and it must not invent one.** `core.md`
+   C1's `TabBar` already carries `pb-[env(safe-area-inset-bottom)]` and `Sheet` the same — **both are
+   correct as written and `core.md` needs no change for A2.** That is also what closes register
+   **V1**'s "the shell's inset variable" gate row: the artifact A2 needed turns out to be `TabBar`
+   itself. `'css'` *does* publish `--safe-area-inset-*`, and this phase pins that value rather than
+   leaving it defaulted, so that a later `core.md` phase writing `var(--safe-area-inset-bottom)` gets
+   a value instead of nothing. Which mode is pinned is a cross-plan contract, not a preference.
+2. **The keyboard bug is handled there too**, so A2's criterion 2 tests Capacitor's workaround rather
+   than the engine's bug.
+3. **No `MainActivity` edit.** `EdgeToEdge.enable(this)` is the *community* plugin's requirement;
+   `grep -rn "EdgeToEdge\|setDecorFitsSystemWindows"` over `@capacitor/android` returns nothing. At
+   `targetSdk` 36 the platform forces edge-to-edge and `SystemBars` applies or consumes the insets.
+4. **What is left for this phase is configuration, plus one module for the thing configuration cannot
+   do**: the system bars' icon contrast, which must follow the *app's* theme and not the device's,
+   because Inkstone is the default on a dark-mode phone (`wave-zero.md` §10c). See the Files list.
 
 `ios.md` I5 is unaffected: it takes `env()` directly on iOS, which is now also what Android does.
+**`@capacitor/status-bar` is a separate question and is recorded in `HANDOFF.md` rather than acted on
+here** — I0 owns the dependency set, and on Android at `targetSdk` 36 that plugin's colour half is
+inert by its own logic while its `setOverlaysWebView()` fights the inset handler.
 
 **The keyboard is the half that will actually break, and getting a pre-144 WebView to test it on is
 not free.** The lookup box is the first thing on the Look up tab and a practice write-card is an
@@ -556,16 +578,18 @@ plugin as well as for the CSS: `hasMetaViewportCover` is one of the two conditio
 `shouldPassthroughInsets`, so without it the plugin pads the WebView even on a current Chromium.
 
 **Files.** `apps/app/capacitor.config.ts` (plugin configuration only — the file is I0's):
-`SystemBars.insetsHandling: 'disable'`, which the plugin's README requires on Capacitor v8, and
-**no** `SafeArea.detectViewportFitCoverChanges: false`, `Keyboard.resizeOnFullScreen` or
-`adjustMarginsForEdgeToEdge`, each of which fights it. `apps/app/android/app/src/main/java/**/MainActivity.java`
-— `EdgeToEdge.enable(this)`, which the plugin requires and does not do for you.
-`apps/app/android/app/src/main/AndroidManifest.xml` — no `windowOptOutEdgeToEdgeEnforcement`.
-`apps/app/tests/unit/platform/**` — the config invariants above, because every one of them fails
-**silently**, as a layout that is subtly wrong on a device nobody in this container has.
-~~the Android runtime that fills the inset variables~~ is deleted: see the correction above, there is
-no variable to fill. `apps/app/index.html` is `web.md` W1's and is not edited here, and `core.md`'s
-token file is not edited here either — it needs no inset token.
+`plugins.SystemBars` with `insetsHandling: 'css'` (pinned, not defaulted),
+`initialViewportFitValueHint: 'cover'` and `style: 'LIGHT'`; and **no** `Keyboard.resizeOnFullScreen`,
+which `SystemBars.warnAboutUnsupportedConfigurationValues()` warns about because both would then
+resize for the keyboard. `apps/app/lib/platform/system-bars.ts` — `applySystemBarsStyle(ground)`, the
+one thing configuration cannot do, called by `core.md`'s theme switch and a no-op off Android.
+`apps/app/tests/unit/platform/system-bars.test.ts` — the config invariants, because every one of them
+fails **silently**, as a layout that is subtly wrong on a device nobody in this container has.
+`apps/app/android/app/src/main/AndroidManifest.xml` is **read** and asserted to carry no
+`windowOptOutEdgeToEdgeEnforcement`; there is nothing to add to it.
+~~the Android runtime that fills the inset variables~~ and ~~`MainActivity.java`~~ are both deleted:
+see the correction above. `apps/app/index.html` is `web.md` W1's and is not edited here, and
+`core.md`'s token file is not edited here either — it needs no inset token.
 
 **Acceptance criteria.**
 
@@ -583,13 +607,18 @@ token file is not edited here either — it needs no inset token.
    asserting only the first proves nothing.
 4. Rotating the device and returning does not leave a stale inset.
 5. Dark mode and light mode both render the system bars legibly (icon contrast is a native theme
-   setting, not CSS) — through this plugin's `setSystemBarsStyle`, **not** `@capacitor/status-bar`,
-   whose `setOverlaysWebView` is what the plugin's README says to stop using. See the note in
-   `HANDOFF.md`: I0 pinned `@capacitor/status-bar` for `ios.md` I5 and it is a shared surface, so A2
-   records the conflict rather than removing the package.
+   setting, not CSS) — through `SystemBars.setStyle` from `@capacitor/core`, **not**
+   `@capacitor/status-bar`, whose `setOverlaysWebView` fights the inset handler and whose colour half
+   is inert at `targetSdk` 36 by its own logic. I0 pinned that package for `ios.md` I5 and it is a
+   shared surface, so A2 records the conflict in `HANDOFF.md` rather than removing it. **This
+   criterion cannot pass until `core.md`'s theme switch calls `applySystemBarsStyle`**; until then the
+   bars are right in Inkstone and wrong in the dark variant, which is a known state rather than a bug
+   to hunt.
 6. The config invariants are held by a unit test, since every one of them fails silently and this
-   repository has no CI: `SystemBars.insetsHandling` is `'disable'`, `viewport-fit=cover` is in
-   `index.html`, and none of the three fighting keys is set.
+   repository has no CI: `SystemBars.insetsHandling` is `'css'` and never `'disable'`,
+   `initialViewportFitValueHint` agrees with `index.html`'s actual viewport meta, `style` is `'LIGHT'`
+   and not `'DEFAULT'`, `Keyboard.resizeOnFullScreen` is unset, no second safe-area plugin is
+   installed, and the manifest carries no `windowOptOutEdgeToEdgeEnforcement`.
 
 ---
 
@@ -910,7 +939,7 @@ renders in the built app alongside the CC BY-SA and LGPL notices that already ex
    hanzi query, a pinyin query, an English gloss query and a segmented pasted passage all return
    correct results, **and a character sheet renders its decomposition**. Aeroplane mode on, verified
    by hand. The decomposition half is the one that proves `decomp.json` actually shipped.
-2. `zipalign -c -P 16 -v` output for the **debug APK** is pasted into `HANDOFF.md`, pass or fail,
+2. `zipalign -c -P 16 -v 4` output for the **debug APK** is pasted into `HANDOFF.md`, pass or fail,
    alongside whatever direct `.so` alignment reading was available. A fail is not a phase failure — it
    is a decision point, and the options AUDIT 2 names are a newer plugin release, a rebuilt native
    library, or Capawesome's paid plugin.
@@ -973,6 +1002,14 @@ does not use.
   `tests/unit/platform/android-project.test.ts` fails if a later phase raises it. Issue #4884 could
   not be read (`github.com` issues and `issues.chromium.org` are both egress-blocked here), but its
   claim is refuted by the shipped source whatever its status.
+
+  **And the consequence A6 has to absorb: a wall exists at WebView 60 whatever this phase does.**
+  `DEFAULT_ANDROID_WEBVIEW_VERSION` is 60 and `android.minWebViewVersion` cannot be set below 55, so
+  Capacitor loads its error page — or, with no `errorUrl` configured, logs `System WebView is not
+  supported` and continues — before any app code runs. This phase's comfort floor is therefore **a
+  banner over the range above 60**, and criterion 2's "the app remains fully usable" is a claim about
+  that range. Below 60 the answer is Capacitor's, not this app's, and no banner of ours is reached.
+  Nothing in this phase makes that wall go away; what this phase must not do is add a second one.
 - **The verification job:** walk `core.md` C3–C6 and confirm that every engine feature they depend on
   either works in any Chromium the app can meet or has a feature-detected degrade the way C5's does.
   C5 is settled. If any *other* surface turns out to depend on a versioned feature with no degrade,
@@ -1088,7 +1125,8 @@ uploaded at 11pm.
 **The release build is where the debug build's sins surface.** Run, and record:
 
 - **The 16 KB alignment check, against an artifact the tool actually accepts.** A5 already ran
-  `zipalign -c -P 16 -v` on the debug APK, which is the form no source disputes. The release-side
+  `zipalign -c -P 16 -v 4` on the debug APK, which is the artifact Google's own page runs it against.
+  The release-side
   question is what to run against a bundle, and **no audit answers it**: AUDIT 2 named the command
   with no artifact and STACK register #5's `<aab-or-apk>` is unsourced. An AAB is not the zip layout
   `zipalign` inspects; Play generates the installable APKs from the bundle. **A0 correction, 2026-09-14:** the tool is **bundletool**
@@ -1224,8 +1262,8 @@ sizes … Starting **February 1, 2027**, if your app updates don't support 16 KB
 won't be able to release these updates"*, and the check is **two** checks with a **third**, decisive
 precondition — see A5. The plugin bundles SQLCipher's native library; AUDIT 2 could not verify 8.1.1.
 *Trigger:* the alignment check fails, or Play rejects the upload with a page-size error.
-*Check:* run `zipalign -c -P 16 -v` on a **debug APK** in A5, the moment the plugin is in the graph —
-that is the artifact form no source disputes — and at A7 on an installable APK generated from the
+*Check:* run `zipalign -c -P 16 -v 4` on a **debug APK** in A5, the moment the plugin is in the graph
+— the artifact Google's own page runs it against — and at A7 on an installable APK generated from the
 release bundle. ~~**No audit establishes what `zipalign -c -P 16` accepts**~~ — **A0 correction, 2026-09-14:** settled:
 `zipalign -c -P 16 -v 4 <apk>` (the `4` is required and this plan was missing it), `llvm-objdump -p
 <so> | grep LOAD` expecting `align 2**14`, and `bundletool build-apks` to get the APK Play would

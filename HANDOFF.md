@@ -5237,3 +5237,308 @@ Nothing in this section is a claim. Run it with one GMS phone, a USB cable and `
    "unknown and untried" is now answered and R11's mitigation has no upside branch: Android
    verification is manual and device-bound, which is a real cost of this platform and should stay
    visible.
+
+### A2 — edge-to-edge, insets and the keyboard: the plan was wrong about the plugin, twice
+
+**A2's design does not survive the shipped code, and the correction makes the phase smaller.** The
+plan is built on `@capacitor-community/safe-area`: *"the plugin publishes inset values; the shell
+reads them from CSS variables … one variable per edge, defined once … on Android under Capacitor the
+plugin's published value overrides it."* Two things are wrong with that, and the second one deletes
+the dependency.
+
+**One. The community plugin publishes nothing.** Its entire JS API at 8.0.1 is `setSystemBarsStyle`,
+`showSystemBars`, `hideSystemBars` (`dist/esm/definitions.d.ts`). There is no `getSafeAreaInsets` and
+nothing to override a variable with. It is a **polyfill**, and its README says so in its second
+sentence: *"If a user has a Chromium version lower than 140, this plugin makes sure the webview gets
+the safe area as a padding. The `env(safe-area-inset-*)` values will be set to `0px`. … For all other
+versions, the developer should handle the safe area insets just as he would on web or iOS."*
+
+That alone resolves the discriminator A2 agonised over — *0 px is both the broken answer and the
+correct answer, and no audit establishes a runtime test for it*. **The plugin is the runtime test**,
+because it is the only code that can read the WebView's version number. Below 140 `env()` is
+deliberately zero **and correct**, since the WebView has already been inset by padding.
+
+**Two, and this is the one that matters: Capacitor 8.5 ships the same thing in core.**
+`@capacitor/android@8.5.2` `capacitor/src/main/java/com/getcapacitor/plugin/SystemBars.java` is a
+**built-in plugin**, registered unconditionally by `Bridge.registerAllPlugins()` (line 664, beside
+`CapacitorCookies` and `WebView`), configured under `plugins.SystemBars`:
+
+| | |
+|---|---|
+| `WEBVIEW_VERSION_WITH_SAFE_AREA_FIX = 140` | the same threshold, the same behaviour |
+| `viewportMetaJSFunction` | probes the live document for `viewport-fit=cover` and re-applies insets when it changes |
+| `setPadding(0, 0, 0, keyboardVisible ? imeInsets.bottom : 0)` | the keyboard workaround, i.e. the Capacitor #8432 / Chromium 457682720 bug A2 expected to have to live with |
+| `injectSafeAreaCSS()` | in `css` mode, sets `--safe-area-inset-{top,right,bottom,left}` on `documentElement` |
+| `insetsHandling: 'native' \| 'css' \| 'disable'`, **default `'css'`** | the whole control surface |
+
+So the third "mandatory Android dependency" in STACK §2.1 is **not installed and must not be**: the
+community plugin's own README tells you to set `SystemBars.insetsHandling: 'disable'` before using
+it, which is two owners of one window. A unit test refuses it and three other known safe-area plugins
+by name.
+
+**What A2 landed**
+
+| File | What |
+|---|---|
+| `apps/app/capacitor.config.ts` | `plugins.SystemBars`: `insetsHandling: 'css'`, `initialViewportFitValueHint: 'cover'`, `style: 'LIGHT'`. Plugin configuration only; the three keys above it are I0's. |
+| `apps/app/lib/platform/system-bars.ts` | `applySystemBarsStyle(ground)` — the one thing configuration cannot do. |
+| `apps/app/tests/unit/platform/system-bars.test.ts` | 11 assertions. Every rule here fails **silently**, as a layout that is subtly wrong on a device nobody in this container has. |
+
+**No `MainActivity` edit, no manifest edit, no new dependency.** The community plugin needs
+`EdgeToEdge.enable(this)`; the built-in one does not, and `grep -rn "EdgeToEdge\|setDecorFitsSystemWindows"`
+over `@capacitor/android` returns nothing — at `targetSdk` 36 the platform forces edge-to-edge and
+`SystemBars` then applies or consumes the insets. The manifest is asserted **not** to carry
+`windowOptOutEdgeToEdgeEnforcement`.
+
+**Three decisions worth arguing with, if anyone wants to.**
+
+1. **`insetsHandling: 'css'`, pinned rather than left defaulted.** `'native'` is the value the vendor
+   marks "(recommended)" and is lighter — no `evaluateJavascript` on every inset change, including
+   every keyboard show and hide. `'css'` is what shipped as the default and gives **both** answers:
+   `env(safe-area-inset-*)`, which `core.md` C1's `TabBar` and `Sheet` already use, and the
+   `--safe-area-inset-*` variables. The deciding argument is cross-plan: under `'native'`, a later
+   `core.md` phase writing `var(--safe-area-inset-bottom)` gets **nothing, silently**, in another
+   plan's file. Pinned rather than defaulted so that a Capacitor upgrade changing the default cannot
+   change our layout without a diff.
+2. **`style: 'LIGHT'`, not `'DEFAULT'`.** `DEFAULT` follows the *device's* dark mode. Inkstone is the
+   default theme on every device including a dark-preferring one (`wave-zero.md` §10c, and `core.md`
+   C0's `tokens.css` implements exactly that), so `DEFAULT` paints white icons over `#f8f4ec` for
+   every learner whose phone is in dark mode — which is A2's criterion 5, failing. The vendor's naming
+   is inverted (`Light` means *"dark system bar content on a light background"*) and
+   `lib/platform/system-bars.ts` is the one place that inversion is written down.
+3. **`initialViewportFitValueHint: 'cover'`.** Only prevents a first-paint jump; the plugin re-probes
+   the document either way. A test asserts it against `index.html`'s actual meta tag so the two cannot
+   drift.
+
+**Two things `core.md` must do, which this session cannot.**
+
+- **Call `applySystemBarsStyle(ground)` from the theme switch.** One line, on every theme change and
+  once at start. It is a no-op off Android and never throws, so the caller needs no platform branch.
+  Without it the bars stay `LIGHT` after the learner picks the dark variant — dark icons on a dark
+  ground, criterion 5 failing in the other direction.
+- **Nothing else. `TabBar` and `Sheet` are correct as written.** Both carry
+  `pb-[env(safe-area-inset-bottom)]`, which is exactly right under both `native` and `css`. **A2 needs
+  no change to `core.md`'s token file and no inset token**, which is also what closes register **V1**'s
+  "the shell's inset variable" gate row: the artifact A2 needed turns out to be `TabBar` itself.
+
+**A conflict recorded rather than acted on: `@capacitor/status-bar`.** I0 pinned it at 8.0.3 for
+`ios.md` I5, and the dependency set is I0's, so A2 does not remove it. But on Android at `targetSdk`
+36 it is the wrong tool and partly inert by its own logic: `StatusBar.shouldSetStatusBarColor()`
+returns `false` outright when the app targets 16, and `setOverlaysWebView()` drives the deprecated
+`setSystemUiVisibility` decor flags — the same window state `SystemBars` is managing.
+**Nothing in the Android build may call `@capacitor/status-bar`**; use `SystemBars` from
+`@capacitor/core`. iOS is unaffected and I5 keeps its choice.
+
+### A2 — the device checklist (all five acceptance criteria)
+
+Every one of these needs a phone, and one of them needs a phone that may not exist.
+
+1. **Two devices, different notch and gesture-bar geometry.** Screenshot each: the tab bar sits above
+   the gesture bar, the header clears the status bar, nothing is under either.
+2. **The keyboard.** Focus the lookup box and a practice write-card with the keyboard open, on a
+   device with **WebView ≥ 144**: the focused input is visible and the tab bar is not floating in the
+   middle of the screen. Then on a device **below 144** if one exists — which `android.md` A2 already
+   says nothing in this plan produces, since WebView is Play-updated on every GMS handset. Try an
+   emulator system image old enough to carry one and **record whether that actually worked**, because
+   no audit establishes that it does. If neither exists, record the pre-144 behaviour as **untested**,
+   say what was tried, and carry it to A6 as an open risk. Record every result **by WebView version**.
+3. **The insets, read rather than eyeballed.** In the WebView inspector, on a device with a gesture
+   bar: `getComputedStyle(document.documentElement).getPropertyValue('--safe-area-inset-bottom')` and
+   the computed `padding-bottom` of `[data-testid="tab-bar"]`. **Both cases are the contract, and
+   asserting only the first proves nothing:** on WebView ≥ 140 the value is non-zero; below 140 it is
+   `0px` **and the rendered result is still correct**, because the WebView itself has been padded.
+4. **Rotate and return.** No stale inset. `handleOnConfigurationChanged` re-applies the bar styles;
+   the insets come through `setOnApplyWindowInsetsListener`, so this is checking the listener is still
+   attached rather than checking arithmetic.
+5. **Dark and light.** Switch the app theme (not the device's) and confirm the system bar icons stay
+   legible against the app's ground in both. **This one fails today** until `core.md` calls
+   `applySystemBarsStyle`; until then the bars are correct in Inkstone and wrong in the dark variant,
+   and that is the expected state rather than a bug to hunt.
+6. **Free while the inspector is open:** `navigator.userAgent` and the WebView version, for A0's
+   matrix and A6's parser.
+
+### A3 — type: what could be landed, and what is blocked on `web.md` W6
+
+**A3 is blocked on a phase that has not landed on any branch.** Its gate is `core.md` C0 (landed on
+`origin/claude/build-core`) **and `web.md` W6**, which owns the self-hosted `unicode-range` subsets
+and their `cmap` coverage assertion. W6 does not exist yet, so there are no subset files: A3's
+criterion 5 — *"a debug APK built with the subsets, and its size delta against the same build with the
+hanzi faces removed"* — has nothing to measure, on top of having no device to measure it on.
+
+**What landed is the one machine-checkable half**: `apps/app/tests/unit/platform/android-fonts.test.ts`
+fails if any `.woff`, `.woff2`, `.ttf`, `.otf`, `.ttc` or `.eot` file appears anywhere under
+`apps/app/android/` outside `cap sync`'s copy of `dist/`. That is A3's closed decision — *there is no
+Android font pipeline* — as a check rather than a sentence, and it is what a builder under deadline
+would violate. The chain it protects is mechanical and already pinned at both ends: W6 puts the faces
+under `apps/app/src/fonts/` referenced from `src/styles/fonts.css`, so Vite emits them into the hashed
+asset directory, so they are in `dist/`; `tests/unit/platform/capacitor-config.test.ts` pins `webDir`
+to Vite's `build.outDir`; and `cap sync` copies the whole of `webDir` into
+`android/app/src/main/assets/public/`. **Capacitor inherits the web's fonts and Android does nothing.**
+
+`lang="zh-Hans"` on the root — criterion 2's mechanism, and invisible on an English-locale device —
+is already asserted by `tests/unit/pwa/manifest.test.ts:100`. Not duplicated.
+
+**Two corrections to A3's arithmetic.**
+
+- **The full-face option is more expensive than A3 says, not less.** A3 prices it at *"9–18 MB"* for
+  two weights, from AUDIT 2's 4.5–9 MB per weight. `core.md` C0 has since **measured** the actual
+  artifact: Noto Serif SC ships as a single **variable** TTF at **23.96 MB** covering weights 200–900
+  (Noto Sans SC, 16.95 MB, 100–900). So the closed option costs 24 MB, not 9–18 MB, and C0's own
+  HANDOFF section flags it: *"24 MB of font on top of 43 MB of dictionary."* The decision to ship
+  subsets does not change; the number quoted against it should.
+- **The dictionary halves, measured here rather than estimated.** `pnpm data` on 2026-09-14 produced
+  `data/dict-1-1.3.20251213.sqlite` at **43,208,704 bytes** (41.2 MiB / 43.2 MB) and `decomp.json` at
+  **916,604 bytes** (0.87 MiB / 0.92 MB). `gzip -9`, which is register **#16**'s unretired proxy for
+  what a store actually does, gives **20,891,152 bytes** (19.92 MiB / 20.9 MB) and **192,216 bytes**.
+  So `data.md` D5a's "~19.5 MB packaged" is the **MiB** reading and is close; the honest statement is
+  **≈19.9 MiB packaged + 41.2 MiB expanded** for the dictionary, plus ≈0.19 + 0.87 MiB for `decomp`,
+  **plus a font delta nobody can measure until W6 lands**. Still an estimate with a named unverified
+  half, and A7's Play-reported download size is what retires it.
+
+### A3 — the device checklist
+
+1. **Glyph identity.** The same passage, screenshotted on every device in A0's matrix, against one
+   reference device. Different manufacturers producing different-looking hanzi is the failure the
+   bundled face prevents, and it cannot be seen any other way.
+2. **The Japanese-locale check.** Set a device's system language to Japanese; open a passage with
+   characters whose Simplified and Japanese forms differ (直, 化, 骨, 令 — **pick them from
+   `pnpm font:coverage`'s output and write down which**); screenshot. The forms must be Simplified.
+   **Then remove the `lang` attribute in a debug build and screenshot again: if the two screenshots
+   are identical the check proved nothing and the sample is wrong.** That second half is the whole
+   check.
+3. **The bold check (register #8).** Bold hanzi with and without `lang="zh-Hans"`, on a device whose
+   WebView is between 139 and 143 if one exists. On every device: bold uses the bundled bold face,
+   verified by the absence of synthetic smearing at large size **and** by the font file appearing in
+   the WebView inspector's loaded resources.
+4. **No tofu — but not by advance width.** A `.notdef` box has a non-zero advance, so a width
+   assertion passes on exactly the failure it is written to catch. The coverage guarantee is W6's
+   `cmap`-union assertion; the device half is a screenshot diff of a fixed headword sample against one
+   reference device. Say which sample.
+5. **The font numbers, once W6 exists.** The APK size delta with and without the hanzi faces, and the
+   count and total transfer time of font requests over the local scheme on first paint, read from the
+   WebView inspector. That second number is the only thing that could reopen the closed full-face
+   option — and if it does, the option comes back as a **`web.md` W6 change** shipped in `dist/`, never
+   as an Android pipeline built here.
+
+### The adversarial review of A0 and A1
+
+Four independent lenses — acceptance criteria; what breaks that no test covers; the seams with
+`core.md`, `web.md` and `ios.md`; is every claim actually supported — then two skeptics per finding,
+one trying to refute the fact and one judging whether the fix belonged to this session at all. What
+the survivors changed, deduplicated:
+
+**The model was wrong in four ways, and only one of them was visible from inside it.**
+
+- **`'/'` matched every path as a prefix**, so with the seven-route shell — the list the component
+  passes by default — every unenumerated route was filed under Today. A learner opening an entry from
+  Look up would find back taking them to Today. The documented `?? current` fallback was dead code on
+  the only tab list that ships. `'/'` now matches itself and nothing else.
+- **The most-recently-visited stack never dropped the tab being arrived at**, so Look up → Review →
+  Look up, then back, returned the learner to the tab they were standing in and took one press more
+  than it should to walk out.
+- **Rule 2 promised something `navigate(-1)` could not deliver.** The model kept a stack per tab;
+  `navigate(-1)` pops *global* history. Enter `/lists/abc` straight from `/stats` and the tab's depth
+  is 1 while the entry underneath belongs to another tab — so a press that promised to stay in the tab
+  left it, and the abandoned per-tab stack grew on every repeat. **The model now keeps the real
+  history in one list** and rule 2 asks the answerable question: *is the entry below this one in this
+  tab?* That deleted the per-tab stacks entirely.
+- **`handleBack` mutated and was not idempotent.** Two presses inside one frame — which a phone
+  delivers happily — popped two tabs for one arrival, skipping a tab and backgrounding a press early.
+  A press made while a switch is outstanding now re-issues the same switch.
+
+**Only the third of those was findable from the component**, and it is the one worth remembering:
+the bug was in the relationship between the model and the router, so neither a model test nor a
+reading of the model could see it. `tests/unit/shell/hardware-back-button.test.tsx` — a data-mode
+`createMemoryRouter` with `@capacitor/app` faked at the module boundary — is what caught it, and it
+now covers the listener's lifecycle (one attach, one detach, none off Android, none in a browser that
+has loaded `@capacitor/core`) as well as what each press actually does to the router.
+
+**Two things that test taught, both worth writing down:**
+
+1. **`Object.defineProperty(globalThis, 'Capacitor', { configurable: true, value })` is read-only**,
+   and importing `@capacitor/app` pulls `@capacitor/core`, whose last statement assigns that global.
+   The assignment throws, the effect's `.catch` swallows it, and the listener silently never attaches
+   — which looks exactly like a teardown bug in the component. `writable: true` is load-bearing in
+   any test that fakes the platform *and* lets Capacitor load. `tests/unit/platform/native.test.ts`
+   uses the non-writable form safely only because nothing there imports the package.
+2. **Reset the fake in `beforeEach`, not `afterEach`.** Testing Library's own `afterEach(cleanup)`
+   unmounts the previous tree *after* ours runs, so a teardown's `remove()` lands in an array we just
+   cleared and poisons the next test's first listener.
+
+**And the component gained a memoised module promise.** Each effect run was issuing its own
+`import('@capacitor/app')`. A browser's module registry dedupes that; a test runner's module mocker
+does not — a second concurrent dynamic import of a mocked module never settles — so under StrictMode
+the surviving listener was never attached. One fetch is what was wanted anyway.
+
+**Three assertions could not fail, and one of them guarded the thing CLAUDE.md warns about most.**
+
+- **`android:sync`'s ordering check passed with `data:ensure` deleted.** `indexOf` returns `-1` for a
+  missing step, so `-1 < everything` is vacuously true — for exactly the step whose loss is the
+  failure mode `CLAUDE.md` singles out (*"the two agree with each other in the wrong place while every
+  test still passes"*). Presence is asserted before order now.
+- **`gradleValue()` took the first match anywhere in the file**, so a hand edit that left
+  `// was com.evil.old` above `applicationId` would read the comment. Proven against a mutated copy:
+  the naive regex returned `com.evil.old`, the anchored one returns the declaration. It now anchors to
+  a line start, refuses comments, and a companion assertion fails if a key is declared twice.
+- **"the app module reads them rather than restating them" only checked that a reference exists**,
+  not that no literal overrides it — which is what its own comment claimed, and what A1 criterion 3
+  exists for. Both directions are asserted now.
+
+**Capacitor's two example tests are deleted.** `ExampleInstrumentedTest.useAppContext()` asserts
+`assertEquals("com.getcapacitor.app", appContext.getPackageName())` against a project whose
+`applicationId` is `com.kjswalls.tangram` — **the one on-device test in the project was guaranteed
+red**. The other asserts that 2 + 2 is 4. Correcting either would assert nothing about this app while
+implying a native test story `android.md` §7 explicitly says does not exist, so both are gone and a
+unit test fails if they come back.
+
+**What the review found in the plan documents, beyond the A0 corrections already listed:**
+
+- **The `zipalign` correction had not reached the three lines a builder actually runs.** A0's finding
+  was written up in prose while A5's criterion 2, A7's narrative and R1's check still carried the
+  argument-less form — two of them calling it *"the form no source disputes"*, which was true only of
+  the form A0 disproved. All three now read `zipalign -c -P 16 -v 4`.
+- **The A6 correction stopped one sentence short.** Recording that Capacitor's gate exists is not the
+  same as recording that it **blocks**: `DEFAULT_ANDROID_WEBVIEW_VERSION` is 60 and the key floors at
+  55, so a wall exists below 60 whatever A6 does, and A6's *"a banner, not a wall"* is a claim about
+  the range above it. Said explicitly now.
+- **The rewritten gate rows claimed more independence than they have.** A4's named artifacts are not
+  C5b, but C6's per-character highlight is painted by the surface C5b rewrites, so A4's device
+  criterion still waits on it while its unit half does not. A6's floor *decision* needs only C5a, but
+  its criterion 3 re-runs the degrade inside the app and its criterion 4 walks C3–C6. Both residuals
+  are now named in the rows rather than implied away.
+- **And the rows cited a section that does not exist.** See the next heading.
+
+### What I found wrong in `android.md`, `wave-zero.md` and the repository
+
+1. **`wave-zero.md` has no §10b and no §10c — still.** This session was handed two rulings by those
+   numbers: *rewrite A2/A4/A6's gate rows to name artifacts rather than phase ranges*, and *the
+   default theme is Inkstone with the desktop palette shell deferred indefinitely*. Neither is in
+   `docs/plans/wave-zero.md` at HEAD, whose §10 ends at row 16e. **`ios.md` I0 reported exactly this
+   two sessions ago** and nothing has landed since; `core.md` C0 has since *implemented* §10c in
+   `tokens.css` and cited it by number, so the repository now contains code justified by a ruling the
+   rulings document does not carry. The gate-row rewrites here cite the ruling as relayed, and point
+   at this section. **Somebody with authority over `wave-zero.md` should land both.** The gate-row one
+   is the unresolved half of register **V1**, which `docs/plans/README.md` calls the most expensive
+   scheduling mistake available in the document.
+2. **`pnpm install --frozen-lockfile` failed on a clean checkout of `claude/build-ios`.** I0 moved
+   `@capacitor/ios` from `dependencies` to `devDependencies` in `apps/app/package.json` and committed
+   a lockfile that still recorded it under `dependencies`, so pnpm refused with
+   `ERR_PNPM_OUTDATED_LOCKFILE`. Three lines, fixed by the ordinary install that added
+   `@capacitor/android`. Worth noting because the failure mode is a fresh clone that cannot install
+   at all, and nothing in the phase gate runs a frozen install.
+3. **`pnpm lint` was green on a clean checkout and 2,094 errors after any `pnpm build`** — see A1.
+   Pre-existing in the sense that `dist/**` was already ignored and the copy was not; latent until a
+   native project existed to copy into.
+4. **STACK §2.1's third mandatory Android dependency is superseded.** `@capacitor-community/safe-area`
+   is not needed at 8.5.x; Capacitor's own `SystemBars` plugin does the same job, is registered
+   unconditionally, and defaults to handling insets. STACK §6's row for that package can be filled in
+   (**8.0.1**, published 2025-12-22) or struck; A2 recommends struck.
+5. **`android.md` A5 sends the dictionary copy to the wrong directory**, and the artifact's name is
+   one the plugin will skip. Corrected in place; the detail is in A0's table above. This is A5's to
+   act on and it is not started.
+6. **Register #19's Chromium issue id is not corroborated.** MDN's compat data cites
+   `crbug.com/40417848`; this plan and STACK register #19 carry `40468168`. Neither could be resolved.
+7. **Register **V3** is still open and this plan is the reason it was raised**: `C5` is cited ten
+   times here for work that is now C5a's or C5b's, and A6's criterion 3 names a spec id that no longer
+   exists. A6's gate row is fixed; **the body of A6 is not**, because A6 is out of this session's
+   scope. A session running A6 should expect to fix those citations first.

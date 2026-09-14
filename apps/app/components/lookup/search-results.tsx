@@ -8,6 +8,7 @@
  * HSK band, and which index answered — because the alternative is a list of
  * identical hanzi that can only be told apart by opening each one.
  */
+import { HanziWord } from '@/components/hanzi/hanzi-text';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/cn';
@@ -59,10 +60,14 @@ export function ResultRow({
       >
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="hanzi text-2xl leading-tight">
-              {group.simp}
+            <p className="text-2xl leading-tight">
+              <HanziWord text={group.simp} pinyinNum={first.pinyinNum} />
               {group.trad !== group.simp ? (
-                <span className="ml-2 text-base text-muted">{group.trad}</span>
+                <HanziWord
+                  text={group.trad}
+                  pinyinNum={first.pinyinNum}
+                  className="ml-2 text-base text-muted"
+                />
               ) : null}
             </p>
             <p className="mt-1 text-sm" data-testid="result-readings">
@@ -80,7 +85,7 @@ export function ResultRow({
             </p>
             {first.classifiers.length > 0 ? (
               <p className="mt-1 text-xs text-muted">
-                CL <span className="hanzi">{first.classifiers.join(' ')}</span>
+                CL <HanziWord text={first.classifiers.join(' ')} />
               </p>
             ) : null}
           </div>

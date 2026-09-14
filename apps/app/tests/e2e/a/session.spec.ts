@@ -27,6 +27,8 @@ import { expect, test, type Page } from '@playwright/test';
 import type { Repository, TangramDb } from '@/lib/db';
 import { DASUAN, openReview, readerContext, seed, storedCard } from '../p2/fixtures';
 
+import { expectBaseText } from '../hanzi';
+
 const DAY_MS = 86_400_000;
 
 type TangramWindow = Window & { __tangram?: { repo: Repository; db: TangramDb } };
@@ -53,7 +55,7 @@ test.describe('/review with the short learning steps on', () => {
     await openReview(page);
     const [id] = await seed(page, [{ entry: DASUAN, context: readerContext() }]);
 
-    await expect(page.getByTestId('card-front')).toContainText('打算');
+    await expectBaseText(page.getByTestId('card-front'), '打算');
     await page.getByTestId('reveal').click();
     // Again on a new card is the first learning step — a minute, not a day.
     await page.getByTestId('grade-1').click();
@@ -84,7 +86,7 @@ test.describe('/review with the short learning steps on', () => {
       /^Nothing due — 1 card comes back in 1 minute\.$/,
     );
     await expect(page.getByTestId('review-card')).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByTestId('card-front')).toContainText('打算');
+    await expectBaseText(page.getByTestId('card-front'), '打算');
     // Nothing was reloaded to get here, and nothing was graded either.
     expect(await reviewCount(page, id)).toBe(1);
   });

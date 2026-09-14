@@ -43,7 +43,12 @@ describe('the card slots', () => {
     const row = await getRepository().addCardFromEntry(DASUAN, context({ source: 'lookup' }));
     render(card({ card: row }));
 
-    expect(screen.getByTestId('card-front')).toHaveTextContent('打算');
+    // `<ruby>` interleaves the readings into `textContent` (`打dǎ算suàn`), so the
+    // base characters come from `data-hanzi` — the hook `<HanziText>` provides
+    // for exactly this (core.md C3).
+    expect(
+      screen.getByTestId('card-front').querySelector('[data-hanzi]'),
+    ).toHaveAttribute('data-hanzi', '打算');
     expect(screen.queryByTestId('card-recall')).toBeNull();
     expect(screen.queryByTestId('card-examples')).toBeNull();
   });
@@ -78,6 +83,60 @@ describe('the card slots', () => {
     // The rest of the front still flips.
     fireEvent.click(screen.getByTestId('card-front'));
     expect(onReveal).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * **A practice card's QUESTION side never carries the reading**, whatever
+ * `pinyinDisplay` says (core.md C3, as amended — see HANDOFF.md).
+ *
+ * This is the guard the phrase card had and the word card did not. C3 gave the
+ * front an unforced `<HanziWord>`, and since `DEFAULT_SETTINGS.pinyinDisplay`
+ * is `'always'`, a fresh install printed 打(dǎ)算(suàn) above the headword and
+ * then revealed `dǎsuàn` as the answer — the card answering itself for every
+ * learner who never opens a setting C8 has not built yet. No test saw it,
+ * because the assertion next door reads `data-hanzi`, which strips the
+ * readings by construction.
+ */
+describe('the question side', () => {
+  it('shows no reading on the front, and the whole reading on the back', async () => {
+    const row = await getRepository().addCardFromEntry(DASUAN, context({ source: 'lookup' }));
+
+    const view = render(card({ card: row }));
+    expect(screen.getByTestId('card-front').querySelector('rt')).toBeNull();
+    view.unmount();
+
+    /**
+     * Not vacuous: the same card, flipped, annotates every character.
+     *
+     * The annotation appears on the FRONT element, because that is where the
+     * headword is rendered — the back is appended below it and never repeats
+     * the characters. So "the question side is silent" and "the answer shows
+     * the reading over each character" are two states of one element, which is
+     * why `revealed` is what switches it.
+     */
+    render(card({ card: row, revealed: true }));
+    const readings = [...screen.getByTestId('card-front').querySelectorAll('rt')].map(
+      (node) => node.textContent,
+    );
+    expect(readings).toEqual(['dǎ', 'suàn']);
+  });
+
+  it('keeps the other script silent too', async () => {
+    const row = await getRepository().addCardFromEntry(DASUAN, context({ source: 'lookup' }));
+    // 打算's traditional and simplified forms are the same, so the secondary
+    // face needs a card whose scripts differ to be rendered at all.
+    const xuexi: CardRow = {
+      ...row,
+      snapshot: { ...row.snapshot, simp: '学习', trad: '學習', pinyinNum: 'xue2 xi2' },
+    };
+    render(card({ card: xuexi, script: 'trad' }));
+    expect(screen.getByTestId('card-front').querySelectorAll('rt')).toHaveLength(0);
+    // Both scripts are on the front — this is the face, not an empty render.
+    const hanzi = [...screen.getByTestId('card-front').querySelectorAll('[data-hanzi]')].map(
+      (node) => node.getAttribute('data-hanzi'),
+    );
+    expect(hanzi).toEqual(['學習', '学习']);
   });
 });
 

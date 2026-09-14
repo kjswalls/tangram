@@ -31,6 +31,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 
+import { HanziWord } from '@/components/hanzi/hanzi-text';
 import type { ExamplesRouteInfo, ExamplesRouteResponse } from '@/app/api/examples/route';
 import { examplesCacheKey } from '@/lib/ai/cache-key';
 import {
@@ -359,11 +360,29 @@ export function ExampleSentences({
                         : undefined
                     }
                   >
-                    <span className="hanzi text-xl">{token.text || '?'}</span>
-                    <span className="text-xs text-muted">
-                      {token.pinyin || '—'}
-                      {token.polyphone ? ' · polyphone' : ''}
-                    </span>
+                    {/*
+                      The reading is ABOVE the token now, through the same
+                      `<HanziText>` every other Chinese run goes through.
+                      **It is still token-granular, not character-granular**,
+                      and that is a frozen-surface limit rather than a choice:
+                      `RenderedToken` (lib/ai/ground.ts) carries `pinyin` as the
+                      MARKED word-level form, and `alignReading` needs the
+                      NUMBERED one. Adding `pinyinNum` to that token is the
+                      change C3 would need and did not make — recorded in
+                      HANDOFF.md. Until then the run aligns in `fallback` mode,
+                      which renders exactly one annotation over the token: the
+                      correct word-level reading rather than a guessed
+                      per-character one.
+                    */}
+                    <HanziWord
+                      text={token.text || '?'}
+                      {...(token.pinyin ? { pinyinMarked: token.pinyin } : {})}
+                      className="text-xl"
+                      force
+                    />
+                    {token.polyphone ? (
+                      <span className="text-xs text-muted">polyphone</span>
+                    ) : null}
                   </span>
                 ))}
               </p>

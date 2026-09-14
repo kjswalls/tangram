@@ -290,17 +290,26 @@ export function createDexieRepository(db: TangramDb): Repository {
    * stored one always wins. The merged row is written back once, so the fill-in
    * happens at most once per new column rather than on every read.
    *
-   * The write is best-effort: `getSettings` is also called from inside
-   * transactions, and a caller that only holds a read lock must still get its
-   * settings rather than an exception. `id` is pinned last so a corrupt stored
-   * row cannot rename the singleton.
+   * **Both writes are best-effort.** `getSettings` is called from inside
+   * transactions, and — since core.md C3 — from inside a Dexie `liveQuery`,
+   * which refuses a readwrite transaction outright ("Readwrite transaction in
+   * liveQuery context"). A caller that only holds a read lock must still get
+   * its settings rather than an exception. The fill-in write was already
+   * guarded; the **create** was not, so the very first read on a fresh database
+   * inside a live query threw and took the whole app down with it. `id` is
+   * pinned last so a corrupt stored row cannot rename the singleton.
    */
   async function getSettings(): Promise<SettingsRow> {
     const now = Date.now();
     const existing = await db.settings.get(SETTINGS_ID);
     if (!existing) {
       const row: SettingsRow = { ...DEFAULT_SETTINGS, createdAt: now, updatedAt: now };
-      await db.settings.put(row);
+      try {
+        await db.settings.put(row);
+      } catch {
+        // Read-only context (a read transaction, or a liveQuery). The caller
+        // gets the defaults; the next writer persists them.
+      }
       return row;
     }
     const missing = (Object.keys(DEFAULT_SETTINGS) as (keyof typeof DEFAULT_SETTINGS)[]).filter(

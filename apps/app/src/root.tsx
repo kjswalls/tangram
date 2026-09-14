@@ -10,6 +10,7 @@ import type { ReactNode } from 'react';
 
 import { Outlet, ScrollRestoration } from 'react-router';
 
+import { PinyinDisplayProvider } from '@/components/hanzi/pinyin-display';
 import { RegisterServiceWorker } from '@/components/pwa/register-sw';
 import { DataBanner } from '@/components/shell/data-banner';
 import { SiteHeader } from '@/components/shell/site-header';
@@ -26,13 +27,15 @@ import { TestHooks } from '@/components/shell/test-hooks';
  */
 export function Root({ children }: { children?: ReactNode }) {
   return (
-    <>
+    // One subscription to the pinyin-visibility setting for the whole tree,
+    // rather than one per Chinese run — a passage has hundreds (core.md C3).
+    <PinyinDisplayProvider>
       <SiteHeader />
       <DataBanner />
       <TestHooks />
       <RegisterServiceWorker />
       <main className="mx-auto w-full max-w-3xl px-4 py-6 sm:py-8">{children ?? <Outlet />}</main>
       <ScrollRestoration />
-    </>
+    </PinyinDisplayProvider>
   );
 }

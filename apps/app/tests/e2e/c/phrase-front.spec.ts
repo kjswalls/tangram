@@ -44,8 +44,18 @@ test.describe('a phrase card front', () => {
     await expect(page.getByTestId('phrase-face-warning')).toContainText('not verified');
     await expect(page.getByTestId('card-back')).toHaveCount(0);
 
-    // The reading is the answer, so the front does not carry it.
+    /**
+     * The reading is the answer, so the front does not carry it.
+     *
+     * Asserted as "no `<rt>` anywhere on this front" and not only as
+     * "the string `kànkan` is absent": since core.md C3 a reading reaches the
+     * screen one character at a time inside a `<ruby>`, so a front that showed
+     * `看kàn看kan` would satisfy the substring check while giving the answer
+     * away. `phrase-face.tsx` renders no ruby at all, deliberately — see
+     * HANDOFF.md, core.md C3 — and this is what holds it to that.
+     */
     await expect(page.getByTestId('card-front')).not.toContainText('kànkan');
+    await expect(page.getByTestId('card-front').locator('rt')).toHaveCount(0);
   });
 
   test('leaves a fully cited phrase unmarked', async ({ page }) => {

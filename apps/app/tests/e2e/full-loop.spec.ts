@@ -50,9 +50,23 @@ import { expect, test, type Page } from '@playwright/test';
 import { ready, resetApp } from './p3/helpers';
 import { DEMO_PARAGRAPH } from './p5/paragraph';
 
+import {
+  expectBaseText,
+  expectExactBaseText,
+  expectNoBaseText,
+  expectNoReadingOf,
+} from './hanzi';
+
 /** In the demo paragraph, in the sentence below — HSK 3, and not a demo card. */
 const MINED = '附近';
 const MINED_SENTENCE = '中午我和同事一起在公司附近的饭馆吃饭，下午继续工作。';
+/**
+ * 附近's reading, word-level and by syllable. Both forms, because C3 renders
+ * one `<rt>` per character: a write card's front must show neither the joined
+ * annotation nor either half of it.
+ */
+const MINED_READING = 'fùjìn';
+const MINED_SYLLABLES = ['fù', 'jìn'] as const;
 /** The demo seed pre-warms `ask_cache` for this question. */
 const BROWSING = "how do I say I'm just browsing";
 /** What the learner types into the recall box for 附近. */
@@ -297,8 +311,8 @@ test('the whole loop with i+1 sentences and free recall on', async ({ page }) =>
       const back = page.getByTestId('card-back');
 
       // The reader's sentence came all the way through, with the word marked.
-      await expect(back.getByTestId('context-back')).toContainText(MINED_SENTENCE);
-      await expect(back.getByTestId('context-target')).toHaveText(MINED);
+      await expectBaseText(back.getByTestId('context-back'), MINED_SENTENCE);
+      await expectExactBaseText(back.getByTestId('context-target'), MINED);
 
       // The suggestion arrives, rings one button, and writes nothing.
       const suggestion = page.getByTestId('recall-suggestion');
@@ -416,7 +430,10 @@ test('the whole loop with i+1 sentences and free recall on', async ({ page }) =>
       // from, which is blanked where the word stood.
       const front = page.getByTestId('card-front');
       await expect(front).toBeVisible();
-      await expect(front).not.toContainText(MINED);
+      await expectNoBaseText(front, MINED);
+      // And not its reading either — which `expectNoBaseText` cannot see,
+      // because it strips the `<rt>`s the reading now lives in.
+      await expectNoReadingOf(front, MINED_READING, MINED_SYLLABLES);
       await expect(page.getByTestId('card-back')).toHaveCount(0);
 
       // An exact answer is settled in the browser. Any request is a failure of
@@ -431,7 +448,7 @@ test('the whole loop with i+1 sentences and free recall on', async ({ page }) =>
       await page.getByTestId('recall-answer').press('Enter');
 
       await expect(page.getByTestId('card-back')).toBeVisible();
-      await expect(page.getByTestId('production-answer')).toHaveText(MINED);
+      await expectExactBaseText(page.getByTestId('production-answer'), MINED);
       await expect(page.getByTestId('recall-suggestion')).toHaveAttribute('data-suggested', '3');
       expect(asked).toBe(0);
       await page.unroute('**/api/recall');

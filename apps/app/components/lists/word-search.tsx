@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 
+import { HanziWord } from '@/components/hanzi/hanzi-text';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { getEntrySource } from '@/lib/lists/entry-source';
@@ -77,7 +78,7 @@ export function WordSearch({
           {results.map((entry) => (
             <li key={entry.id} className="flex items-center justify-between gap-3 py-2">
               <span className="min-w-0">
-                <span className="hanzi text-lg">{entry.simp}</span>{' '}
+                <HanziWord text={entry.simp} pinyinNum={entry.pinyinNum} className="text-lg" />{' '}
                 <span className="text-sm text-muted">{entry.pinyinMarked}</span>
                 <span className="block truncate text-sm text-muted">{entry.glosses[0]}</span>
               </span>

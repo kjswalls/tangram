@@ -18,6 +18,17 @@ export interface CardFace {
   secondary?: string;
   /** `Traditional` or `Simplified` — what `secondary` is. */
   secondaryLabel?: string;
+  /**
+   * The snapshot's numbered reading, so `<HanziText>` can align it character by
+   * character (core.md C3). It is the SNAPSHOT's, not the dictionary's: a card
+   * renders from the snapshot so that a dictionary rebuild cannot silently
+   * change what is on it, and the reading is part of that.
+   *
+   * The same reading serves both `primary` and `secondary` — CC-CEDICT's
+   * traditional and simplified columns are the same word with the same reading,
+   * which is why one `pinyinNum` sits on the face rather than one per script.
+   */
+  pinyinNum?: string;
 }
 
 /**
@@ -25,16 +36,20 @@ export interface CardFace {
  * differs (`settings.script` flips which one leads).
  */
 export function cardFace(snapshot: CardSnapshot, script: ScriptPreference): CardFace {
+  // A phrase's `pinyinNum` is the model's, token by token, and a phrase face
+  // renders its own tokens through `PhraseFace` — so no word-level reading here.
   if (isPhraseSnapshot(snapshot)) return { primary: snapshot.simp };
 
   const wantsTrad = script === 'trad';
   const primary = wantsTrad ? snapshot.trad : snapshot.simp;
   const other = wantsTrad ? snapshot.simp : snapshot.trad;
-  if (!other || other === primary) return { primary };
+  const reading = snapshot.pinyinNum ? { pinyinNum: snapshot.pinyinNum } : {};
+  if (!other || other === primary) return { primary, ...reading };
   return {
     primary,
     secondary: other,
     secondaryLabel: wantsTrad ? 'Simplified' : 'Traditional',
+    ...reading,
   };
 }
 

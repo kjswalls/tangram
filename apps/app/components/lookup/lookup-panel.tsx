@@ -64,14 +64,23 @@ export function LookupPanel({
       className={cn('rounded-xl border border-border bg-surface', className)}
     >
       <header className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border px-4 py-3">
-        <h2 className="hanzi text-xl font-medium">
+        {/* The query as the learner typed it — which may be pinyin, English or
+            a hanzi run the dictionary has no entry for — so there is no cited
+            reading to annotate. `lang` is what it needs (core.md C0 rule 2);
+            `EntryDetail` below it renders the resolved headword with its ruby. */}
+        <h2 className="hanzi text-xl font-medium" lang="zh-Hans">
           {query || <span className="font-sans text-base text-muted">Nothing looked up yet</span>}
         </h2>
         {context ? <Badge tone="accent">from {context.source}</Badge> : null}
       </header>
 
       {provenance ? (
-        <p className="hanzi border-b border-border px-4 py-2 text-sm text-muted">{provenance}</p>
+        <p
+          className="hanzi border-b border-border px-4 py-2 text-sm text-muted"
+          lang="zh-Hans"
+        >
+          {provenance}
+        </p>
       ) : null}
 
       <div data-testid="lookup-body" className="px-4 py-4">

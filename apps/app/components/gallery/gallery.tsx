@@ -26,6 +26,8 @@ import { useEffect, useState } from 'react';
 
 import { DictStatusView } from '@/components/dict/dict-status';
 import { Section, Row } from '@/components/gallery/section';
+import { passageRuns } from '@/components/gallery/passage';
+import { HanziText } from '@/components/hanzi/hanzi-text';
 import {
   ASK_OFFLINE_CHIP,
   ASK_UNGROUNDED_BODY,
@@ -42,6 +44,7 @@ import { Input } from '@/components/ui/input';
 import { Sheet } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
 import { TabBar, type TabItem } from '@/components/ui/tab-bar';
+import type { PinyinDisplay } from '@/lib/db/schema';
 import type { DictStatus } from '@/lib/dict/store';
 
 /**
@@ -51,6 +54,29 @@ import type { DictStatus } from '@/lib/dict/store';
  * and rewording the intro would have left the tree-shake check passing against
  * a bundle that contained the entire gallery.
  */
+/**
+ * The three `pinyinDisplay` states, side by side (core.md C3).
+ *
+ * Each column passes `display` explicitly instead of reading the provider, so
+ * the gallery shows all three at once — the setting is one value and a review
+ * that had to toggle it three times would compare three screenshots taken at
+ * three moments.
+ */
+const PASSAGE_MODES: readonly { key: PinyinDisplay; label: string; note: string }[] = [
+  { key: 'always', label: "'always'", note: 'the default — every reading, band reserved' },
+  { key: 'tap', label: "'tap'", note: 'nothing until a tap; then that word only' },
+  { key: 'never', label: "'never'", note: 'no <rt> anywhere, no band' },
+];
+
+/**
+ * 200 and 500 characters. Both are computed once at module scope: building
+ * them inside the component would hand `<HanziText>` a new array identity on
+ * every render and defeat the `useMemo` over `runs` that keeps a 500-character
+ * passage from re-aligning on each keystroke elsewhere on the page.
+ */
+const PASSAGE_200 = passageRuns(200);
+const PASSAGE_500 = passageRuns(500);
+
 export const GALLERY_MARKER = 'Every primitive in every variant';
 
 /** The three tabs C7 will mount for real. Named here so the shape is reviewable. */
@@ -310,6 +336,7 @@ export function Gallery() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [fieldValue, setFieldValue] = useState('');
   const [activeTab, setActiveTab] = useState('look-up');
+  const [longShown, setLongShown] = useState(false);
 
   return (
     <div data-testid="gallery" className="flex flex-col gap-8 pb-24">
@@ -554,6 +581,63 @@ export function Gallery() {
             <DictStatusView status={status} source="asset" onStart={() => undefined} />
           </div>
         ))}
+      </Section>
+
+
+      <Section
+        id="passage"
+        title="A reading passage, with per-character ruby"
+        note={
+          <>
+            C3&rsquo;s criteria are about a <em>passage</em>, and nothing outside the reader renders
+            one — C5b owns that file, so they are asserted here instead. The runs come from{' '}
+            <code>segment()</code> over the demo paragraph and the readings from the dictionary; a
+            unit test re-derives them. Each column overrides the setting rather than reading it, so
+            all three states are on screen at once.
+          </>
+        }
+      >
+        <div className="flex flex-col gap-6 wide:flex-row">
+          {PASSAGE_MODES.map(({ key, label, note }) => (
+            <div key={key} data-testid={`passage-${key}`} className="min-w-0 flex-1">
+              <p className="font-mono text-xs text-muted">
+                {label} — {note}
+              </p>
+              <p className="mt-2 text-2xl leading-loose">
+                <HanziText
+                  runs={PASSAGE_200}
+                  display={key}
+                  // A tap has to do something, or `'tap'` cannot be reviewed:
+                  // the reveal lives inside `<HanziText>` and only fires for a
+                  // passage that takes a word handler. C4 hangs the real word
+                  // sheet off this.
+                  onWord={() => undefined}
+                  data-testid={`passage-text-${key}`}
+                />
+              </p>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            variant="secondary"
+            size="sm"
+            data-testid="passage-long-show"
+            onClick={() => setLongShown(true)}
+          >
+            Mount 500 characters
+          </Button>
+          <p className="text-xs text-muted">
+            Mounted on demand, not on load: the layout cost C3 records is the cost of{' '}
+            <em>mounting</em> one, and a passage already on the page cannot be timed.
+          </p>
+        </div>
+        {longShown ? (
+          <p className="text-2xl leading-loose" data-testid="passage-long">
+            <HanziText runs={PASSAGE_500} display="always" data-testid="passage-text-long" />
+          </p>
+        ) : null}
       </Section>
 
       <Section

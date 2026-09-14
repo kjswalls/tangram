@@ -23,6 +23,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import type { AskRouteInfo, AskRouteResponse } from '@/app/api/ask/route';
+import { HanziWord } from '@/components/hanzi/hanzi-text';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { askCacheKey } from '@/lib/ai/cache-key';
@@ -204,7 +205,7 @@ function MatchCard({
       className="rounded-lg border border-border px-3 py-2"
     >
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        <span className="hanzi text-lg font-medium">{entry.simp}</span>
+        <HanziWord text={entry.simp} pinyinNum={entry.pinyinNum} className="text-lg font-medium" />
         <span className="text-sm text-accent">{entry.pinyinMarked || '—'}</span>
         {entry.hskBand ? <Badge tone="accent">HSK {hskBandLabel(entry.hskBand)}</Badge> : null}
       </div>
@@ -359,19 +360,38 @@ function PhraseCard({
                     : undefined
             }
           >
-            <span
+            {/*
+              The reading is ABOVE the token now (core.md C3), through the same
+              `<HanziText>` every other Chinese run goes through, and `force`
+              because the ask panel is answering a question: it prints the
+              reading whatever `pinyinDisplay` says.
+
+              **Token-granular, not character-granular**, and that is a
+              frozen-surface limit rather than a choice — `RenderedToken`
+              (lib/ai/ground.ts) carries `pinyin` as the MARKED word-level form
+              and `alignReading` needs the NUMBERED one, so the run aligns in
+              `fallback` mode: one correct word-level annotation rather than a
+              guessed per-character one. Recorded in HANDOFF.md.
+            */}
+            <HanziWord
+              text={token.text || '?'}
+              {...(token.pinyin ? { pinyinMarked: token.pinyin } : {})}
+              force
               className={cn(
-                'hanzi text-2xl',
+                'text-2xl',
                 (token.unverified || token.aiGenerated) &&
                   'decoration-warning decoration-dotted underline underline-offset-4',
               )}
-            >
-              {token.text || '?'}
-            </span>
-            <span className="text-xs text-muted">
-              {token.pinyin || (token.aiGenerated ? 'AI' : '—')}
-              {token.polyphone ? ' · polyphone' : ''}
-            </span>
+            />
+            {/*
+              A token the model invented has no reading to put above it, and
+              the flag is the whole point of the row — so it keeps its own line
+              rather than vanishing with the pinyin.
+            */}
+            {token.pinyin ? null : (
+              <span className="text-xs text-warning">{token.aiGenerated ? 'AI' : '—'}</span>
+            )}
+            {token.polyphone ? <span className="text-xs text-muted">polyphone</span> : null}
           </span>
         ))}
       </p>

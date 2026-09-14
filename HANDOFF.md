@@ -5154,3 +5154,496 @@ through `var(${token})` interpolation, which C0's token guard cannot see (`galle
 now checks those two lists through TypeScript, and asserts the swatch list covers every tier-2
 token); and the "no gallery module name in the manifest" assertion was vacuous on a single-chunk
 build — kept, with a comment saying it starts meaning something when W6 splits the bundle.
+
+## `core.md` C2 — `TTSProvider`, widened; and the block speaker
+
+**Landed.** `lib/tts/provider.ts` is now an interface with utterance identity, an event surface, a
+declared boundary capability, voice enumeration and `stop()`. `lib/tts/speech-synthesis.ts`
+implements it over Web Speech. New `lib/tts/sequence.ts` is the per-character queue C6 uses.
+`components/tts/speak-button.tsx` is one speaker per hanzi **block**, tap-to-play/tap-to-stop, with
+the pending / ready / unavailable triad and its **visible** reason unchanged.
+
+### The interface, verbatim — `ios.md` and `android.md` implement this
+
+```ts
+export type VoiceId = string;
+
+export interface TTSVoice {
+  id: VoiceId;
+  name: string;
+  /** BCP-47, as the engine reports it. */
+  lang: string;
+  /** The engine marks this the default for its language. */
+  isDefault: boolean;
+}
+
+export interface SpeakOptions {
+  /** BCP-47 tag handed to the utterance; defaults to the chosen voice's own. */
+  lang?: string;
+  /** 0.1–10, 1 is the browser default. Slower is the point for a learner. */
+  rate?: number;
+  /** Prefer this voice. An unknown id falls back to the provider's own ranking. */
+  voiceId?: VoiceId;
+}
+
+/** Where an utterance ended up. `done` resolves to one of these; it never rejects. */
+export type UtteranceOutcome = 'ended' | 'cancelled' | 'error' | 'unavailable';
+
+export interface BoundaryEvent {
+  /** Code-unit offset into the utterance's own `text`. */
+  charIndex: number;
+  /** Length of the run being spoken, when the engine reports one. */
+  charLength?: number;
+}
+
+export interface UtteranceEvents {
+  start: undefined;
+  end: undefined;
+  boundary: BoundaryEvent;
+  cancel: undefined;
+  error: { message: string };
+}
+
+export type UtteranceEventName = keyof UtteranceEvents;
+
+export interface Utterance {
+  /** Unique within a provider, and monotonic. Identity, not an index. */
+  readonly id: number;
+  readonly text: string;
+  /** Never rejects. */
+  readonly done: Promise<UtteranceOutcome>;
+  /** Returns an unsubscribe function. **`start` replays** — see rule 1. */
+  on<K extends UtteranceEventName>(
+    event: K,
+    listener: (payload: UtteranceEvents[K]) => void,
+  ): () => void;
+  /** Cancel this utterance and nothing else. A no-op once it has finished. */
+  cancel(): void;
+}
+
+export interface TTSProvider {
+  readonly name: string;
+  /** Whether `boundary` events can be relied on. **Declared, not detected.** */
+  readonly supportsBoundary: boolean;
+  /** Whether this provider can speak **Mandarin** here, now. */
+  available(): Promise<boolean>;
+  voices(): Promise<readonly TTSVoice[]>;
+  /** Queue `text` and return its handle **synchronously**. */
+  speak(text: string, opts?: SpeakOptions): Utterance;
+  /** Cancel everything this provider has queued or is speaking. */
+  stop(): void;
+  /**
+   * Subscribe to "the set of voices may have changed"; returns an unsubscribe.
+   * An adapter with no such signal returns a no-op and never calls back.
+   */
+  onVoicesChanged(listener: () => void): () => void;
+}
+```
+
+`lib/tts/sequence.ts` sits on top of it:
+
+```ts
+export type SequenceOutcome = 'ended' | 'stopped' | 'unavailable' | 'error';
+```
+
+### Four more C2 decisions the plan did not settle
+
+- **`speak()` enqueues; it does not cancel.** Before C2 the provider called `synth.cancel()` inside
+  every `speak()`, so a second tap replaced the first and there was no way to stop anything at all.
+  C6's hold-to-slow mode is N utterances *in order*, which a cancel-on-speak interface cannot
+  express, so the cancel moved **out of the provider and into `SpeakButton`**: a tap on a speaking
+  button stops it, and a tap on an idle one calls `stop()` before starting. The adapter keeps its
+  own one-at-a-time queue, because `speechSynthesis` is a single global queue shared with every
+  other script on the page and its `cancel()` empties all of it.
+- **The web adapter declares `supportsBoundary = false`, even though Chrome desktop does fire
+  `boundary`.** The flag is a *declaration*, not a detection: STACK §2.1 adopts per-character
+  utterances as the rule rather than the fallback, C6 repeats it ("do this even where boundary
+  events exist"), and a `true` here would invite a consumer to branch on something two of the three
+  engines cannot deliver. An adapter that means it may declare `true`; nothing in this app will read
+  it as permission to skip the per-character path.
+- **`lib/tts/sequence.ts` never reads `boundary` at all**, and behaves identically whichever way the
+  flag is set — which is what its unit test asserts (`it.each([false, true])`), rather than only
+  exercising the `false` branch.
+- **The outcome unions are part of the contract.** `UtteranceOutcome` is
+  `'ended' | 'cancelled' | 'error' | 'unavailable'`; `SequenceOutcome` is
+  `'ended' | 'stopped' | 'unavailable' | 'error'`. `'ended'` on a sequence means **every** character
+  was spoken: an engine failure on one used to fall through the loop and still report `'ended'`, so
+  a pass in which nothing was audible was indistinguishable from one that worked.
+
+**`HANDOFF.md`'s "Plan item 3 — TTS" section (above, around line 1333) is superseded by this one.**
+It describes the pre-C2 three-member seam — `available()`, `speak(text, opts?)` returning
+`Promise<void>` — and a reader who follows `core.md` C2's pointer to "the final interface" and stops
+at the first TTS heading gets the old one. Everything it says about voice ranking, the memoised
+`voiceschanged` wait and the visible unavailable reason still holds; everything it says about the
+*shape* of `speak()` does not.
+
+`onVoicesChanged` is the one addition beyond C2's list, and it is there because
+`available()` has a **different answer at different times**: Chrome's voice list is empty on a cold
+navigation and populates asynchronously — on Linux well past any timeout worth waiting through — so
+a `SpeakButton` that asked once on mount said "No voice" for the life of that mount while the next
+card's speaker worked. Two identical buttons on one screen, disagreeing. On mobile the same signal
+is an OS voice install or removal, which is also when a stored `SpeakOptions.voiceId` stops
+resolving.
+
+### Three rules the plan did not state, and a mobile adapter must honour
+
+**1. `start` is REPLAYED to a late subscriber. Only `start`.** C2 says to drive the highlight off
+per-character utterance `start` when boundaries are absent — and then leaves the *timing* of that
+event unspecified. `@capacitor-community/text-to-speech` has **no start event at all**: its
+`speak()` resolves when the utterance finishes, so the only honest thing an adapter can do is emit
+`start` synchronously inside `speak()`. A consumer written against the Web Speech adapter subscribes
+on the statement *after* `speak()` and, against that adapter, misses every one — which is zero
+highlights on exactly the platform the per-character path exists for. So an `Utterance` remembers
+that `start` fired and `on('start', …)` invokes a listener immediately if it already has.
+`tests/unit/tts/fake-provider.ts` has a `startsEagerly: true` mode that emits `start` inside
+`speak()`, and `sequence.ts`'s criterion-3 test runs against it.
+
+**2. `done` must EVENTUALLY settle.** A requirement on the adapter, not a hope about the engine.
+Consumers await it with no timeout of their own — `sequence.ts` awaits one per character — so a
+`done` that never resolves hangs the caller with a character lit and no way out but `stop()`. The
+engines drop utterances: Chrome cuts a long one without an `end`, and iOS drops the completion
+callback when the app backgrounds mid-utterance, which is precisely the case
+`@capacitor-community/text-to-speech`'s completion-resolved `speak()` promise cannot cover. **An
+adapter owns a watchdog of its own.** The Web Speech adapter's is `#watchdogMs`: four times the
+plausible duration, floored at 10s and capped at 30s.
+
+**3. A provider must never read Mandarin text in Cantonese.** The old adapter's voice ranking put
+`zh-HK` last rather than refusing it, which on a Cantonese-only device meant the learner heard the
+wrong language rather than the honest "no voice". The rule is now in the interface's own
+documentation: such a voice is **refused** — including when `SpeakOptions.voiceId` names one — and
+`available()` answers `false`. `isCantoneseVoice` is exported so an adapter applies the same
+predicate rather than re-deriving it.
+
+### What the review found in C2
+
+Two lenses — the plan's acceptance criteria, and what breaks that no test covers — then an
+adversarial refutation pass over every finding. **The blocking one was the watchdog, which had no
+test at all.**
+
+1. **The watchdog abandoned the utterance without taking it off the engine.** When it fired it
+   settled the handle and pumped the next utterance, but never called `synth.cancel()` — so the
+   engine was still speaking the abandoned one when the next `speak()` arrived. Two utterances in
+   the browser's single global, additive queue, which is the exact state the adapter's own header
+   says it exists to prevent. **And there was no way back**: `stop()` only reached
+   `synth.cancel()` inside `if (current)`, so after a watchdog fire it was a complete no-op, the
+   button had already reset to Play, and the learner's next tap *added* a third utterance.
+   `stop()` now cancels the engine unconditionally.
+   - A second bug fell out of the fix: cancelling *before* settling made the engine's own
+     `error: 'canceled'` arrive first, so the outcome came back `'cancelled'` and the
+     `'the speech engine never answered'` event — the one diagnostic this path exists to emit —
+     never reached a listener. Settle, then cancel, then pump.
+2. **The watchdog scaled without a cap**, so the longer the utterance the later the guard: a
+   40-character block at `BLOCK_RATE` worked out at 53 seconds. That is backwards — the failure it
+   guards is Chrome dropping a **long** utterance at ~15s — so it is capped at 30s now. The 10s
+   floor stays, including for `sequence.ts`'s one-code-point utterances, because firing early cuts
+   a character off mid-sound.
+3. **`SpeakButton` discarded the `UtteranceOutcome`.** The provider distinguishes `'error'` and
+   `'unavailable'` from `'ended'`; the only consumer threw all of it away and returned to the Play
+   glyph as if the word had been spoken — silence with no explanation, which contradicts the
+   component's own argument for why the unavailable reason is *visible text*. It reads the outcome
+   now and shows `Could not play` beside the glyph. `'cancelled'` says nothing: that is the
+   learner's own second tap.
+4. **Availability was asked once per mount and never again**, which is the `onVoicesChanged`
+   addition above.
+5. **`sequence.ts` spoke punctuation**, on the unverified reasoning that "an engine handed 。 says
+   nothing and returns, which is a free no-op". The cost of that being wrong is not free: the first
+   `'error'` stops the whole sequence, so an engine that answers a `，`-only utterance with
+   `synthesis-failed` kills a sentence at the comma. Punctuation is skipped now, alongside
+   whitespace — `\p{P}`, `\p{S}`, `\p{C}` — and Latin and digits still speak, so 卡拉OK keeps
+   its OK. The indexes handed to `onIndex` are still the original string's.
+
+**Three tests that could not fail**, each rewritten and each mutation-verified:
+
+- **"does nothing when pressed while unavailable"** clicked a `disabled` button and asserted
+  nothing was spoken — which React guarantees on its own, since it does not deliver a synthetic
+  click for a disabled form control. Deleting the component's `if (disabled) return;` guard left it
+  green, and *still* does: neither `.click()` nor `fireEvent.click` can reach the handler. So the
+  test now asserts the thing that actually holds the behaviour up — **the button carries `disabled`
+  in every state but `ready`** — and says in as many words that the guard in `toggle` is a second
+  line of defence for the day `disabled` is replaced by `aria-disabled`, and that this test has to
+  be rewritten deliberately on that day. Removing `disabled` from the button fails it.
+- **"cancelling twice, or after it ended, is a no-op"** re-asserted an already-settled promise's
+  value, which is immutable. The observable failure is a `cancel` **event** after `end` — what the
+  interface forbids and what a sequence would read as an interruption — so it counts `cancel`
+  emissions from a listener subscribed before the end. Removing the fake's `if (this.settled)
+  return;` fails it.
+- **"renders pending, then ready"** never asserted `pending`; it waited past it, as every other
+  test in the file does. `pending` is the state that renders the wrapper `invisible` so the pinyin
+  line does not jump when the probe lands — changing that class to `hidden` passed the whole suite
+  while every review card reflowed. It is asserted now.
+
+Also corrected: the `VoiceId` documentation — the id→index minting rule, which is the hardest part
+of a Capacitor adapter — was attached to `SpeakOptions` instead of to `VoiceId`, so the type it
+constrains carried no documentation at all on a settle-first surface that `ios.md` I4 reads as its
+specification.
+
+### Not done, and why
+
+- **`tests/unit/tts/provider.test.ts` is the contract, not a runnable conformance suite.** Its
+  header claimed `ios.md` I4 and `android.md` A4 "should be able to run this file against their
+  adapters". They cannot: every test drives the fake through methods that are deliberately not part
+  of `TTSProvider` — `start(id)`, `end(id)`, `fail(id, message)`, `loadVoices()`. Turning it into
+  `describeProviderContract(factory, driver)` means specifying a driver interface for "make this
+  utterance start now", which is a real design question about how a Capacitor adapter is testable
+  at all, and not one C2 should answer on the mobile plans' behalf. **The header says so now**
+  rather than promising something that does not exist.
+- **`stop()` immediately followed by `speak()` in the same task is the documented Chrome
+  stuck-synthesiser pattern**, and it is now the *normal* path for every tap on a second card's
+  speaker, because C2 moved the cancel out of `speak()` and into the consumer. Nothing here can
+  test it — the fake cancels synchronously and headless Chromium has no voices — and inserting a
+  `setTimeout` between them on a guess would be speculation. **Flagged for the first session with a
+  real browser and a real voice.**
+- **Audio itself is still unverified.** Headless Chromium ships no voices, so the e2e spec asserts
+  the disabled branch and its visible reason and nothing else. Unchanged from Phase 6 and unchanged
+  by this phase; `ios.md` and `android.md` are where a real voice first speaks.
+- **`boundary` has no real-engine test.** Nothing in this container emits one. The fake covers the
+  contract; the capability flag exists precisely because two of three engines cannot be trusted
+  with it.
+
+## `core.md` C3 — per-character ruby, and the alignment nobody had written
+
+**Landed.** New `lib/hanzi/align.ts` (`alignReading`), `components/hanzi/hanzi-text.tsx`
+(`<HanziText>` / `<HanziWord>`), `components/hanzi/pinyin-display.tsx` (the provider over
+`settings.pinyinDisplay`), `components/hanzi/ruby.css`. `lib/db/schema.ts` gains
+`pinyinDisplay?: 'always' | 'tap' | 'never'`, default `'always'`, optional and merged by
+`getSettings()` — **no Dexie version bump**, as C3 specifies. `lib/dict/pinyin.ts` exports
+`isNumberedSyllable`. `lib/srs/presentation.ts`'s `CardFace` carries `pinyinNum` so a card face can
+align.
+
+### The alignment rate, which C3 asks for by name
+
+Measured over the whole of `data/dict.json` by
+`tests/unit/hanzi/align.test.ts`'s property test, which prints it on every run:
+
+```
+  total:    248,376 headword/reading pairs
+  aligned:  248,248 (99.948%)
+  fallback: 128 (0.052%), of which 68 have no reading at all (xx5)
+```
+
+**0.052% is far below the "few percent" threshold C3 sets for needing another pass**, so C5a can
+build on it. The 60 non-`xx5` fallbacks are all the same shape: a Latin run CC-CEDICT writes as one
+multi-letter token against more than one character — `AA制 [AA zhi4]`, `BP机 [BP ji1]`, `4S店`,
+`CP值`, `21三体综合症 [er4 shi2 yi1 …]`. Nothing can say which character `AA` belongs to, so the
+aligner refuses and the caller renders one word-level annotation. That is the honest answer to the
+hazard C3 names, not a special case for it. `3C店 [san1 C dian4]` and `卡拉OK [ka3 la1 O K]` — where
+CC-CEDICT *does* write one token per letter — align per character.
+
+### The two recorded measurements
+
+Written by `tests/e2e/core/ruby.spec.ts` into `apps/app/test-results/c3-record.json`.
+
+**The clipboard — and it is now an assertion.** C3 says "if Chromium does exclude it, promote this
+to an assertion in the same commit and say so." **It excludes it.** Over a `Range` spanning the
+whole 284-character passage:
+
+| | length | contains the readings |
+|---|---|---|
+| `getSelection().toString()` | 1042 | yes |
+| the clipboard, after `Ctrl+C` | 284 | **no** — the hanzi exactly |
+
+So Blink honours `user-select: none` in the **copied-text** algorithm the same way WebKit has since
+Safari 16.4 (bug 80159), even though it does not honour it in the *selection* string. That
+distinction matters and is why the first measurement of this was wrong: a test that reads
+`getSelection().toString()` is not measuring the clipboard, and would have recorded "Chromium
+copies the pinyin" — the opposite of the truth. The spec now asserts both halves, so the claim is
+about copying rather than about nothing having been selected. **`rt { user-select: none }` is no
+longer sourced for one engine only**; R12 in `core.md`'s register can be closed for Blink. C5b still
+replaces this criterion when it takes the clipboard over explicitly.
+
+**Layout time for 500 characters:** 568 characters / 460 ruby annotations mount, commit and lay out
+in **~40ms** in headless desktop Chromium (42.4ms, 42.5ms and 36.5ms across runs). Recorded only —
+there is no budget to assert against and a number from this container is not one to turn into a
+gate.
+
+### `components/hanzi/ruby.css` did not exist, and nothing noticed
+
+The component shipped `.hanzi-band`, `.hanzi-rt` and `.hanzi-ruby` for a stylesheet **nobody had
+written**. C3's Files list names it; it was missed. Every unit test passed, because jsdom has no
+layout and every class name is just a string to it. What it cost:
+
+- `ruby-position: over` was never declared;
+- **`rt { user-select: none }` was never applied** — so the clipboard measurement above would have
+  been a measurement of unstyled ruby, and would have recorded the wrong answer twice over;
+- the annotations took the browser's default `<rt>` styling — the wrong family and no muted colour;
+- and the band was never reserved, so **the first line's readings sat 13px above the passage**,
+  overlapping whatever was printed there. The e2e criterion ("every `<rt>`'s bounding box inside its
+  container's") is what caught it, on its first run.
+
+`tests/e2e/core/ruby.spec.ts`'s first test asserts every one of those declarations reaches the page,
+because **a class that resolves to nothing is invisible in every other test in the file.**
+
+### Two CSS findings that only a browser could have produced
+
+**1. The band cannot be `padding-top` on an `inline-block`, because that stops the passage
+wrapping.** The obvious fix for the escaping first line is
+`.hanzi-band { display: inline-block; padding-top: 0.6em }`, and it works — until a run has no
+`<rt>` in it. Measured in Chromium: **an `inline-block` whose children are `<ruby>` elements with no
+`<rt>` has no line-break opportunities at all**, so the `'tap'` column's 200-character passage
+became a single unbreakable **2546px** box at a 390px viewport and the page scrolled sideways. The
+identical markup with annotations wraps at 358px — the annotations are what create the break
+opportunities. So the band is a **zero-width strut** instead: `.hanzi-band::before { content: '';
+display: inline-block; width: 0; height: 1.6em; vertical-align: baseline }`, which props the first
+line box open and leaves the element `display: inline`. The e2e asserts both halves — the strut has
+height, and the element is still `inline` — because each alone passes while the other is broken.
+
+**2. `ruby.css` has to be inside `@layer base`, or `rtClassName` is inert.** Tailwind 4 emits every
+utility into `@layer utilities`, and an **unlayered** rule beats a layered one whatever the
+specificity. Unlayered, `.hanzi rt { font-size: 0.5em }` silently beat `rtClassName="text-[0.28em]"`
+on the card faces — so the prop that this file's own prose calls an override did nothing, and a
+four-syllable answer at `text-7xl` rendered 36px annotations over 72px characters instead of 20px
+ones. This is the **second** Tailwind-4 layering trap in this plan; C0's was `--radius-*` on bare
+`:root` re-pointing every `rounded-*`. Both have the same shape: an unlayered declaration beating
+the framework's own, silently. **Assume it will happen again.**
+
+### `<ruby>` interleaves `textContent`, and that made a guarantee go vacuous
+
+`<ruby>打<rt>dǎ</rt></ruby><ruby>算<rt>suàn</rt></ruby>` reads back as `打dǎ算suàn`. Fifteen e2e
+specs went red on `toContainText('打算')`, which is a nuisance. **The dangerous half is the other
+direction**: `not.toContainText('打算')` — the production card's "the front may not contain the
+answer", the review session's "the graded one is gone" — keeps passing against a front that shows
+the word in full, because the interleaved string no longer contains the substring. Those assertions
+would have gone quietly vacuous and nothing would have failed.
+
+Two hooks, for two different jobs:
+
+- **`data-hanzi`** on every `<HanziText>` wrapper: the base characters of that one run, without the
+  readings. Unit tests and anything that wants *the word* read this.
+- **`tests/e2e/hanzi.ts`** — `baseText()` / `expectBaseText()` / `expectNoBaseText()` /
+  `expectExactBaseText()` / `baseTexts()`: the region's text with the `<rt>` elements dropped,
+  i.e. exactly what `textContent` used to return. Whole-region assertions (`card-front` is hanzi
+  plus glosses plus a peek line) go through these, in **both** directions. Playwright's
+  `filter({ hasText })` has the same problem and the one use of it is now `filter({ has:
+  locator('[data-hanzi="打算"]') })`.
+
+### `getSettings()` threw inside a live query, and every route rendered "Something went wrong"
+
+`PinyinDisplayProvider` reads the setting through Dexie's `liveQuery`, which refuses a readwrite
+transaction outright. `getSettings()`'s header already called its write best-effort — but only the
+*fill-in* write was guarded and **the create was not**, so the first read on a fresh database inside
+a live query threw "Readwrite transaction in liveQuery context", the error reached the router's
+`errorElement`, and *every* route rendered the error boundary. Seventeen e2e specs went red at once
+and no unit test saw it, because no unit test mounted a live query.
+`tests/unit/db/settings-read-only.test.ts` is the regression: `getSettings()` inside a read
+transaction, on a fresh database and on one missing the column. Mutation-verified.
+
+### A contradiction in C3 itself, and how it is resolved
+
+C3 asks for two things about `'tap'` that cannot both hold:
+
+> default state: no `<rt>` is rendered anywhere, and the ruby band is **not** reserved (no layout
+> shift on reveal — this is why it must be specified now: reserving the band changes the line box)
+
+Reserving the band *later* **is** the shift. **The stated reason wins over the stated mechanism**:
+in `'tap'` the band is reserved from the first render, before anything is revealed, so a reveal
+drops an `<rt>` into space that is already there. `'never'` reserves nothing; `'always'` and `force`
+reserve only when something is actually drawn, so a passage of `xx5` entries carries no empty band.
+The e2e compares the **whole block's** geometry and a far-end word's position, in document
+coordinates, before and after a tap — the first version captured a `top` and then never read it, and
+its only positional assertion (`offset >= 0`) could not be false under any layout the component can
+produce.
+
+### Decisions this plan's C3 left open, or got wrong
+
+- **`review/phrase-face.tsx` is NOT switched, deliberately.** C3's call-site table lists it (`:50
+  :69`, "card faces, both sides"). The file's own committed rule is *"No pinyin here… this is the
+  front of a review card, where the reading is the answer"*, and a phrase card has only a front —
+  rendering ruby on it hands the learner the answer. The table's justification cites
+  `product-decisions §4`, and **`docs/product-decisions.md` is not in this repository** (every plan
+  cites it; nothing carries it), so the citation cannot be checked. Left plain, with `lang="zh-Hans"`
+  added. If the owner's §4 really does mean the phrase front too, this is a two-line change.
+- **`docs/product-decisions.md` does not exist in the repo.** `core.md`, `ios.md`, `web.md`,
+  `data.md` and `README.md` all cite it by section. Four C3 decisions rest on §4 alone. Worth
+  committing, or worth the plans quoting the rules they depend on.
+- **`lookup/lookup-panel.tsx:67` is not "the `<h2>` headword"** that C3's table calls it. It renders
+  the **query as the learner typed it** — which may be pinyin, English, or a hanzi run the dictionary
+  has no entry for — so there is no cited reading to annotate and annotating it would be a guess.
+  It keeps `.hanzi` and `lang`; `<EntryDetail>` below it renders the resolved headword with its ruby.
+  Same for the provenance line at `:74`.
+- **`lookup/entry-detail.tsx`'s decomposition strip stays plain** (the IDS string `⿰扌丁`, the
+  radical). A decomposition is not a word and has no reading. This is also the licence boundary:
+  Make Me a Hanzi data must never travel with a reading that would make it look like dictionary
+  content.
+- **Example sentences and ask-panel phrase tokens are annotated at TOKEN granularity, not
+  character.** `RenderedToken` (`lib/ai/ground.ts`, under the frozen `packages/ai` surface) carries
+  `pinyin` as the **marked** word-level form and `alignReading` needs the **numbered** one. Adding
+  `pinyinNum` to that token is the change C3 would need; **it is a frozen surface, so it is recorded
+  here and not made.** Until then those runs align in `fallback` mode, which renders exactly one
+  annotation over the token — the correct word-level reading rather than a guessed per-character
+  one. Both sites are marked in code with this reason.
+- **The `'tap'` "one gesture, two effects" e2e is C4's, not C3's.** C3's criterion asks that the same
+  tap both reveal the reading *and open the word sheet*; the word sheet is C4. The reveal half is
+  asserted here (unit and e2e); the sheet half lands with the sheet. `<HanziText>` already fires
+  `onWord` in the same handler that performs the reveal, so the wiring is done.
+
+### What the review found in C3
+
+Three lenses on C3 (the acceptance criteria; what breaks that no test covers; tests that cannot
+fail) plus two on C2, each finding then put to an adversarial refutation pass. **The blocking one
+was the recognition card answering itself.**
+
+1. **A recognition card's front printed the reading it was testing.** `cardFace()` carries
+   `snapshot.pinyinNum` and the front rendered it through an unforced `<HanziWord>` — and
+   `DEFAULT_SETTINGS.pinyinDisplay` is `'always'`, so a fresh install showed 打(dǎ)算(suàn) above the
+   headword and then revealed `dǎsuàn` as the answer a keypress later. `phrase-face.tsx` had the
+   rule already ("this is the front of a review card, where the reading is the answer") and the two
+   card types behaved oppositely. The rule now stated in both places: **`pinyinDisplay` governs
+   reading surfaces, not the question side of a practice card.** The front is `display="never"`
+   until `revealed`, and then `force` — the annotation appears over each character *on the flip*,
+   which is where it belongs, and which the joined `card-pinyin` cannot show. Guarded in both a
+   unit test and `p2/review.spec.ts`, both mutation-verified.
+2. **`pinyinDisplay: 'tap'` could never reveal anything anywhere in the app.** The delegated handler
+   was attached only when a caller supplied `onWord`/`onCharacter`, and the reveal lives inside that
+   handler — the gallery was the single call site that passed one, specifically so the state could
+   be demonstrated. Every card, search result, list row and entry detail passed neither, so "only
+   when I tap" behaved exactly like "never". `revealsOnTap` is in the condition now.
+3. **`onCharacter` reported character 0 for every tap inside a fallback run.** The fallback branch
+   carried one hardcoded `data-char-index={0}` for the whole run — and fallback is not a rare path:
+   every `xx5` entry, every multi-letter Latin headword, and **every** example-sentence and
+   ask-panel token, which reach `<HanziWord>` with only `pinyinMarked`. C4's character sheet would
+   have opened on the wrong character with no signal. Each character carries its own index now:
+   fallback means the *reading* cannot be split, not that the characters cannot be counted.
+4. **The gallery passage printed four wrong readings.** Generated with `entryIds[0]`, which is the
+   most **frequent** entry and not the contextually cited one: jì over 骑 in 骑自行车, páo over 跑 in
+   跑完步, yāo over 要, kān over 看 — on the one surface the review looks at first, and on the phase
+   whose entire purpose is that a fabricated reading cannot reach the screen. Worse, the test that
+   claimed to guard it re-derived the fixture with the same function, so it pinned the bug. A
+   polyphone now gets **no** reading, and a second test names 骑 跑 要 看 会 的 和 东西 by hand rather
+   than deriving them.
+5. **The `'tap'` revealed set survived a change of passage.** It holds indexes into `runs`, and
+   React reuses the instance when the element type and position are stable — a reader swapping
+   texts, a sheet showing a second entry — so run 3 of the new passage came up revealed because run
+   3 of the old one had been tapped. Cleared on a `runs` change.
+6. **Ruby broke the accessible name.** With no `<rp>`, the `<ruby>`'s computed name is the
+   interleaved string, so the card's `<h2>` read back as "打dǎ算suàn" — the same interleaving that
+   broke fifteen e2e specs, except the sighted surface was fixed with `data-hanzi` and the assistive
+   one was not. `<rp>(` … `<rp>)` now travel with every annotation: a reader without ruby support
+   says "打 (dǎ)", one with it ignores them, and they are `user-select: none` so the clipboard is
+   unchanged. `baseText()` strips them alongside the `<rt>`s.
+7. **`lookup/entry-detail.tsx`'s "Characters" strip had no readings** — the one screen in the app
+   whose subject *is* individual characters. It aligns the **selected** reading now, so it changes
+   with the reading the learner picks, and a character that appears twice with two syllables (好好)
+   gets none rather than a guess.
+
+**Three more tests that could not fail**, on top of C2's three:
+
+- **`tests/e2e/hanzi.ts`'s `expectNoReadingOf` passed for every input it will ever see.**
+  `expect.not.arrayContaining([a, b, c])` passes as soon as *one* is absent — and it was handed the
+  word-level annotation together with its syllables, of which a run carries one set or the other,
+  never both. It filters term by term now. That is the second time the readings-versus-base-text
+  distinction produced a vacuous assertion; the first is why the helper exists at all.
+- **The "one delegated handler" test asserted `ruby.getAttribute('onclick') === null`**, which is
+  true of every React-rendered element ever, handler or not — React delegates from the root and
+  never writes the content attribute — and the render passed no callbacks, so nothing was attached
+  in any case. Adding a per-character `onClick` to `<Ruby>`, the exact regression named, left it
+  green. There is no DOM-level way to count React handlers, so it reads the module the way
+  `tokens.test.ts` reads `tokens.css`: exactly one `onClick=` binding, on the container.
+- **The alignment property test skipped itself when `data/dict.json` was absent**, and `pnpm test`
+  did not generate it — so on any fresh clone C3's headline guard silently vanished and the suite
+  was green without it. The root `test` script runs `data:ensure` now, the way `build` does, and the
+  test fails loudly rather than disappearing.
+
+Also fixed: `<HanziText>` stamped `data-testid="reader-token"` on **every** word grouping app-wide,
+which is the reader's hook — `tests/e2e/p5/helpers.ts` counts those elements on `/read` to assert
+how a passage segmented, and since C3 the reader panel contains groupings too. The default is
+`hanzi-word`; `wordTestId` is the override C5b passes when it switches `reader-text.tsx`.

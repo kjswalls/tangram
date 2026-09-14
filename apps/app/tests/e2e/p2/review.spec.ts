@@ -10,6 +10,7 @@ import {
   SENTENCE,
   storedCard,
 } from './fixtures';
+import { expectBaseText, expectExactBaseText, expectNoBaseText } from '../hanzi';
 
 const DAY_MS = 86_400_000;
 
@@ -30,7 +31,16 @@ test.describe('/review', () => {
     ]);
 
     await expect(page.getByTestId('review-progress')).toHaveText('Card 1 of 2');
-    await expect(page.getByTestId('card-front')).toContainText('打算');
+    await expectBaseText(page.getByTestId('card-front'), '打算');
+    /**
+     * **And not its reading.** `expectBaseText` strips the `<rt>`s, so it
+     * cannot see one — this is the assertion that can. C3's first cut rendered
+     * the front unforced against a default of `pinyinDisplay: 'always'`, so a
+     * fresh install printed 打(dǎ)算(suàn) above the headword and then revealed
+     * `dǎsuàn` as the answer. The phrase card had this guard; the word card did
+     * not, and the two behaved oppositely.
+     */
+    await expect(page.getByTestId('card-front').locator('rt')).toHaveCount(0);
     await expect(page.getByTestId('card-back')).toHaveCount(0);
 
     // A key that means nothing here does nothing.
@@ -40,6 +50,10 @@ test.describe('/review', () => {
     await page.keyboard.press('Space');
     await expect(page.getByTestId('card-back')).toBeVisible();
     await expect(page.getByTestId('card-pinyin')).toHaveText('dǎsuàn');
+    // …and now the reading IS there, one annotation per character. Which is
+    // what makes the count-of-zero above a real assertion rather than a claim
+    // that this card never annotates anything.
+    await expect(page.getByTestId('card-front').locator('rt')).toHaveText(['dǎ', 'suàn']);
     await expect(page.getByTestId('card-back')).toContainText('HSK 2');
 
     // Each button says what it would schedule. `10m` is a legal answer since
@@ -101,8 +115,8 @@ test.describe('/review', () => {
 
     const card = page.getByTestId('review-card');
     await expect(card).toHaveAttribute('data-card-id', second);
-    await expect(card).toContainText('看看');
-    await expect(card).not.toContainText('打算');
+    await expectBaseText(card, '看看');
+    await expectNoBaseText(card, '打算');
     // A fresh session, so the counter starts over on what is left.
     await expect(page.getByTestId('review-progress')).toHaveText('Card 1 of 1');
     // One row per grade: the graded card has the seed's plus this one, the card
@@ -120,12 +134,12 @@ test.describe('/review', () => {
 
     await page.getByTestId('peek-context').click();
     const peek = page.getByTestId('context-peek');
-    await expect(peek).toHaveText('我＿＿明天去北京。');
-    await expect(peek).not.toContainText('打算');
+    await expectExactBaseText(peek, '我＿＿明天去北京。');
+    await expectNoBaseText(peek, '打算');
 
     await page.keyboard.press('Space');
     await expect(page.getByTestId('context-back')).toHaveText(SENTENCE);
-    await expect(page.getByTestId('context-target')).toHaveText('打算');
+    await expectExactBaseText(page.getByTestId('context-target'), '打算');
     await expect(page.getByTestId('card-back')).toContainText('From the sentence');
   });
 
@@ -143,7 +157,7 @@ test.describe('/review', () => {
     // `seed` reloads, so the session is still loading for a beat after it
     // returns; a Space that lands before the card renders is a keystroke into
     // an empty page, and the reveal never happens.
-    await expect(page.getByTestId('card-front')).toContainText('打算');
+    await expectBaseText(page.getByTestId('card-front'), '打算');
     await page.keyboard.press('Space');
     await expect(page.getByTestId('card-glosses')).toHaveText('to intend');
     const others = page.getByTestId('other-senses');
@@ -213,7 +227,7 @@ test.describe('/review', () => {
     await openReview(page);
     await seed(page, [{ entry: KANKAN, context: readerContext({ source: 'lookup' }) }]);
 
-    await expect(page.getByTestId('review-card')).toContainText('看看');
+    await expectBaseText(page.getByTestId('review-card'), '看看');
     await page.keyboard.press('Space');
     await page.keyboard.press('1');
     await expect(page.getByTestId('review-empty')).toBeVisible();

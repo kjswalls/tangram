@@ -7,6 +7,7 @@ import { ProductionListToggle } from '@/components/lists/production-list-toggle'
 import { WordSearch } from '@/components/lists/word-search';
 import { WordStateBadge } from '@/components/lists/word-state';
 import { Badge } from '@/components/ui/badge';
+import { HanziWord } from '@/components/hanzi/hanzi-text';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { getRepository } from '@/lib/db/get-db';
@@ -197,7 +198,19 @@ export function ListDetail({ listId }: { listId: string }) {
                 className="flex items-center justify-between gap-3 py-2"
               >
                 <span className="min-w-0">
-                  <span className="hanzi text-lg">{member.entry?.simp ?? member.entryId}</span>{' '}
+                  {member.entry ? (
+                    <HanziWord
+                      text={member.entry.simp}
+                      pinyinNum={member.entry.pinyinNum}
+                      className="text-lg"
+                    />
+                  ) : (
+                    // A member whose entry the dictionary no longer has: the id
+                    // is not a word and must not be annotated as one.
+                    <span className="hanzi text-lg" lang="zh-Hans">
+                      {member.entryId}
+                    </span>
+                  )}{' '}
                   <span className="text-sm text-muted">{member.entry?.pinyinMarked}</span>
                   <span className="block truncate text-sm text-muted">
                     {member.entry?.glosses.slice(0, 3).join('; ')}

@@ -26,7 +26,12 @@ describe('the review session', () => {
 
     render(<ReviewSession />);
     await screen.findByTestId('review-card');
-    expect(screen.getByTestId('card-front')).toHaveTextContent('打算');
+    // `data-hanzi`, not `textContent`: `<ruby>` interleaves the per-character
+    // readings (core.md C3).
+    expect(screen.getByTestId('card-front').querySelector('[data-hanzi]')).toHaveAttribute(
+      'data-hanzi',
+      '打算',
+    );
     expect(screen.queryByTestId('card-back')).toBeNull();
 
     // A grade key before the flip is not a grade: you cannot rate what you have

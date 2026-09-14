@@ -119,7 +119,12 @@ describe('the production card front', () => {
 
   it('gives the answer on the back, with the reading and the sentence marked', () => {
     render(<ProductionCard card={card()} script="simp" revealed onReveal={noop} />);
-    expect(screen.getByTestId('production-answer')).toHaveTextContent('打算');
+    // `<ruby>` interleaves the readings into `textContent` (`打dǎ算suàn`), so
+    // the base characters are read from `data-hanzi` — the hook `<HanziText>`
+    // exists to provide (core.md C3).
+    expect(
+      screen.getByTestId('production-answer').querySelector('[data-hanzi]'),
+    ).toHaveAttribute('data-hanzi', '打算');
     expect(screen.getByTestId('card-pinyin')).toHaveTextContent('dǎsuàn');
     expect(screen.getByTestId('card-glosses')).toHaveTextContent('to plan');
     expect(screen.getByTestId('context-target')).toHaveTextContent('打算');
@@ -131,8 +136,13 @@ describe('the production card front', () => {
       context: undefined,
     });
     render(<ProductionCard card={xuexi} script="trad" revealed onReveal={noop} />);
-    expect(screen.getByTestId('production-answer')).toHaveTextContent('學習');
-    expect(screen.getByTestId('card-back')).toHaveTextContent('学习');
+    const hanzi = [...screen.getByTestId('card-back').querySelectorAll('[data-hanzi]')].map(
+      (node) => node.getAttribute('data-hanzi'),
+    );
+    expect(
+      screen.getByTestId('production-answer').querySelector('[data-hanzi]'),
+    ).toHaveAttribute('data-hanzi', '學習');
+    expect(hanzi).toContain('学习');
   });
 
   it('carries the answer box, and stops a keystroke in it from flipping the card', () => {

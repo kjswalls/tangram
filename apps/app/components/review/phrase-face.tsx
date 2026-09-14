@@ -48,6 +48,7 @@ export function PhraseFace({ card }: PhraseFaceProps) {
         data-testid="phrase-face"
         data-tokens="false"
         className="hanzi text-6xl font-medium sm:text-7xl"
+        lang="zh-Hans"
       >
         {snapshot.simp}
       </h2>
@@ -66,6 +67,7 @@ export function PhraseFace({ card }: PhraseFaceProps) {
         // from the snapshot rather than from the spans a screen reader would
         // otherwise announce as separate words.
         aria-label={snapshot.simp}
+        lang="zh-Hans"
         className="hanzi flex flex-wrap items-baseline justify-center gap-x-2 text-6xl font-medium sm:text-7xl"
       >
         {tokens.map((token, index) => {

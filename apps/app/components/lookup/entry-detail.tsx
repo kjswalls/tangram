@@ -14,9 +14,11 @@
  * its own licence (CLAUDE.md); it is displayed and never written onto the card.
  */
 import { Link } from 'react-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { SpeakButton } from '@/components/tts/speak-button';
+import { HanziWord } from '@/components/hanzi/hanzi-text';
+import { alignReading } from '@/lib/hanzi/align';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/cn';
@@ -87,7 +89,7 @@ function Reading({
       </ol>
       {entry.classifiers.length > 0 ? (
         <p className="mt-1 text-xs text-muted">
-          classifier <span className="hanzi">{entry.classifiers.join(' ')}</span>
+          classifier <HanziWord text={entry.classifiers.join(' ')} />
         </p>
       ) : null}
     </li>
@@ -132,6 +134,32 @@ export function EntryDetail({
   }, [group.simp]);
 
   const entry = group.entries.find((candidate) => candidate.id === selectedId) ?? group.entries[0];
+  /**
+   * The syllable each character of the headword takes, under the reading the
+   * learner has selected — for the "Characters" strip below, which is the one
+   * screen in the app whose subject *is* individual characters and was the one
+   * screen with no per-character reading on it.
+   *
+   * Keyed by character rather than by position because `decomp` is a list of
+   * the headword's characters, and **a character that appears twice with two
+   * different syllables gets none**: 好好 is hǎo hāo, and printing either over
+   * both rows would be exactly the fabricated reading the grounding contract
+   * forbids. A fallback alignment (`AA制`) yields an empty map, so the strip
+   * stays plain there too.
+   */
+  const syllables = useMemo(() => {
+    const alignment = alignReading(entry.simp, entry.pinyinNum);
+    if (alignment.mode !== 'aligned') return new Map<string, string>();
+    const byChar = new Map<string, string | null>();
+    for (const { char, syllable } of alignment.chars) {
+      if (!syllable) continue;
+      const seen = byChar.get(char);
+      byChar.set(char, seen === undefined || seen === syllable ? syllable : null);
+    }
+    return new Map(
+      [...byChar].filter((pair): pair is [string, string] => pair[1] !== null),
+    );
+  }, [entry.pinyinNum, entry.simp]);
   const choosable = group.entries.length > 1;
   const state: AddState = outcome?.id === entry.id ? outcome.state : 'idle';
   const carded = probe?.id === entry.id ? probe.carded : undefined;
@@ -190,7 +218,8 @@ export function EntryDetail({
             'Same in both scripts'
           ) : (
             <>
-              traditional <span className="hanzi text-base text-foreground">{group.trad}</span>
+              traditional{' '}
+              <HanziWord text={group.trad} pinyinNum={entry.pinyinNum} className="text-base text-ink" />
             </>
           )}
         </p>
@@ -229,13 +258,33 @@ export function EntryDetail({
           <ul className="mt-2 flex flex-col gap-1" data-testid="decomposition">
             {decomp.map(({ char, entry: parts }) => (
               <li key={char} className="text-sm">
-                <span className="hanzi text-lg">{char}</span>{' '}
+                {/*
+                  The reading comes from the SELECTED entry's alignment, so it
+                  changes with the reading the learner picks — and is absent
+                  when the alignment cannot say which syllable this character
+                  takes. `force`, because this strip is a reading surface: it
+                  exists to answer "how is this character read".
+                */}
+                <HanziWord
+                  text={char}
+                  {...(syllables.has(char) ? { pinyinMarked: syllables.get(char) } : {})}
+                  force
+                  className="text-lg"
+                />{' '}
                 {parts ? (
                   <>
-                    <span className="hanzi text-muted">{parts.decomposition}</span>
+                    {/* An IDS string (⿰⿱…) plus its components — a
+                        decomposition, not a word, so there is no reading to
+                        annotate and `lang` is all it needs. */}
+                    <span className="hanzi text-muted" lang="zh-Hans">
+                      {parts.decomposition}
+                    </span>
                     <span className="text-muted">
                       {' '}
-                      · radical <span className="hanzi">{parts.radical}</span>
+                      · radical{' '}
+                      <span className="hanzi" lang="zh-Hans">
+                        {parts.radical}
+                      </span>
                       {parts.definition ? ` · ${parts.definition}` : ''}
                     </span>
                   </>

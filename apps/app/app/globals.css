@@ -1,5 +1,6 @@
 @import 'tailwindcss';
 @import './tokens.css';
+@import '../components/hanzi/ruby.css';
 
 /*
  * THE BASE BLOCK (docs/plans/core.md C0).

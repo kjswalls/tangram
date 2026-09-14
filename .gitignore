@@ -35,3 +35,6 @@ test-results/
 playwright-report/
 blob-report/
 .playwright/
+
+# Throwaway server logs from a local run or a review agent; never committed.
+*.log

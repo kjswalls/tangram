@@ -1,0 +1,18 @@
+{
+  "//": "Declarations only — `noEmit`, and nothing here is compiled by anyone. The app reads this package through Vite and the server through tsc; both resolve the `.ts` source named in `exports`. docs/plans/backend.md B2, first commit.",
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "incremental": true
+  },
+  "include": ["*.ts"],
+  "exclude": ["node_modules"]
+}

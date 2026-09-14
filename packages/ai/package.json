@@ -1,0 +1,24 @@
+{
+  "name": "@tangram/ai",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.22"
+  },
+  "//": "docs/plans/wave-zero.md \u00a75 creates this package and moves the ten existing lib/ai/** modules into it. That move (wave 0 deliverable 5) has NOT run \u2014 README.md V6 flags it as not executable as written, because it names ten modules and none of the 33 files with 74 import sites that break. This package therefore contains exactly one file: schemas.ts, the frozen ask contract that is backend.md B2's first commit. Nothing has moved and nothing is re-exported. THE EXPORTS MAP POINTS AT TYPESCRIPT SOURCE AND THAT IS A DEBT, NOT A DESIGN: schemas.ts exports runtime values (the caps, the paths, toRetrieved) and apps/server emits plain JavaScript that plain `node` loads. It resolves today only because pnpm symlinks a workspace package and node's realpath lands outside node_modules, so Node's type stripping is permitted; against a deploy artifact where @tangram/ai is a real directory under node_modules the same emitted dist/index.js fails with ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING. Whoever runs deliverable 5 must add a build emitting dist/*.js + .d.ts and point exports at {types, import}. See HANDOFF.md.",
+  "exports": {
+    ".": "./schemas.ts",
+    "./schemas": "./schemas.ts"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "eslint": "^9.39.5",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.70.0"
+  }
+}

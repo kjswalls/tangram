@@ -30,11 +30,11 @@
  *     that cwd rule — the CLI has an `ios.path` option and no sibling
  *     requirement. Keeping them siblings is what makes the one cwd rule enough.
  *
- * **The iOS deployment target is 18.2, and it is set in the Xcode project, not
+ * **The iOS deployment target is 17.2, and it is set in the Xcode project, not
  * here** (`ios/App/App.xcodeproj/project.pbxproj`, `IPHONEOS_DEPLOYMENT_TARGET`;
  * Capacitor's own floor is 15.0 — `Capacitor.podspec`, the SPM template's
  * `platforms: [.iOS(.v15)]`, and the CLI's `ios.minVersion`). Three CSS floors
- * chose it and the highest wins (`ios.md` I0's floor table, STACK §6):
+ * bear on it (`ios.md` I0's floor table, STACK §6):
  *
  *   | Feature                                        | Safari | → iOS |
  *   |------------------------------------------------|--------|-------|
@@ -56,10 +56,33 @@
  *     Ventura, iPadOS 16.4, and iOS 16.4."
  *     https://developer.apple.com/documentation/safari-release-notes/safari-16_4-release-notes
  *
- * There is no user base to strand, and raising a deployment target is free today
- * and expensive later. The cost is stated rather than hidden: iOS 18.2 (December
- * 2024) excludes every device that cannot run it, which for a 2026 v1 with no
- * users is a decision the owner can revisit by editing one build setting.
+ * **`ios.md` I0 recommends the highest of the three — 18.2 — and 17.2 is what
+ * ships. The reason is a constraint the plan could not have known**, found by
+ * running the CLI: `cap sync` *derives* the SPM manifest's platform from this
+ * build setting. `getMajoriOSVersion` (`@capacitor/cli` 8.5.2
+ * `dist/ios/common.js`) takes the two characters after the first
+ * `IPHONEOS_DEPLOYMENT_TARGET = ` and `dist/util/spm.js` interpolates them as
+ * `platforms: [.iOS(.v${major})]` into a manifest whose header is
+ * `// swift-tools-version: 5.9`. At 18.2 that emits `.iOS(.v18)`, and `.v18`
+ * does not exist in PackageDescription 5.9 — the generated, unmodifiable
+ * ("DO NOT MODIFY THIS FILE") manifest does not build, and re-syncing reproduces
+ * it. `.v17` is the highest platform that version of PackageDescription has.
+ *
+ * So the target is set by the highest **functional** floor rather than the
+ * highest floor: the CSS Custom Highlight API, at exactly 17.2, is what paints
+ * the drag selection. What 17.2 gives up is the ruby row, and only on devices
+ * between 17.2 and 18.1 — a current device has every feature regardless, since a
+ * deployment target decides *which devices may install the app*, not what the
+ * engine on a modern one supports. `core.md` C3 judges that row's practical risk
+ * **cosmetic** in any case: `over` is the engine default for horizontal text, so
+ * an engine that ignores the declaration lays it out the same way.
+ *
+ * Two ways back to 18.2 if the owner wants it, both with a real cost:
+ * set `experimental.ios.spm.swiftToolsVersion` to `'6.0'` (the CLI's own
+ * `declarations.d.ts` warns "Capacitor does not officially support Swift 6 yet.
+ * Setting this property to 6.0 or higher may cause issues"), or re-add the
+ * platform with `--packagemanager CocoaPods`, which has no `Package.swift` at
+ * all. Neither could be tested in the container this was written in.
  *
  * **`-webkit-ruby-position` is not emitted** — the question `core.md` C3 handed
  * to this phase by name. Unprefixed `ruby-position` shipped in Safari 18.2, the

@@ -4806,16 +4806,39 @@ run in this repo to check. The failure that *is* silent is drift between `webDir
 `build.outDir` while a stale `dist/` is still on disk, since `dist/` is gitignored and survives an
 `outDir` change. That is what the test covers.
 
-### The deployment target: iOS 18.2
+### The deployment target: iOS 17.2, not the 18.2 `ios.md` recommends
 
-Set from the three CSS floors the reader depends on, highest wins (`ios.md` I0's floor table):
+The three CSS floors the reader depends on (`ios.md` I0's floor table):
 `ruby-align`/`ruby-overhang`/unprefixed `ruby-position` needs Safari 18.2 → **iOS 18.2**; the CSS
 Custom Highlight API needs 17.2 → iOS 17.2; `user-select: none` excluded from copy needs 16.4 → iOS
-16.4. Capacitor's own floor is 15.0, so nothing in the toolchain objects. There are no users to
-strand and raising a target is free today and expensive later. The cost, stated rather than hidden:
-iOS 18.2 shipped December 2024 and every device that cannot run it is excluded. It is one build
-setting (`IPHONEOS_DEPLOYMENT_TARGET`) if the owner wants it lower — and if he does, the three floors
-above are what he is trading away, in that order.
+16.4. I0 recommends the highest. **17.2 ships instead, because of a constraint the plan could not
+have known and that only shows up when you run the CLI** — it was set to 18.2 first, and I1's
+adversarial review caught what that produced.
+
+`cap sync` **derives** the SPM manifest's platform from this build setting: `getMajoriOSVersion`
+(`@capacitor/cli` 8.5.2 `dist/ios/common.js`) takes the two characters after the first
+`IPHONEOS_DEPLOYMENT_TARGET = `, and `dist/util/spm.js` interpolates them as
+`platforms: [.iOS(.v<major>)]` into a manifest whose header it leaves at its default
+`// swift-tools-version: 5.9`. At 18.2 that is `.iOS(.v18)` — and `.v18` does not exist in
+PackageDescription 5.9. The generated manifest does not resolve, it is headed **"DO NOT MODIFY THIS
+FILE - managed by Capacitor CLI commands"**, and a re-sync reproduces it exactly. `.v17` is the
+highest platform that PackageDescription version has.
+
+So the target is set by the highest **functional** floor rather than the highest floor. The CSS
+Custom Highlight API sits at exactly 17.2 and is what paints the drag selection. What 17.2 gives up
+is the ruby row, on devices between 17.2 and 18.1 only — a deployment target decides *which devices
+may install the app*, not what the engine on a current one supports, so the iOS 26 device that runs
+I2 is unaffected either way. `core.md` C3 independently judges that row's practical risk **cosmetic**:
+`over` is the engine default for horizontal text, so an engine that ignores the declaration lays it
+out the same way.
+
+**Two ways back to 18.2, if the owner wants it**, neither testable in this container:
+set `experimental.ios.spm.swiftToolsVersion` to `'6.0'` in `capacitor.config.ts` — the CLI's own
+`declarations.d.ts` warns *"Capacitor does not officially support Swift 6 yet. Setting this property
+to 6.0 or higher may cause issues"* — or re-add the platform with `--packagemanager CocoaPods`, which
+has no `Package.swift` at all. `tests/unit/platform/ios-project.test.ts` holds the pair together
+either way: it asserts the manifest's `.vN` against the pbxproj target **and** against what its own
+tools version can express.
 
 **`-webkit-ruby-position` is not emitted** — the question `core.md` C3 handed to this phase by name.
 Unprefixed `ruby-position` shipped in Safari 18.2 and the target is 18.2, so the prefix would be dead
@@ -4911,10 +4934,24 @@ no apex, and the reverse-DNS id is conventionally one the owner controls. This i
 to the GitHub account, not a decision this session could make, and after the first App Store Connect
 upload it can never change (`ios.md` I6).
 
-To change it, before I7: `apps/app/capacitor.config.ts` (`appId`) and then `pnpm -F app cap sync ios`
-— the CLI rewrites `PRODUCT_BUNDLE_IDENTIFIER` in `ios/App/App.xcodeproj/project.pbxproj` and
-`ios/App/App/capacitor.config.json` from the config. On Android the same `appId` becomes
-`applicationId` and the `namespace`, which is why it is recorded here rather than in an iOS-only note.
+**Changing it is a two-file edit, and a sync will not do it.** `editProjectSettingsIOS` — the only
+code in `@capacitor/cli` 8.5.2 that writes `PRODUCT_BUNDLE_IDENTIFIER` into `project.pbxproj` or
+`CFBundleDisplayName` into `Info.plist` — is called from **`cap add` and nowhere else**
+(`dist/tasks/add.js`; `cap sync` is `copy` + `update`, and neither touches it). `cap copy` *does*
+regenerate `ios/App/App/capacitor.config.json` with the new id, so after a sync the runtime config
+and the Xcode project disagree — and the Xcode project is what signs, installs and uploads.
+
+So, before I7, either:
+
+1. edit `apps/app/capacitor.config.ts` **and** `PRODUCT_BUNDLE_IDENTIFIER` in
+   `ios/App/App.xcodeproj/project.pbxproj` (plus `CFBundleDisplayName` in `Info.plist` if the display
+   name changes), or
+2. delete `apps/app/ios/` and re-run `pnpm -F app cap add ios`, which rewrites both from the config.
+
+`tests/unit/platform/ios-project.test.ts` fails if the two ever disagree, and its failure message
+names these two remedies rather than "run a sync". The same applies on Android —
+`editProjectSettingsAndroid` has the identical single call site — where the `appId` becomes
+`applicationId` and the `namespace`; `android.md` A6a owns that half and says so.
 
 ### What I found wrong in `ios.md`, `wave-zero.md` and `STACK.md`
 
@@ -5002,3 +5039,382 @@ Killed, with reasons in the run: that the seam test should also ban `import { Ca
 '@capacitor/core'` (it would block `convertFileSrc`, which `data.md` D5a needs); that the `cap`
 script set needs per-subcommand aliases (`"cap": "cap"` already passes everything through); that the
 `appId` remediation note was iOS-only (`android.md` A6a owns its half and says so).
+
+## `ios.md` I1 — the Xcode project, generated and committed; the device pass is blocked
+
+**I1 is not complete. It is half-complete and blocked, and the half that is missing is the half the
+phase is named for.** `npx cap add ios`, the first sync, the commit boundary and the toolchain
+decisions all ran here. *"An app that launches on a physical iPhone"* did not, and cannot: there is
+no Mac and no device (see I0's matrix — every role is unassigned). Four of I1's seven acceptance
+criteria are device criteria and are recorded below as **BLOCKED**, per `ios.md` §6 R17: *"A phase
+that cannot run its device checks is blocked, not complete, and must be recorded that way."*
+
+### What ran in the container
+
+`cap add ios` works on Linux. That is worth stating because nothing in the plan says so and it is
+easy to assume otherwise: `addIOS()` only extracts the platform template archive, and the CocoaPods
+checks are gated on `config.cli.os === OS.Mac`. So the Xcode project is generated, committed and
+ready for whoever has the Mac; what needs macOS is building, signing and running it.
+
+```
+$ pnpm -F app exec cap add ios
+✔ Adding native Xcode project in ios
+✔ Copying web assets from dist to ios/App/App/public
+✔ Creating capacitor.config.json in ios/App/App
+[info] All Capacitor plugins have a Package.swift file and will be included in Package.swift
+[info] Found 6 Capacitor plugins for ios:
+       @capacitor-community/sqlite@8.1.1  @capacitor-community/text-to-speech@8.0.2
+       @capacitor/app@8.1.1  @capacitor/keyboard@8.0.5
+       @capacitor/splash-screen@8.0.2  @capacitor/status-bar@8.0.3
+[success] ios platform added!
+```
+
+`pnpm -F app cap:sync:ios` re-runs clean. `cap add` wrote `PRODUCT_BUNDLE_IDENTIFIER =
+com.kjswalls.tangram` into both build configurations and `CFBundleDisplayName = Tangram` into
+`Info.plist`, from `capacitor.config.ts`. **Read that as "`cap add` did it", not "the CLI keeps them
+in step":** `editProjectSettingsIOS` is called from `cap add` and from nowhere else, so a later
+`appId` change needs a hand edit of the pbxproj or a delete-and-re-add. The corrected procedure is in
+the I0 section above; an earlier draft of this paragraph said "one edit plus a sync" and was wrong.
+
+### The dependency manager is **SPM**, and it is a decision, not a fact
+
+`ios.md` I1 says to *"record which dependency manager the generated project uses ... Read it off the
+first `cap add ios`"*, as though the template were fixed. It is not. `@capacitor/cli` 8.5.2 ships
+**two** iOS templates — `assets/ios-pods-template.tar.gz` and `assets/ios-spm-template.tar.gz` — and
+`dist/index.js` selects between them: the default is **SPM**, and `--packagemanager CocoaPods`
+switches `platformTemplateArchive` to the Pods one.
+
+Taken: the default, SPM. Three reasons, all checkable:
+
+1. All six plugins ship a `Package.swift` — the CLI says so and lists them, and the generated
+   manifest carries a `.package(...)` line for each. AUDIT 1's note that
+   `@capacitor-community/sqlite` 8.1.0 *added* SPM is what made this live; it is no longer an open
+   question for our plugin set.
+2. It needs no Ruby toolchain on the Mac, and the CocoaPods checks the CLI would otherwise run are
+   Mac-only anyway.
+3. It is reversible for the price of a re-add: delete `ios/` and
+   `pnpm -F app cap add ios --packagemanager CocoaPods`. Nothing in the app depends on which one is
+   underneath.
+
+**The cost, which is the finding here:** the generated
+`ios/App/CapApp-SPM/Package.swift` points at plugins **through the pnpm store**, e.g.
+`path: "../../../../../node_modules/.pnpm/@capacitor+keyboard@8.0.5_@capacitor+core@8.5.2/node_modules/@capacitor/keyboard"`.
+The path is repo-relative and valid after `pnpm install` with this lockfile, so committing it is
+right — but that directory name encodes the plugin's **version and its peer hash**, so *any*
+dependency bump invalidates every line of a file whose header says "DO NOT MODIFY - managed by
+Capacitor CLI commands". `cap sync` regenerates it; the failure mode is a stale committed manifest,
+which on a Mac is an Xcode package-resolution error with no obvious cause.
+`tests/unit/platform/ios-project.test.ts` turns that into one failing assertion naming the path, and
+the remedy is always `pnpm -F app cap:sync:ios`. **Run a sync before opening Xcode**, every time.
+
+### The commit boundary, read off the sync rather than guessed
+
+**20 files are committed** and four generated paths are not. The template ships its own
+`ios/.gitignore` and it already covers exactly the right things, so the root `.gitignore` needed no
+edit at all — `ios.md` I1 lists `.gitignore` in its Files, and the honest answer is that Capacitor
+had already done it:
+
+```
+App/build   App/Pods   App/output   App/App/public   DerivedData   xcuserdata
+capacitor-cordova-ios-plugins
+App/App/capacitor.config.json   App/App/config.xml
+```
+
+`App/App/public` is the directory `cap copy` writes `dist/` into — the path I1 says to read off the
+first sync rather than assume. The test asks **git** whether each of those is ignored (with three
+committed files as the negative control) rather than reading the `.gitignore` text, so a rule that is
+present but no longer matching still fails.
+
+**One thing the plan does not mention and the gate found immediately:** `cap sync` copies the whole
+Vite build into the native tree, so `eslint .` in `apps/app` then lints a minified bundle and the
+stamped service worker — **2,038 errors, none of them real**. `apps/app/eslint.config.mjs` now
+ignores `ios/**` and `android/**`. Android is listed now rather than at A1 because the copy is
+`cap sync`'s behaviour on both platforms, so A1 would hit the identical wall.
+
+### The deployment target is 18.2 in the project, and a test holds it there
+
+`IPHONEOS_DEPLOYMENT_TARGET` is `18.2` in all four build configurations (the template ships 15.0).
+The reasoning is in `capacitor.config.ts`'s header and in I0 above. It is guarded by a unit test
+because Xcode's "Update to recommended settings" is one click and rewrites `project.pbxproj`, and
+because losing it silently drops the three CSS features the reader is built on.
+
+**`ios/App/CapApp-SPM/Package.swift` is not independent of that number, and finding out why is what
+moved the target from 18.2 to 17.2.** `cap sync` derives the manifest's `platforms:` from the pbxproj
+(`getMajoriOSVersion`, two characters) while leaving `// swift-tools-version: 5.9` alone, so 18.2
+emitted `.iOS(.v18)` — a platform PackageDescription 5.9 does not define — into a file that says DO
+NOT MODIFY and regenerates identically. It now reads `platforms: [.iOS(.v17)]`, which agrees with the
+target and with the tools version. The full reasoning and the two routes back to 18.2 are in the I0
+section above. `tests/unit/platform/ios-project.test.ts` asserts all three against each other.
+
+### UIScene — the evidence, for R10's drift check
+
+From the **generated** `ios/App/App/Info.plist` (not the template):
+
+```xml
+<key>UIApplicationSceneManifest</key>
+<dict>
+  <key>UIApplicationSupportsMultipleScenes</key><false/>
+  <key>UISceneConfigurations</key>
+  <dict>
+    <key>UIWindowSceneSessionRoleApplication</key>
+    <array><dict>
+      <key>UISceneConfigurationName</key><string>Default Configuration</string>
+      <key>UISceneDelegateClassName</key><string>$(PRODUCT_MODULE_NAME).SceneDelegate</string>
+      <key>UISceneStoryboardFile</key><string>Main</string>
+    </dict></array>
+  </dict>
+</dict>
+```
+
+plus `ios/App/App/SceneDelegate.swift` (a `UIWindowSceneDelegate` implementing
+`scene(_:willConnectTo:options:)` and forwarding to `SceneDelegateProxy.shared`),
+`AppDelegate.swift`'s `application(_:configurationForConnecting:options:)`, and
+`CAPSceneDelegateProxy.swift` inside `@capacitor/ios` 8.5.2. R10 asks for this to be re-read after
+any Capacitor or Xcode upgrade; the four keys and both delegate hooks are asserted on every
+`pnpm test` instead of being remembered.
+
+### The three things I1 says break under a local scheme
+
+**1. The service worker.** `web.md` W1 **did** carry ruling 12 — both halves. `apps/app/index.html`
+has `viewport-fit=cover` and `components/pwa/register-sw.tsx` has the native gate, with its own unit
+test. I0 re-pointed that gate at `lib/platform/native.ts`, which the file's header had asked for by
+name. The device half of the claim — `navigator.serviceWorker.getRegistrations()` empty inside the
+app, read from Safari Web Inspector — is **BLOCKED**.
+
+**2. The API base is not merely untested here; it is known to be wrong today, and that is a blocked
+dependency rather than a discovery to make on the device.** `web.md` **W4 has not landed**, and
+`ios.md` §4.3 requires it before I1's network check. Every call in the app is still relative —
+`fetch('/api/ask')`, `fetch('/api/examples')`, `fetch('/api/dict/hsk?band=1')` — and the dev/preview
+Vite adapter is what answers them, which does not exist in a shipped bundle. On a device those
+resolve against the app's own origin and are served by the local scheme handler out of the bundled
+`dist/`, so **I1 criterion 2's "no request in the WebView inspector targets the local scheme for
+`/api/*`" will fail as the build stands.** Criterion 4 is therefore **explicitly deferred in writing
+to I8**, which the criterion itself allows. Whoever runs the device pass should expect this and not
+file it as a new bug.
+
+The one thing that did not need the device: **the default origin is `capacitor://localhost`**, read
+from `@capacitor/ios` 8.5.2 `Capacitor/Capacitor/CAPInstanceDescriptor.swift`
+(`InstanceDescriptorDefaults.scheme = "capacitor"`, `.hostname = "localhost"`), overridable via
+`server.iosScheme` in the Capacitor config. That is the string `backend.md`'s CORS configuration has
+to allow, and no audit recorded it. Confirm it on the device by reading `window.location.origin`;
+Android's is `http://localhost` and is `android.md`'s to record.
+
+**3. The router.** `vite.config.ts` already sets `base: '/'` with the reasoning I1 needs — Capacitor
+serves `dist/` from the root of the custom scheme, and a relative base would break deep routes under
+the SPA fallback. So there is nothing to change; the device check is that a deep route survives a
+reload under `capacitor://localhost` and that nothing builds an absolute URL from
+`window.location.origin` expecting a real host. **Hash routing remains a proposal recorded in
+`ios.md` alone.** It is not adopted, nothing here depends on it, and per I1 it would need `web.md`
+W8's agreement rather than a note here.
+
+### What "tested" means on native — settled, as I1 requires
+
+**Automated tests stay web-only. Every native phase ends in a written manual device checklist.** The
+suite already exercises the same JavaScript the app runs; the WebView is not what breaks; a solo
+developer who adds an iOS UI-test rig will maintain it instead of shipping. The cost is that nothing
+catches a native regression between phases, which is why the checklist below is written down and
+re-run rather than remembered.
+
+One refinement this phase adds, because it cost nothing: the *project file* is not the app, and it
+**is** testable here. `tests/unit/platform/ios-project.test.ts` holds the deployment target, the
+bundle identifier, the UIScene keys, the gitignore boundary and Package.swift's freshness. That is
+not native testing and does not pretend to be.
+
+### The standing device checklist
+
+Run it on **the primary** (§4.2's role), with Safari Web Inspector attached, and record the result,
+the device's OS version, the Xcode version and the build number in this file. It has two parts.
+
+**Part one — now, against whatever shell `web.md` W1 produced.** This is **seven nav routes plus a
+list detail route and a catch-all**, not three tabs: `core.md` C7 is the phase that re-baselines this
+list to three tabs, and until then a nine-row table is correct rather than stale.
+
+| # | Check | Pass looks like |
+|---|---|---|
+| 1 | Launch from Xcode on a physical iOS 26 device | The app opens to `/` (Today) with no white flash beyond the launch screen |
+| 2 | Visit `/`, `/lookup`, `/review`, `/read`, `/lists`, `/lists/:id`, `/stats`, `/settings`, and a bad path | Each renders and navigates; the bad path renders the not-found route |
+| 3 | Deep route reload: navigate to `/settings`, then reload the WebView | `/settings` renders again — the history API and the local scheme agree |
+| 4 | `window.location.origin` in the console | `capacitor://localhost` (record the exact string; `backend.md`'s CORS needs it) |
+| 5 | `navigator.serviceWorker.getRegistrations()` in the console | `[]` — empty. A non-empty result is a `web.md` bug, reported there, not patched here |
+| 6 | Network tab while the app loads | Expect `/api/*` requests against the local scheme **until W4 lands** — known, see above. Record what they return |
+| 7 | Look up a word; add a card; grade a card | The card appears in the list and the grade sticks across a reload |
+| 8 | Background the app, wait a minute, resume | State survives; no reload-to-blank |
+| 9 | Rotate the device | Layout reflows; nothing is clipped |
+| 10 | Airplane mode, then relaunch | The app still opens and local data is there |
+
+**Part two — the reader rows. NOT YET APPLICABLE.** They activate at the commit where `core.md`
+C3–C6 land, and whichever native phase runs next adds them and never removes them. Marked rather
+than deleted so their absence is visible.
+
+| # | Check | Activated by |
+|---|---|---|
+| 11 | Paste a text into the reader; it renders with per-character ruby | `core.md` C3 |
+| 12 | Drag a span; the lookup fires with exactly that span | `core.md` C5b |
+| 13 | Tap a character; the character sheet opens | `core.md` C4 |
+| 14 | Tap a block speaker; it reads the block in Mandarin | `core.md` C6 + `ios.md` I4 |
+| 15 | Hold a block speaker; the per-character highlight advances, and releasing stops it | `core.md` C6 + `ios.md` I4 |
+
+Rows 11–15 are also R1's watch: the iOS 26 `-webkit-user-select: none` crash would show up here as
+the WebView dying during ordinary reader use, not only in I2's harness.
+
+**Re-baseline at `core.md` C7**, when seven routes become three tabs.
+
+### I1's acceptance criteria, one by one
+
+| # | Criterion | State |
+|---|---|---|
+| 1 | `cap sync ios` completes; the app launches from Xcode on a physical iOS 26 device | **HALF. BLOCKED.** Sync completes here. No Mac, no device. Record the OS, Xcode, `@capacitor/core` and deployment-target versions together when it runs. |
+| 2 | Every route renders on the device; a deep route survives a reload; no `/api/*` against the local scheme | **BLOCKED**, and the third clause is expected to fail until `web.md` W4 lands (above). |
+| 3 | `getRegistrations()` empty inside the app | **BLOCKED.** The unit half is green and is `web.md` W1's. |
+| 4 | One authenticated call to the real API base over HTTPS | **DEFERRED IN WRITING TO I8**, as the criterion permits: `backend.md` has not shipped a deployed server and W4 has not landed the client half. |
+| 5 | Scene-manifest evidence pasted into `HANDOFF.md` | **DONE** (above), from the generated project. |
+| 6 | The standing checklist exists in both parts, reader rows marked not-yet-applicable, applicable rows run once | **HALF.** The checklist exists and is marked. Nothing has been run. |
+| 7 | The device is identified by its §4.2 role | **BLOCKED.** No devices; the matrix is in I0 above with every role unassigned. |
+
+### What is needed to unblock, in order
+
+1. **A Mac with Xcode 26**, and **a physical iOS 26 device**. Without both there is no iOS app —
+   this is STACK §4's precondition, not a soft gate.
+2. From a fresh clone: `pnpm install`, then `pnpm data` (six test files refuse without the
+   dictionary artifact), then `pnpm build` — `dist/` is gitignored, and `cap sync` refuses a `webDir`
+   that does not exist. Then `pnpm -F app cap:sync:ios`, which is what regenerates `Package.swift`
+   for this machine's `node_modules` layout. Only then open `apps/app/ios/App/App.xcodeproj`. Sign
+   with a free personal team if the paid enrolment has not cleared — that is enough for I1, and the
+   profile expires after 7 days (I0).
+3. Run the checklist. Record it here.
+4. Then **I2**, which is where the stack decision is actually tested. Its own section follows.
+
+## I2 — the device checklist this session stopped in front of
+
+**This is the phase the whole iOS decision rests on, and it needs one physical iPhone running iOS 26.
+Nothing else in the plan is blocked by hardware in the same way: I2 is not "untested until someone
+gets round to it", it is the check that says whether the architecture is right.** Written out here so
+that the person with the phone can run it without reading three documents first — but read
+`ios.md` I2 before starting, because this is a summary of it, not a replacement.
+
+### Before you can run it
+
+| Needed | Why | State today |
+|---|---|---|
+| A Mac with **Xcode 26** | There is no iOS build otherwise | absent |
+| A physical device on **iOS 26** | A WKWebView crash on a specific OS build is a device fact. The Simulator cannot answer it. | absent |
+| **`core.md` C5a's harness** — per-character `<ruby>`, `caretRangeFromPoint` on every `pointermove`, the CSS Custom Highlight API, in `components/gallery/**`, working in desktop Chromium, with **no production reader file touched** | I2 loads *that*, inside the Capacitor WebView. Without it there is nothing to test. | not landed — a parallel session is building `core.md` C0–C5a |
+| `apps/app/ios` built and launching (**I1**) | The harness must run inside the Capacitor WebView, with Capacitor's configuration — **not** in mobile Safari, which is WKWebView without it | generated, never built |
+
+**Do not let any `core.md` C5b production file land before this returns.** C5b is the character-granular
+rewrite of `use-span-select.ts`, `hanzi-text.tsx`, `reader-text.tsx` and `lib/stores/reader.ts`.
+C3 is safe either way: if check 1 crashes, the fault is in the selection CSS, not the ruby renderer.
+
+### What to run
+
+Load C5a's gallery harness in the app (a development-only route under `apps/app/` is enough — I2
+writes no production reader code), attach Safari Web Inspector to the device, and work through
+`ios.md` I2's seven checks. The two that decide things:
+
+**Check 1 — the crash.** Apply `-webkit-user-select: none` to the passage and drag across it
+repeatedly: slow drags, fast flicks, multi-touch, sustained over a session. AUDIT 1 reports one Apple
+forum thread describing a WKWebView crash on the iOS 26 **beta** with that property applied during
+touch; the resolution is unknown. The property is not optional — the reader suppresses native
+selection precisely so a drag can be hand-rolled, and it is applied to the element under the finger.
+
+**Checks 2 and 3 — is it fast enough.** Record, as numbers, not adjectives: median and p95
+`pointermove`→highlight-updated latency; layout/paint time for a pasted passage of a few hundred
+characters where every character is its own `<ruby>`; and whether that passage still scrolls
+smoothly. **Nobody has a threshold.** No audit measured any of this on any device. Record what it is
+and judge it by feel with the owner.
+
+The rest: feature-detect `caretPositionFromPoint` and log which path runs (register #2 — not fatal
+either way, the proprietary `caretRangeFromPoint` is in every WKWebView); confirm the highlight lands
+on base characters and never on `<rt>` text; read the clipboard back after a span copy and compare it
+to `spanOf()`'s string, **not** to what the selection looks like; and repeat 1–3 with VoiceOver on and
+Dynamic Type large, recording what happens without fixing it.
+
+One thing to keep straight, because an earlier draft of `ios.md` conflated it: there is **no system
+selection on the reader passage**, so there is no system copy to inspect. Whatever reaches the
+clipboard comes from C5b's own `copy` handler. Safari 16.4's `user-select`-copy-exclusion behaviour
+governs `rt { user-select: none }` **everywhere else** `<HanziText>` renders — lookup headwords, card
+faces, examples — and not the passage.
+
+### What each outcome means
+
+| Outcome | What it means | What happens next |
+|---|---|---|
+| **No crash, latency and layout acceptable** | The stack decision holds. This is the expected case. | Mark registers #1 and #2 settled here with the numbers; `core.md` **C5b is unblocked** and `HANDOFF.md` must say so explicitly, because that phase is waiting on this answer. |
+| **No crash, but the numbers are bad** | The design survives; the implementation needs work. | `core.md` owns the fixes and they are cheap and known: throttle the hit-test to animation frames, hit-test only when the pointer crosses into a new character, cap the rendered passage length. What I2 owes is the measurement that says which is needed. |
+| **Crash — but a CSS variant avoids it** | Survivable. | Record **every** variant tried and its result: unprefixed `user-select: none` only; the property on a parent rather than the touched element; applied on `pointerdown` and removed on `pointerup`; `-webkit-touch-callout: none` alone with selection left enabled but discarded. The list is worth more than the conclusion. |
+| **Crash — and it is fixed on a current release** | The report was a beta artifact. | Note the OS version at which it is fixed and set the app's floor accordingly. Do not record it as "gone". |
+| **Crash — reproducible, no workaround** | **This is the answer that changes the architecture.** It fires condition 5 of STACK §2.1's "what would make this decision wrong". | **Stop and re-plan with the owner. Do not start building.** |
+
+### If it is the last row — what is actually at stake
+
+The blast radius is one screen and the bill is a rewrite. A Capacitor plugin can present a native
+`UIViewController` from `bridge.viewController`, so the damage is confined to the **reader**: lookup,
+practice, library, the dictionary, the database and the Capacitor decision itself are untouched. That
+containment is real and it is why this risk is survivable at all.
+
+It is not an escape from the work. Taking that exit means building exactly the thing the whole stack
+decision exists to avoid — a Core Text ruby layout engine, plus hit-testing, plus
+`UITextInteraction`/`UITextSelectionDisplayInteraction` — the Pleco path, which STACK's own
+alternatives table calls *"a company's worth of work"*. And it is **iOS-only**: no audit records an
+Android equivalent of `bridge.viewController`, and if the interaction design fails it plausibly fails
+on both engines, in which case Android's answer is a custom Compose `Layout` plus
+`TextLayoutResult.getOffsetForPosition` — a second native text engine, in a language the owner does
+not use.
+
+So the honest framing for the owner, if it comes to that: this is a scope change, not a fallback, and
+the alternatives worth putting on the table alongside it include shipping the reader without
+drag-select on iOS first.
+
+**A crash with no recorded workaround attempts is a failed phase, not a blocked one** (`ios.md` I2
+criterion 3). Whatever happens, write the seven results, the device's exact OS version and the two
+latency numbers into this file.
+
+### I1's adversarial review — and the two things it caught that a green gate never would
+
+Four lenses again, different from I0's: acceptance criteria; **"you are the person with the Mac,
+picking this up cold"**; what breaks that no test covers; and whether the blocked work is honestly
+reported. Then two skeptics per finding. 22 raised, 8 survived, and they deduplicate to **two real
+defects — both of which had already been written into this file as if they were verified**, which is
+the failure mode the honesty lens exists for.
+
+**1. The committed `Package.swift` could not have resolved.** Setting the deployment target to 18.2
+made `cap sync` emit `platforms: [.iOS(.v18)]` under `// swift-tools-version: 5.9`. Mechanism, source
+and remedy are in the I0 deployment-target section above. The shape of the failure is worth naming
+separately from the fix: **the first thing the Mac session would have hit was a package-resolution
+error in a file headed "DO NOT MODIFY", regenerated identically by the obvious remedy.** The gates
+were green throughout, because nothing in this container compiles Swift.
+
+**2. "The `appId` change is one edit plus a sync" was false**, in both the I0 and I1 sections.
+`editProjectSettingsIOS` runs on `cap add` only. Corrected in both places, and the test's failure
+message now names the two procedures that actually work — because the danger was not the drift but
+the remedy: a wrong one turns a real failure into something that reads like a flaky test.
+
+Both defects were mine, both were written down as observations, and both came from **reading the
+template or the mechanism instead of the generated artifact**. The I0 section's Package.swift row
+says `.v15` correctly *about the template*; the I1 paragraph repeated it *about the committed file*,
+which is a different claim. Worth a rule for whoever writes the next phase: when the CLI generates a
+file, quote the generated file.
+
+Also fixed from the same pass: `ios.md`'s "blocked, not complete" sentence is in §6 R17, not §5; and
+the unblock steps now name `pnpm install`, `pnpm data` and `pnpm build`, without which the first
+command a Mac reader runs (`cap sync ios`) aborts on a missing `dist/`.
+
+**One finding is handed on rather than fixed, because it is a frozen surface.** Committing `ios/`
+puts it inside Tailwind 4's automatic source detection — which skips gitignored paths, and this tree
+is deliberately committed — so the build now emits utilities invented from words inside Xcode
+metadata. Measured: `dist/assets/index-*.css` went **27,277 → 27,304 bytes**, the extra being
+`.contents{display:contents}`, generated from the token `contents` in
+`ios/App/CapApp-SPM/.gitignore`'s `.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata`. It is
+27 bytes of dead CSS today and it grows with every native file added — `android/` next. The fix is
+one `@source not` directive in the Tailwind entry stylesheet, which is **`core.md` C0's file**
+(`app/globals.css` today), and `ios.md` §2 says this plan does not own it. So it is written here per
+CLAUDE.md's rule rather than edited: **C0 (or A1, whichever runs first) should exclude `ios/` and
+`android/` from Tailwind's source scan.**
+
+Nine other findings were killed by the skeptics, including: that the deployment-target assertion
+should count build configurations rather than compare values (it would weaken the guard against the
+mutation that actually happens, which is a changed value); that the bundle-identifier test should pin
+a literal id (the id is deliberately provisional); and that `cap sync`'s SPM-vs-CocoaPods choice
+changes which SQLCipher distribution `@capacitor-community/sqlite` resolves (true — SPM takes
+`sqlcipher/SQLCipher.swift`, the podspec takes the `SQLCipher` pod — but it lands on **register #20**,
+which I3 settles on the device either way, and nothing here claimed otherwise).

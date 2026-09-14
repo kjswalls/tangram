@@ -10,7 +10,17 @@ import { expect, test } from '@playwright/test';
 
 import { DASUAN, openReview, seed } from '../p2/fixtures';
 
+import { expectBaseText } from '../hanzi';
+
 const NO_VOICE = 'No Mandarin voice available in this browser';
+/**
+ * The short form that sits next to the glyph. **This is the assertion C2's
+ * criterion actually asks for**: "the disabled state and its *visible* reason".
+ * The spec asserted `title` and `aria-label` only — i.e. the reason exactly
+ * where a touch screen never shows it, which is the failure the component's
+ * header says the visible text exists to prevent.
+ */
+const NO_VOICE_VISIBLE = 'No voice';
 
 test.describe('speaker button', () => {
   test('is on the review card back, disabled, with the reason', async ({ page }) => {
@@ -27,13 +37,16 @@ test.describe('speaker button', () => {
     await expect(speak).toHaveAttribute('data-tts-status', 'unavailable');
     await expect(speak).toHaveAttribute('title', NO_VOICE);
     await expect(speak).toHaveAttribute('aria-label', NO_VOICE);
+    await expect(
+      page.getByTestId('card-back').getByText(NO_VOICE_VISIBLE, { exact: true }),
+    ).toBeVisible();
   });
 
   test('is in the lookup entry detail, disabled, with the reason', async ({ page }) => {
     await page.goto('/lookup');
     await page.getByTestId('lookup-input').fill('dasuan');
     const first = page.getByTestId('search-result').first();
-    await expect(first).toContainText('打算', { timeout: 20_000 });
+    await expectBaseText(first, '打算', { timeout: 20_000 });
     await first.click();
 
     const detail = page.getByTestId('entry-detail');
@@ -43,5 +56,6 @@ test.describe('speaker button', () => {
     await expect(speak).toBeDisabled();
     await expect(speak).toHaveAttribute('data-tts-status', 'unavailable');
     await expect(speak).toHaveAttribute('title', NO_VOICE);
+    await expect(detail.getByText(NO_VOICE_VISIBLE, { exact: true })).toBeVisible();
   });
 });

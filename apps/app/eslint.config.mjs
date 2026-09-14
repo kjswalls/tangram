@@ -23,6 +23,14 @@ const config = [
       // copy too would report the same findings twice and go stale between
       // builds.
       'public/sw.js',
+      // The Capacitor Android project (docs/plans/android.md A1). It holds no
+      // JavaScript this repository writes — what a lint run finds in it is
+      // `cap sync`'s copy of `dist/` under `app/src/main/assets/public/`, which
+      // is the same minified bundle `dist/**` above already excludes, reported
+      // a second time from a second path. Without this line `pnpm lint` is green
+      // on a clean checkout and red the moment anyone runs `pnpm build`.
+      'android/**',
+      'ios/**',
     ],
   },
   js.configs.recommended,

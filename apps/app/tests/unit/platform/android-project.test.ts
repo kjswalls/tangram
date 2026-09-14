@@ -1,0 +1,197 @@
+/**
+ * What the committed Android project must say (`docs/plans/android.md` A1).
+ *
+ * **There is no CI in this repository** — no `.github/` directory, and no
+ * sibling plan creates one (`wave-zero.md` §10 ruling 13, `android.md` R11) — so
+ * every rule that wants enforcement is a unit test under `tests/unit/`, in the
+ * pattern `tests/unit/deps.test.ts` already uses for repo-shape assertions.
+ * A1's criterion 3 asks for exactly that over the SDK levels; the rest of this
+ * file is the same argument applied to the other Gradle facts a phase downstream
+ * silently depends on.
+ *
+ * Read `apps/app/android/**` as source, not as build output. Capacitor's native
+ * directory is a tree you edit — Gradle config, manifest entries, the asset copy
+ * — and treating it as generated means every edit is lost on the next
+ * regeneration.
+ */
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+import { describe, expect, it } from 'vitest';
+
+import capacitorConfig from '@/capacitor.config';
+import { appRoot } from '@/lib/server/roots';
+
+const APP = appRoot(import.meta.dirname);
+const ANDROID = resolve(APP, 'android');
+
+const read = (relative: string) => readFileSync(resolve(ANDROID, relative), 'utf8');
+
+/** `key = 24` / `key 24` / `key "24"`, which Gradle spells all three ways. */
+function gradleValue(source: string, key: string): string | undefined {
+  const match = new RegExp(`\\b${key}\\b\\s*=?\\s*["']?([\\w.]+)["']?`).exec(source);
+  return match?.[1];
+}
+
+describe('SDK levels (A1 criterion 3)', () => {
+  const variables = read('variables.gradle');
+
+  // 24/36/36 are Capacitor 8.5.2's own defaults — verified in the shipped
+  // package, `@capacitor/android/capacitor/build.gradle`, rather than taken from
+  // AUDIT 2's search snippet — and 36 is what Play requires for new apps and
+  // updates since 31 August 2026, with an extension available to 1 November 2026
+  // (developer.android.com/google/play/requirements/target-sdk, read 2026-09-14).
+  it.each([
+    ['minSdkVersion', '24'],
+    ['compileSdkVersion', '36'],
+    ['targetSdkVersion', '36'],
+  ])('declares %s = %s', (key, expected) => {
+    expect(gradleValue(variables, key)).toBe(expected);
+  });
+
+  it('makes the app module read them rather than restating them', () => {
+    // This is the half that stops a plugin's own defaults from quietly
+    // overriding them: a module that hard-codes `minSdkVersion 21` passes a
+    // check that only reads variables.gradle.
+    const app = read('app/build.gradle');
+    for (const key of ['compileSdkVersion', 'minSdkVersion', 'targetSdkVersion']) {
+      expect(app, key).toMatch(new RegExp(`rootProject\\.ext\\.${key}`));
+    }
+  });
+});
+
+describe('the Android Gradle Plugin version', () => {
+  /**
+   * **AGP must be 8.5.1 or higher, and this is a 16 KB page-size requirement,
+   * not housekeeping.** Google's own words
+   * (developer.android.com/guide/practices/page-sizes, read 2026-09-14):
+   *
+   *   "In AGP version 8.3 to 8.5, apps are 16 KB aligned by default. However,
+   *    bundletool does not zipalign APKs by default. So, the app may appear to
+   *    work, but when built from a bundle in Play, it won't install."
+   *
+   * That is the exact failure `android.md` R1's mitigation does not catch: A5
+   * runs `zipalign` on a **debug APK** and A7's fallback runs it on a locally
+   * built release APK, and on AGP 8.3–8.5 both are green while the APK Play
+   * generates from the bundle is not installable. The version is the only thing
+   * that closes it before a rejection does, so it is asserted here.
+   */
+  it('is at least 8.5.1', () => {
+    const version = /com\.android\.tools\.build:gradle:([\d.]+)/.exec(read('build.gradle'))?.[1];
+    expect(version, 'no AGP classpath in android/build.gradle').toBeDefined();
+    const [major, minor, patch] = version!.split('.').map(Number);
+    const ordinal = major * 1e6 + minor * 1e3 + patch;
+    expect(ordinal, `AGP ${version} is below 8.5.1`).toBeGreaterThanOrEqual(8 * 1e6 + 5 * 1e3 + 1);
+  });
+});
+
+describe('the application id', () => {
+  /**
+   * `applicationId` is the app's permanent identity in Play and can never change
+   * after the first upload (`android.md` A6a). The CLI writes it out of
+   * `capacitor.config.ts`'s `appId` at `cap add` / `cap sync`, so the two can
+   * drift only by a hand edit — which is precisely the edit A6a warns about, and
+   * `ios.md` I0 has already recorded the `appId` as **provisional**. If the
+   * owner changes it, both of these move together or the stores name two
+   * different products.
+   */
+  it('matches capacitor.config.ts, in both build.gradle and the namespace', () => {
+    const app = read('app/build.gradle');
+    expect(gradleValue(app, 'applicationId')).toBe(capacitorConfig.appId);
+    expect(gradleValue(app, 'namespace')).toBe(capacitorConfig.appId);
+  });
+
+  it('is where the MainActivity package lives', () => {
+    const packageDir = (capacitorConfig.appId as string).split('.').join('/');
+    expect(() => read(`app/src/main/java/${packageDir}/MainActivity.java`)).not.toThrow();
+  });
+});
+
+describe('the WebView floor stays advisory (A6)', () => {
+  /**
+   * **Capacitor 8.5.2 does have a built-in WebView version gate, and it blocks.**
+   * `android.md` A6 says it does not, citing Capacitor issue #4884; the shipped
+   * source disagrees. `@capacitor/android@8.5.2`
+   * `capacitor/src/main/java/com/getcapacitor/Bridge.java`:
+   *
+   *   public static final int MINIMUM_ANDROID_WEBVIEW_VERSION = 55;
+   *   public static final int DEFAULT_ANDROID_WEBVIEW_VERSION = 60;
+   *   if (!this.isMinimumWebViewInstalled()) { webView.loadUrl(errorUrl); return; }
+   *
+   * and `CapConfig.java` reads `android.minWebViewVersion` from the config,
+   * flooring it at 55. So raising that key to A6's comfort floor would replace
+   * A6's banner with a wall — "a learner on a five-year-old phone should get a
+   * working dictionary with a banner asking them to update Android System
+   * WebView, not a wall" — which is the opposite of what A6 specifies. The
+   * comfort floor belongs in app code; this key stays at its default.
+   */
+  it('does not raise android.minWebViewVersion', () => {
+    expect(capacitorConfig.android?.minWebViewVersion).toBeUndefined();
+  });
+});
+
+describe('the gitignore rules that keep large and secret files out (A1 criterion 8)', () => {
+  const ignore = read('.gitignore');
+
+  it('ignores the keystore and its properties file before A7 creates them', () => {
+    // The template ships these commented out. A signing key committed once is
+    // committed forever, so the ignore exists before the file does.
+    for (const pattern of ['*.jks', '*.keystore', 'keystore.properties']) {
+      expect(ignore.split('\n'), pattern).toContain(pattern);
+    }
+  });
+
+  it('ignores the directory cap sync copies dist/ into', () => {
+    expect(ignore).toContain('app/src/main/assets/public');
+  });
+
+  it('ignores a dictionary artifact anywhere under the asset root', () => {
+    // `app/src/main/assets/public` covers the copy that goes where
+    // @capacitor-community/sqlite actually looks (`public/assets/databases`).
+    // These cover the one android.md A5 currently tells a builder to make, into
+    // the asset ROOT, which that rule does not match. The failure is a 43 MB
+    // binary in git history.
+    for (const pattern of [
+      'app/src/main/assets/**/*.sqlite',
+      'app/src/main/assets/**/*.db',
+      'app/src/main/assets/**/decomp.json',
+    ]) {
+      expect(ignore.split('\n'), pattern).toContain(pattern);
+    }
+  });
+
+  it('ignores build output and the local SDK path', () => {
+    for (const pattern of ['build/', '.gradle/', 'local.properties', '*.apk', '*.aab']) {
+      expect(ignore.split('\n'), pattern).toContain(pattern);
+    }
+  });
+
+  it('ignores the two Gradle files cap sync regenerates', () => {
+    // `capacitor.settings.gradle` embeds `node_modules/.pnpm/<name>@<version>_
+    // <peer-hash>/...` paths out of the installed tree. Committing it commits a
+    // path that goes stale on any version or peer change, and makes `git status`
+    // dirty after every sync. Capacitor's own template gitignore omits both;
+    // under pnpm that omission is wrong. See the .gitignore for the full note.
+    for (const pattern of ['capacitor.settings.gradle', 'app/capacitor.build.gradle']) {
+      expect(ignore.split('\n'), pattern).toContain(pattern);
+    }
+  });
+});
+
+describe('the build command is one command', () => {
+  const rootScripts = (
+    JSON.parse(readFileSync(resolve(APP, '..', '..', 'package.json'), 'utf8')) as {
+      scripts: Record<string, string>;
+    }
+  ).scripts;
+
+  it('exists at the workspace root and does the whole sequence', () => {
+    // A1 criterion 2: reproducible from a clean checkout by one documented
+    // command sequence. The order is data, then the web build, then the sync —
+    // A5 inserts its asset copy between the build and the sync.
+    const sync = rootScripts['android:sync'];
+    expect(sync).toBeDefined();
+    expect(sync.indexOf('data:ensure')).toBeLessThan(sync.indexOf('-F app build'));
+    expect(sync.indexOf('-F app build')).toBeLessThan(sync.indexOf('cap sync android'));
+  });
+});

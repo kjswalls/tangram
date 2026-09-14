@@ -5002,3 +5002,238 @@ Killed, with reasons in the run: that the seam test should also ban `import { Ca
 '@capacitor/core'` (it would block `convertFileSrc`, which `data.md` D5a needs); that the `cap`
 script set needs per-subcommand aliases (`"cap": "cap"` already passes everything through); that the
 `appId` remediation note was iOS-only (`android.md` A6a owns its half and says so).
+
+## `android.md` A0–A3 — the Android project, the insets, and the facts the audits could not reach
+
+**Scope of this session: A0 through A3, then stop.** A4 onward is not started. Everything below that
+needs a phone is written as a **checklist**, not as a claim; this container has no Android device, no
+Android SDK, and — see A0 — no way to obtain one.
+
+### A0 — job one: the egress-blocked docs (register #12)
+
+`capacitorjs.com`, `ionic.io`, `capawesome.io`, `issues.chromium.org`, `support.google.com`,
+`play.google.com`, `bugs.chromium.org` and `dl.google.com` are **all denied by this container's
+network policy** (the proxy answers `403` to `CONNECT`; `curl -sS "$HTTPS_PROXY/__agentproxy/status"`
+lists the denials). `ios.md` I0 found the same for `capacitorjs.com` and STACK §4's "five-minute task"
+assumes an unblocked network it does not have.
+
+**`developer.android.com` and `registry.npmjs.org` and `raw.githubusercontent.com` are reachable**,
+and so is the best source of all — the **shipped packages**. Everything below was read on
+**2026-09-14** from a primary artifact, with the file and line named, or is marked unread.
+
+| Fact | Answer | Read from |
+|---|---|---|
+| Capacitor 8's minSdk / compileSdk / targetSdk | **24 / 36 / 36.** AUDIT 2 was right. | `@capacitor/android@8.5.2` `capacitor/build.gradle`; reproduced into `android/variables.gradle` by `cap add android` |
+| Capacitor 8's Android Gradle Plugin | **8.13.0** | `@capacitor/android@8.5.2` `capacitor/build.gradle` `classpath 'com.android.tools.build:gradle:8.13.0'`; the generated `android/build.gradle` carries the same |
+| Capacitor 8's JDK requirement | **Java 21.** Not from a docs page: the generated `app/capacitor.build.gradle` sets `sourceCompatibility`/`targetCompatibility` to `VERSION_21`. The container has OpenJDK 21.0.10, so it matches. | `cap sync android` output |
+| Gradle | **8.14.3**, via the committed wrapper (`distributionUrl=…gradle-8.14.3-all.zip`) | `android/gradle/wrapper/gradle-wrapper.properties` |
+| **The local scheme and origin the Android WebView serves from** | **`https://localhost`** — *not* `http://localhost`, which is what this plan, `ios.md` and `components/pwa/register-sw.tsx`'s header all say. `CapConfig.java:39` `private String androidScheme = CAPACITOR_HTTPS_SCHEME;` with `CAPACITOR_HTTPS_SCHEME = "https"` (`Bridge.java:94`) and `hostname = "localhost"` (`CapConfig.java:38`); `Bridge.java:631` composes `localUrl = scheme + "://" + authority`. Overridable by `server.androidScheme`, which `validateScheme` restricts to `http` or `https`. **`backend.md`'s CORS allow-list and `web.md` W4's gate key on this string.** A1 confirms it on a device. | `@capacitor/android@8.5.2` |
+| The core plugin names for back button / status bar / keyboard / splash | `@capacitor/app` (`backButton`, `minimizeApp()`), `@capacitor/status-bar`, `@capacitor/keyboard`, `@capacitor/splash-screen` — all already pinned by I0. **`backButton`'s own doc comment**: *"Listening for this event will disable the default back button behaviour."* `minimizeApp()` is documented Android-only. | `@capacitor/app@8.1.1` `dist/esm/definitions.d.ts` |
+| `@capacitor-community/safe-area`'s version | **8.0.1**, published 2025-12-22, and it is `latest`. STACK §6's "version not recorded by the audit" row can be filled in. | npm registry |
+| **16 KB page size: which tool, which artifact** | **Both a zip-entry check and an ELF check, and the command this plan carries is missing a required argument.** See below. | developer.android.com/guide/practices/page-sizes |
+| Play's target-API requirement | *"New apps and app updates must target Android 16 (API level 36) or higher"*, in force since **31 August 2026**, with an extension available to **1 November 2026**. AUDIT 2 was right. | developer.android.com/google/play/requirements/target-sdk |
+| `window.speechSynthesis` in the Android WebView (**#19**) | **Corroborated, with the issue id corrected.** MDN's browser-compat-data gives `webview_android: {version_added: false}` for both `Window.speechSynthesis` and `SpeechSynthesis`, and cites **`crbug.com/40417848`** — *not* the `40468168` this plan and STACK carry. Neither id could be resolved (tracker blocked). The device log at A1 is still the check. | `raw.githubusercontent.com/mdn/browser-compat-data/main/api/{Window,SpeechSynthesis}.json` |
+| Chromium **446078849** (the CJK synthetic-bold regression, #8) | **COULD NOT CONFIRM.** `issues.chromium.org`, `bugs.chromium.org`, `crbug.com` and `issuetracker.google.com` are all `403` here, and `github.com`'s issue API is `403` too. The mitigation (bundle a real bold weight, declare `lang`) does not depend on it. | — |
+| Capacitor **#8432** (keyboard bottom inset) | **COULD NOT CONFIRM as an issue**, but the underlying bug is confirmed from the safe-area plugin's own source, which cites the Chromium issue directly: `WEBVIEW_VERSION_WITH_SAFE_AREA_KEYBOARD_FIX = 144 // crbug 457682720`. And the sibling constant `WEBVIEW_VERSION_WITH_SAFE_AREA_CORE_FIX = 140 // crbug 40699457` is the safe-area-returns-0px bug, whose id no audit had. | `@capacitor-community/safe-area@8.0.1` `SafeAreaPlugin.java:34,37` |
+| Capacitor **#4884** ("no built-in WebView version gate") | **COULD NOT CONFIRM, and the claim is refuted by the shipped source regardless.** Capacitor 8.5.2 *does* gate: `Bridge.MINIMUM_ANDROID_WEBVIEW_VERSION = 55`, `DEFAULT_ANDROID_WEBVIEW_VERSION = 60`, `CapConfig` reads `android.minWebViewVersion` and floors it at 55, and below the floor `Bridge.load()` loads an error page instead of the app. **It blocks; it does not warn.** See "What I found wrong" below. | `@capacitor/android@8.5.2` `Bridge.java`, `CapConfig.java` |
+
+#### The 16 KB page-size check, settled — and the part that matters is not the command
+
+Google's page (read 2026-09-14) names **two** checks and one precondition.
+
+1. **Zip-entry alignment of an installable APK.** Verbatim, in both spellings the page uses:
+   `SDK_ROOT/Android/sdk/build-tools/35.0.0/zipalign -v -c -P 16 4 APK_NAME.apk` and
+   `zipalign -c -P 16 -v 4 APK_NAME.apk`. **The `4` is a required positional argument** — the
+   alignment in bytes — and `android.md` A5's `zipalign -c -P 16 -v` and STACK register #5's
+   `zipalign -c -P 16 -v <aab-or-apk>` **both omit it**, so as written each fails on usage rather than
+   on alignment. The artifact is an APK; the page never runs `zipalign` on an `.aab`, which confirms
+   the plan's own reading.
+2. **ELF load-segment alignment of each `.so`**:
+   `…/toolchains/llvm/prebuilt/<host>/bin/llvm-objdump -p SHARED_OBJECT_FILE.so | grep LOAD`, where
+   every LOAD line must read `align 2**14` or higher. `check_elf_alignment.sh APK_NAME.apk` is the
+   script form. `llvm-readelf -Wl <so> | grep 'RELRO\|Type'` is the RELRO variant.
+3. **The precondition, which is the real risk.** Google: *"In AGP version 8.3 to 8.5, apps are 16 KB
+   aligned by default. However, bundletool does not zipalign APKs by default. So, the app may appear
+   to work, but when built from a bundle in Play, it won't install."* That is `android.md` R1's
+   mitigation **failing green**: A5 checks a debug APK and A7's fallback checks a locally built
+   release APK, and on AGP 8.3–8.5 both pass while Play's generated APK does not install. The
+   generated project is on **AGP 8.13.0**, and A1 added
+   `tests/unit/platform/android-project.test.ts` to fail if it ever drops below 8.5.1. **This is the
+   single most useful thing A0 found.**
+
+For A7: the tool that turns an AAB into the APK Play would install is **bundletool**
+(`github.com/google/bundletool/releases`): `bundletool build-apks --bundle=my_app.aab
+--output=my_app.apks` (`--mode=universal` for one APK; `--ks`/`--ks-pass`/`--ks-key-alias`/`--key-pass`
+to sign). `bundletool dump config --bundle=<my.aab>` reads a bundle's alignment directly.
+`adb shell getconf PAGE_SIZE` → `16384` confirms a 16 KB test device.
+
+**The compliance deadline is 1 February 2027**, for apps targeting API 35+ — not "since November
+2025", which is what `android.md` A5 and R1 said. It is a rejection when it fires, so it still gates
+the release; it is just not in force today.
+
+### A0 — job two: the Play Console (registers #15 and #16) — BLOCKED, and it is the owner's
+
+**Not done, and not doable from here.** Job two is "pay the one-time registration fee and record what
+it was", plus the account's verification state, the closed-testing policy wording, the target-API
+deadline and the store-listing checklist. Paying a fee and creating a developer identity needs the
+owner's legal identity and payment method, exactly as `ios.md` I0 said of the Apple enrolment.
+`play.google.com` and `support.google.com` are egress-blocked here besides, so even the *reading* half
+is unavailable: the policy page cannot be quoted.
+
+One of the five things is settled from a reachable Google page and is recorded above: the **target-API
+requirement** (36, since 31 August 2026, extension to 1 November 2026).
+
+The **12-testers / 14-days** rule could only be found in third-party write-ups, which agree with each
+other and with AUDIT 2 — personal accounts created on or after 13 November 2023, 20 testers originally
+and reduced to 12 in December 2024, 14 continuous days, organisation accounts exempt — and **none of
+them is Google**. Treat it as still unconfirmed. A8 plans a fortnight around it and R7 calls it a
+calendar gate on a solo developer; do not let the agreement of four blogs promote it to a fact.
+
+**A0 is therefore blocked, not complete**, on job two as well as job three, exactly as its own §5
+standing rule requires.
+
+### A0 — job three: the device matrix — BLOCKED. Every role unassigned.
+
+`android.md` §4 requires this table before the performance bar means anything, and A5/A6 quote every
+number against the device named here. This session has no hardware of any kind.
+
+| Role | Device | Model / Android / **WebView version** (settings **and** UA) / GMS / RAM / free storage | Blocks |
+|---|---|---|---|
+| **The low-end target** — *a decision, not a device; STACK §4 says name one or the bar is unfalsifiable* | **NONE** | — | A5's copy timing and cold-start numbers, A6, registers #11 and #18 |
+| **A GMS phone** | **NONE** | — | A1, A3, A4, A5, A6; registers #5, #7, #8, #11, #18, #19 |
+| **A non-GMS phone** (borrowed for an afternoon is enough) | **NONE** | — | the other half of register **#7**, which is what decides whether audio tier 3 is v1 scope |
+| **A device below WebView 144** | **NONE**, and nothing in this plan produces one — WebView is Play-updated on every GMS handset | — | A2 criterion 2's keyboard case, A3's bold check (#8), A6's floor |
+| device state: **near-full storage** | **NONE** | — | register #18's failure path |
+
+**Fill this in by hand, one row per phone, before A2's device pass.** For each: model, Android
+version, Android System WebView version **read twice — from the WebView's own entry in Settings → Apps
+and from `navigator.userAgent`, recorded separately** (they are the same number by different routes,
+and the second is what A6's parser consumes), whether Google Mobile Services is present, RAM, free
+storage. Then mark one row **"the low-end target"** and answer explicitly: **is any device in the
+matrix below WebView 144?** If the answer is no — which is the likely answer — A2 records its
+pre-144 keyboard result as **untested** and carries it to A6 as an open risk, which is what A2 already
+says to do.
+
+### A1 — the Capacitor Android project
+
+**What landed**
+
+| File | What it is |
+|---|---|
+| `apps/app/android/**` (52 files) | `cap add android` output, committed as source. Gradle wiring, the manifest, `MainActivity.java`, the template icons and splash images, the Gradle wrapper. |
+| `apps/app/android/.gitignore` | The template's, plus four additions — see below. |
+| `apps/app/lib/shell/back-navigation.ts` | The hardware back button's four-rule model plus the overlay registry. Pure; no React, no Capacitor. |
+| `apps/app/components/shell/hardware-back-button.tsx` | The mount. Feeds the model every router location; attaches `@capacitor/app`'s `backButton` listener behind `isAndroid()` via a **dynamic** import; executes the action. Holds no policy. |
+| `apps/app/src/root.tsx` | One line: mounts it beside the other mounted-once components. |
+| `apps/app/tests/unit/platform/android-project.test.ts` | 14 assertions over the Gradle config, the application id, the WebView-gate key and the gitignore rules. |
+| `apps/app/tests/unit/shell/back-navigation.test.ts` | 22 assertions — every row of A1's criterion-6 device checklist, held as logic. |
+| `apps/app/eslint.config.mjs` | `android/**` and `ios/**` ignored. See below; without this `pnpm lint` is red after any `pnpm build`. |
+| `package.json` (root) | `android:sync`, `android:open`. |
+| `apps/app/package.json` | `@capacitor/android@8.5.2` (devDependency), `cap:sync:android`, `cap:open:android`. |
+| `pnpm-lock.yaml` | Plus a three-line fix that is not mine — see "what I found wrong". |
+
+Gates: `pnpm lint`, `pnpm typecheck`, `pnpm test` (1251 app + 75 server), `pnpm build` all green, and
+`git status` clean after `pnpm android:sync`.
+
+**The one documented command** (A1 criterion 2), from a clean checkout:
+
+```bash
+pnpm install          # @capacitor/android is a devDependency; nothing else is needed
+pnpm android:sync     # = data:ensure, then the app build, then `pnpm -F app cap sync android`
+```
+
+`android:sync` is deliberately in that order, and **A5's asset copy goes between the build and the
+sync** — into `apps/app/dist/assets/databases/`, not into the native tree; see the A5 note below.
+Opening the project in Android Studio requires `android:sync` to have run at least once, because the
+two generated Gradle files are gitignored (below).
+
+**The bundle did not grow by the price of a plugin.** `@capacitor/app` is imported *dynamically*,
+inside the effect, behind `isAndroid()`. Vite splits it: `dist/assets/index-*.js` is 661,985 B and
+contains **no** `androidBridge`, while `@capacitor/core` (7,872 B) and `@capacitor/app` (842 B) sit in
+two chunks that `dist/index.html` never references and a browser never fetches. The main bundle grew
+**+2.3 kB** against I0's 659.70 kB, which is the back-button model and mount. A static import would
+have put the bridge in every web download and installed the `Capacitor` global on the web — harmless
+by construction (`lib/platform/native.ts` tests `isNativePlatform()`, not the global's presence) but
+paid for by every browser.
+
+**The back button, and where it lives.** A1 is right that nothing in any sibling plan defines it, so
+this session wrote it. The policy is in **one module**, `lib/shell/back-navigation.ts`, and
+`core.md` **C7 should adopt it rather than write a second one** — it takes the tab roots as an
+argument for exactly that reason. Two things the four rules do not say, both found by writing it:
+
+- **Rule 3 pops the most-recently-visited stack, so the router arrival it causes must not push.**
+  Without that, back alternates between two tabs forever instead of walking out. The model arms a
+  `pendingBackTo` on a `switch-tab` decision and consumes the matching arrival.
+- **`BackButtonListenerEvent.canGoBack` is not rule 2's question.** It is the WebView's own history,
+  which crosses tabs; rule 2 is about *this tab's* stack. The model keeps its own per-tab depth and
+  ignores the payload.
+- Rule 4 is `App.minimizeApp()`, never `exitApp()`. Attaching the listener disables the platform
+  default (the plugin's own doc comment), so the last press is ours to answer.
+
+The **overlay registry** (`registerOverlay` / `closeTopOverlay`) is a LIFO stack rather than a
+boolean, because a dialog over a sheet must close the dialog only. Nothing registers yet — `core.md`
+C1's `Sheet` is the file that should, and it is not on this branch — so **rule 1 is inert rather than
+wrong**, and a test pins that.
+
+**Four gitignore rules the template does not have, and one of them is a pnpm problem.**
+
+1. `*.jks`, `*.keystore`, `keystore.properties` — the template ships the first two **commented out**.
+   A signing key committed once is committed forever and A7 is the phase that makes one.
+2. `app/src/main/assets/**/*.sqlite`, `**/*.db`, `**/decomp.json` — belt for the braces; see A5 below.
+3. **`capacitor.settings.gradle` and `app/capacitor.build.gradle`.** Capacitor's own template
+   gitignore does **not** list these, and under pnpm that omission is wrong: `capacitor.settings.gradle`
+   embeds `new File('../../../node_modules/.pnpm/@capacitor+android@8.5.2_@capacitor+core@8.5.2/node_modules/@capacitor/android/capacitor')`
+   — the content-addressed store path, peer hash and all. Committing it commits a path that goes stale
+   on any version or peer change, and makes `git status` dirty after every sync, which is criterion 8.
+   Both files open with "DO NOT EDIT THIS FILE! IT IS GENERATED EACH TIME 'capacitor update' IS RUN".
+4. Not a gitignore but the same class of problem: **`apps/app/eslint.config.mjs` now ignores
+   `android/**` and `ios/**`.** `cap sync` copies `dist/` to `android/app/src/main/assets/public/`, and
+   `eslint`'s existing `dist/**` ignore does not cover the copy — so `pnpm lint` is green on a clean
+   checkout and **2,094 errors** the moment anyone runs `pnpm build`. `ios/**` is added pre-emptively
+   because `ios.md` I1's `cap add ios` will reproduce it exactly.
+
+**Register #19, the origin and the service worker are all device checks and none of them ran.** See
+the checklist below.
+
+### A1 — the device checklist (criteria 1, 4, 5, 6, and the half of 3 a phone must do)
+
+Nothing in this section is a claim. Run it with one GMS phone, a USB cable and `chrome://inspect`.
+
+1. **Install and route.** `pnpm android:sync`, then `./gradlew assembleDebug` and install. Every route
+   in `components/shell/nav.ts` — `/`, `/lookup`, `/review`, `/read`, `/lists`, `/stats`, `/settings` —
+   renders and navigates. **Seven rows is correct, not stale**: `core.md` C7 re-baselines this list to
+   three tabs. **Expected failure, assert it rather than discover it:** lookup does not work. `data.md`
+   D6 has not run, `/api/dict/*` resolves against `https://localhost` and fails, and the expected state
+   is `core.md` C4a's dictionary-unavailable screen — not a crash, not a blank page. Lookup starts
+   working at A5.
+2. **Register #19.** In the WebView inspector: `typeof window.speechSynthesis`. Expected `"undefined"`.
+   Record the value **and** the device. If it is defined, A4's justification changes (not its
+   decision) and `core.md` C2's `supportsBoundary` fallback gains a third case.
+3. **The origin.** `window.location.origin`. Expected **`https://localhost`** (see A0). Record it, and
+   tell `backend.md` — its CORS allow-list and `web.md` W4's gate both key on it. **The observed value
+   wins** over the documented one.
+4. **The UA string.** `navigator.userAgent`, in full, per device. Free here, and it is A6's parser input.
+5. **No service worker.** `navigator.serviceWorker.getRegistrations()` → `[]`. This is the device half
+   `web.md` W1's unit test cannot run, and it matters more than it looks: `https://localhost` **is** a
+   secure context, so without the bridge test in `register-sw.tsx` a worker would register and could
+   serve a previous build's shell after an app update.
+6. **The back button, four rows.** Each row's logic is already asserted in
+   `tests/unit/shell/back-navigation.test.ts`; what the device proves is the wiring.
+   - a. With a sheet or dialog open → it closes, and **nothing else happens** (the route does not change).
+     *Note: nothing registers an overlay yet, so until `core.md` C1's `Sheet` calls `registerOverlay`,
+     this row cannot pass and should be recorded as deferred rather than failed.*
+   - b. On a route below a tab root (e.g. `/lists/<id>`) → back returns to `/lists`.
+   - c. At a tab root, having visited another tab before it → back returns to **the tab actually
+     visited before**, not the one to its left.
+   - d. At the root of the **first** tab (`/` today; Look up after C7) → the app **backgrounds**.
+     Re-opening from the launcher returns to where it was. It must not finish the activity.
+7. **`git status` is clean** after a full build on the machine that ran it (criterion 8).
+8. **Criterion 7 is answered and needs no device: there is no compile-only gate and there cannot be
+   one here.** `dl.google.com` is denied by the container's network policy, and it serves both the
+   command-line tools zip and the SDK repository manifest — so `sdkmanager` cannot be installed, and
+   `android.jar`, `zipalign` and `adb` cannot be obtained at all. `maven.google.com`,
+   `services.gradle.org` and `repo1.maven.org` are reachable, so Gradle can resolve AGP and AndroidX;
+   it simply has nothing to compile against. **Nobody should try this again.** `android.md` §3's
+   "unknown and untried" is now answered and R11's mitigation has no upside branch: Android
+   verification is manual and device-bound, which is a real cost of this platform and should stay
+   visible.

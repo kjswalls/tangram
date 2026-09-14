@@ -57,7 +57,11 @@ export function WordSearch({
           onChange={(event) => setQuery(event.target.value)}
           className="max-w-xs"
         />
-        <Button type="submit" disabled={pending || !query.trim()}>
+        {/* `secondary`, not the default `primary`: since C1 the primary variant
+            is the screen's single filled vermillion action (§1), and a search
+            submit inside a card is not it. On /lists/:id it sat next to the
+            delete confirmation, which is. */}
+        <Button type="submit" variant="secondary" disabled={pending || !query.trim()}>
           {pending ? 'Searching…' : 'Find'}
         </Button>
       </form>

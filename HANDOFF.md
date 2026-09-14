@@ -5011,3 +5011,146 @@ icon set, and vermillion not appearing until C1.
 **Mutation-tested, because a guard nobody has seen fail is not a guard.** Re-introducing
 `--radius-md`, pointing a component at `var(--gone)`, reordering a font stack, and adding a second
 `:root` block each fail exactly one test and no others.
+
+## C1 — the primitives, and a gallery to review them in
+
+Commit: `core: the primitives, and the gallery every later phase is reviewed on (C1)`.
+
+Ten primitives (`Button` with a `grade` shape, `Card`, `Badge`, `Input`, plus new `Sheet`, `TabBar`,
+`Chip`, `Field`, `EmptyState`, `Skeleton`), a `/gallery` route that is **not in a production build**,
+and the two composite state sets C4a and C7 will assert against.
+
+### What `/gallery` is for, and how it stays out of production
+
+The guard is the **build mode**, and that took two attempts.
+
+| build | `/gallery` |
+|---|---|
+| `pnpm dev` | present — `import.meta.env.DEV` |
+| `pnpm build` | **absent**, and nothing in the environment can change that |
+| `pnpm build:e2e` (`vite build --mode e2e`) | present; `import.meta.env.PROD` is still true, so the service worker still registers and `tests/e2e/p6/pwa.spec.ts` is unaffected |
+
+The first draft keyed it to a `VITE_TANGRAM_GALLERY` environment variable set in
+`playwright.config.ts`, and the review found it **failed open in both directions**: `/gallery` did
+not exist under `pnpm dev` at all — the surface whose whole purpose is "what makes each later phase
+reviewable without driving the whole app" — and a plain `vite build` shipped the entire gallery
+whenever that variable happened to be in the environment, which `pnpm e2e` itself put there. Vite
+exposes `process.env.VITE_*` alongside `.env` files, so an env-var guard is ambient state; a mode is
+a build-time constant.
+
+`tests/e2e/core/gallery-excluded.spec.ts` builds **twice** and asserts both directions: a production
+build with `VITE_TANGRAM_GALLERY=1` deliberately in its environment (the gallery must be absent), and
+an `--mode e2e` build (the marker must be present). That second build is the positive control, and it
+is why the negative means something — the marker is prose, and without a control a reworded intro
+would have left the check passing against a bundle that contained the whole gallery. `GALLERY_MARKER`
+is exported from `components/gallery/gallery.tsx` and rendered from there, so a copy edit moves both.
+
+**`pnpm smoke` needs no exemption** and this is the record of it: W2 derives its cases from the
+production route table, which by construction has no `/gallery` in it. **W2 must not "fix" the
+missing case by adding one.** Verified: `pnpm smoke` reports 21 routes ok and no gallery case.
+
+### Decisions C1 made that the plan did not settle
+
+- **`--breakpoint-wide: 45rem` (720px), a new Tailwind breakpoint.** §1 says the wide shell is "the
+  same three destinations at ~720px and above"; `Sheet` is the first file that needs the number, and
+  Tailwind's `md:` is 768px, which would have left a 48px band where the wide shell rendered a
+  phone-shaped bottom sheet — R7 in miniature. It is a **new** variant rather than a re-pointing of
+  `md`, because `md` means 768px in forty existing components. **C7's two shells must use `wide:`**;
+  a component that hard-codes `md:` for this boundary reintroduces the band.
+- **The active tab wears its DESTINATION's accent, not one colour for all three.** §1 assigns the
+  accents by meaning — jade is Look up, vermillion is Practice and the single primary action — so a
+  bar that painted whatever tab was active in vermillion put a permanent vermillion-tinted region in
+  the chrome of every screen, next to the one vermillion action that screen is allowed, with Look up
+  (the app's home) worst affected. `TabItem.accent` is `'neutral' | 'lookup' | 'practice' | 'new'`,
+  defaulting to neutral (ink on a `--border` pill).
+- **`Chip`'s `practice` tone wears `text-practice`, like every other tone.** It wore `text-ink` in
+  the first draft, so the one tone that never showed vermillion was the vermillion tone — while
+  `TabBar` put `text-practice` on the identical ground. Two treatments of one token pair in one
+  phase. `--practice` on `--practice-soft` measures 4.84:1 and is now in the gallery's contrast
+  table.
+- **`--skeleton`, a fourth token outside product-decisions §11's table** (after `--warning` /
+  `--warning-soft` at C0). `Skeleton` painted `--border` at 60%, which measured **1.26:1** against a
+  card in light and 1.16:1 in dark — at the edge of perceivable on a phone in daylight, and the place
+  it matters most is the ask panel's `thinking` state, where those rows are the only evidence the
+  model is working. `#c5bdaf`, the same hue one step darker, is 1.83:1.
+- **The dictionary's progress bar is two divs, not `<progress>`.** An unstyled `<progress>` is
+  painted by the UA: Chromium draws **pure green on grey**, every other engine draws something else —
+  a saturated non-palette colour on the first screen of a first launch, different per engine. And its
+  indeterminate state does not animate under this stylesheet (measured as six byte-identical frames
+  over 1.3 s), so "the server sent no `Content-Length`" rendered as a bar **stuck at 0%** — worse
+  than the indeterminate spinner `data.md` D4 was trying to rule out. It is now tokens, a real
+  `dict-sweep` keyframe with `motion-reduce:animate-none`, and the same `role="progressbar"` ARIA the
+  element would have had, with `aria-valuenow` omitted when the value is genuinely unknown.
+- **`Sheet` locks body scroll while open**, with `scrollbar-gutter: stable` so the page does not jump
+  sideways on a pointer device. Without it a wheel or a touch drag over the dimmed backdrop scrolled
+  the document underneath — on a phone, the common miss — which undoes the one thing §1 promises
+  about a sheet.
+- **`Sheet`'s phone height is `min-h-[50dvh] max-h-[66dvh]`.** §1's "covers the lower two thirds" is
+  two-sided and the first draft implemented only the cap, so a short sheet rendered as a strip pinned
+  to the bottom edge. **If §1 meant the cap only, this is the line to change** — one class.
+- **`components/dict/dict-status.tsx` is C4a's file and C1 landed its presentational half.** C1's
+  criterion is that the gallery's ids are the ids C4a's specs assert, and the only way for that to be
+  true is for the gallery to render C4a's component. It is pure: status in, markup out. C4a adds
+  `store.status` / `store.subscribe()`, the retry, `dict-gate.tsx`, and deletes `data-banner.tsx`.
+- **`components/lookup/ask-state.ts` is C7's file and this is its types-only first commit**, the
+  pattern CLAUDE.md's shared-surface rule asks for. C1's gallery needs the five state names for its
+  three specimens and C4's in-context gloss line consumes `unavailable`. `backend.md` B2 fills
+  `answered` and changes none of the other four.
+- **`components/lists/word-search.tsx`'s "Find" is `variant="secondary"` now.** Since C1 the primary
+  variant is the screen's single filled vermillion action, and on `/lists/:id` a search submit sat in
+  the same colour as the delete confirmation. **The delete confirmation is still `primary`, i.e.
+  vermillion, and that is wrong** — an irreversible action wearing the same colour as a benign one.
+  A destructive treatment is a design decision rather than a rename, so it is **left for C8**, which
+  owns that screen's relabelling.
+
+### A third settled-palette contrast failure, for the owner alongside C0's two
+
+- **`--new` on `--new-soft` is 4.48:1**, under AA for the 12px text `Badge` and `Chip` use. C0 did not
+  measure it because nothing consumed the pair; C1 is the phase that creates it. **Proposal:
+  `--t1-gold-700: #886211`** — visually the same colour, 4.61:1 on the tint and 5.03:1 on paper. The
+  gallery's contrast table prints it as FAIL, so it is visible rather than buried here.
+
+### A defect in `web.md` W1, found by C1's exclusion spec
+
+**An unmatched URL in a production build renders "Something went wrong", not "Not found".**
+`src/routes/not-found.tsx` decides with `error === undefined || (isRouteErrorResponse(error) &&
+error.status === 404)`, but in a built SPA the `*` route reaches that component through the root
+`errorElement` with an error defined, so a learner who mistypes a URL — or follows a stale bookmark,
+which the SPA fallback makes routine — is told the app broke. Reproduced on `/nope` as well as on
+`/gallery`, against a plain `vite build` served with an SPA fallback. **Not fixed here**: the file is
+`web.md`'s and C7 rewrites the routing anyway. `gallery-excluded.spec.ts` deliberately asserts the
+"Go to Today" link rather than the heading, and says why, so it neither freezes the defect nor fails
+for a reason unrelated to the gallery.
+
+### What the review found
+
+Three lenses (acceptance criteria; what breaks that no test covers; UX on real pixels — 68
+screenshots, measured contrast). **Eighteen findings.** The three that matter most were all tests
+that could not fail:
+
+1. **The variant-map tests could not detect a dropped variant** — the phase's blocking finding, and
+   criterion 6 verbatim. Every assertion was `className.trim().length > 0`, and `className` always
+   carries the component's base classes, so `VARIANTS[v] = ''` passed. Verified by emptying three map
+   entries at once and watching 33 tests pass. The maps are exported now and asserted directly: every
+   key present, no entry empty, no two entries equal — with Badge's `accent`/`lookup` alias declared
+   as the one intentional duplicate, so a second one cannot slip in as "probably intentional".
+2. **The `Sheet` focus-trap tests were vacuous.** The candidate filter was `offsetParent !== null`;
+   jsdom implements no layout, so that is null for *every* element, the list collapsed to whichever
+   node already had focus, and every Tab re-focused it. The tests asserted containment, which is
+   trivially true of a sheet that swallows Tab entirely — they passed with the wrap inverted. The
+   filter is now `hidden` / `aria-hidden` / computed `display`+`visibility`, which mean the same
+   thing in both environments, and the tests assert the **sequence** (Close → first → second →
+   Close). Mutation-checked: inverting the wrap fails exactly those two tests.
+3. **The keyboard spec computed the `:focus-visible` outline and threw it away**, so the ring half of
+   criterion 4 was unverified — while `components/ui/input.tsx` shipped `focus:outline-none`, which
+   survived only because `globals.css`'s rule is unlayered and Tailwind's utilities are in
+   `@layer utilities`. An accident of cascade layering, not something any test stated. The spec
+   asserts the ring and a non-zero width on every focus stop now, and `focus:outline-none` is gone.
+
+Also fixed: the exclusion mechanism (above); the native first-launch specimens had no stable test id
+of their own, so C1's own "named here so no later phase can quietly skip them" did not hold for them;
+`Card`'s new docstring named `--radius-md`, the one token name C0 ruled out; the gallery read tokens
+through `var(${token})` interpolation, which C0's token guard cannot see (`gallery-tokens.test.ts`
+now checks those two lists through TypeScript, and asserts the swatch list covers every tier-2
+token); and the "no gallery module name in the manifest" assertion was vacuous on a single-chunk
+build — kept, with a comment saying it starts meaning something when W6 splits the bundle.

@@ -117,6 +117,7 @@ const SEMANTIC_COLOURS = [
   'new-soft',
   'warning',
   'warning-soft',
+  'skeleton',
   'on-accent',
 ] as const;
 

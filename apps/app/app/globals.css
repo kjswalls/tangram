@@ -51,3 +51,19 @@ body {
   outline: 2px solid var(--lookup);
   outline-offset: 2px;
 }
+
+/*
+ * The dictionary's indeterminate progress sweep (components/dict/dict-status.tsx).
+ * A keyframe rather than a native `<progress>`, because the element's own
+ * indeterminate animation does not run under this stylesheet and the bar read
+ * as stuck at 0% on the first screen of a first launch. Plain CSS, per §7, and
+ * the component carries `motion-reduce:animate-none`.
+ */
+@keyframes dict-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
+}

@@ -66,6 +66,7 @@
   --t1-ink-900: #1c1a17;
   --t1-ink-500: #7a7469;
   --t1-ink-150: #e0d8ca;
+  --t1-ink-250: #c5bdaf;
 
   --t1-vermillion-600: #b93a26;
   --t1-vermillion-050: #ffe8e3;
@@ -127,6 +128,17 @@
 
   --warning: var(--t1-amber-800);
   --warning-soft: var(--t1-amber-050);
+
+  /*
+   * The placeholder a `Skeleton` is painted in. Not `--border`, and not a wash
+   * of it: at 60% of `--border` a skeleton measured 1.26:1 against a card in
+   * light and 1.16:1 in dark, which is at the edge of perceivable on a phone in
+   * daylight — and the one place it matters most is the ask panel's `thinking`
+   * state, where the skeleton rows ARE the evidence that the model is working.
+   * `#c5bdaf` is the same hue one step darker, 1.83:1 on `--surface`. Another
+   * token not in product-decisions §11's table; recorded in HANDOFF.
+   */
+  --skeleton: var(--t1-ink-250);
 
   /* Text on a filled accent. One token, because both accents are dark enough
    * to carry the raised paper rather than white. */
@@ -203,6 +215,7 @@
     --new-soft: var(--t1-gold-900);
     --warning: var(--t1-amber-400);
     --warning-soft: var(--t1-amber-900);
+    --skeleton: var(--t1-night-border);
     --on-accent: var(--t1-ink-900);
   }
 }
@@ -221,6 +234,7 @@
   --new-soft: var(--t1-gold-900);
   --warning: var(--t1-amber-400);
   --warning-soft: var(--t1-amber-900);
+  --skeleton: var(--t1-night-border);
   --on-accent: var(--t1-ink-900);
 }
 
@@ -257,6 +271,7 @@
 
   --color-warning: var(--warning);
   --color-warning-soft: var(--warning-soft);
+  --color-skeleton: var(--skeleton);
   --color-on-accent: var(--on-accent);
 
   /* Aliases kept for the screens C7/C8 rewrite. */
@@ -270,4 +285,15 @@
    * Tailwind's namespace and overriding it is the intent: `font-sans` should
    * mean the app's UI face. */
   --font-sans: var(--font-ui);
+
+  /*
+   * The wide shell's boundary, named once (core.md §1: "the same three
+   * destinations at ~720px and above"). It is a NEW breakpoint rather than a
+   * re-pointing of `md`, because `md` is 768px in forty existing components and
+   * moving it would be a layout change disguised as a token. `Sheet` uses it
+   * today and **C7's two shells must use the same variant** — a component that
+   * hard-codes `md:` for this boundary leaves a 48px band where the wide shell
+   * renders phone-shaped chrome, which is R7 in miniature.
+   */
+  --breakpoint-wide: 45rem;
 }

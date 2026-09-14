@@ -1,69 +1,46 @@
-@import "tailwindcss";
+@import 'tailwindcss';
+@import './tokens.css';
 
 /*
- * Tangram's surface. One accent (jade), one warm paper ground, and a type scale
- * that lets hanzi breathe — Chinese glyphs need more line-height and size than
- * the Latin text around them, so they get their own font stack and utility.
+ * THE BASE BLOCK (docs/plans/core.md C0).
+ *
+ * The palette lives next door in `tokens.css` and nothing here may name a
+ * colour: every rule below reads a tier-2 semantic token. Keep it that way —
+ * a hex in this file is a colour outside the token layer just as much as a hex
+ * in a component is.
  */
 
-:root {
-  --background: #fbfaf7;
-  --surface: #ffffff;
-  --foreground: #1a1917;
-  --muted: #6d6a63;
-  --border: #e7e3dc;
-  --accent: #0f766e;
-  --accent-soft: #d7ece8;
-  --accent-foreground: #ffffff;
-  --warning: #92400e;
-  --warning-soft: #fdf0d5;
+html {
+  /*
+   * Inkstone is the default on every device, so the document declares `light`
+   * and only an explicit `dark` or a `system` preference flips it. Without
+   * this, a dark-preferring device would paint form controls, scrollbars and
+   * the canvas behind the page dark under a light palette.
+   */
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
-    --background: #14140f;
-    --surface: #1c1c18;
-    --foreground: #ece9e2;
-    --muted: #a09c93;
-    --border: #302f29;
-    --accent: #5eead4;
-    --accent-soft: #14332f;
-    --accent-foreground: #06231f;
-    --warning: #fbbf24;
-    --warning-soft: #3a2b0d;
+  :root[data-theme='system'] {
+    color-scheme: dark;
   }
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-surface: var(--surface);
-  --color-foreground: var(--foreground);
-  --color-muted: var(--muted);
-  --color-border: var(--border);
-  --color-accent: var(--accent);
-  --color-accent-soft: var(--accent-soft);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-warning: var(--warning);
-  --color-warning-soft: var(--warning-soft);
-
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
-    Arial, sans-serif;
-  --font-hanzi: "Noto Serif SC", "Songti SC", "Source Han Serif SC", "PingFang SC",
-    "Microsoft YaHei", ui-serif, serif;
-}
-
-html {
-  color-scheme: light dark;
-}
-
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-sans);
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-ui);
   -webkit-font-smoothing: antialiased;
 }
 
-/* Hanzi at Latin sizes are unreadable; every Chinese run uses this. */
+/*
+ * Hanzi at Latin sizes are unreadable; every Chinese run uses this. C3's
+ * `<HanziText>` renders through it and adds the per-character ruby.
+ */
 .hanzi {
   font-family: var(--font-hanzi);
   line-height: 1.35;
@@ -71,6 +48,6 @@ body {
 }
 
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--lookup);
   outline-offset: 2px;
 }

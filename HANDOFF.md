@@ -4730,3 +4730,284 @@ all now with a regression test:
 - Three restated declarations were unpinned (`ProviderName`, `AskContext`, `MAX_EXAMPLE_SENTENCES`).
   Pinned. `MAX_EXAMPLE_SENTENCES` is the sharp one: it is simultaneously the edge validator's cap and
   the ceiling `examplesUserPrompt`'s `count = 3` sits under.
+
+
+---
+
+# `core.md` C0–C5a — the shared UI core
+
+One session, seven phases (C0, C1, C2, C3, C4, C4a, C5a), on `claude/build-core` off
+`claude/integration`. C5b and everything after it are **out of scope and not built** — C5b is gated
+on `ios.md` I2 answering register #1 on a physical iOS 26 device, and that device does not exist in
+this container. C9 is deferred indefinitely (wave-zero §10c as relayed in this session's brief).
+
+Every phase ran an adversarial review panel before committing. Read the "what the review found"
+subsection of each phase below rather than the phase description if you only read one thing: every
+phase's review found something the green gates did not.
+
+## Two rulings that are NOT in the checked-in `docs/plans/wave-zero.md`
+
+**This is the first thing a later session needs.** This session's brief relayed two orchestrator
+rulings as "**wave-zero.md** §10b and §10c". Neither exists in the document at
+`claude/integration`'s HEAD: `wave-zero.md` §10 is a table of issues **11–16** with sub-rows
+16a–16e, and `grep -n '10b\|10c\|Inkstone' docs/` finds nothing outside `PLAN.md`'s codename list.
+
+The two rulings, as relayed, and what this session did with them:
+
+| Ruling (as relayed) | Applied where |
+|---|---|
+| **§10b** — C7 is not gated on C5b; register #1 gates C5b and nothing else. | Nothing here depends on it; recorded so the next session does not re-derive it. `core.md` §4's dependency table already says this, so §10b confirms core.md against this document's own wave table. |
+| **§10c** — the default theme is **Inkstone** (warm paper, ink text, vermillion accent); the dark variant is optional and is **not** the default. Build C0's tokens that way. | C0's token layer, and it **contradicts `core.md` C0 rule 1** — see the theme decision below. |
+
+**Someone with write access to `docs/plans/wave-zero.md` should land §10b and §10c in it**, because
+`ios.md`, `android.md` and `web.md` all read that document and none of them can see these rulings.
+Until then the only record is this section.
+
+## C0 — the token layer, and the font question it depends on
+
+Commit: `core: the Inkstone token layer, and the font coverage nobody had measured (C0)`.
+
+### The headline number: `pnpm font:coverage`
+
+C0's stated headline deliverable. **Noto Serif SC covers 99.462% of the dictionary's headword
+character set**, and the audit's expectation that the slim faces would fall short of 124k CC-CEDICT
+headwords is **wrong for this face**: the residue is 79 characters, every one of them an unranked
+CJK Extension B/C/D/E code point in the astral planes.
+
+```
+font:coverage
+  dictionary: 124,188 entries, 14,677 distinct headword characters (simp ∪ trad, by code point)
+
+PER FACE
+  Noto Serif SC     99.462%  14,598 / 14,677  uncovered 79   (23.96 MB, variable weight 200-900)
+      ≤1k: 0   ≤10k: 0   ≤50k: 0   ≤200k: 0   unranked/>200k: 79
+      most frequent uncovered: 𪢌 U+2A88C  𪨊 U+2AA0A  𬸩 U+2CE29  𠈌 U+2020C  𠇹 U+201F9  …
+  Noto Sans SC      99.475%  14,600 / 14,677  uncovered 77   (16.95 MB, variable weight 100-900)
+      ≤1k: 0   ≤10k: 0   ≤50k: 0   ≤200k: 0   unranked/>200k: 77
+  Newsreader         0.334%  49 / 14,677      uncovered 14,628  (0.43 MB)
+      ≤1k: 1024   ≤10k: 3327   ≤50k: 4100   ≤200k: 2706   unranked/>200k: 3471
+  DM Sans            0.341%  50 / 14,677      uncovered 14,627  (0.23 MB)
+      ≤1k: 1024   ≤10k: 3327   ≤50k: 4100   ≤200k: 2706   unranked/>200k: 3470
+
+PER STACK (union of the vendored faces only)
+  --font-hanzi     99.462%  uncovered 79      [GATED]
+      measured:   Noto Serif SC
+      unmeasured: Source Han Serif SC, Songti SC, STSong, Noto Serif CJK SC, PingFang SC,
+                  Microsoft YaHei, ui-serif, serif — system faces with no fetchable binary
+  --font-display    0.334%  uncovered 14,628  [reported]
+  --font-ui         0.341%  uncovered 14,627  [reported]
+```
+
+What three plans can take from it:
+
+- **`web.md`'s first-load budget.** The hanzi face that covers the dictionary is **24 MB raw** as a
+  single variable TTF. That is not a web download; `unicode-range`-split subsets are not an
+  optimisation here, they are the only way this ships on the web. The figure to carry next to the
+  dictionary's 13.9 MB brotli is *the subset a page actually pulls*, which nobody has measured —
+  `pnpm font:coverage` measures cmaps, not delivery. Measuring Google Fonts' per-`unicode-range`
+  woff2 slices is a one-afternoon addition to the same script and is **not done**.
+- **`ios.md` / `android.md` package size.** 24 MB of font on top of 43 MB of dictionary. On native
+  it is package bytes and the learner pays once, but 67 MB is a number worth deciding about rather
+  than discovering at submission.
+- **The 79-character residue is unfixable by choosing a different face.** Noto Sans SC misses 77 of
+  the same set. Those characters render as tofu wherever they appear; none of them is in a word
+  jieba ranks.
+
+### What the font tooling is, and how it is pinned
+
+`pnpm font:fetch` vendors four faces into a **gitignored** `vendor/fonts/<family>/`; each family's
+`OFL.txt` is **committed** next to it, the way `data/COPYING-makemeahanzi` is, because the OFL
+requires the licence to travel with the font. The sources are Google Fonts' own builds from
+`google/fonts@main` — which is a moving ref, and `api.github.com` is blocked from this container
+(see `docs/data-sources.md`), so a commit SHA cannot be resolved at fetch time. Each face is instead
+**pinned by sha256 in `scripts/fonts.ts`**, and a digest mismatch fails the fetch rather than
+silently changing the bytes the numbers above were measured over. `--accept-new-digest` takes the new
+file and prints the digest to paste back.
+
+| Face | sha256 | Bytes |
+|---|---|---|
+| Noto Serif SC `NotoSerifSC[wght].ttf` | `050080d9255a86808f2945bffac582b31ef32bc36411ce29563b4961670c66f9` | 23.96 MB |
+| Noto Sans SC `NotoSansSC[wght].ttf` | `a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da` | 16.95 MB |
+| Newsreader `Newsreader[opsz,wght].ttf` | `8a08d13f8a6c0d51be379a60af84f945f65369a67e509ee3c3bdcc421254d7c1` | 0.43 MB |
+| DM Sans `DMSans[opsz,wght].ttf` | `8cd08d97e89c24d0aa92edd2f0f4c8ee6195eee9b7c9f154865a58b02f0c1c0d` | 0.23 MB |
+
+The cmap parser is **fontkit 2.0.x** as a workspace-root devDependency (build-time only; nothing
+ships it), pinned in `docs/data-sources.md`. It has **no default export under Node ESM** — import
+`{ create }`, not `fontkit.create`.
+
+### `--practice-soft: #ffe8e3` — the proposal C0 owed, and it is the owner's to confirm
+
+product-decisions §11 gives a soft tint for jade (`#d9ece6`) and gold (`#f3ead3`) and none for
+vermillion, and C0 says the builder proposes one against a stated constraint and the owner confirms
+it in the UX review. The proposal and its arithmetic:
+
+- **#ffe8e3.** Its OKLab lightness is 0.9481, which is **0.4162 above `#b93a26`'s 0.5319** — the same
+  distance `#d9ece6`'s 0.9273 sits above `#0f766e`'s 0.5109 (0.4164). That is C0's stated constraint,
+  met to four decimal places.
+- Its chroma, **0.0262**, sits between jade-soft's 0.0216 and gold-soft's 0.0319, and is the most
+  vermillion sRGB has at that lightness and hue — the gamut boundary, not a choice.
+- `--ink` on it is **14.80:1**, well past AA for the chip/badge role the constraint names.
+
+It renders in `/gallery`'s token section next to the other two tints. If the owner replaces it,
+change `apps/app/app/tokens.css` and the one assertion in `tests/unit/ui/tokens.test.ts` together.
+
+### The theme decision, and the `core.md` rule it overrides
+
+`wave-zero.md` §10c (as relayed) says Inkstone is the default and the dark variant is optional and
+not the default. `core.md` C0 rule 1 says the opposite for the one case that matters: "an unset
+`data-theme` means 'follow the system' … STACK §5.1's 'ship light as the default' is a
+recommendation about the command-palette shell's chrome, not an instruction to ignore
+`prefers-color-scheme`" — and its acceptance criterion asks for a fifth Playwright case "asserting
+the app follows the system".
+
+CLAUDE.md is explicit that wave-zero governs, so **§10c wins and `core.md` C0 rule 1's unset case is
+wrong**. Note also that rule 1 hangs its reasoning on STACK §5.1, the command-palette shell's own
+open question — and C9 is now deferred indefinitely, so that hook has come away from the wall.
+
+What shipped, and it keeps every structural thing rule 1 asked for:
+
+| `data-theme` | Palette |
+|---|---|
+| unset | Inkstone. **The default, on every device.** `prefers-color-scheme` is not consulted. |
+| `light` | Inkstone, pinned — an explicit choice, same palette. |
+| `dark` | The dark variant, pinned. |
+| `system` | Follows `prefers-color-scheme`. |
+
+`system` is the name of the opt-in that rule 1's `@media` block is reached through; `/gallery`'s
+theme control sets all four, C8 owns the learner-facing control, and
+`tests/e2e/core/theme.spec.ts` asserts all of it including the unset case under **both**
+emulations. **If the orchestrator meant rule 1 rather than §10c, one test and one block change** —
+that is the whole cost, and it is why the conflict is written down rather than smoothed over.
+
+### The radius scale could not be called what the plan calls it
+
+**A defect in `core.md` C0's token table.** It names the scale `--radius-sm` / `--radius-md` /
+`--radius-lg` = 12 / 16 / 24 px. **`--radius-*` is Tailwind 4's own theme namespace.** Tailwind
+defines `--radius-sm|md|lg` as 0.25/0.375/0.5rem inside `@layer theme` and emits
+`.rounded-md{border-radius:var(--radius-md)}`; a declaration of the same name on an **unlayered**
+`:root` beats every cascade layer. Writing the plan's names silently re-points every
+`rounded-sm|md|lg` in the app — eighteen call sites — with no diff in any component to show for it.
+It shipped in the first C0 draft and the review caught it on real pixels: the lookup input became a
+pill.
+
+The scale keeps its values and its sm/md/lg steps under **`--r-sm` / `--r-md` / `--r-lg`**, and
+`tests/unit/ui/tokens.test.ts` now fails if the app declares any `--radius-*` of its own. C1's
+primitives read `rounded-[var(--r-md)]`. **A later phase must not "fix" the names back.**
+
+### Two measured accessibility problems in the settled palette — the owner's call, not the builder's
+
+Both are pairs of product-decisions §11's own hexes, so C0 records them rather than changing them:
+the same rule that makes `--practice-soft` the owner's decision. `/gallery`'s token section renders
+the measured ratios so they are looked at rather than read about.
+
+1. **`--muted` on `--paper` is 4.23:1** — under AA's 4.5:1 for normal text, and a **regression**: at
+   `claude/integration` HEAD the pair was `#6d6a63` on `#fbfaf7` = 5.17:1. On `--surface` the new
+   pair is 4.56:1 and passes, so secondary text is compliant inside a card and non-compliant on the
+   page ground — which is where every route's subtitle sits. **Proposal: `--t1-ink-500: #756f64`**,
+   the same hue and chroma one step darker, 4.54:1 on paper and 4.90:1 on surface, visually
+   indistinguishable.
+2. **`--lookup` on `--lookup-soft` is 4.45:1** — a hair under, and inherited rather than introduced
+   (`#0f766e` on `#d7ece8` was 4.44:1 at HEAD). It is the active nav pill and the `seed` /
+   `looked-up` badges. **Proposal: `--t1-jade-050: #d2e8e1`** (4.63:1).
+
+Everything else measured clears AA: ink on paper 15.8:1, ink on surface 17.1:1, text on each filled
+accent 5.3–5.6:1, the warning pair 6.3:1, the focus ring 5.0:1 against a 3:1 requirement, and every
+dark-variant pair 5.5–14.9:1.
+
+### `pnpm font:coverage`'s exit rule is not the one `core.md` asks for
+
+C0's criterion says it "exits non-zero only when a declared stack leaves a character uncovered". The
+measurement makes that rule a permanently red command — the exact failure C0 rejects one paragraph
+earlier for the per-face case — because the 79-character residue has no glyph in any shipped face.
+Two rules replace it, and the script prints the substitution in its own output rather than leaving it
+in a header:
+
+1. a gated stack's residue must be a **subset of `scripts/font-residue.json`**, a committed,
+   reviewable list, regenerated only by `--update-baseline`;
+2. **no residue character may carry a jieba frequency rank** — which a regenerated baseline cannot
+   silence, and which is the property that actually matters: no word a learner can meet renders as
+   tofu.
+
+### Everything else C0 decided that the plan did not settle
+
+- **`--warning` / `--warning-soft` are tier-2 tokens and are not in §11's table.** They are the amber
+  pair the app already shipped, kept because `Badge tone="warning"` and the dictionary's `failed`
+  states need somewhere to land. Recorded rather than invented quietly.
+- **`--on-accent`** is one token, not two: both accents are dark enough to carry the raised paper.
+- **`@theme inline` keeps four aliases** — `--color-background`, `--color-foreground`,
+  `--color-accent`, `--color-accent-foreground` — because forty-odd components say `bg-accent` and
+  `text-foreground`, and C0 is "a rename plus a palette swap plus one script" (R8). **C7 and C8
+  rewrite those screens and take the class names with them.**
+- **The chart palette's warm series is now the Inkstone vermillion `#b93a26`**, replacing an
+  unrelated orange. Re-validated, not eyeballed (Viénot 1999 dichromat simulation + CIEDE2000): worst
+  adjacent CVD ΔE 26.8 protan / 31.9 deutan, normal-vision ΔE 55.9, contrasts 3.69:1 and 5.59:1 on
+  `#fffdf9` — better than the pair it replaced on every axis (protan 20.5, contrast 3.15:1). The jade
+  series and the six-step stability ramp are **unchanged**, because the palette's jade `--lookup` is
+  the same `#0f766e` the old `--accent` was, so there was nothing to re-derive.
+- **Scope taken from `web.md`'s PWA phase, deliberately.** `index.html`'s `theme-color`,
+  `public/manifest.webmanifest`'s `theme_color`/`background_color` and `public/offline.html` are not
+  in C0's Files list, and `web.md`'s PWA phase names the manifest row as its own ("`theme_color` /
+  `background_color` from `core.md` C0's tokens"). They were changed here anyway, because leaving the
+  installed app's chrome on jade while the ground became warm paper is worse than the scope
+  crossing. **`web.md`'s session should strike that row rather than re-decide it.**
+- **`public/offline.html` lost its `prefers-color-scheme: dark` block.** It is served by the service
+  worker with no app running, so it cannot read `data-theme`; with dark an explicit choice rather
+  than a system default, a media block there would have made it the one surface in the app that went
+  dark on its own.
+- **The PWA icon set is now inconsistent and C0 could not fix it.** `public/icon.svg`,
+  `public/icons/tangram.svg` and the two PNGs are a jade `#0f766e` tile with pieces in `#fbfaf7` —
+  the old background hex this palette deletes. Installing the app now paints an Inkstone-paper splash
+  behind a jade icon. The container has **no raster tooling** (no ImageMagick, rsvg, cairosvg or
+  PIL), so recolouring only the SVGs would leave them disagreeing with their own PNGs. **`web.md`'s
+  PWA phase owns the icon set and this is an item it owes**: a `#f8f4ec` tile with `#b93a26` pieces
+  puts the settled accent on the launcher.
+- **Vermillion reaches no pixels in C0 itself.** Every `--practice*` token is defined and referenced
+  by nothing until **C1** makes `Button variant="primary"` vermillion; the review's UX lens is right
+  that after C0 alone the app reads as the jade app on a warmer ground. That is the phase boundary
+  working as intended, not an omission — but a reviewer looking at C0 in isolation should expect it.
+
+### What the review found
+
+Four independent lenses (correctness against the acceptance criteria; what breaks that no test
+covers; cross-plan seams and conventions; UX on real pixels with 24 screenshots and measured
+contrast). **Fifteen findings; nine were acted on, six were recorded rather than fixed.** The lens
+that mutated the new test four ways and re-ran it is the one that proved the gate is a gate.
+
+Fixed before the commit:
+
+1. **The `--radius-*` collision** (above) — the blocking one, found by two lenses independently.
+2. **`accent-[var(--accent)]` in `components/lists/list-card.tsx:70` and
+   `production-list-toggle.tsx:151` resolved to nothing.** `--accent` existed on `:root` at HEAD; the
+   token layer replaced it with `--lookup` plus a `--color-accent` alias *inside* `@theme inline`,
+   which does not emit a `--accent` custom property. Tailwind compiles an arbitrary-value class
+   whatever it is given, so `accent-color: var(--accent)` became invalid at computed-value time and
+   Chromium painted **the Library checkboxes native blue** — the only saturated cool colour left in
+   the app. Both call sites now say `accent-[var(--lookup)]`.
+3. **`--font-display` never reached the cascade.** Tailwind emits a theme variable only when
+   something references it; declared solely inside `@theme inline` and used only through an arbitrary
+   value, it was pruned out of the stylesheet entirely. All three families are on bare `:root` now,
+   and an e2e case asserts each one computes.
+4. **The tokens test could be fooled four ways.** Its CSS reader anchored on the first textual
+   occurrence of a selector — which for `:root` was inside the header *comment* — and read only the
+   first matching block, so a second `:root` block would have changed the palette with all 21 tests
+   green. It now strips comments, anchors on a real selector, **merges** every matching block, and
+   asserts there is exactly one bare `:root`.
+5. **The tier-1 leak guard walked only `apps/app`.** Criterion 4 says "anywhere outside the tokens
+   block"; `packages/**`, `apps/server/**` and `scripts/**` were never scanned. It walks the
+   workspace root now.
+6. **Nothing tied `scripts/fonts.ts`'s stacks to `tokens.css`.** A stack edit would have had
+   `font:coverage` certify a stack the app no longer declares. A test parses the three `--font-*`
+   declarations and compares them.
+7. **New: every `var(--…)` in app source must name a token `tokens.css` declares** (`--viz-*`
+   excepted — the chart palette declares its own). This is the general form of finding 2, and it is
+   the guard that would have caught it.
+8. **`pnpm font:coverage` now prints the exit rule it applied against the one C0 asks for.**
+9. **This HANDOFF section**, which two files asserted existed before it did.
+
+Recorded rather than fixed, each above: the two settled-palette contrast failures, the §10c vs
+`core.md` rule 1 theme conflict, the font-coverage exit rule, the manifest scope crossing, the PWA
+icon set, and vermillion not appearing until C1.
+
+**Mutation-tested, because a guard nobody has seen fail is not a guard.** Re-introducing
+`--radius-md`, pointing a component at `var(--gone)`, reordering a font stack, and adding a second
+`:root` block each fail exactly one test and no others.

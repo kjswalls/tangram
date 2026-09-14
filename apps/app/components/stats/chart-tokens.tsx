@@ -1,26 +1,38 @@
 /**
- * The chart palette (Phase 8, `/stats`).
+ * The chart palette (Phase 8, `/stats`; re-derived at core.md C0).
  *
- * Tangram's own tokens (`app/globals.css`) are a UI palette, not a data one, and
- * two of them fail the data-viz gates outright: the jade accent `#0f766e` sits
- * below the OKLCH chroma floor (0.086) so it reads as gray in a small mark, and
- * its dark-mode twin `#5eead4` sits above the dark lightness band (L 0.855).
- * These are the same two hues stepped until they pass — the app's jade one step
- * brighter, and a warm counterpart for the second series — validated rather
- * than eyeballed:
+ * Tangram's own tokens (`app/tokens.css`) are a UI palette, not a data one, and
+ * the accents fail the data-viz gates outright at the values the UI wears: the
+ * jade `--lookup` #0f766e sits below the OKLCH chroma floor (0.086) so it reads
+ * as gray in a small mark, and its dark twin sits above the dark lightness
+ * band. These are the palette's own hues stepped until they pass — C0 requires
+ * this file to stay a SEPARATE palette and to be re-derived from the new
+ * accents rather than merged into the UI tokens.
  *
- *   series pair, light on #ffffff: worst adjacent CVD ΔE 10.7, normal-vision
- *   ΔE 27.5, both marks ≥ 3:1 — all checks PASS.
- *   series pair, dark on #1c1c18: CVD ΔE 13.5, normal-vision ΔE 27.3 — PASS.
- *   stability ramp (ordinal, 6 steps): monotone lightness, every adjacent ΔL
- *   ≥ 0.06, surface-nearest step 2.03:1 light / 3.63:1 dark — PASS both modes.
+ * What C0 changed, and what it did not. The warm series is now the Inkstone
+ * vermillion `#b93a26` itself, replacing an unrelated orange; the jade series
+ * and the stability ramp are unchanged, because the palette's jade `--lookup`
+ * is the same #0f766e the old `--accent` was, so there was nothing to
+ * re-derive. Validated, not eyeballed (Viénot 1999 dichromat simulation,
+ * CIEDE2000):
  *
- * The ramp is one hue light→dark in light mode and dark→light in dark mode:
+ *   series pair, light on #fffdf9: worst adjacent CVD dE 26.8 (protan), 31.9
+ *   (deutan), 70.6 (tritan), normal-vision dE 55.9, contrast 3.69:1 and 5.59:1
+ *   — all PASS, and every figure is better than the pair this replaced
+ *   (protan 20.5, contrast 3.15:1).
+ *   series pair, dark on #201d16: worst CVD dE 24.8, normal-vision dE 54.8,
+ *   contrast 5.54:1 and 4.33:1 — PASS.
+ *   stability ramp (ordinal, 6 steps): monotone lightness, every adjacent dL
+ *   >= 0.06 — unchanged and still PASS in both modes.
+ *
+ * The ramp is one hue light->dark in light mode and dark->light in dark mode:
  * a sequential scale anchors at the surface, so it has to flip with it.
  *
- * Chrome (grid, axis, ink) is wired to the app's own tokens, so the charts
- * follow the page rather than carrying a second theme. `--viz-surface` is the
- * card's background, which is what the 2px gaps and rings are painted in.
+ * Chrome (grid, axis, ink) is wired to the app's own tier-2 tokens, so the
+ * charts follow the page rather than carrying a second theme. `--viz-surface`
+ * is the card's background, which is what the 2px gaps and rings are painted
+ * in. The dark selectors mirror `app/tokens.css`: dark is an explicit choice,
+ * never the default (wave-zero.md §10c).
  */
 
 const CSS = `
@@ -28,10 +40,10 @@ const CSS = `
   --viz-surface: var(--surface);
   --viz-grid: var(--border);
   --viz-axis: var(--muted);
-  --viz-ink: var(--foreground);
+  --viz-ink: var(--ink);
   --viz-muted: var(--muted);
   --viz-s1: #0d9488;
-  --viz-s2: #eb6834;
+  --viz-s2: #b93a26;
   --viz-ramp-1: #5ac8b4;
   --viz-ramp-2: #43b4a1;
   --viz-ramp-3: #2aa08e;
@@ -39,8 +51,18 @@ const CSS = `
   --viz-ramp-5: #0e7869;
   --viz-ramp-6: #076457;
 }
+:root[data-theme='dark'] .viz {
+  --viz-s1: #12a695;
+  --viz-s2: #d95926;
+  --viz-ramp-1: #128272;
+  --viz-ramp-2: #1d9886;
+  --viz-ramp-3: #3cae9b;
+  --viz-ramp-4: #55c3b0;
+  --viz-ramp-5: #6ddac6;
+  --viz-ramp-6: #84f0dc;
+}
 @media (prefers-color-scheme: dark) {
-  .viz {
+  :root[data-theme='system'] .viz {
     --viz-s1: #12a695;
     --viz-s2: #d95926;
     --viz-ramp-1: #128272;
@@ -52,7 +74,7 @@ const CSS = `
   }
 }
 .viz svg { display: block; width: 100%; height: auto; }
-.viz .viz-plot:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.viz .viz-plot:focus-visible { outline: 2px solid var(--lookup); outline-offset: 2px; }
 `;
 
 /** The six ordinal steps, in bucket order. Read by the histogram and its key. */

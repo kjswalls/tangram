@@ -31,3 +31,20 @@
 - @playwright/test 1.63 — use executablePath /opt/pw-browsers/chromium, never 'playwright install'
 - serwist 9.5.12 + @serwist/next for PWA (stretch only)
 - eslint: anchor uses ^9.39.4 19.2.14
+
+# Fonts (docs/plans/core.md C0; `pnpm font:fetch`, `pnpm font:coverage`)
+Vendored into a gitignored `vendor/fonts/<family>/`; the OFL text beside each binary IS committed,
+because the OFL requires the licence to travel with the font. Pinned by sha256 in `scripts/fonts.ts`
+rather than by a git ref — api.github.com is blocked from the container, so a commit SHA cannot be
+resolved at fetch time, and a digest mismatch fails the fetch instead of silently changing the bytes
+the recorded coverage numbers were measured over.
+- Noto Serif SC — `raw.githubusercontent.com/google/fonts/main/ofl/notoserifsc/NotoSerifSC[wght].ttf`
+  (OFL-1.1, variable 200–900, 23.96 MB). The `--font-hanzi` face. Google Fonts' own build, which is
+  what a web delivery would serve; `notofonts/noto-cjk`'s OTFs are a different, larger build.
+- Noto Sans SC — same repo, `ofl/notosanssc/NotoSansSC[wght].ttf` (OFL-1.1, 16.95 MB). Measured as
+  the sans alternative; not declared in a stack.
+- Newsreader — `ofl/newsreader/Newsreader[opsz,wght].ttf` (OFL-1.1, 0.43 MB). `--font-display`.
+- DM Sans — `ofl/dmsans/DMSans[opsz,wght].ttf` (OFL-1.1, 0.23 MB). `--font-ui`.
+- **fontkit 2.0.x** (+ `@types/fontkit` 2.0.x) as a workspace-root devDependency — the cmap parser.
+  Build-time only; nothing ships it. `fontkit` has no default export under Node ESM, so import
+  `{ create }`, not `fontkit.create`.

@@ -148,7 +148,7 @@ export function ProductionListToggle({
         <input
           type="checkbox"
           data-testid="list-production-toggle"
-          className="h-4 w-4 accent-[var(--accent)]"
+          className="h-4 w-4 accent-[var(--lookup)]"
           checked={on}
           aria-label="Also study production for this list"
           onChange={(event) => {

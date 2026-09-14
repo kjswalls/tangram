@@ -1,0 +1,273 @@
+/*
+ * Tangram's token layer — the "Inkstone" palette (docs/plans/core.md C0,
+ * docs/plans/wave-zero.md §10c).
+ *
+ * THE TOKENS BLOCK. Nothing else in the app may define a colour, and nothing
+ * else may read a `--t1-*` variable. Two tiers:
+ *
+ *   tier 1 — `--t1-*`, raw palette values. They exist ONLY in this file. A
+ *            component that reaches one has reached past the semantic layer,
+ *            which is core.md R8's actual failure mode, so
+ *            tests/unit/ui/tokens.test.ts fails the build when a `--t1-`
+ *            appears anywhere else in the workspace.
+ *   tier 2 — the semantic tokens components use, directly and through the
+ *            `@theme inline` mapping below. `--paper`, `--ink`, `--practice`
+ *            and friends say what a colour is FOR; the hexes say what it is.
+ *
+ * The tiers are not ceremony: they are what makes the dark variant, and any
+ * later palette, a swap of tier 1 rather than a second design.
+ *
+ * --- Which theme a first-time visitor gets ---------------------------------
+ *
+ * Inkstone (warm paper, ink text, vermillion accent) is THE default, on every
+ * device, including a dark-preferring one. wave-zero.md §10c: "the default
+ * theme is Inkstone … the dark variant is optional and is not the default."
+ *
+ * So `data-theme` has four readings and two palettes:
+ *
+ *   unset               → Inkstone. The default. Ignores prefers-color-scheme.
+ *   [data-theme=light]  → Inkstone, pinned. Same palette; an explicit choice.
+ *   [data-theme=dark]   → the dark variant, pinned.
+ *   [data-theme=system] → follows prefers-color-scheme.
+ *
+ * **core.md C0 rule 1 says the opposite for the unset case** — that an unset
+ * `data-theme` follows the system, "which is the web's own default" — and its
+ * criterion asks for a fifth test case asserting exactly that. That text was
+ * written before §10c, and CLAUDE.md is explicit that wave-zero governs where
+ * the two disagree. The structure rule 1 asks for survives intact (a bare
+ * `:root` light palette, a `prefers-color-scheme` block, a `[data-theme=dark]`
+ * block, all defining the same token set); what changed is that the media block
+ * is reached through an explicit opt-in instead of by default. `system` is the
+ * name of that opt-in, `/gallery`'s theme control sets all four, and HANDOFF.md
+ * records the conflict for the orchestrator to settle in wave-zero.md itself.
+ *
+ * --- One measured accessibility problem, recorded rather than fixed ---------
+ *
+ * `--muted` on `--paper` is **4.23:1**, under WCAG AA's 4.5:1 for normal-size
+ * body text. (On `--surface` it is 4.56:1 and passes, so secondary text is
+ * compliant inside a card and non-compliant on the page ground.) Both hexes are
+ * product-decisions §11's settled values, so C0 does not change them on its own
+ * — the same rule that makes `--practice-soft` the owner's call. `#756f64`, the
+ * same hue and chroma one step darker, reaches 4.54:1 on paper. HANDOFF.md
+ * carries the measurement and the proposal; `/gallery` renders the ratios so it
+ * is looked at rather than read about.
+ */
+
+:root {
+  /* ---- tier 1: the Inkstone palette, raw ---------------------------------
+   * Ten of these are product-decisions §11's settled hexes and are asserted by
+   * tests/unit/ui/tokens.test.ts against that list. The eleventh,
+   * `--t1-vermillion-050`, is the one settled-palette gap (core.md C0): §11
+   * gives a soft tint for jade and gold and none for vermillion. See the
+   * `--practice-soft` note below.
+   */
+  --t1-paper: #f8f4ec;
+  --t1-paper-raised: #fffdf9;
+  --t1-ink-900: #1c1a17;
+  --t1-ink-500: #7a7469;
+  --t1-ink-150: #e0d8ca;
+
+  --t1-vermillion-600: #b93a26;
+  --t1-vermillion-050: #ffe8e3;
+  --t1-jade-700: #0f766e;
+  --t1-jade-050: #d9ece6;
+  --t1-gold-700: #8a6414;
+  --t1-gold-050: #f3ead3;
+
+  /* Warning is not in §11's table and is not invented colour: it is the amber
+   * pair the app already shipped, kept so `Badge tone="warning"` and the
+   * dictionary's `failed` states have somewhere to land. Recorded in HANDOFF. */
+  --t1-amber-800: #92400e;
+  --t1-amber-050: #fdf0d5;
+
+  /* The dark ramp. Warm charcoal rather than neutral grey, because a neutral
+   * dark under a vermillion accent reads blue. */
+  --t1-night: #16140f;
+  --t1-night-raised: #201d16;
+  --t1-night-ink: #ece7dc;
+  --t1-night-muted: #a39c8d;
+  --t1-night-border: #363128;
+  --t1-vermillion-400: #e8705a;
+  --t1-vermillion-900: #3b2019;
+  --t1-jade-400: #4cc3ac;
+  --t1-jade-900: #14332f;
+  --t1-gold-400: #d9ac4e;
+  --t1-gold-900: #3a2f16;
+  --t1-amber-400: #fbbf24;
+  --t1-amber-900: #3a2b0d;
+
+  /* ---- tier 2: the semantic tokens, light (Inkstone) ---------------------- */
+  --paper: var(--t1-paper);
+  --surface: var(--t1-paper-raised);
+  --ink: var(--t1-ink-900);
+  --muted: var(--t1-ink-500);
+  --border: var(--t1-ink-150);
+
+  /* Vermillion. Practice, and the SINGLE filled primary action on a screen. */
+  --practice: var(--t1-vermillion-600);
+  /*
+   * `--practice-soft` was the one open value in C0's table and it is the
+   * owner's call, not the builder's. The builder's proposal, per C0's stated
+   * constraint: #ffe8e3 sits 0.416 OKLab-L above #b93a26, which is the same
+   * lightness distance #d9ece6 sits above #0f766e (0.416); its chroma, 0.026,
+   * is between jade-soft's 0.022 and gold-soft's 0.032 and is the most
+   * vermillion sRGB has at that lightness; `--ink` on it is 14.8:1. It renders
+   * next to the other two chips in /gallery for the owner to confirm or
+   * replace.
+   */
+  --practice-soft: var(--t1-vermillion-050);
+
+  /* Jade. Look up, and the "learning" reader state. */
+  --lookup: var(--t1-jade-700);
+  --lookup-soft: var(--t1-jade-050);
+
+  /* Gold. The "new" reader state. */
+  --new: var(--t1-gold-700);
+  --new-soft: var(--t1-gold-050);
+
+  --warning: var(--t1-amber-800);
+  --warning-soft: var(--t1-amber-050);
+
+  /* Text on a filled accent. One token, because both accents are dark enough
+   * to carry the raised paper rather than white. */
+  --on-accent: var(--t1-paper-raised);
+
+  /*
+   * ---- the radius scale, and why it is NOT called `--radius-*` -------------
+   *
+   * product-decisions §11 and core.md C0's token table name these
+   * `--radius-sm` / `--radius-md` / `--radius-lg`. **Those three names cannot
+   * be used.** `--radius-*` is Tailwind 4's own theme namespace: it already
+   * defines `--radius-sm/md/lg` as 0.25/0.375/0.5rem inside `@layer theme`, and
+   * emits `.rounded-md{border-radius:var(--radius-md)}`. A declaration of the
+   * same name on an UNLAYERED `:root` beats every cascade layer, so writing the
+   * plan's names here silently re-points every `rounded-sm|md|lg` in the app —
+   * an 8px button corner becomes 24px and the input becomes a pill. C0 is
+   * meant to be "a rename plus a palette swap plus one script" (R8), not a
+   * reshaping of every corner in forty components.
+   *
+   * So the scale keeps the plan's VALUES and sm/md/lg steps under names outside
+   * that namespace, and the tokens test asserts the app declares no
+   * `--radius-*` of its own so the collision cannot come back. Recorded in
+   * HANDOFF.md as a correction to core.md's token table.
+   */
+  --r-sm: 12px;
+  --r-md: 16px;
+  --r-lg: 24px;
+
+  /*
+   * ---- type ---------------------------------------------------------------
+   *
+   * On bare `:root`, not in `@theme`, and for a reason that cost a review
+   * finding: Tailwind emits a theme variable only when something references it,
+   * so a family declared solely in `@theme inline` and used only through an
+   * arbitrary value (`font-[family-name:var(--font-display)]`) can be pruned
+   * out of the stylesheet entirely and resolve to nothing. Declared here they
+   * always exist. None of the three names collides with a Tailwind default —
+   * its font namespace ships `--font-sans`, `--font-serif` and `--font-mono`
+   * only — and `--font-sans` is remapped in `@theme inline` below, deliberately.
+   *
+   * Each stack carries a real fallback list, because until `web.md` and the
+   * mobile plans ship font files every one of these is a system-font gamble and
+   * the app has to look deliberate anyway. `pnpm font:coverage` measures the
+   * first face of each against the dictionary's headword character set, and
+   * `scripts/fonts.ts` is checked against these three declarations by
+   * tests/unit/ui/tokens.test.ts so the two cannot drift.
+   */
+  --font-display: Newsreader, ui-serif, Georgia, 'Times New Roman', serif;
+  --font-ui:
+    'DM Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    sans-serif;
+  --font-hanzi:
+    'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'STSong', 'Noto Serif CJK SC', 'PingFang SC',
+    'Microsoft YaHei', ui-serif, serif;
+}
+
+/*
+ * The dark variant, reached only by an explicit choice — see the header.
+ * Every token redefined here also exists in the light block above, which
+ * tests/unit/ui/tokens.test.ts asserts in both directions.
+ */
+@media (prefers-color-scheme: dark) {
+  :root[data-theme='system'] {
+    --paper: var(--t1-night);
+    --surface: var(--t1-night-raised);
+    --ink: var(--t1-night-ink);
+    --muted: var(--t1-night-muted);
+    --border: var(--t1-night-border);
+    --practice: var(--t1-vermillion-400);
+    --practice-soft: var(--t1-vermillion-900);
+    --lookup: var(--t1-jade-400);
+    --lookup-soft: var(--t1-jade-900);
+    --new: var(--t1-gold-400);
+    --new-soft: var(--t1-gold-900);
+    --warning: var(--t1-amber-400);
+    --warning-soft: var(--t1-amber-900);
+    --on-accent: var(--t1-ink-900);
+  }
+}
+
+:root[data-theme='dark'] {
+  --paper: var(--t1-night);
+  --surface: var(--t1-night-raised);
+  --ink: var(--t1-night-ink);
+  --muted: var(--t1-night-muted);
+  --border: var(--t1-night-border);
+  --practice: var(--t1-vermillion-400);
+  --practice-soft: var(--t1-vermillion-900);
+  --lookup: var(--t1-jade-400);
+  --lookup-soft: var(--t1-jade-900);
+  --new: var(--t1-gold-400);
+  --new-soft: var(--t1-gold-900);
+  --warning: var(--t1-amber-400);
+  --warning-soft: var(--t1-amber-900);
+  --on-accent: var(--t1-ink-900);
+}
+
+/*
+ * The Tailwind mapping. Every `--color-*` here resolves to a TIER-2 token and
+ * never to a `--t1-*`; the tokens test asserts exactly that, because a
+ * `--color-x: var(--t1-…)` would let a utility class reach past the semantic
+ * layer without any component naming a hex.
+ *
+ * `--color-background`, `--color-foreground`, `--color-accent` and
+ * `--color-accent-soft` are kept as aliases of the new names. Forty-odd
+ * components already say `bg-background`, `text-foreground`, `bg-accent`; C0 is
+ * "a rename plus a palette swap plus one script" (core.md R8) and a 40-file
+ * class rewrite in the same commit would bury the palette change. C7 and C8
+ * rewrite those screens and take the class names with them.
+ *
+ * Nothing but `--color-*` and `--font-sans` belongs here. The radius scale is
+ * `--r-*` on `:root` (see above) and the three families are on `:root` too, so
+ * that they cannot be pruned.
+ */
+@theme inline {
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+
+  --color-practice: var(--practice);
+  --color-practice-soft: var(--practice-soft);
+  --color-lookup: var(--lookup);
+  --color-lookup-soft: var(--lookup-soft);
+  --color-new: var(--new);
+  --color-new-soft: var(--new-soft);
+
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-on-accent: var(--on-accent);
+
+  /* Aliases kept for the screens C7/C8 rewrite. */
+  --color-background: var(--paper);
+  --color-foreground: var(--ink);
+  --color-accent: var(--lookup);
+  --color-accent-soft: var(--lookup-soft);
+  --color-accent-foreground: var(--on-accent);
+
+  /* Tailwind's own default sans, re-pointed at the UI stack. This one IS in
+   * Tailwind's namespace and overriding it is the intent: `font-sans` should
+   * mean the app's UI face. */
+  --font-sans: var(--font-ui);
+}

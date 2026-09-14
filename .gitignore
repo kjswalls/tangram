@@ -38,3 +38,12 @@ blob-report/
 
 # Throwaway server logs from a local run or a review agent; never committed.
 *.log
+
+# Vendored font binaries (`pnpm font:fetch`, docs/plans/core.md C0). Megabytes,
+# fetchable, and pinned by sha256 in scripts/fonts.ts — so the bytes are ignored
+# and the OFL licence texts beside them are COMMITTED, the way
+# data/COPYING-makemeahanzi is. The OFL requires the licence to travel with the
+# font; a gitignore that swallowed it would be a licence bug, not tidiness.
+/vendor/fonts/**
+!/vendor/fonts/**/
+!/vendor/fonts/**/*.txt

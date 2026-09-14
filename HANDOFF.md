@@ -3598,3 +3598,771 @@ rather than for this one:
   that is what landed, so **C1's gallery specs cannot run under the current `playwright.config.ts`**
   and C1 owns adding a second project or a dev-mode webServer.
 
+
+---
+
+## `data.md` D1 — one prebuilt SQLite dictionary, and a verifier that proves it
+
+Three commits on `claude/build-dictionary`, on top of `3d3b817`:
+
+- `test: two session suites render a <Link> without a router, so pnpm test exits 1`
+- `data: freeze DictStore, SqlRunner, DictStatus and the artifact schema (D1, first commit)`
+- `data: pnpm data emits the SQLite dictionary, and pnpm data:verify proves it (D1)`
+
+`pnpm data` now writes `data/dict-1-<snapshot>.sqlite` and `data/dict-manifest.json` beside
+`dict.json`, which keeps being written: it is the differential oracle D2 and D3 compare the store
+against, and it is `verify-data.ts`'s input. D6 decides its fate, not this phase.
+
+### The gate was already red, and that is why the first commit is a test fix
+
+`pnpm test` at `3d3b817` printed **"89 passed, 915 passed"** and then **exited 1**. Vitest counts
+unhandled errors separately from failures, and `tests/unit/ai/recall-session.test.tsx` and
+`tests/unit/review/production-session.test.tsx` were rendering components containing a `<Link>`
+through the unwrapped `@testing-library/react` render — `TypeError: Cannot destructure property
+'basename' of 'React$1.useContext(...)' as it is null`. That is exactly what W1 added
+`tests/unit/render.tsx` for; W1's own HANDOFF section names five files re-pointed at the helper and
+these two were missed. Every assertion passed, so the gate table read green while the command's exit
+status did not. One import specifier each.
+
+**Lesson for the next phase: read the exit status, not the summary line.** A suite that passes and
+exits 1 is a suite nobody is checking.
+
+### What D1's own figures came out at — one table is wrong in the plan
+
+Every **structural** figure in `data.md` D1 reproduces exactly, which is a good sign for the rest of
+the document: 124,188 entries; 242,087 `words` rows (120,448 simp + 121,639 trad); 14,625 `chars`;
+23,052 `char_words` rows holding 636,088 postings; `words_total_simp` 55,422,515 and
+`words_total_trad` 64,124,174, both at `max_len` 15; 51 banded entries with no `freqRank`, six of
+them in HSK 1; 71,232 of 120,448 simplified headwords one or two characters long.
+
+**The compressed figures do not.** Measured here, on the schema that ships, after VACUUM:
+
+| | `data.md` D1 | measured 2026-09-13 (this phase) |
+|---|---|---|
+| raw | 43.1 MB | **43.2 MB** |
+| gzip -9 | 19.5 MB | **21.1 MB** |
+| brotli q11 | 13.9 MB | **15.3 MB** (14.7 MB at `lgwin=24`) |
+
+Raw matches; both compressed figures are about 8-10% larger than D1 says, and `lgwin` does not
+explain the gap. Three documents quote the old numbers and need correcting by whoever owns them:
+
+- **`data.md` D5a's 63 MB two-copy on-device budget is ~64.3 MB** (21.1 packaged + 43.2 expanded).
+  `ios.md` and `android.md` adopt that budget verbatim, and D5a already says the packaged half is a
+  `gzip -9` proxy resting on STACK register #16 — it is now a *measured* proxy that is 1.6 MB larger.
+  Still 2% of Play's 200 MB base-module cap; nothing is at risk, but the number two plans quote is
+  stale.
+- **`data.md` D4's web transfer is ~15.3 MB brotli, not 13.9.**
+- **STACK §3's dictionary-artifacts table** carries D1's 43.1 / 19.5 / 13.9 row as "measured against
+  the schema that ships". Only the first of the three is.
+
+The committed budget is 50 MB raw / 18 MB brotli (`verify-data.ts`), checked on every
+`pnpm data:verify --sizes`. 43.2 / 15.3 sit inside it with room.
+
+### Two schema changes against D1's printed block, both measured
+
+D1's schema block would have produced a **45.5 MB** file. Two changes bring it to 43.2, and both are
+in `schema.sql` with their measurements beside them:
+
+- **`gloss_fts` gains `columnsize=0`**, dropping the `gloss_fts_docsize` shadow table: **1.20 MB**
+  for a column only `bm25()` and `columnsize()` read. D3 already establishes that `bm25()` returns 0
+  for every row on a contentless `detail=none` table (reproduced here on 3.51.2), and the ranking is
+  `glossTier` in TypeScript. MATCH, AND-queries and the `tokenchars` apostrophe case all verified
+  working with it.
+- **`entries_hsk` is partial**, `WHERE hsk_band IS NOT NULL`: **1.26 MB down to 0.11 MB**, because
+  113,160 of the 124,188 rows have no band. SQLite proves `hsk_band = ?` implies
+  `hsk_band IS NOT NULL` and still picks it — `SEARCH entries USING INDEX entries_hsk (hsk_band=?)`,
+  and `USING COVERING INDEX` when the projection allows — so the `ORDER BY hsk_sort, rowid`
+  tie-break is still a plain index scan.
+
+**Was that a freeze violation?** The three TypeScript declarations `core.md` and `ios.md` gate on
+(`DictStore`, `SqlRunner`, `DictStatus`) landed in the first commit and have not been touched since.
+The SQL moved in the second commit, and `data.md` D1 scopes the SQL's freeze to the end of the phase
+— *"it does not change after D1 without a `SCHEMA_VERSION` bump"* — so authoring the schema inside
+the phase that owns it is not the thing CLAUDE.md forbids. It is still a sharper edge than it looks,
+so **`store-contract.test.ts` now pins `schema.sql`'s sha256 to `SCHEMA_VERSION`**: the next edit to
+that file fails a test that asks, in the same commit, whether the version needs bumping. Nothing else
+in the tree notices a schema change — the artifact rebuilds happily, `PRAGMA user_version` still says
+1, and every store goes on trusting a file whose shape moved under it.
+
+### Two places D1's text is wrong, found by building it
+
+1. **`SCHEMA_VERSION` cannot both live in `schema.sql` and be "read from one place".** D1 prints
+   `PRAGMA user_version = 1` and `PRAGMA application_id = 0x54474D31` inside the SQL, and also tells
+   an adversarial review to check "whether `SCHEMA_VERSION` is actually read from one place". Both
+   stores validate an opened file against those two numbers at runtime, so they are
+   `lib/dict/artifact.ts` constants applied by the builder, and the SQL asserts neither.
+   `store-contract.test.ts` fails if the SQL ever re-assigns one.
+
+2. **`meta.sources` must not be `dict.meta.sources` verbatim.** D1 says to copy it so `/settings`
+   renders attribution from the data. That list exists because `decomp.json` comes out of the same
+   build, and it names Make Me a Hanzi — LGPL-3.0-or-later. The SQLite dictionary derives nothing
+   from it. A CC BY-SA artifact carrying an LGPL provenance it does not have is the opposite of the
+   boundary PLAN.md §5 draws, so the builder filters that source out and the boundary is asserted
+   rather than assumed: no decomposition-shaped schema name, no Make Me a Hanzi in `meta.sources`,
+   and **no IDS character** (⿰⿱⿲…, a Unicode block that appears nowhere in CC-CEDICT) anywhere in the
+   43 MB. `data/ATTRIBUTION.md` is committed, covers all three artifacts, and says so.
+
+### What the verifier is, and what it caught
+
+`pnpm data:verify` (10 s) is D1 criterion 4 in full, against `dict.json` parsed in the same process —
+not a golden file, and not a second implementation of the build. All 124,188 entries deep-equal their
+JSON row with glosses order intact and a NULL `classifiers` column rebuilding as `[]`; rowid order
+equals `compareEntries` re-derived independently; both pinyin key columns equal `LazyDictIndex`'s own
+keys entry by entry (and the `readingKeys() ?? normalizePinyin()` expression separately, 742 readings
+on the slow path); all 242,087 `words.freq` equal `headwordFreq()`; all 14,625 `chars` verdicts equal
+`detectScript`'s; the `char_words` row set is exactly the 23,052 pairs, checked *separately* from the
+636,088 postings because indexing only single-character headwords passes the postings check; all
+seven HSK bands equal `hskBand()` in full including the 51 rankless entries at the tail; all 47,125
+gloss tokens' posting lists match. `--sizes` adds the cumulative table and the compressed figures
+(~2 min — brotli q11 over 43 MB).
+
+It earned itself on the first run by failing on one character. **𰻞 (biáng, U+30EDE)** is a headword
+in CJK extension G, and `search.ts`'s `CJK_PATTERN` stops at U+2EBEF: `detectScript` skips the
+character entirely while the `chars` table has a row for it. The check now applies the same
+`hasCjk` gate the code does, so the table and the code agree by construction.
+
+**The gap is bigger than that one character, and it is left open deliberately.** Measured:
+`CJK_PATTERN` covers ext A/B/C/D/E/F and the compatibility ideographs but **not ext G
+(U+30000–U+3134A) or ext H (U+31350–U+323AF)**. Thirty-nine `chars` rows fall outside the pattern;
+twenty-seven are Latin letters, `々`, `〇`, the Suzhou numerals and the Japanese era ligatures, which
+carry no script evidence and should not. **Twelve are ext-G hanzi that do**: 𰦭 𰻝 𰻞 𱃲 𱅒 𱇏 𱇩 𱇭 𱉝 𱉵
+𱌶 𱌹. 486 entries contain a character the pattern does not match. Widening the pattern is a
+behavioural change to segmentation and search routing — those twelve characters would stop passing
+through as `text` tokens — and D2 and D3 have a stated budget of two behavioural changes between
+them, both already spent. **It is not in D1's scope and it is not D3's third change. Someone should
+own it.**
+
+### `data:ensure` had to change, and that is the phase's quiet blocking bug
+
+`scripts/build-data.ts` returned early when `data/dict.json` existed, and `pnpm build` runs
+`data:ensure`. After D1 that means **any tree that already held the JSON would never generate the
+`.sqlite`** — `pnpm build` ships an app with no dictionary and every local gate stays green, because
+`pnpm dev`, the unit suite and the e2e suite all read `data/` off local disk. That is the same shape
+as W0's `outputFileTracingIncludes` incident, so the guard is driven by *running* it
+(`build-data.ts --print-artifact-status`) rather than by re-deriving its logic in a test, and the
+four cases are: the real directory (present), `dict.json` with no artifact (absent), a manifest
+naming a schema version this tree does not build (absent), and an artifact truncated to the wrong
+length (absent).
+
+**What the guard deliberately does not check: the CC-CEDICT snapshot.** It compares
+`manifest.schemaVersion` against `SCHEMA_VERSION`, not `manifest.dictVersion` against
+`cedictVersion()`. So bumping the `cedict-json` dependency and running `pnpm build` rebuilds nothing,
+and the app ships the previous snapshot — internally consistent and truthfully labelled
+(`meta.dict_version`, the manifest and the filename all name the snapshot the rows actually came
+from), just older than the dependency. This predates D1: the old guard had no version test at all.
+`data:ensure`'s documented contract is "generate only if missing" (CLAUDE.md, PLAN.md §3.1) and
+`pnpm data` is the fix, so widening it here would have been a silent contract change. **Recorded as
+an open question rather than taken.**
+
+### Decisions the plan did not settle
+
+- **`headwordTotals(index, script)` is exported from `segment.ts`**, alongside `headwordFreq`. D1's
+  Files list only asks for `headwordFreq`, but the builder and the verifier both need `statsFor`'s
+  loop, and three copies of a nine-line loop with a `MAX_WORD_CHARS = 16` literal in each is how the
+  segmenter's unknown-word floor quietly shifts. D2 replaces the function with a `meta` read; until
+  then all three callers share one definition.
+- **The varint posting codec lives in `lib/dict/artifact.ts`**, not a module of its own. It is the
+  artifact's own encoding and the builder, the verifier and every store need it; `artifact.ts` was
+  already the module all three import.
+- **`schema.sql` splits on a `-- >>> indexes` marker.** Indexes are created after the rows so 124k
+  inserts do not each maintain six live B-trees, and there is still exactly one schema file.
+- **Tests that open the artifact run under `// @vitest-environment node`.** Vite refuses to bundle
+  `node:sqlite` for the jsdom default — *"Cannot bundle Node.js built-in"*. **D2's store tests will
+  need the same docblock**, and this is a five-minute confusion if nobody says so.
+- **The size report is read off `dbstat`**, not produced by seven separate builds as D1's table was.
+  After a VACUUM the freelist is empty, so the per-object page bytes sum to the file and the
+  cumulative table is the same information, in the same row order, for seven fewer builds.
+
+### What the adversarial review changed
+
+Five independent lenses (plan compliance; what breaks that no test covers; the attacks D1 itself
+names plus the freeze discipline; will the file work on the other three runtimes; is the data right
+independently of the verifier), then two refuters per finding — one on correctness, one on
+consequence — instructed to refute by default. 20 findings, 12 verified. None survived both refuters,
+but four were confirmed factually by the correctness verifier and are fixed here:
+
+1. **No HANDOFF section existed** — raised by five of the twenty findings, and correctly: two shipped
+   source comments said something "is recorded in HANDOFF.md" when it was not. This section is the
+   fix, and the rule it teaches is *append the HANDOFF section in the phase's own commit*, not at the
+   end of the session.
+2. **Nothing asserted that the six indexes exist in the built file.** An artifact built from a schema
+   that lost every index passes every content check and every unit test; the symptom is a dictionary
+   that is merely slow. `verify-data.ts` now parses `schema.sql` for its declared objects and
+   compares against `sqlite_master`, checks `gloss_fts` still carries all four of its options and
+   `entries_hsk` its `WHERE` clause, and checks the freelist is empty. Proved by dropping
+   `entries_simp` from a copy and watching it go red.
+3. **`statsFor` was re-implemented in the builder and again in the verifier** — see
+   `headwordTotals` above.
+4. **`.gitignore` did not cover the builder's own temp file.** `<artifact>.sqlite.tmp-<pid>` does not
+   match `/data/*.sqlite`, so an interrupted `pnpm data` left a 43 MB binary one `git add -A` from
+   the history.
+
+And one finding that is **real, refuted as out of D1's scope, and load-bearing for D3**:
+
+> **`gloss_fts` dedupes what `index.byGloss` duplicates.** `LazyDictIndex` pushes an entry id into a
+> token's posting list **once per gloss**, so a list there can carry the same id several times; an
+> FTS5 index carries a rowid once per term. Measured: 4,603 tokens carry 44,265 duplicate postings,
+> and nine tokens exceed the 5,000-candidate cap (`of`, `to`, `a`, `the`, `in`, `and`, `or`, `for`,
+> `idiom`). For those nine the JSON `slice(0, 5000)` spends places on duplicates and the FTS `LIMIT
+> 5000` does not, so **the two candidate pools are not the same pool at the cap.** `data.md` D3 says
+> *"for a single-word query, FTS5 plus `LIMIT 5000` is the same pool today's code has, and recall
+> does not move at all"* — that sentence is wrong for those nine tokens. D3's differential test must
+> expect it rather than be surprised by it. `verify-data.ts`'s check is now labelled for what it
+> actually compares.
+
+Two more recorded and not acted on:
+
+- **`char_words.rowids` is the only BLOB in the artifact, and the frozen `SqlValue` promises
+  `Uint8Array`.** Whether `@capacitor-community/sqlite` returns a BLOB as a `Uint8Array` — rather
+  than base64, or a number array — is unverified, and `SqlValue` is a frozen surface.
+  **D5a should probe this in the same device session as register entries 6 and 18**, and if the
+  plugin does not return `Uint8Array` the runner converts at the bridge rather than the frozen type
+  changing.
+- **D5b's four-probe list is now incomplete.** `data.md` D5b probes `WITHOUT ROWID`, FTS5,
+  `content=''` with `detail=none`, and unicode61 `tokenchars`. The artifact now also uses
+  `columnsize=0` and a **partial index**. Both are old features (partial indexes date to SQLite
+  3.8.0) and probe 3 exercises `columnsize=0` by construction since it MATCHes the shipped table, but
+  the list should say so.
+
+### Gates
+
+`pnpm lint`, `pnpm typecheck`, `pnpm test` (90 files, 931 tests), `pnpm build` and
+`PORT=3000 pnpm e2e` (110 passed) all green. Two consecutive `pnpm data` runs produce the same
+sha256, so criterion 7 holds as specified rather than aspirationally.
+
+---
+
+## `data.md` D2 — `DictStore` over a `SqlRunner`, in Node
+
+One commit. `lib/dict/sqlite-store.ts` is the one implementation of `DictStore`, written entirely
+against `SqlRunner`; `lib/dict/runners/node.ts` is the first runner; `lib/dict/query/{entries,hanzi,
+pinyin,hsk}.ts` are the SQL builders. `tests/unit/dict/store.test.ts` is 107 tests comparing the
+store against the JSON index in the same process.
+
+`segment()` is D3's and rejects with a message saying so — deliberately, rather than returning an
+empty result, because an empty segmentation is a legitimate answer for an empty string and a caller
+cannot tell "no tokens" from "not built yet". The English half of `search()` is D3's for the same
+reason and returns an empty English section until then.
+
+### The refactor D2 needed and the plan did not name
+
+`data.md` D2 says *"everything interesting (routing, ranking, grouping, paging, the DP) lives in
+`sqlite-store.ts` and is written once for all three platforms"*. Written once — and there are now
+**two** implementations answering a search, because D2's and D3's tests are differential and D6 is
+what deletes the JSON one. If the store re-implemented grouping, the five-key sort, the section
+allocation and the cursor, every one of those tests would be comparing two rankers as well as two
+candidate sets, and a difference in either would look like a difference in the other.
+
+So `lib/dict/rank.ts` grew from D1's `compareEntries` into the shared pure layer: `CJK_PATTERN` and
+`hasCjk`, `stemToken`, `glossTokens` and `parseIdList` (D2's Files list already moved these out of
+`index.ts`), plus `CandidateSet`, `materialise`, `dedupeSections`, `allocate`, `parseCursor` and
+`pageWindow`. `lib/dict/search.ts` imports them back and re-exports the three symbols other modules
+already took from it, so **`index.test.ts`, `pinyin.test.ts`, `search.test.ts`, `segment.test.ts`
+and `cold-start.test.ts` all pass unedited** — which is the evidence that the extraction changed no
+behaviour. D2's criterion 1 asked for two of those; all five hold.
+
+One ordering change fell out of it and is worth naming because it is what makes the store cheap:
+**dedupe, page, and only then attach entries.** `search.ts` used to materialise every group —
+possibly 5,000 of them — and page afterwards. Both implementations now page first, so the store's
+second round trip fetches full rows for at most fifty headwords instead of five thousand. The JSON
+side is unaffected either way, since its entries are already in memory.
+
+### The round-trip budget, and the one row of D2's table that is wrong
+
+`store.test.ts` counts `SqlRunner.query` calls against a spy runner. Measured:
+
+| method | trips | D2's table |
+|---|---|---|
+| `open` | 1 (a batch of 2 statements) | 1 |
+| `entries`, `hskBand`, `readingCount` | 1 | 1 |
+| `search` | 2 (3 statements, then 1) | 2 |
+| `wordsContaining` | **2** | **1** |
+
+**`wordsContaining` cannot be one round trip, and the table is wrong rather than the code.**
+`char_words.rowids` is a delta-varint BLOB — that shape is what makes the infix capability cost
++1.4 MB instead of +22.4 MB, which is the decision D1 took to close STACK §5.6 — and only
+TypeScript can decode it, so the entry rowids are not known until the first result is back. The
+one-trip alternatives were measured: `instr(simp, ?) > 0 ORDER BY rowid LIMIT 30` costs **2.6 ms**
+for a common character and **12.9 ms** for a rare one (it scans to the end of the table), against
+**0.1 ms** for the two steps here. A third option — storing the postings as a JSON array so
+`json_each` could join them in one statement — would put roughly 3 MB back on the artifact.
+
+It is also not on the keystroke path: `wordsContaining` is the character sheet's panel, opened on a
+tap. The budget exists to stop per-keystroke bridge chatter and `search` and `segment` are where
+that matters. **`data.md` D2's budget table should say 2, and D5a should measure this one on a real
+device** rather than assume 2 × 1–5 ms is fine.
+
+### Latency, re-measured at the shipped limits
+
+D2 required this: the plan's table was measured at `LIMIT 50`/`LIMIT 200` while the shipped limits
+are 400 (hanzi, per script) and 600 (pinyin), and it flagged its own extrapolation as a hypothesis.
+Measured through the store, native SQLite 3.51.2, warm, cache disabled, mean of 20 runs:
+
+| call | ms |
+|---|---|
+| `open()` — `meta` + the whole `chars` table | **39.6** (once) |
+| `search('打算')` — hanzi exact, 2 trips | 0.26 |
+| `search('打')` — hanzi prefix, `LIMIT 400` per script | 4.2 |
+| `search('中')` — hanzi prefix, `LIMIT 400` per script | 5.1 |
+| `search('dasuan')` / `search('da3suan4')` — pinyin exact | 0.20 / 0.18 |
+| `search('da')` — pinyin prefix, `LIMIT 600` | 6.4 |
+| `entries()` — 50 ids | 0.08 |
+| `hskBand(1)` — the whole band | 3.6 |
+| `hskBand(7, {limit:50, offset:100})` | 0.36 |
+| `readingCount('看')` | 0.02 |
+| `wordsContaining('算', {limit:50})` — 2 trips | 0.55 |
+
+**The plan's hypothesis about prefix cost is wrong.** It guessed that "the range scan sorts its whole
+matching range by rowid before the `LIMIT` applies, so the cost should track the range rather than
+the limit". It tracks the **limit**: the same pinyin prefix costs 0.42 ms at `LIMIT 50`, 1.6 ms at
+200 and 3.4 ms at 600, on an unchanged range. Which is good news — the limits are a lever D4 can
+pull if WASM latency bites — and it means the plan's 1.18 / 1.59 ms figures were low because they
+were measured at a fraction of the shipped limit, not because the shipped limit is free.
+
+**Two numbers for D4 to carry.** `open()` at 39.6 ms is the biggest single cost in the layer and it
+is almost entirely the 14,625-row `chars` read. At STACK's extrapolated 2–5× that is 80–200 ms in
+WASM, once per session, before the first lookup can be answered. If that hurts, the lever is to load
+`chars` lazily on the first `segment()` rather than in `open()` — at the cost of making
+`detectScript` asynchronous, which is exactly what D3 goes to some trouble to avoid. **Measure it in
+D4 before changing anything.** And the worst interactive call is 6.4 ms, so the 50 ms threshold D4
+stops at has about 8× of headroom at 2–5×.
+
+### The prefix range trap, and why the obvious test for it proves the wrong thing
+
+`data.md` D2 names it: a prefix scan's upper bound must be the prefix with its **last code point
+incremented**, never the prefix with `U+FFFF` appended, because SQLite's `BINARY` collation compares
+UTF-8 bytes where `U+FFFF` is `EF BF BF` and any astral character is `F0 …`.
+
+The trap has a second edge the plan does not mention, and it cost time: **a test written in
+JavaScript can "prove" the naive bound is fine.** JavaScript compares strings by UTF-16 code units,
+where a surrogate lead (`0xD867`) is *below* `U+FFFF`, so `'𩽾𩾌' < '𩽾￿'` is `true` in JS and
+`false` in SQLite. The test therefore issues both range queries against the real artifact and asserts
+that the naive bound drops 𩽾𩾌 (ānkāng, the anglerfish — both characters astral) while the correct
+one keeps it. A JS-only assertion here is worse than no assertion.
+
+### The behavioural change D2 is allowed, stated as it landed
+
+**Prefix truncation changes from key order to frequency order.** The JSON `prefixIds` walks the
+sorted key array and emits whole key buckets in *lexicographic key order* until the cap is reached;
+`ORDER BY rowid LIMIT n` keeps the *n most frequent* across all matching keys. This is the one
+behavioural diff D2 budgets for, and the tests are written to expose it rather than absorb it: for a
+query whose candidate set falls under the cap the two implementations must agree exactly, entries
+included; for one that hits it, only that the exact headword still leads and every group is a real
+prefix match.
+
+### Decisions the plan did not settle
+
+- **`AbortSignal` rides in `SearchOptions`, not as a third parameter.** `DictStore.search` is frozen
+  at two parameters by D1's first commit, and D2 wants cancellation. `SearchOptions` is this layer's
+  own type, so `signal` goes there; the JSON implementation ignores it, being synchronous.
+- **A call carrying a signal does not join an in-flight promise.** It reads the result cache and
+  fills it, but sharing one promise between callers with different signals means one caller's abort
+  rejects the other's live request, and a refcount over participants is more machinery than a
+  debounced search box needs. Signal-less calls coalesce as normal.
+- **`open()` failure is `reason: 'corrupt'`.** The four `DictStatus` failure reasons are D4's to
+  distinguish properly — it is the phase that fetches bytes and can tell a truncated download from a
+  file that is not this artifact. The Node runner has none of those failure modes, so it reports the
+  one that means "the file did not open as this dictionary" and D4 refines it.
+- **The store exposes `close()` and `opened`**, neither of which is on the frozen `DictStore`.
+  `close()` is what a test needs to not leak a file handle; `opened` is how a caller reaches the
+  `meta` constants and the `chars` table without a second query. Both are additions to the class, not
+  to the interface, so the freeze holds.
+- **`hskBand()` with an `offset` and no `limit` passes `LIMIT -1`**, which is SQLite's "no limit" —
+  it will not take an `OFFSET` without one.
+
+### Tests worth knowing about
+
+- `store.test.ts` carries **D2 criterion 6 as an assertion**: it walks `lib/dict/**` and fails on any
+  `node:fs` or `node:sqlite` import outside `load.ts` and `runners/node.ts`. That rule protects a
+  browser worker and a WebView from a build failure nobody would see in this container, so it is a
+  test rather than a convention.
+- `wordsContaining` has no counterpart in the JSON index, so its oracle is brute force: for twenty
+  characters, including one in a single headword (𩽾), several of the commonest, and four
+  simplified/traditional pairs that differ, it scans `dict.json` for every entry whose headword
+  contains the character and compares the whole list in rowid order.
+- All seven HSK bands are compared **in full**, not sampled — the 51 rankless entries are the only
+  rows where the two orderings can disagree and six of them are in band 1.
+
+### What D2's adversarial review changed
+
+Five lenses (plan compliance; what breaks that no test covers; is the answer actually the same;
+the `rank.ts` extraction; will it survive the other runners), then two refuters per finding — one on
+correctness, one on consequence, refuting by default. **20 findings, 12 verified, and the
+correctness verifier confirmed eleven of the twelve factually.** One survived both refuters. The
+consequence verifiers refuted most of the rest on "no production consumer exists yet", which is true
+and is not a reason to leave them: `core.md` is the consumer and it has not been written.
+
+**The one that survived: the pinyin differential test asserted nothing a broken store could fail.**
+It compared the intersection of the two key lists with itself. Both verifiers reproduced it by
+mutation — with `pinyinPrefix` changed to `LIMIT 1` the store dropped 打算盘 from `dasuan`, three of
+four groups from `dasu` and half of `nu:3`, and **all 1,039 tests still passed**. That is the worst
+kind of defect this repo has a name for, and it was in the phase's headline guarantee.
+
+It is fixed by asserting what can actually be asserted, which took working out, because the obvious
+assertion is both too strong and too weak. Too strong: the JSON side runs an English section
+alongside the pinyin one and `dedupe` awards a headword to whichever ranked it higher, so the JSON's
+pinyin section is a **subset** of the store's, which has no English competitor until D3. Too weak:
+comparing only the shared keys. So the test now asserts containment, the relative order of the
+shared keys, per-group entry-id set equality, and full field-for-field equality for every group the
+JSON matched at a single reading — plus a second, independent oracle described below.
+
+**The cap gate was wrong in the direction that hides bugs.** Both differential blocks decided
+"capped or not" by comparing `SearchResult.total` against 400 or 600. `total` is a **deduped group
+count summed over every section**; the caps count **ids per script**. Measured, they disagree in
+both directions — `无` is capped at 400 ids with a total of 397, `lu:4` is uncapped at 442 ids with
+a total of 483 — so the strict "must agree exactly" rule was running on truncated queries and the
+loose rule on exact ones. The predicate now asks the JSON implementation with its own `prefixIds`,
+which is the function that does the truncating.
+
+**"Every group is a prefix match" is not a test.** The capped branch asserted only that. It is
+equally true of a store that kept the four hundred *least* frequent matches — verified: mutating the
+prefix query to `ORDER BY rowid DESC` passed every assertion in the file. The capped branch now
+compares the store's group set against an oracle built from the JSON index alone: the exact matches
+plus the N lowest-rowid prefix matches per script, `index.entries` being a Map in `compareEntries`
+order and therefore a walk in rowid order. That is a complete specification of the store's candidate
+set, capped or not.
+
+**And a shared-code blind spot, which is the cost of the `rank.ts` extraction.** Anything `rank.ts`
+gets wrong it gets wrong on *both* sides, so no differential test can see it: forcing `materialise`
+to stamp `hskBand: 1` on every group passed all 116 store tests. It is caught today only because
+`search.test.ts` still checks a literal band — and D6 re-points that file at the store. So
+`store.test.ts` now carries one deliberately **non**-differential assertion, checking each group's
+band against `data/dict.json` directly.
+
+The tests were then re-run against seven separate mutations, each restored afterwards. Before these
+changes 0 of 7 failed; after them 7 of 7 do: pinyin prefix `LIMIT 1`, hanzi prefix `DESC`, pinyin
+prefix `DESC`, `upperBound` appending `U+FFFF`, `hskBand` ordering by rowid, `entries()` ignoring
+the requested order, `readingCount` counting rows, and `materialise` forcing a band.
+
+### The capped-query record (criterion 4)
+
+D2 requires "the diff and one line of justification per query" for every capped query. The test
+computes it rather than transcribing it, and writes it to stdout on every run:
+
+```
+capped hanzi queries (cap 400 ids per script):
+  中: store 385 groups, json 422; 97 only in the store (more frequent), 134 only in the JSON (earlier by key)
+  无: store 398 groups, json 397; 13 only in the store, 12 only in the JSON
+  高: store 392 groups, json 398;  1 only in the store,  7 only in the JSON
+  一: store 400 groups, json 429; 138 only in the store, 167 only in the JSON
+
+capped pinyin queries (cap 600 ids):
+  xian: store 634, json 587; 334 only in the store, 287 only in the JSON
+  da:   store 581, json 575; 450 only in the store, 444 only in the JSON
+  yi:   store 717, json 572; 463 only in the store, 318 only in the JSON
+  shi:  store 622, json 569; 374 only in the store, 321 only in the JSON
+  zhi:  store 647, json 587; 303 only in the store, 243 only in the JSON
+  shu:  store 605, json 582; 402 only in the store, 379 only in the JSON
+```
+
+**The justification is the same line for all ten and it is D2's one budgeted behavioural change:**
+the JSON walk emits whole key buckets in lexicographic key order until 400 (or 600) *ids* have
+accumulated, and `ORDER BY rowid LIMIT n` takes the n most frequent across all matching keys. Each
+side's exclusives are checked to be genuine matches — a prefix match on a real headword for hanzi, a
+reading whose key starts with the query's key for pinyin — so nothing else is hiding inside the
+diff. The pinyin numbers are larger than the hanzi ones because the pinyin section's JSON side also
+loses groups to the English section's `dedupe`, which the store has no equivalent of until D3.
+
+**A second face of the same change, which D2 does not mention.** A headword's readings sit under
+*different* pinyin keys when one of them is neutral-tone — 女人 is `nu:3 ren2` (`nu3ren2`) and
+`nu:3 ren5` (`nu3ren`) — so key order and rowid order disagree *inside* a group, on queries nowhere
+near the cap. Four queries in the suite's list show it, one group each: `nu:3`, `hé`, `men2`,
+`guai1`. The entry **sets** are always identical; only the order differs. It is pinned by name in
+its own test rather than tolerated in an aggregate, so if that count grows something else has
+changed. D2's "must agree exactly, entries included" is therefore true of the hanzi section and not
+quite true of the pinyin one, and this is why.
+
+### Six store defects the review found, all fixed
+
+None could bite today — `sqlite-store.ts` has no importer outside its own test — and all of them
+would have bitten `core.md`, which is the consumer that has not been written yet.
+
+1. **`open()` latched a rejected promise forever.** An async function runs synchronously to its
+   first suspension, so a `connect()` that threw *before* awaiting reached the inner `finally`
+   before the assignment to the in-flight slot — leaving a rejected promise there and wedging every
+   later `open()` on a store that could have recovered. The first fix was wrong in a second way (it
+   compared the slot against the raw attempt rather than the chained promise, so the slot was never
+   cleared at all) and a test caught that too.
+2. **A failed `open()` leaked its `SqlRunner`.** On OPFS the pool holds an exclusive lock per origin
+   and on Capacitor the plugin holds a native handle, so a leaked connection is not garbage — it is
+   a retry that can never succeed.
+3. **`close()` racing a pending `open()` was a no-op**: it read `#runner` before the continuation
+   assigned it, leaked the connection, and let the store flip back to `ready` a moment after being
+   closed. It now waits for the attempt to settle.
+4. **`open()` read `meta.schema_version` and never checked it.** A file built by a different
+   `SCHEMA_VERSION` opened, answered every query, and reported `ready`. It is now a `failed` open —
+   D4 refines the four failure reasons, but the check belongs where every runner gets it for free.
+5. **The result cache handed out its stored object.** One consumer calling `.sort()` on a returned
+   entry list, or emptying it, would corrupt every later answer for the life of the session, and the
+   symptom would look like a dictionary bug. Results are shallow-frozen before they enter the cache.
+6. **A cached search resolved instead of rejecting when its signal was already aborted**, because
+   the cache was consulted before the signal. A call that rejects when cold and resolves when warm
+   is the worst kind of flake.
+
+Three smaller ones fixed with them: the `node:fs` guard only matched single-quoted static imports
+(it now matches any quote style and dynamic `import()`); the two prefix caps existed in `search.ts`
+*and* in the query modules with nothing tying them together (`search.ts` imports them now); and the
+`xx5` test could not fail, because `xx` does not parse as pinyin so the query never reached the
+pinyin index — it now asserts against the columns, and checks a real `xx5` headword (働) is still
+findable by hanzi with an empty `pinyinMarked`.
+
+---
+
+## `data.md` D3 — gloss search, the inverted segmenter, and `retrieve.ts`
+
+One commit. `lib/dict/query/gloss.ts` and `lib/dict/query/segment.ts` are the new SQL;
+`lib/dict/segment.ts` is inverted; `lib/dict/rank.ts` gains the `glossTier` machinery;
+`lib/ai/retrieve.ts` is new. `tests/unit/dict/gloss.test.ts` (57 tests) and
+`tests/unit/ai/retrieve.test.ts` (38) are new, and `search.test.ts` and `segment.test.ts` are
+re-pointed at the store.
+
+### The two behavioural changes D3 budgets for, measured
+
+A 200-query English corpus — 180 gloss tokens taken from the dictionary in rowid order so the corpus
+is not a list of words somebody thought of, plus 20 multi-word phrases — compared group-set for
+group-set against the JSON index at a page large enough that paging cannot confound it:
+
+```
+183 identical, 17 wider, 0 narrower
+wider: the, for, and, to plan, to eat, to go to, to be able to, a lot of, to look at,
+       to make a, in front of, point of view, to take care of, to be born, to get up,
+       south of the, to come back
+```
+
+**Nothing is ever lost**, which is the assertion the test makes; "wider" is D3's change 1 and it
+only adds. The multi-word entries are the predicted case exactly: today's code intersects per-word
+posting lists that were each truncated to 5,000 *before* the intersection, so `to go to` came back
+with 38 fewer groups than the dictionary actually contains.
+
+**Three of the seventeen are single words — `the`, `for`, `and` — and D3 says that cannot happen.**
+Its text is explicit: *"for a single-word query, FTS5 plus `LIMIT 5000` is the same pool today's code
+has, and recall does not move at all."* It is not, and the reason is the difference D1's review
+turned up: `index.byGloss` pushes an entry id into a token's posting list **once per gloss**, so a
+list there can carry the same id several times, while an FTS5 index carries a rowid once per term.
+Measured: 4,603 tokens carry 44,265 duplicate postings, and nine tokens exceed the 5,000 cap (`of`,
+`to`, `a`, `the`, `in`, `and`, `or`, `for`, `idiom`). For those nine the JSON `slice(0, 5000)` spends
+places on duplicates and the FTS `LIMIT 5000` does not, so the pools differ and the store's is
+strictly larger. **`data.md` D3's sentence is wrong for those nine tokens.** The direction is
+harmless — more recall on a query for `the` — but a later session comparing the two should expect it
+rather than chase it.
+
+`da` and `to` paged to the end with `nextCursor`:
+
+```
+paging "da": store 12 pages / 592 groups / total 592;  json 12 pages / 590 groups / total 590
+paging "to": store 95 pages / 4718 groups / total 4718; json 38 pages / 1854 groups / total 1854
+```
+
+`to` is the cap's shadow made visible: the JSON walk terminates at 1,854 groups because its pool was
+truncated, the store's at 4,718 because FTS5's intersection is exact. `total` is constant across
+both walks, every group is visited exactly once, and `keys.length === total` on both sides — which
+is what would catch a `:cap` lowered quietly, as a shorter walk rather than as a wrong answer.
+
+**`:cap` stays at 5,000, matching `MAX_GLOSS_CANDIDATES`.** D3 required this to be an explicit
+decision rather than a default. Measured native cost at that cap: 0.4 ms for `"plan"`, 0.6 ms for
+`"to" AND "plan"`, and **25 ms for `"to"` alone**, which is the worst single common token and the
+only one anywhere near D4's 50 ms interactive threshold. At `LIMIT 400` the same query is 12 ms, so
+the lever exists — but taking it would make this a redesign rather than a port (`glossTier` would
+rank only what the cap admits, `total` would become a capped count, and `nextCursor` would terminate
+early), so it is D4's to take with the measurement in hand.
+
+### Four places D3's text does not survive contact
+
+1. **`SELECT script, word, freq FROM words WHERE word IN (…)` across both scripts is a full table
+   scan.** `words` is `PRIMARY KEY (script, word)` on a `WITHOUT ROWID` table, so there is no other
+   B-tree and `word IN (…)` alone cannot use an index. Measured on a 67-hanzi paragraph (937
+   distinct substrings): **45.7 ms** for the one statement D3 prints, **1.8 ms** for two
+   `script = ? AND word IN (…)` statements. Both are **one round trip**, because a batch is the round
+   trip — so the fix costs nothing D3 was buying. (D3's own 1.37 ms figure was measured
+   single-script, which is the form that uses the index; the two-script form it then mandates is the
+   form that does not.)
+
+2. **`SegmentInput` as printed cannot express the two round trips D3 also mandates.** It carries
+   `idsFor: (word) => EntryId[]`, and the chosen words are not known until the DP has run — which is
+   the call `idsFor` is an argument to. So `segment.ts` exposes `planSegments()` (cut the text, no
+   ids needed) and `attachIds()` (fill each token's readings), with `segmentWith(text, input)` kept
+   as D3's named entry point for a caller that already holds both halves. The store uses the two
+   halves; the JSON `segment()` drives the same `planSegments`, so the two cannot disagree about the
+   cutting, only about which candidates they were given.
+
+3. **`segment.test.ts`'s suggested oracle is wrong and taking it would have weakened the test.** D3
+   permits replacing `getDictIndex().bySimp.get('了')` with "the ids behind `store.search('了')`'s
+   exact hanzi group, which D1 guarantees is `bySimp.get('了')` in the same order". It is not: a
+   search *group* is one `trad|simp` headword, while `bySimp.get('了')` spans every traditional form
+   of the simplified one — 了 has four entries across 了 and 瞭. The suggested oracle returns two ids
+   where the token carries four. `lib/dict/index.ts` is alive until D6, so the two oracles stay as
+   they are and D6 freezes them into fixtures.
+
+4. **`retrieve.ts` lands at `lib/ai/retrieve.ts`, not `packages/ai/retrieve.ts`.** D3 assumes wave
+   0's deliverable 5 has run; `README.md`'s register V6 records it as not executable as written and
+   this session was scoped out of it, so `packages/ai/` does not exist. The file moves with its nine
+   neighbours when someone specifies that move. `README.md`'s own §7 uses the pre-move spelling for
+   exactly this file.
+
+### The synchronous/asynchronous seam, and what it cost
+
+`GroundContext.segment` is `(text: string) => Token[]`; `DictStore.segment` returns a promise. D3's
+resolution — await the segments up front, build a `Map<string, Token[]>`, pass
+`(text) => map.get(text) ?? []` — is right about the shape and **misses that the strings are not
+knowable in advance**: `ground()` segments each phrase it has *rendered from the cited entries*, and
+the rendering happens inside it. Re-implementing that rendering in `retrieve.ts` would put two copies
+of the thing that decides what a learner sees into the tree.
+
+So `ground()` is run as a **fixed point**. Each round hands it maps and records what it asked for and
+could not be told; the store answers those; the round runs again. It closes in three (segments, then
+the entry ids the segmenter produced, then nothing), it is bounded at four, and `ground()` is pure so
+running it three times costs microseconds against a model call that has a 30-second budget. One
+detail is load-bearing: an id the dictionary does not have is remembered as *answered no*, or an
+invented citation would be re-requested every round and the loop would never close. There is a test
+for that.
+
+**`ground.ts` is unmodified**, which was the point. `tests/unit/ai/retrieve.test.ts` proves the
+grounded answer is identical whichever way the dictionary was reached, over an ordinary answer, an
+invented citation, a phrase built out of the model's own text (随看随买), a mixed phrase, and an empty
+response.
+
+### What was not done, and why
+
+**`tests/unit/ai/helpers.ts` is not re-pointed at the store.** `data.md` **D6**'s disposition table
+says it is re-pointed "in D3, not here", but D3's own criterion 9 asks only that `tests/unit/ai/`
+passes with the segment map pre-awaited and `ground.ts` unmodified — which it does. Re-pointing the
+helpers makes `entriesFor`/`entryFor`/`readingOf` async and churns roughly 2,000 lines of ask tests
+that are about grounding rules, for no behavioural gain while `lib/dict/index.ts` is still alive. The
+trigger for that churn is D6's deletion of the JSON path, and it belongs in the commit that deletes
+it. **D6 should expect to do it.**
+
+`app/api/ask/route.ts` gains two `export` keywords, on `mergedSearch` and `candidateEntries`, so the
+differential test compares against the real originals rather than against a re-implementation that
+could be wrong in the same way. D6 deletes both with the route.
+
+### Test disposition (criterion 1 and 3)
+
+- **`segment.test.ts`** — rewritten mechanically, **no expected value changed**, two cases added
+  (criterion 2). Permitted edits only: the import block, `async`/`await`, `store.segment` for
+  `segment`, `detectScriptFrom(chars, text)` for `detectScript(index, text)`. The two added cases
+  assert the *cut* rather than the returned script for the cross-script fallback, because the
+  existing case checks the label and a single-script candidate query would still produce the right
+  label while splitting 學習 into two characters.
+- **`search.test.ts`** — re-pointed at the store, **28 assertions, zero changed**. The edits are the
+  import block, `async`/`await`, and `store.search`/`store.entries` behind the same `search` and
+  `getEntry` names so no call site moved. The store reproduces the JSON implementation's entire
+  acceptance suite: routing, tier order, the polyphone grouping, the ü/v/`u:` folding, the neutral
+  tone, `he`/`long`/`sun`/`women`, the paging contract, and "a real word above a variant of it".
+- **`index.test.ts`, `pinyin.test.ts`, `cold-start.test.ts`, and every suite under `tests/unit/ai/`
+  and `tests/unit/lists/`** — unedited and passing.
+
+### Round trips (criterion 8)
+
+Unchanged with the English half in: an English query is two, a pinyin query runs **both** sections in
+the same two, and `isGlossToken`'s statements ride in the existing batch without raising the count.
+`segment` is two whatever the passage length, and a passage with no hanzi spends none. All asserted
+against a spy runner, which also checks that the two per-script word statements go in one array
+rather than one call each.
+
+### The MATCH string
+
+Building it is a security-shaped problem rather than a formatting one — FTS5 has its own query
+syntax and an unescaped learner query is an injection into it. Every term is one token matching
+`[a-z0-9']`, double-quoted, joined with ` AND `, and a 35-case fuzz corpus (`"`, `*`, `^`, `:`,
+`NEAR`, `NOT`, unbalanced quotes, a 200-character query, Cyrillic, an emoji) asserts that nothing
+ever reaches SQLite as a syntax error. Two spy assertions hold the line D3 draws: **no phrase query
+is ever constructed** — on a `detail=none` table that raises rather than returning nothing — and **no
+MATCH string contains ` OR `**.
+
+The OR guard needed a decision D3 does not anticipate. `englishGroups` takes the union of
+`{stemToken(word), lemma(word)}` over each *already lemmatised* word, which collapses to a singleton
+almost always — but not for a plural of a plural: `lemmas('mens')` is `['men']`, and `men` is itself
+an `IRREGULAR` key, so its forms are `{men, man}` and today's code unions both lists. FTS5 would say
+that as `("men" OR "man")`, which is the exact string D3 forbids. So the union is expressed as one
+statement per form combination and unioned in TypeScript, which is provably the same set, bounded at
+four combinations, and emits no `OR`.
+
+### What D3's adversarial review changed
+
+Five lenses (plan compliance; what breaks that no test covers; is the answer actually the same; the
+`retrieve.ts` seam; the SQL, the caps and the platform), then two refuters per finding, refuting by
+default. 17 findings, 12 verified, and **four survived both refuters — all four the same bug.**
+
+#### The blocking one: `store.segment()` threw on a long passage
+
+`candidateSubstrings` returns every distinct ≤16-character substring of every hanzi run — Θ(16n) and
+unbounded — and `wordCandidates` bound the whole list as `?` placeholders. SQLite's
+`SQLITE_MAX_VARIABLE_NUMBER` is **32,766** on the shipped `node:sqlite`, so a passage of about 2,100
+varied hanzi threw a raw `too many SQL variables`. Four independent verifiers reproduced it: 2,000
+hanzi segmented in 152 ms, 2,200 threw, 20,000 threw. The JSON segmenter it replaces returns 9,471
+tokens for 20,000 characters — which is exactly the limit
+`app/api/dict/segment/route.ts` documents (`MAX_TEXT_CHARS = 20_000`) for the route D6 re-points at
+the store, and `lib/stores/reader.ts` posts a whole pasted paragraph with no client cap.
+
+Worse than the throw: the suite asserted the opposite. `gloss.test.ts` claimed "segmentation is two
+round trips **whatever the passage length**" using a 66-character passage, and the HANDOFF section
+above repeated it.
+
+**Every unbounded `IN (…)` is now chunked** — `entriesByIds`, `entriesByRowids`,
+`readingsOfHeadwords`, `wordCandidates` and `readingsOfWords` — at 900 values, which is under the
+**999** that was SQLite's default before 3.32 and that neither `@sqlite.org/sqlite-wasm` nor the
+SQLCipher pod has been checked against. The limit is a compile-time option and the three runtimes are
+three different builds, so the number is chosen for the oldest of them rather than for the one that
+happens to be running the tests. **The chunks ride in the same batch, so the round-trip count does
+not move** — which is the whole reason this costs nothing. 20,000 hanzi now segments in 785 ms and
+matches the JSON segmenter token for token.
+
+Chunking then produced a second bug within the hour, and the new test caught it immediately:
+`readingsOfWords` binds its list **twice** (`simp IN (…) OR trad IN (…)`), so an entry whose `simp`
+falls in one chunk and whose `trad` falls in another is returned by both — 着 came back with eight
+readings instead of four. Results from a chunked query are now deduped and re-sorted by rowid
+centrally, because `ORDER BY rowid` orders rows *within* a statement and a chunked query is several.
+
+#### The blind spot the `rank.ts` and DP sharing creates
+
+The inversion made `planSegments`/`route` shared by both implementations — which is what stops them
+disagreeing about the cutting, and is also why **no differential can see a change to the DP**. Three
+mutations passed the entire suite: flipping jieba's `(score, end)` tie-break so a shorter word wins,
+doubling the unknown-word floor, and ignoring `maxLen`. The plan names all three as things that must
+survive the port, and nothing pinned any of them.
+
+`segment.test.ts` now drives `planSegments` directly with a hand-made `freqOf` and constants chosen so
+the decision sits exactly on the edge — no dictionary, no store, no arithmetic that drifts with the
+data. The tie-break case gives the long word a frequency of exactly `1/total`, which makes the two
+paths equal to the last bit so the tie-break alone decides; the floor case sets `a = 50, b = c = 7`,
+so the unknown-crossing path wins by one and loses by a mile if the floor moves.
+
+**And the cross-script candidate precedence had exactly one guarding case.** Inverting the two
+`wordCandidates` statements — so the *other* script wins a collision instead of the chosen one —
+passed everything, because a collision is rare: there are exactly **60** headwords in this snapshot
+that exist in both scripts with a different `headwordFreq`. Six texts that separate the two orders
+were found by running the DP with both maps over every headword containing a collision character
+(干么, 特么, 中宁, 乾安, 藉由, 大夥) and are now asserted by value and against the JSON implementation.
+
+There was also **no differential of the store's segmenter against the JSON one at all** — the plan's
+cases are all fixed literals, so both implementations could be wrong the same way. A 138-sentence
+corpus built from the dictionary's own headwords now compares them field for field, in both script
+forcings.
+
+#### Three smaller ones, fixed
+
+- **Every three-letter English query ran the same 5,000-row FTS statement twice.** `plan` ranks
+  `"plan"` and then probes `"plan"` for `isGlossToken` — the same SQL, run again, per keystroke. The
+  probe now reads the ranked statement's result when the MATCH string is identical, and still issues
+  its own where the two genuinely differ (`women` ranks `"woman"` and probes `{women, woman}`).
+- **The 200-query corpus asserted only that nothing was lost**, so a store that returned the whole
+  dictionary for every query would have passed. It now also checks that every group the store *adds*
+  is a real gloss match for the query's own words.
+- **The fixed point's answered-no memo was unfalsifiable and its `MISSING` sentinel unreachable.**
+  Deleting the memo left every test green, because `ground()` drops an id outside the retrieved set
+  *before* asking. The guard is now a set of ids already **asked** rather than a fake `Entry` for ids
+  not **found** — so the loop's termination does not depend on a detail of the function it is
+  driving — and a test drives it through a store that answers nothing at all. `truncatedForms`, a
+  field set and never read, is gone.
+
+#### A gotcha worth more than the bug it hid
+
+**`pnpm exec tsc --noEmit` at the workspace root is not the app's typecheck.** The root `tsconfig.json`
+includes `scripts/**` only, so it sees the 16 app modules the scripts import transitively and nothing
+else — `sqlite-store.ts` among the missing. A `ReferenceError: bySimp is not defined` survived a
+clean root `tsc` and was caught by the test suite instead. `pnpm typecheck` runs both projects and is
+the one to use; the short form looks like a full check and is a partial one.
+
+And one process note, paid for in lost work: **do not use `git checkout <file>` to restore a mutated
+file during mutation testing.** Three of these fixes were uncommitted when a mutation script reverted
+`query/entries.ts` that way, and the chunking had to be written twice. Copy the file aside first.

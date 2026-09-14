@@ -56,13 +56,37 @@ interface SegmentIndex {
 /** Keyed off the index object, so `resetDictCache()` drops this with everything else. */
 const STATS = new WeakMap<DictIndex, SegmentIndex>();
 
-function headwordFreq(index: DictIndex, ids: readonly EntryId[]): number {
+/**
+ * The frequency the DP scores a headword at, and the value `words.freq` holds in
+ * the artifact. Exported because `scripts/build-data.ts` and
+ * `scripts/verify-data.ts` must *call* it rather than re-implement it: SQL
+ * `MAX(freq)` and replaying `compareEntries` give a different answer wherever a
+ * jieba frequency is 0 or absent, and the symptom is a sentence nobody wrote a
+ * segmentation case for (data.md §6).
+ */
+export function headwordFreq(index: DictIndex, ids: readonly EntryId[]): number {
   // Ids are stored frequency-descending, so the first one carries the word's freq.
   const first = ids.length > 0 ? index.entries.get(ids[0]) : undefined;
   return first?.freq ?? 1;
 }
 
-function statsFor(index: DictIndex, map: Map<string, EntryId[]>): ScriptStats {
+/**
+ * The two numbers the DP needs about a script, before the log is taken:
+ * the summed head frequency of every headword, and the longest headword the
+ * scan will try.
+ *
+ * Exported for the same reason `headwordFreq` is. `scripts/build-data.ts`
+ * writes both into `meta` and `scripts/verify-data.ts` checks them, and D2
+ * replaces this function with a `meta` read — so all three have to agree about
+ * `maxLen`'s quirk (a headword longer than `MAX_WORD_CHARS` does not raise it)
+ * and about summing `headwordFreq` rather than raw `freq`. Two re-implementations
+ * of a nine-line loop is how the segmenter's floor quietly shifts.
+ */
+export function headwordTotals(
+  index: DictIndex,
+  script: SegmentScript,
+): { total: number; maxLen: number } {
+  const map = script === 'simp' ? index.bySimp : index.byTrad;
   let total = 0;
   let maxLen = 1;
   for (const [word, ids] of map) {
@@ -70,13 +94,18 @@ function statsFor(index: DictIndex, map: Map<string, EntryId[]>): ScriptStats {
     const length = [...word].length;
     if (length > maxLen && length <= MAX_WORD_CHARS) maxLen = length;
   }
+  return { total, maxLen };
+}
+
+function statsFor(index: DictIndex, script: SegmentScript): ScriptStats {
+  const { total, maxLen } = headwordTotals(index, script);
   return { logTotal: Math.log(total || 1), maxLen };
 }
 
 function segmentIndex(index: DictIndex): SegmentIndex {
   let cached = STATS.get(index);
   if (!cached) {
-    cached = { simp: statsFor(index, index.bySimp), trad: statsFor(index, index.byTrad) };
+    cached = { simp: statsFor(index, 'simp'), trad: statsFor(index, 'trad') };
     STATS.set(index, cached);
   }
   return cached;
@@ -116,11 +145,23 @@ interface Cut {
   score: number;
 }
 
-/** One hanzi run → the character indexes it should be cut at. */
+/**
+ * One hanzi run → the character indexes it should be cut at.
+ *
+ * The inversion (docs/plans/data.md D3) changes the signature and **nothing
+ * else**: `lookup`/`freqOf` become one `freqOf(word)`, because under a
+ * `words(script, word, freq)` table there are no entry ids during the DP — they
+ * are fetched for the chosen words afterwards. The loop body's two changes are
+ * mechanical, `const ids = lookup(word)` → `const freq = freqOf(word)` and
+ * `if (!ids && length > 1) continue` → `if (freq === undefined && length > 1)
+ * continue`, and everything else is checkable as a line-level diff: the reverse
+ * scan, `Math.min(stats.maxLen, n - i)`, `-stats.logTotal` as the unknown-word
+ * weight, `Math.log(freq) - stats.logTotal`, and jieba's `(score, end)`
+ * tie-break where a longer word wins an exact tie.
+ */
 function route(
   chars: readonly string[],
-  lookup: (word: string) => EntryId[] | undefined,
-  freqOf: (ids: readonly EntryId[]) => number,
+  freqOf: (word: string) => number | undefined,
   stats: ScriptStats,
 ): Cut[] {
   const n = chars.length;
@@ -133,9 +174,9 @@ function route(
     for (let length = 1; length <= span; length += 1) {
       const end = i + length;
       const word = chars.slice(i, end).join('');
-      const ids = lookup(word);
-      if (!ids && length > 1) continue;
-      const weight = ids ? Math.log(freqOf(ids)) - stats.logTotal : floor;
+      const freq = freqOf(word);
+      if (freq === undefined && length > 1) continue;
+      const weight = freq === undefined ? floor : Math.log(freq) - stats.logTotal;
       const score = weight + best[end].score;
       // jieba compares `(score, end)`, so a longer word wins an exact tie.
       if (chosen === null || score > chosen.score || (score === chosen.score && end > chosen.end)) {
@@ -147,21 +188,64 @@ function route(
   return best;
 }
 
-/**
- * Segment a string. Throws `DictDataMissingError` when `data/` has not been built,
- * which the route turns into a 503.
- */
-export function segment(text: string, options: SegmentOptions = {}): SegmentResult {
-  const index = getDictIndex();
-  const script = options.script ?? detectScript(index, text);
-  const stats = segmentIndex(index)[script];
-  const primary = script === 'simp' ? index.bySimp : index.byTrad;
-  const secondary = script === 'simp' ? index.byTrad : index.bySimp;
-  const lookup = (word: string): EntryId[] | undefined =>
-    primary.get(word) ?? secondary.get(word);
-  const freqOf = (ids: readonly EntryId[]): number => headwordFreq(index, ids);
+// ---------------------------------------------------------------------------
+// The inverted segmenter (docs/plans/data.md D3)
+// ---------------------------------------------------------------------------
 
+/** The two constants of a script. Read from `meta` by the store, computed by the index. */
+export interface SegmentStats {
+  logTotal: number;
+  maxLen: number;
+}
+
+/**
+ * Everything the DP needs that is not the text, as D3 specifies it.
+ *
+ * `candidates` spans **both scripts**, with the chosen script winning on
+ * collision, and that is not an optimisation — a regression case depends on it.
+ * `segment()` looks a word up in the chosen script's headwords and falls back to
+ * the other script's, and `segment.test.ts` asserts that `segment('學習',
+ * { script: 'simp' })` returns `'simp'`: 學習 is a *traditional* headword, so it
+ * is found only through that fallback. A single-script candidate query returns
+ * nothing for it, the DP falls back to single characters, and the assertion
+ * changes meaning without failing loudly.
+ */
+export interface SegmentInput {
+  script: SegmentScript;
+  stats: SegmentStats;
+  candidates: ReadonlyMap<string, number>;
+  /** Every reading of a chosen word, in rowid order. */
+  idsFor: (word: string) => readonly EntryId[];
+}
+
+/** What the DP decided, before any entry ids have been fetched. */
+export interface SegmentPlan {
+  text: string;
+  script: SegmentScript;
+  /** Tokens with `entryIds` still empty; `via` is already correct. */
+  tokens: Token[];
+  /** The distinct chosen word tokens that matched a headword, in order. */
+  words: string[];
+}
+
+/**
+ * Cut the text, without needing any entry ids.
+ *
+ * Split out from `segmentWith` because the store cannot have both halves at
+ * once: D3 budgets `segment()` at two round trips, one for the candidate
+ * substrings and one for "the chosen words' entry ids", and the chosen words are
+ * not known until this function has run. `SegmentInput.idsFor` as D3 prints it
+ * cannot be filled before the call it is an argument to.
+ */
+export function planSegments(
+  text: string,
+  input: { script: SegmentScript; stats: SegmentStats; freqOf: (word: string) => number | undefined },
+): SegmentPlan {
+  const { script, stats, freqOf } = input;
   const tokens: Token[] = [];
+  const words: string[] = [];
+  const seen = new Set<string>();
+
   // Character array plus its UTF-16 offsets: `Token.start`/`end` are code units
   // (lib/types.ts), while the DAG has to run over code points or a rare
   // extension-B character would be cut in half.
@@ -195,24 +279,84 @@ export function segment(text: string, options: SegmentOptions = {}): SegmentResu
     let runEnd = i;
     while (runEnd < chars.length && hasCjk(chars[runEnd])) runEnd += 1;
     const run = chars.slice(i, runEnd);
-    const cuts = route(run, lookup, freqOf, stats);
+    const cuts = route(run, freqOf, stats);
     let at = 0;
     while (at < run.length) {
       const end = cuts[at].end;
       const word = run.slice(at, end).join('');
-      const ids = lookup(word);
+      const known = freqOf(word) !== undefined;
       tokens.push({
         text: word,
         start: offsets[i + at],
         end: offsets[i + end],
         kind: 'word',
-        entryIds: ids ? [...ids] : [],
-        via: ids ? 'entry' : 'fallback',
+        entryIds: [],
+        via: known ? 'entry' : 'fallback',
       });
+      if (known && !seen.has(word)) {
+        seen.add(word);
+        words.push(word);
+      }
       at = end;
     }
     i = runEnd;
   }
 
-  return { text, script, tokens };
+  return { text, script, tokens, words };
+}
+
+/**
+ * Fill in each word token's readings.
+ *
+ * `entryIds` carries **every** reading of the matched headword, frequency-ordered
+ * and never truncated: 了 is one token with `le` and `liǎo` on it, and the panel
+ * that opens from a tap is the thing that decides between them.
+ */
+export function attachIds(
+  plan: SegmentPlan,
+  idsFor: (word: string) => readonly EntryId[],
+): SegmentResult {
+  return {
+    text: plan.text,
+    script: plan.script,
+    tokens: plan.tokens.map((token) =>
+      token.kind === 'word' && token.via === 'entry'
+        ? { ...token, entryIds: [...idsFor(token.text)] }
+        : token,
+    ),
+  };
+}
+
+/** D3's named entry point, for a caller that already holds both halves. */
+export function segmentWith(text: string, input: SegmentInput): SegmentResult {
+  const plan = planSegments(text, {
+    script: input.script,
+    stats: input.stats,
+    freqOf: (word) => input.candidates.get(word),
+  });
+  return attachIds(plan, input.idsFor);
+}
+
+/**
+ * Segment a string against the JSON index. Throws `DictDataMissingError` when
+ * `data/` has not been built, which the route turns into a 503.
+ *
+ * Kept until D6: it is the differential oracle `tests/unit/dict/segment.test.ts`
+ * and the store's own tests compare against, and it now drives the **same** DP
+ * the store does, so the two cannot disagree about the cutting — only about
+ * which candidates they were given.
+ */
+export function segment(text: string, options: SegmentOptions = {}): SegmentResult {
+  const index = getDictIndex();
+  const script = options.script ?? detectScript(index, text);
+  const stats = segmentIndex(index)[script];
+  const primary = script === 'simp' ? index.bySimp : index.byTrad;
+  const secondary = script === 'simp' ? index.byTrad : index.bySimp;
+  const lookup = (word: string): EntryId[] | undefined => primary.get(word) ?? secondary.get(word);
+  const freqOf = (word: string): number | undefined => {
+    const ids = lookup(word);
+    return ids ? headwordFreq(index, ids) : undefined;
+  };
+  const plan = planSegments(text, { script, stats, freqOf });
+  return attachIds(plan, (word) => lookup(word) ?? []);
 }

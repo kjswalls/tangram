@@ -173,8 +173,12 @@ function searchEntries(query: string, limit: number): Entry[] {
  * searched one at a time — otherwise the retrieval echo has nothing to echo and
  * §3.4's "no query ever renders an empty panel" fails on the first real
  * sentence somebody types.
+ *
+ * Exported only so `tests/unit/ai/retrieve.test.ts` can compare it against
+ * `lib/ai/retrieve.ts`'s store-backed port entry for entry (docs/plans/data.md
+ * D3, criterion 9). `data.md` D6 deletes this copy along with the route.
  */
-function mergedSearch(query: string): Entry[] {
+export function mergedSearch(query: string): Entry[] {
   const found = searchEntries(query, 20);
   if (found.length > 0 || hasCjk(query)) return found;
 
@@ -194,8 +198,12 @@ function mergedSearch(query: string): Entry[] {
   return out;
 }
 
-/** Every entry behind every token of a proposed phrase, in phrase order. */
-function candidateEntries(candidates: readonly string[]): Entry[] {
+/**
+ * Every entry behind every token of a proposed phrase, in phrase order.
+ *
+ * Exported for the same reason as `mergedSearch` above, and deleted with it.
+ */
+export function candidateEntries(candidates: readonly string[]): Entry[] {
   const out: Entry[] = [];
   const seen = new Set<EntryId>();
   for (const candidate of candidates.slice(0, 8)) {

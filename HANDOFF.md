@@ -5642,6 +5642,29 @@ C0's theme model and C0's control.
   repeat the key (`// applicationId "com.evil.old"`); a comment that does not is harmless either way.
   Corrected to the mutation that was actually run.
 
+### Three claims in the A0 table above that the review found overstated
+
+All three are corrected in the code and the plan; the table above is append-only, so read these as
+superseding it.
+
+1. **"`validateScheme` restricts `server.androidScheme` to `http` or `https`" — wrong.** It rejects a
+   denylist — `file`, `ftp`, `ftps`, `ws`, `wss`, `about`, `blob`, `data` — and for any *other*
+   non-`http(s)` scheme it only logs *"Using a non-standard scheme … known to cause issues as of
+   Android Webview 117"* and **returns true**. The default is still `https`, so the recorded origin
+   `https://localhost` stands; what is wrong is the claim about what the app could be configured to.
+2. **"Capacitor's WebView gate blocks; it does not warn" — conditional, and today it does not block.**
+   `Bridge.load()` loads the error page **only if `server.errorPath` is configured**; with none — which
+   is this project — it logs `System WebView is not supported` and loads the app anyway. So there is
+   no wall at WebView 60 today. The reason A6 must still leave `android.minWebViewVersion` alone is
+   unchanged and is now stated as the real one: `errorPath` is one config key away, and the two
+   together are exactly the wall A6 refuses.
+3. **"`capacitor.settings.gradle` embeds *absolute* module paths" — they are relative**
+   (`../../../node_modules/.pnpm/…`). What makes them unfit to commit is not absoluteness but that
+   they name **pnpm's virtual-store layout**, version and peer hash included. And `git status` is not
+   dirty after *every* sync — a sync with the dependency tree unchanged rewrites them byte-identically.
+   It is dirty after the sync that follows an upgrade, which is when nobody is looking at that file.
+   The rule is unchanged; the reason is narrower than it was written.
+
 ### Where the Android track stands, and what the next session should not assume
 
 - **A0 is blocked, not complete**, on the Play Console (owner's identity and payment; the policy pages

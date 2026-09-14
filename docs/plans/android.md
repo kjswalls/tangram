@@ -1032,13 +1032,24 @@ does not use.
   not be read (`github.com` issues and `issues.chromium.org` are both egress-blocked here), but its
   claim is refuted by the shipped source whatever its status.
 
-  **And the consequence A6 has to absorb: a wall exists at WebView 60 whatever this phase does.**
-  `DEFAULT_ANDROID_WEBVIEW_VERSION` is 60 and `android.minWebViewVersion` cannot be set below 55, so
-  Capacitor loads its error page — or, with no `errorUrl` configured, logs `System WebView is not
-  supported` and continues — before any app code runs. This phase's comfort floor is therefore **a
-  banner over the range above 60**, and criterion 2's "the app remains fully usable" is a claim about
-  that range. Below 60 the answer is Capacitor's, not this app's, and no banner of ours is reached.
-  Nothing in this phase makes that wall go away; what this phase must not do is add a second one.
+  **And the consequence A6 has to absorb, stated exactly, because the first version of this note
+  overstated it.** `DEFAULT_ANDROID_WEBVIEW_VERSION` is 60 and `android.minWebViewVersion` cannot be
+  set below 55, so below the floor `Bridge.load()` takes this branch:
+
+  ```java
+  if (!this.isMinimumWebViewInstalled()) {
+      String errorUrl = this.getErrorUrl();
+      if (errorUrl != null) { webView.loadUrl(errorUrl); return; }
+      else { Logger.error(MINIMUM_ANDROID_WEBVIEW_ERROR); }
+  }
+  ```
+
+  **It blocks only when `server.errorPath` is configured, and this project configures none** — so
+  today a device below WebView 60 gets one line in logcat and the app loads anyway. So there is no
+  wall right now, and A6's *"a banner, not a wall"* is unthreatened. What A6 must not do is create
+  one: `errorPath` is one config key away, and raising `minWebViewVersion` to the comfort floor
+  alongside it is exactly the wall this phase refuses. The key stays at its default and
+  `tests/unit/platform/android-project.test.ts` fails if a later phase raises it.
 - **The verification job:** walk `core.md` C3–C6 and confirm that every engine feature they depend on
   either works in any Chromium the app can meet or has a feature-detected degrade the way C5's does.
   C5 is settled. If any *other* surface turns out to depend on a versioned feature with no degrade,

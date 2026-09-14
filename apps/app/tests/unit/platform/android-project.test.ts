@@ -142,14 +142,24 @@ describe('the application id', () => {
 
 describe('the WebView floor stays advisory (A6)', () => {
   /**
-   * **Capacitor 8.5.2 does have a built-in WebView version gate, and it blocks.**
-   * `android.md` A6 says it does not, citing Capacitor issue #4884; the shipped
-   * source disagrees. `@capacitor/android@8.5.2`
+   * **Capacitor 8.5.2 does have a built-in WebView version gate, and it can
+   * block.** `android.md` A6 says it does not exist, citing Capacitor issue
+   * #4884; the shipped source disagrees. `@capacitor/android@8.5.2`
    * `capacitor/src/main/java/com/getcapacitor/Bridge.java`:
    *
    *   public static final int MINIMUM_ANDROID_WEBVIEW_VERSION = 55;
    *   public static final int DEFAULT_ANDROID_WEBVIEW_VERSION = 60;
-   *   if (!this.isMinimumWebViewInstalled()) { webView.loadUrl(errorUrl); return; }
+   *   if (!this.isMinimumWebViewInstalled()) {
+   *       String errorUrl = this.getErrorUrl();
+   *       if (errorUrl != null) { webView.loadUrl(errorUrl); return; }
+   *       else { Logger.error(MINIMUM_ANDROID_WEBVIEW_ERROR); }
+   *   }
+   *
+   * **Whether it blocks depends on `server.errorPath`**, and this project
+   * configures none — so today a below-floor device gets one logcat line and the
+   * app loads anyway. That is not a reason to relax: `errorPath` is one config
+   * key away, and raising `minWebViewVersion` alongside it would turn A6's
+   * banner into the wall A6 refuses.
    *
    * and `CapConfig.java` reads `android.minWebViewVersion` from the config,
    * flooring it at 55. So raising that key to A6's comfort floor would replace
@@ -201,9 +211,10 @@ describe('the gitignore rules that keep large and secret files out (A1 criterion
 
   it('ignores the two Gradle files cap sync regenerates', () => {
     // `capacitor.settings.gradle` embeds `node_modules/.pnpm/<name>@<version>_
-    // <peer-hash>/...` paths out of the installed tree. Committing it commits a
-    // path that goes stale on any version or peer change, and makes `git status`
-    // dirty after every sync. Capacitor's own template gitignore omits both;
+    // <peer-hash>/...` paths out of the installed tree — relative to the file,
+    // but naming pnpm's store layout. Committing it commits a path that goes
+    // stale on any version or peer change, and leaves `git status` dirty after
+    // the sync that follows one. Capacitor's own template gitignore omits both;
     // under pnpm that omission is wrong. See the .gitignore for the full note.
     for (const pattern of ['capacitor.settings.gradle', 'app/capacitor.build.gradle']) {
       expect(ignore.split('\n'), pattern).toContain(pattern);

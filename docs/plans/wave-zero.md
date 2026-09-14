@@ -222,6 +222,53 @@ like it matched, with every local gate green — the first was the dictionary tr
 were caught by an adversarial reviewer rather than by a test, and in both cases the fix included a new
 test that can catch the next one.
 
+## 10b. V1 — the phone shell is NOT behind an iPhone — SETTLED
+
+The verification register's V1 asked whether `core.md` C7 may land before C5b, because the answer
+decides whether the whole Android track waits on Apple hardware. **It may. C7 is not gated on C5b.**
+
+**Why the gate exists, and why it is right.** `ios.md` I2 answers register #1 on a physical iOS 26
+device: the reported WKWebView crash against `-webkit-user-select: none` during touch. That property
+is how drag-select stops the ruby annotations being swept into the selection, so it is load-bearing.
+C5a builds the prototype in a harness touching no production file, I2 runs against that harness, and
+C5b — the production rewrite — waits for the answer. That ordering stands and is not reopened.
+
+**What was wrong was the inheritance, not the gate.** `android.md` A2, A4 and A6 gated on *ranges* of
+core phases (C7; C6; C3–C6), and those ranges contain C5b. So Android's second phase — which needs a
+tab bar and a CSS variable — transitively waited on an iPhone. That was nobody's intent and
+contradicts both `android.md`'s own premise and STACK §4.
+
+**And the two documents disagreed.** `core.md` §4 already says register #1 gates *"Before C5b, and
+before nothing else here."* `README.md`'s wave 5 put C7 after C5b anyway, and §8's disposition table
+implied it. Read against what C7 actually builds — the three-tab shell, the wide breakpoint, the
+Practice queue merge, `components/shell/**` — none of it consumes C5b. The only real coupling is that
+C7 assembles the Look up tab around a reader C5b later rewrites: rework to sequence sensibly, not a
+dependency.
+
+**Rulings.**
+
+1. **`core.md` §4 governs.** C7 may land before C5b. `README.md`'s wave table is corrected, not §4.
+2. **`android.md` A2, A4 and A6 stop gating on phase ranges** and name the artifacts they need: the
+   `TabBar` primitive and the shell's inset CSS variable (A2), `lib/tts/sequence.ts` (A4), the engine
+   feature list C5a measured (A6). None of those is C5b.
+3. **Prefer C7 after C5b when both are free**, to avoid assembling the Look up tab twice — a
+   preference for the scheduler, never a gate another plan may inherit.
+4. **V4 falls out with it.** Wave 0b stops claiming `core.md` C0 runs in parallel with `web.md` W0.
+   C0 edits the manifest W0 is splitting. C0 follows W0.
+
+## 10c. The two shells — SETTLED by the owner (2026-09-14)
+
+- **Wide-screen web gets the PAGE shell**, not the command palette.
+- **The desktop application gets the PALETTE, with the global hotkey** — which was always the
+  palette's only real justification, since a browser tab cannot summon itself.
+- **The desktop application is deferred.** `core.md` C9 (the palette) and `web.md`'s Tauri work go
+  with it. The installed PWA remains the desktop story until someone asks for the hotkey.
+- **The default theme is Inkstone** — the warm paper ground, ink text and vermillion accent already
+  specified as the visual language. The dark variant is optional and not the default.
+
+This resolves the tension the design session left open: the palette earns its keep only where the
+hotkey exists, so it ships with the application and the web keeps the shell that suits a browser.
+
 ## 11. `ios.md`'s contested-surfaces table — DELETE IT (issue 4)
 
 `android.md` is correct on all three rows and `ios.md` misquotes it on all three. Verified at HEAD:

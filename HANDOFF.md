@@ -4840,9 +4840,14 @@ has no `Package.swift` at all. `tests/unit/platform/ios-project.test.ts` holds t
 either way: it asserts the manifest's `.vN` against the pbxproj target **and** against what its own
 tools version can express.
 
-**`-webkit-ruby-position` is not emitted** — the question `core.md` C3 handed to this phase by name.
-Unprefixed `ruby-position` shipped in Safari 18.2 and the target is 18.2, so the prefix would be dead
-bytes on every supported device.
+**`-webkit-ruby-position` is still not emitted** — the question `core.md` C3 handed to this phase by
+name — but at 17.2 the reason changed, and C3 should know that. At an 18.2 target the prefix would
+have been unreachable code. At 17.2 there is a real band, iOS 17.2 to 18.1, where unprefixed
+`ruby-position` is absent. The answer is unchanged anyway, because the declaration in question is
+`over` and that is the engine's own default for horizontal text — a device that ignores the property
+lays the ruby out the same way, which is exactly why C3 calls the risk cosmetic. **If C3 ever
+declares a non-default `ruby-position`, the question reopens for that band**, and it is C3's to
+decide rather than something to pre-empt here with a speculative prefix.
 
 ### The shared surface `android.md` inherits
 
@@ -5131,9 +5136,9 @@ stamped service worker — **2,038 errors, none of them real**. `apps/app/eslint
 ignores `ios/**` and `android/**`. Android is listed now rather than at A1 because the copy is
 `cap sync`'s behaviour on both platforms, so A1 would hit the identical wall.
 
-### The deployment target is 18.2 in the project, and a test holds it there
+### The deployment target is 17.2 in the project, and a test holds it there
 
-`IPHONEOS_DEPLOYMENT_TARGET` is `18.2` in all four build configurations (the template ships 15.0).
+`IPHONEOS_DEPLOYMENT_TARGET` is `17.2` in all four build configurations (the template ships 15.0).
 The reasoning is in `capacitor.config.ts`'s header and in I0 above. It is guarded by a unit test
 because Xcode's "Update to recommended settings" is one click and rewrites `project.pbxproj`, and
 because losing it silently drops the three CSS features the reader is built on.

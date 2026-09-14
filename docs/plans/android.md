@@ -570,8 +570,21 @@ to prevent; and `StatusBar.updateStyle()` re-applies its own remembered style on
 change, so a rotation would undo a theme change made through `SystemBars` alone. Removing the package
 is **not** this phase's call (the dependency set is I0's, and `CLAUDE.md`'s rule is to write the need
 down and continue) — but **plugin configuration is**, which is what A2's Files list grants. So both are
-set to `LIGHT`, `lib/platform/system-bars.ts` sets both at runtime, and they agree instead of racing.
-`setOverlaysWebView()` remains the call nothing in the Android build may make.
+set to `LIGHT`, `lib/platform/system-bars.ts` sets both at runtime, and they agree instead of racing —
+and the config key also fixes rotation, because `setStyle` assigns `currentStyle` *before* resolving
+`DEFAULT` against the device theme, so `updateStyle()` then re-applies the app's choice rather than
+the phone's.
+
+**What configuration cannot reach, stated rather than waved at.** `StatusBarPlugin.load()` constructs
+`StatusBar` at plugin registration, and that constructor runs `setBackgroundColor(...)`,
+`setStyle(...)` **and `setOverlaysWebView(...)` with no JS call at all** — so ~~"nothing in the Android
+build may call this plugin"~~ was never a mitigation, it was a misunderstanding of when the plugin
+runs. Two of the three are settled by config. The third, `overlaysWebView`, defaults to `true` and
+drives the deprecated `setSystemUiVisibility` decor flags plus a transparent status-bar colour; those
+are ignored on Android 15+ and live across **API 24–34**, which `minSdk` 24 admits. **Whether that
+fights `SystemBars` on such a device is a hardware question**, so this phase does not guess at the
+key: it is item 7 of the device checklist in `HANDOFF.md`, and the only complete fix — excluding the
+package from the Android build — is `ios.md` I0's dependency-set call and is written down there.
 
 **The keyboard is the half that will actually break, and getting a pre-144 WebView to test it on is
 not free.** The lookup box is the first thing on the Look up tab and a practice write-card is an

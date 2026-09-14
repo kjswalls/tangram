@@ -5374,6 +5374,11 @@ Every one of these needs a phone, and one of them needs a phone that may not exi
    and that is the expected state rather than a bug to hunt.
 6. **Free while the inspector is open:** `navigator.userAgent` and the WebView version, for A0's
    matrix and A6's parser.
+7. *(added after the A2/A3 review — see the correction below.)* **`@capacitor/status-bar`'s
+   registration-time writes, on an API 24–34 device specifically.** Screenshot the top edge and say
+   whether anything is under the status bar. If it is, `StatusBar.overlaysWebView: false` is the first
+   thing to try; if that does not settle it, the package has to leave the Android build, which is
+   `ios.md` I0's call.
 
 ### A3 — type: what could be landed, and what is blocked on `web.md` W6
 
@@ -5686,3 +5691,41 @@ superseding it.
   Capacitor chunks (7,898 B and 842 B) are still unreferenced by `dist/index.html`.
 - `pnpm lint`, `pnpm typecheck`, `pnpm test` and `pnpm build` are green, `pnpm e2e` is 112 passed, and
   `git status` is clean after `pnpm run android:sync`.
+
+### The A2/A3 review's verdict, and the one correction it left standing
+
+**16 findings raised across four lenses, 2 survived both skeptics** — and as with the first review,
+the ratio is inflated by the fact that findings were acted on as they arrived, so the judge killed
+most of the rest as "already landed". Both survivors are about the same thing, and one of them
+corrects a correction I made earlier in this file.
+
+**`@capacitor/status-bar` writes window state at *plugin registration*, so "nothing in the Android
+build may call it" was never a mitigation.** `StatusBarPlugin.load()` constructs `StatusBar`, and that
+constructor runs, with no JavaScript involved:
+
+```java
+setBackgroundColor(config.getBackgroundColor());   // #000000 by default
+setStyle(config.getStyle());                       // "DEFAULT" by default
+setOverlaysWebView(config.isOverlaysWebView());    // true by default
+```
+
+Two of the three are settled by the `StatusBar: { style: 'LIGHT' }` key this session added — and that
+key does more work than it looks: `setStyle` assigns `currentStyle` **before** resolving `DEFAULT`
+against the device theme, so with it set, `updateStyle()` on every configuration change re-applies the
+app's choice rather than the phone's. Without it, a rotation in the dark variant would have snapped the
+bars back to device-following, which is A2's criterion 4.
+
+**The third is not reachable from configuration in a way this container can justify.**
+`overlaysWebView` defaults to `true` and drives the deprecated `setSystemUiVisibility` decor flags
+plus a transparent status-bar colour. Those are ignored on Android 15+ and **live across API 24–34**,
+which `minSdk` 24 admits — the same window state `SystemBars` is managing, with plugin iteration order
+over a `HashMap` deciding who writes last. Setting `overlaysWebView: false` might fix it or might make
+the top edge worse, and **there is no device here to find out on**, so the key is not guessed at: it is
+item 7 of A2's device checklist above.
+
+**For `ios.md` I0, whose dependency-set call this is.** The only complete fix is **excluding
+`@capacitor/status-bar` from the Android build** — Capacitor 8.5 ships `SystemBars` in core and it
+does everything that plugin does, better, on the platform where insets matter. A2 does not remove it,
+per `CLAUDE.md`'s rule about frozen surfaces, and the config above makes the common case agree. But
+the package is not merely redundant on Android: it is a second, self-starting owner of the window.
+If I5 has no iOS reason to keep it, dropping it is the smaller change.

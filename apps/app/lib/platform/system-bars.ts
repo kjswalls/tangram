@@ -55,10 +55,26 @@
  * and `CLAUDE.md`'s rule is to write the need down and continue. What is this
  * phase's call is **plugin configuration**, which `android.md` A2's Files list
  * grants, so both are configured to `LIGHT` and this function sets both. They
- * agree instead of racing, and it costs one config key and four lines.
- * `setOverlaysWebView()` is still the thing nothing may call: it drives the
- * deprecated `setSystemUiVisibility` decor flags, which is the window state
- * `SystemBars` is managing.
+ * agree instead of racing, and it costs one config key and four lines. The key
+ * also fixes rotation: `setStyle` assigns `currentStyle` *before* resolving
+ * `DEFAULT` against the device theme, so with the config set that field holds
+ * `LIGHT` and `updateStyle()` re-applies the app's choice instead of the phone's.
+ *
+ * **What configuration cannot reach, and it is worth being exact about.**
+ * `StatusBarPlugin.load()` constructs `StatusBar` at plugin registration, and
+ * that constructor runs `setBackgroundColor(config.getBackgroundColor())`,
+ * `setStyle(config.getStyle())` and
+ * `setOverlaysWebView(config.isOverlaysWebView())` **with no JS call at all** —
+ * so "nothing in the Android build may call this plugin" is not a mitigation,
+ * it is a misunderstanding of when the plugin runs. Two of those three are
+ * settled by config; the third is `overlaysWebView`, which defaults to `true`
+ * and drives the deprecated `setSystemUiVisibility` decor flags plus a
+ * transparent status-bar colour. Those flags are ignored on Android 15+ but are
+ * live across API 24–34, which `minSdk` 24 admits. **Whether that fights
+ * `SystemBars` on such a device is a hardware question this container cannot
+ * answer**, so it is not guessed at here: it is an item on A2's device
+ * checklist and a note to `ios.md` I0 in `HANDOFF.md`, whose dependency-set call
+ * it is. The only complete fix is excluding the package from the Android build.
  */
 import { isAndroid } from '@/lib/platform/native';
 

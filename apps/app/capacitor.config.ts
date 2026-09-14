@@ -84,9 +84,16 @@
  * platform with `--packagemanager CocoaPods`, which has no `Package.swift` at
  * all. Neither could be tested in the container this was written in.
  *
- * **`-webkit-ruby-position` is not emitted** — the question `core.md` C3 handed
- * to this phase by name. Unprefixed `ruby-position` shipped in Safari 18.2, the
- * target is 18.2, so the prefix would be dead bytes on every supported device.
+ * **`-webkit-ruby-position` is still not emitted** — the question `core.md` C3
+ * handed to this phase by name — but the reason is no longer "the target makes
+ * it dead bytes", and C3 should know that. At an 18.2 target it would have been
+ * unreachable code. At 17.2 there is a real band, iOS 17.2 to 18.1, where
+ * unprefixed `ruby-position` is absent. The answer is unchanged anyway, because
+ * the declaration in question is `over`, which is the engine's own default for
+ * horizontal text: a device that ignores the property lays the ruby out the same
+ * way, which is exactly why C3 calls the risk cosmetic. **If C3 ever declares a
+ * non-default `ruby-position`, this question reopens for that band** — and that
+ * is a `core.md` decision, not one to pre-empt here with a speculative prefix.
  *
  * **`appId` is provisional.** It is baked into the Xcode project at
  * `cap add ios` and can never change after the first App Store Connect upload

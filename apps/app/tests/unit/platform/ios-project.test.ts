@@ -9,9 +9,10 @@
  *
  *  - **Xcode rewrites `project.pbxproj` whenever it feels like it.** "Update to
  *    recommended settings" is one click and it touches deployment targets. The
- *    18.2 target is not cosmetic: it is what makes `ruby-position`, the CSS
- *    Custom Highlight API and the `user-select: none` copy exclusion guaranteed
- *    rather than hoped for (`capacitor.config.ts`'s header).
+ *    17.2 target is not cosmetic: it is the CSS Custom Highlight API's floor,
+ *    which is what paints the drag selection, and it is also the highest `.vN`
+ *    the generated `Package.swift`'s tools version can express — so the number
+ *    is load-bearing in two directions at once (`capacitor.config.ts`'s header).
  *  - **The bundle identifier can never change after the first App Store Connect
  *    upload**, and it lives in two files that are written from a third.
  *  - **UIScene is a future-dated, launch-breaking requirement** (`ios.md` R10:
@@ -88,7 +89,7 @@ describe('the generated iOS project', () => {
     }
   });
 
-  it('carries the 18.2 deployment target in every build configuration', () => {
+  it('carries the 17.2 deployment target in every build configuration', () => {
     const pbxproj = readFileSync(PBXPROJ, 'utf8');
     const targets = [...pbxproj.matchAll(/IPHONEOS_DEPLOYMENT_TARGET = ([\d.]+);/g)].map((m) => m[1]);
 

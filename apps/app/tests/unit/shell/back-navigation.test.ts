@@ -375,3 +375,30 @@ describe('two presses before the router answers the first', () => {
     expect(nav.handleBack({ overlayOpen: false })).toEqual({ type: 'switch-tab', to: '/lookup' });
   });
 });
+
+describe('an unenumerated route keeps the tab it was recorded under', () => {
+  it('does not offer a pop out of the tab once the learner has moved on', () => {
+    // `/entry/x` is under no tab root, so it is filed under the tab it was
+    // opened from. Asking again later would answer with whatever tab the learner
+    // is in *now* — so from Stats, the entry below would look like a Stats page
+    // and rule 2 would pop straight out of Stats into it.
+    const nav = createBackNavigation(SEVEN);
+    nav.visit('/', 'POP');
+    nav.visit('/lookup');
+    nav.visit('/entry/zhongwen');
+    nav.visit('/stats');
+
+    expect(nav.snapshot()).toMatchObject({ current: '/stats', depth: 0 });
+    expect(nav.handleBack({ overlayOpen: false })).toEqual({ type: 'switch-tab', to: '/lookup' });
+  });
+
+  it('still offers the pop while the learner is in the tab that recorded it', () => {
+    const nav = createBackNavigation(SEVEN);
+    nav.visit('/', 'POP');
+    nav.visit('/lookup');
+    nav.visit('/entry/zhongwen');
+
+    expect(nav.snapshot()).toMatchObject({ current: '/lookup', depth: 1 });
+    expect(nav.handleBack({ overlayOpen: false })).toEqual({ type: 'pop' });
+  });
+});

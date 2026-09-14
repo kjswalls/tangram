@@ -165,7 +165,16 @@ export function createBackNavigation(tabs: readonly string[]): BackNavigation {
    * rule 2 fires only when the entry below is in the same tab, which is what
    * makes `navigate(-1)` safe.
    */
-  let entries: string[] = [];
+  /**
+   * **Each entry carries the tab it was recorded under, not just its path.**
+   * `tabOf` falls back to "the tab the learner is in" for a path under no root,
+   * and that answer is only true at the moment of the arrival. Resolving it
+   * again later reads the *current* tab, so `/entry/x` opened from Look up would
+   * be re-read as belonging to whichever tab the learner is in when they press
+   * back — and rule 2 would offer a pop that leaves the tab it promised to stay
+   * in. Resolve once, at record time.
+   */
+  let entries: Array<{ path: string; tab: string }> = [];
   let mru: string[] = [];
   let current: string | null = null;
   let pendingBackTo: string | null = null;
@@ -217,23 +226,26 @@ export function createBackNavigation(tabs: readonly string[]): BackNavigation {
       const tab = tabOf(path);
       if (tab === null) return;
 
+      const entry = { path, tab };
+      const top = () => entries[entries.length - 1];
+
       if (entries.length === 0) {
         // The first arrival is the entry the app opened on. It is not poppable,
         // whatever the router calls it: a cold start reports POP.
-        entries = [path];
+        entries = [entry];
       } else if (kind === 'POP') {
         if (entries.length > 1) entries.pop();
         // Resync if the router went somewhere this model did not record — a
         // multi-entry traversal, or a restore. The observed location always wins.
-        if (entries[entries.length - 1] !== path) entries = [path];
+        if (top().path !== path) entries = [entry];
       } else if (kind === 'REPLACE') {
         // A replace onto the entry below it collapses rather than duplicating —
         // otherwise rule 2 offers a pop that lands on the same page.
-        if (entries.length > 1 && entries[entries.length - 2] === path) entries.pop();
-        else entries[entries.length - 1] = path;
-      } else if (entries[entries.length - 1] !== path) {
+        if (entries.length > 1 && entries[entries.length - 2].path === path) entries.pop();
+        else entries[entries.length - 1] = entry;
+      } else if (top().path !== path) {
         // A re-render that re-reports the same location is not a navigation.
-        entries.push(path);
+        entries.push(entry);
       }
 
       if (pendingBackTo !== null && pendingBackTo === tab) {
@@ -258,7 +270,7 @@ export function createBackNavigation(tabs: readonly string[]): BackNavigation {
       // is not "the current tab's own history stack", and rule 3 decides where
       // to go instead.
       const below = entries.length > 1 ? entries[entries.length - 2] : undefined;
-      if (below !== undefined && tabOf(below) === tab) return { type: 'pop' };
+      if (below !== undefined && below.tab === tab) return { type: 'pop' };
 
       // A second press before the router has reported the first switch must
       // re-issue it, not decide again. `handleBack` mutates — it pops the
@@ -279,10 +291,7 @@ export function createBackNavigation(tabs: readonly string[]): BackNavigation {
 
     snapshot() {
       let depth = 0;
-      while (
-        entries.length - 2 - depth >= 0 &&
-        tabOf(entries[entries.length - 2 - depth]) === current
-      ) {
+      while (entries.length - 2 - depth >= 0 && entries[entries.length - 2 - depth].tab === current) {
         depth += 1;
       }
       return {

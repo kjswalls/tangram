@@ -47,8 +47,20 @@ const FONT_EXTENSIONS = ['.woff', '.woff2', '.ttf', '.otf', '.ttc', '.eot'];
  */
 const SYNC_OUTPUT = join('app', 'src', 'main', 'assets', 'public');
 
+/**
+ * Generated trees, skipped by name.
+ *
+ * **Without this the test fails on the builder's machine and nowhere else.** A
+ * plain `./gradlew assembleDebug` writes merged assets — the synced web fonts
+ * among them — into `android/app/build/intermediates/`, which is gitignored and
+ * is not source. The subject here is what this repository *ships*, so the walk
+ * covers exactly that and nothing a build produced.
+ */
+const GENERATED = new Set(['build', '.gradle', 'capacitor-cordova-android-plugins']);
+
 function walk(dir: string, found: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
+    if (GENERATED.has(entry)) continue;
     const full = join(dir, entry);
     const rel = relative(ANDROID, full);
     if (rel === SYNC_OUTPUT || rel.startsWith(`${SYNC_OUTPUT}/`)) continue;

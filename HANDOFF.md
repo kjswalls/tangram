@@ -5025,7 +5025,7 @@ and so is the best source of all — the **shipped packages**. Everything below 
 |---|---|---|
 | Capacitor 8's minSdk / compileSdk / targetSdk | **24 / 36 / 36.** AUDIT 2 was right. | `@capacitor/android@8.5.2` `capacitor/build.gradle`; reproduced into `android/variables.gradle` by `cap add android` |
 | Capacitor 8's Android Gradle Plugin | **8.13.0** | `@capacitor/android@8.5.2` `capacitor/build.gradle` `classpath 'com.android.tools.build:gradle:8.13.0'`; the generated `android/build.gradle` carries the same |
-| Capacitor 8's JDK requirement | **Java 21.** Not from a docs page: the generated `app/capacitor.build.gradle` sets `sourceCompatibility`/`targetCompatibility` to `VERSION_21`. The container has OpenJDK 21.0.10, so it matches. | `cap sync android` output |
+| Capacitor 8's Java level | **Source and target compatibility 21**, which is not quite the same claim as "requires JDK 21": the generated `app/capacitor.build.gradle` sets `sourceCompatibility`/`targetCompatibility` to `JavaVersion.VERSION_21`, and a newer JDK can still compile to that level. What it does establish is a **floor**: a JDK older than 21 cannot. The container has OpenJDK 21.0.10. The docs page that would state Capacitor's own supported JDK range is blocked. | the file `cap sync android` generates |
 | Gradle | **8.14.3**, via the committed wrapper (`distributionUrl=…gradle-8.14.3-all.zip`) | `android/gradle/wrapper/gradle-wrapper.properties` |
 | **The local scheme and origin the Android WebView serves from** | **`https://localhost`** — *not* `http://localhost`, which is what this plan, `ios.md` and `components/pwa/register-sw.tsx`'s header all say. `CapConfig.java:39` `private String androidScheme = CAPACITOR_HTTPS_SCHEME;` with `CAPACITOR_HTTPS_SCHEME = "https"` (`Bridge.java:94`) and `hostname = "localhost"` (`CapConfig.java:38`); `Bridge.java:631` composes `localUrl = scheme + "://" + authority`. Overridable by `server.androidScheme`, which `validateScheme` restricts to `http` or `https`. **`backend.md`'s CORS allow-list and `web.md` W4's gate key on this string.** A1 confirms it on a device. | `@capacitor/android@8.5.2` |
 | The core plugin names for back button / status bar / keyboard / splash | `@capacitor/app` (`backButton`, `minimizeApp()`), `@capacitor/status-bar`, `@capacitor/keyboard`, `@capacitor/splash-screen` — all already pinned by I0. **`backButton`'s own doc comment**: *"Listening for this event will disable the default back button behaviour."* `minimizeApp()` is documented Android-only. | `@capacitor/app@8.1.1` `dist/esm/definitions.d.ts` |
@@ -5286,8 +5286,13 @@ by name.
 
 **No `MainActivity` edit, no manifest edit, no new dependency.** The community plugin needs
 `EdgeToEdge.enable(this)`; the built-in one does not, and `grep -rn "EdgeToEdge\|setDecorFitsSystemWindows"`
-over `@capacitor/android` returns nothing — at `targetSdk` 36 the platform forces edge-to-edge and
-`SystemBars` then applies or consumes the insets. The manifest is asserted **not** to carry
+over `@capacitor/android` returns nothing. The reason is the platform's, and it is worth scoping
+precisely rather than repeating the slogan: **an app targeting API 35+ is forced edge-to-edge on
+Android 15, and on Android 16 the `windowOptOutEdgeToEdgeEnforcement` opt-out is ignored outright.**
+Below Android 15 — this app's `minSdk` is 24, so that is most of the supported range — the app is
+*not* edge-to-edge, the system bars do not overlap it, and the insets are correctly zero. Either way
+`SystemBars` reads `WindowInsetsCompat` and applies or consumes what it finds, so nothing in the app
+branches on the OS version. The manifest is asserted **not** to carry
 `windowOptOutEdgeToEdgeEnforcement`.
 
 **Three decisions worth arguing with, if anyone wants to.**
@@ -5320,6 +5325,19 @@ over `@capacitor/android` returns nothing — at `targetSdk` 36 the platform for
   `pb-[env(safe-area-inset-bottom)]`, which is exactly right under both `native` and `css`. **A2 needs
   no change to `core.md`'s token file and no inset token**, which is also what closes register **V1**'s
   "the shell's inset variable" gate row: the artifact A2 needed turns out to be `TabBar` itself.
+
+**One effect of this that crosses into `ios.md`, flagged rather than buried.** `plugins` in
+`capacitor.config.ts` is **not per-platform** — there is no `ios.plugins` block — and Capacitor ships
+a `SystemBars` plugin on iOS too (`@capacitor/ios` `Capacitor/Capacitor/Plugins/SystemBars.swift`,
+which reads the same `style`, `hidden` and `animation` keys at load). So `style: 'LIGHT'` set here
+**also changes iOS's initial status-bar style**, from `DEFAULT` to `LIGHT`. That happens to be the
+right value there for the same reason it is right here — Inkstone is a light ground on both — but it
+is a behaviour change in `ios.md` I5's territory made by an Android phase, and I5 should know it was
+made deliberately rather than find it. For the same reason, `lib/platform/system-bars.ts` is one
+word away from serving both platforms: its guard is `isAndroid()`, and `isNativePlatform()` would be
+correct if I5 wants it, since `SystemBars.setStyle` is the same JS API on both. **A2 does not make
+that change** — the iOS status bar is I5's call and this plan does not pre-empt it — exactly as it
+does not remove `@capacitor/status-bar`.
 
 **A conflict recorded rather than acted on: `@capacitor/status-bar`.** I0 pinned it at 8.0.3 for
 `ios.md` I5, and the dependency set is I0's, so A2 does not remove it. But on Android at `targetSdk`

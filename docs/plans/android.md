@@ -540,8 +540,12 @@ Four consequences, and all four make this phase cheaper:
 2. **The keyboard bug is handled there too**, so A2's criterion 2 tests Capacitor's workaround rather
    than the engine's bug.
 3. **No `MainActivity` edit.** `EdgeToEdge.enable(this)` is the *community* plugin's requirement;
-   `grep -rn "EdgeToEdge\|setDecorFitsSystemWindows"` over `@capacitor/android` returns nothing. At
-   `targetSdk` 36 the platform forces edge-to-edge and `SystemBars` applies or consumes the insets.
+   `grep -rn "EdgeToEdge\|setDecorFitsSystemWindows"` over `@capacitor/android` returns nothing. The
+   platform does it, within a range worth stating precisely: an app targeting API 35+ is forced
+   edge-to-edge on **Android 15**, and on **Android 16** the opt-out is ignored. Below Android 15 —
+   most of the range above `minSdk` 24 — the app is not edge-to-edge, the bars do not overlap it, and
+   the insets are correctly zero. `SystemBars` reads `WindowInsetsCompat` either way, so no app code
+   branches on the OS version.
 4. **What is left for this phase is configuration, plus one module for the thing configuration cannot
    do**: the system bars' icon contrast, which must follow the *app's* theme and not the device's,
    because Inkstone is the default on a dark-mode phone (`wave-zero.md` §10c). See the Files list.

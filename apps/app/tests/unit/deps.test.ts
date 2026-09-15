@@ -68,7 +68,10 @@ describe('runtime dependencies', () => {
  *
  * `@capacitor/ios` ships **no importable JavaScript entry point** — no `main`,
  * no `module`, no `exports`; its `files` are the native sources, two podspecs
- * and `pods_helpers.rb`. (It does carry JS: `Capacitor/Capacitor/assets/
+ * and `pods_helpers.rb`. `@capacitor/android` (`docs/plans/android.md` A1) is
+ * the same shape and is here for the same reason: its `files` are
+ * `capacitor/build.gradle`, three lint/proguard files and `capacitor/src/main/`,
+ * with no `main`, `module`, `exports` or `types` at all. (It does carry JS: `Capacitor/Capacitor/assets/
  * native-bridge.js`, 53 KB, which the native runtime injects into the WebView
  * and which `lib/platform/native.ts` cites — but nothing ever resolves it
  * through node.) So it cannot satisfy the import check above. The CLI finds it
@@ -89,9 +92,9 @@ describe('runtime dependencies', () => {
  * dependencies, and the import check above is what proves they load.
  */
 describe('the Capacitor packages that are not runtime dependencies', () => {
-  it('keeps @capacitor/ios and @capacitor/cli out of dependencies', () => {
+  it('keeps the platform packages and the CLI out of dependencies', () => {
     const pkg = manifest();
-    for (const name of ['@capacitor/ios', '@capacitor/cli']) {
+    for (const name of ['@capacitor/ios', '@capacitor/android', '@capacitor/cli']) {
       expect(pkg.dependencies[name], `${name} must not be a runtime dependency`).toBeUndefined();
       expect(pkg.devDependencies[name], `${name} must be a devDependency`).toBeDefined();
     }

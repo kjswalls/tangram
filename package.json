@@ -20,6 +20,8 @@
     "sw": "tsx scripts/build-sw.ts",
     "font:fetch": "tsx scripts/font-fetch.ts",
     "font:coverage": "TANGRAM_DATA_DIR=\"$PWD/data\" tsx scripts/font-coverage.ts",
+    "android:sync": "pnpm run data:ensure && pnpm -F app build && pnpm -F app cap sync android",
+    "android:open": "pnpm -F app cap open android",
     "smoke": "tsx scripts/smoke.ts",
     "preview": "tsx scripts/preview.ts"
   },

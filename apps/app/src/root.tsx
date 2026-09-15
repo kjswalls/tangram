@@ -12,6 +12,7 @@ import { Outlet, ScrollRestoration } from 'react-router';
 
 import { PinyinDisplayProvider } from '@/components/hanzi/pinyin-display';
 import { RegisterServiceWorker } from '@/components/pwa/register-sw';
+import { HardwareBackButton } from '@/components/shell/hardware-back-button';
 import { SiteHeader } from '@/components/shell/site-header';
 import { TestHooks } from '@/components/shell/test-hooks';
 
@@ -32,6 +33,13 @@ export function Root({ children }: { children?: ReactNode }) {
       <SiteHeader />
       <TestHooks />
       <RegisterServiceWorker />
+      {/*
+        Android's hardware back button (docs/plans/android.md A1). Renders
+        nothing and does nothing off Android; it is mounted here, beside the
+        other mounted-once components, because it must see every navigation and
+        there is exactly one of it. `core.md` C7 re-baselines its tab list.
+      */}
+      <HardwareBackButton />
       <main className="mx-auto w-full max-w-3xl px-4 py-6 sm:py-8">{children ?? <Outlet />}</main>
       <ScrollRestoration />
     </PinyinDisplayProvider>

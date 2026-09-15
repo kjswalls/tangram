@@ -124,6 +124,118 @@ after.** It carries both plans' additions at once so neither has to rebase on th
 
 Both plans drop their "whichever lands first, the other rebases" prose and gate on this commit.
 
+**The declarations themselves — SETTLED (register V5).** The table above names methods and callers
+and no signatures, and V5 was right that deliverable 4 is not executable from it: a builder would
+have to reconstruct the types from two sibling plans, one of which (`backend.md` B5) types the sync
+members against a `SyncedStore` that **B4 defines, many waves later**. Freezing a signature whose
+type is written downstream is not freezing anything. So the four types come with the diff, in
+`lib/db/repository.ts`, and **B4 consumes `SyncedStore` rather than declaring it** — B4 keeps its
+schema corrections, which add columns to Dexie *index strings* and are not type changes.
+
+Transcribe this. It is the whole of deliverable 4, and nothing in it is a design decision left to
+the builder:
+
+```ts
+/**
+ * The eight stores that sync. Derived from `StoreName` rather than hand-listed,
+ * so a store added to the schema is a type error here instead of a silent
+ * omission from the change feed. `ask_cache` is excluded and stays excluded:
+ * it is a cache keyed by a hash of the prompt, it holds entry ids and sense
+ * indexes only, and re-deriving it costs one model call.
+ */
+export type SyncedStore = Exclude<StoreName, 'ask_cache'>;
+
+/** The row shape each synced store carries on the row-level channel. */
+export interface SyncedRow {
+  words: WordRow;
+  cards: CardRow;
+  reviews: ReviewRow;
+  lists: ListRow;
+  list_members: ListMemberRow;
+  known_words: KnownWordRow;
+  texts: TextRow;
+  settings: SettingsRow;
+}
+
+/** Where the last sync got to. One row, client-side. */
+export interface SyncState {
+  /**
+   * The `t0` of the last successful push — taken *before* the read, so a row
+   * written during a push is caught by the next one (`backend.md` B5).
+   */
+  lastPushedAt: number | null;
+  /** The maximum `server_updated_at` the last pull saw, per store. */
+  cursors: Partial<Record<SyncedStore, string>>;
+  lastSyncedAt: number | null;
+}
+
+/** A whole-database dump. Versioned, because a restore outlives its writer. */
+export interface Snapshot {
+  /** This envelope's format version, bumped when the envelope changes. */
+  format: 1;
+  /** The `DB_VERSION` the dump was cut at. */
+  dbVersion: number;
+  createdAt: number;
+  rows: { [S in SyncedStore]: SyncedRow[S][] } & { ask_cache: AskCacheRow[] };
+}
+```
+
+and, on `Repository` itself:
+
+```ts
+/**
+ * Every store, every row, **tombstones included**. With `importAll`, the only
+ * two members allowed to see `deletedAt !== null` rows: a round trip that drops
+ * soft-deleted rows resurrects deleted cards on the next sync.
+ */
+exportAll(): Promise<Snapshot>;
+
+/**
+ * Destructive by contract — this is restore, not merge. Merge is sync
+ * (`changedSince`/`applyRemote`). Replaces the database wholesale.
+ */
+importAll(snapshot: Snapshot): Promise<void>;
+
+/** Local writes to push. Not one key: see the change-feed table in `backend.md` B5. */
+changedSince<S extends SyncedStore>(store: S, sinceMs: number): Promise<SyncedRow[S][]>;
+
+/** Remote rows in, LWW plus B4's natural-key dedupe, one Dexie transaction per call. */
+applyRemote<S extends SyncedStore>(store: S, rows: SyncedRow[S][]): Promise<void>;
+
+syncState(): Promise<SyncState>;
+setSyncState(patch: Partial<SyncState>): Promise<SyncState>;
+
+/** Sign-out and account deletion. Tombstones and pushes; it does not drop the database. */
+resetAccount(): Promise<void>;
+```
+
+Four things in that block are rulings, not transcription, and a builder should not relitigate them:
+
+1. **`changedSince` and `applyRemote` are generic over the store.** B5's sketch returns a bare
+   `Row[]`, which makes every call site cast. The mapped `SyncedRow` costs nothing at runtime and is
+   what stops `applyRemote('cards', reviewRows)` compiling.
+2. **`SyncedStore` is derived, not listed.** B5's prose says "the eight stores B4 lists"; a list in
+   prose drifts from the schema. `Exclude<StoreName, 'ask_cache'>` cannot.
+3. **`Snapshot.rows` includes `ask_cache`** even though it does not sync. Export is a backup of the
+   database, and omitting the cache from a restore is a silent cache flush the learner did not ask
+   for. It is the one place the two sets differ, which is why the type says so explicitly rather
+   than reusing `SyncedStore` for both.
+4. **`resetAccount()` does not drop the database.** B5 §1144 has it tombstone and push, so the reset
+   reaches other devices; a local wipe is `resetAll` and is a different thing that B4 makes refuse
+   while a session is live.
+
+**The block above was typechecked against the real schema, not sketched.** Compiled under the
+app's own `tsconfig.json` against `lib/db/schema.ts` as it stands, with three negative assertions
+that all hold: `applyRemote('cards', reviewRows)` is an error, `changedSince('ask_cache', …)` is an
+error, and `keyof SyncedRow` is exactly `SyncedStore` in both directions. If a later schema change
+adds a store, `SyncedRow` fails to compile until someone decides whether it syncs — which is the
+point of deriving the union.
+
+**This is still a types-only commit.** `lib/db/dexie.ts` gets seven `throw new Error('not
+implemented')` bodies — enough for `pnpm typecheck` to pass, and `web.md` W5 and `backend.md` B5
+replace them. A stub that returns a plausible empty value instead of throwing is how a phase ships
+a sync engine that silently syncs nothing, so it throws.
+
 **`packages/ai/` is created in wave 0 and the existing ten `lib/ai/**` modules move there in the same
 commit** — not in `backend.md` B1. Moving it in wave 0 removes the gate between `data.md` D3 and B1
 entirely, because both then write into a location that already exists.

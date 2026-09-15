@@ -4730,3 +4730,1651 @@ all now with a regression test:
 - Three restated declarations were unpinned (`ProviderName`, `AskContext`, `MAX_EXAMPLE_SENTENCES`).
   Pinned. `MAX_EXAMPLE_SENTENCES` is the sharp one: it is simultaneously the edge validator's cap and
   the ceiling `examplesUserPrompt`'s `count = 3` sits under.
+
+
+---
+
+# `core.md` C0–C5a — the shared UI core
+
+One session, seven phases (C0, C1, C2, C3, C4, C4a, C5a), on `claude/build-core` off
+`claude/integration`. C5b and everything after it are **out of scope and not built** — C5b is gated
+on `ios.md` I2 answering register #1 on a physical iOS 26 device, and that device does not exist in
+this container. C9 is deferred indefinitely (wave-zero §10c as relayed in this session's brief).
+
+Every phase ran an adversarial review panel before committing. Read the "what the review found"
+subsection of each phase below rather than the phase description if you only read one thing: every
+phase's review found something the green gates did not.
+
+## Two rulings that are NOT in the checked-in `docs/plans/wave-zero.md`
+
+**This is the first thing a later session needs.** This session's brief relayed two orchestrator
+rulings as "**wave-zero.md** §10b and §10c". Neither exists in the document at
+`claude/integration`'s HEAD: `wave-zero.md` §10 is a table of issues **11–16** with sub-rows
+16a–16e, and `grep -n '10b\|10c\|Inkstone' docs/` finds nothing outside `PLAN.md`'s codename list.
+
+The two rulings, as relayed, and what this session did with them:
+
+| Ruling (as relayed) | Applied where |
+|---|---|
+| **§10b** — C7 is not gated on C5b; register #1 gates C5b and nothing else. | Nothing here depends on it; recorded so the next session does not re-derive it. `core.md` §4's dependency table already says this, so §10b confirms core.md against this document's own wave table. |
+| **§10c** — the default theme is **Inkstone** (warm paper, ink text, vermillion accent); the dark variant is optional and is **not** the default. Build C0's tokens that way. | C0's token layer, and it **contradicts `core.md` C0 rule 1** — see the theme decision below. |
+
+**Someone with write access to `docs/plans/wave-zero.md` should land §10b and §10c in it**, because
+`ios.md`, `android.md` and `web.md` all read that document and none of them can see these rulings.
+Until then the only record is this section.
+
+## C0 — the token layer, and the font question it depends on
+
+Commit: `core: the Inkstone token layer, and the font coverage nobody had measured (C0)`.
+
+### The headline number: `pnpm font:coverage`
+
+C0's stated headline deliverable. **Noto Serif SC covers 99.462% of the dictionary's headword
+character set**, and the audit's expectation that the slim faces would fall short of 124k CC-CEDICT
+headwords is **wrong for this face**: the residue is 79 characters, every one of them an unranked
+CJK Extension B/C/D/E code point in the astral planes.
+
+```
+font:coverage
+  dictionary: 124,188 entries, 14,677 distinct headword characters (simp ∪ trad, by code point)
+
+PER FACE
+  Noto Serif SC     99.462%  14,598 / 14,677  uncovered 79   (23.96 MB, variable weight 200-900)
+      ≤1k: 0   ≤10k: 0   ≤50k: 0   ≤200k: 0   unranked/>200k: 79
+      most frequent uncovered: 𪢌 U+2A88C  𪨊 U+2AA0A  𬸩 U+2CE29  𠈌 U+2020C  𠇹 U+201F9  …
+  Noto Sans SC      99.475%  14,600 / 14,677  uncovered 77   (16.95 MB, variable weight 100-900)
+      ≤1k: 0   ≤10k: 0   ≤50k: 0   ≤200k: 0   unranked/>200k: 77
+  Newsreader         0.334%  49 / 14,677      uncovered 14,628  (0.43 MB)
+      ≤1k: 1024   ≤10k: 3327   ≤50k: 4100   ≤200k: 2706   unranked/>200k: 3471
+  DM Sans            0.341%  50 / 14,677      uncovered 14,627  (0.23 MB)
+      ≤1k: 1024   ≤10k: 3327   ≤50k: 4100   ≤200k: 2706   unranked/>200k: 3470
+
+PER STACK (union of the vendored faces only)
+  --font-hanzi     99.462%  uncovered 79      [GATED]
+      measured:   Noto Serif SC
+      unmeasured: Source Han Serif SC, Songti SC, STSong, Noto Serif CJK SC, PingFang SC,
+                  Microsoft YaHei, ui-serif, serif — system faces with no fetchable binary
+  --font-display    0.334%  uncovered 14,628  [reported]
+  --font-ui         0.341%  uncovered 14,627  [reported]
+```
+
+What three plans can take from it:
+
+- **`web.md`'s first-load budget.** The hanzi face that covers the dictionary is **24 MB raw** as a
+  single variable TTF. That is not a web download; `unicode-range`-split subsets are not an
+  optimisation here, they are the only way this ships on the web. The figure to carry next to the
+  dictionary's 13.9 MB brotli is *the subset a page actually pulls*, which nobody has measured —
+  `pnpm font:coverage` measures cmaps, not delivery. Measuring Google Fonts' per-`unicode-range`
+  woff2 slices is a one-afternoon addition to the same script and is **not done**.
+- **`ios.md` / `android.md` package size.** 24 MB of font on top of 43 MB of dictionary. On native
+  it is package bytes and the learner pays once, but 67 MB is a number worth deciding about rather
+  than discovering at submission.
+- **The 79-character residue is unfixable by choosing a different face.** Noto Sans SC misses 77 of
+  the same set. Those characters render as tofu wherever they appear; none of them is in a word
+  jieba ranks.
+
+### What the font tooling is, and how it is pinned
+
+`pnpm font:fetch` vendors four faces into a **gitignored** `vendor/fonts/<family>/`; each family's
+`OFL.txt` is **committed** next to it, the way `data/COPYING-makemeahanzi` is, because the OFL
+requires the licence to travel with the font. The sources are Google Fonts' own builds from
+`google/fonts@main` — which is a moving ref, and `api.github.com` is blocked from this container
+(see `docs/data-sources.md`), so a commit SHA cannot be resolved at fetch time. Each face is instead
+**pinned by sha256 in `scripts/fonts.ts`**, and a digest mismatch fails the fetch rather than
+silently changing the bytes the numbers above were measured over. `--accept-new-digest` takes the new
+file and prints the digest to paste back.
+
+| Face | sha256 | Bytes |
+|---|---|---|
+| Noto Serif SC `NotoSerifSC[wght].ttf` | `050080d9255a86808f2945bffac582b31ef32bc36411ce29563b4961670c66f9` | 23.96 MB |
+| Noto Sans SC `NotoSansSC[wght].ttf` | `a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da` | 16.95 MB |
+| Newsreader `Newsreader[opsz,wght].ttf` | `8a08d13f8a6c0d51be379a60af84f945f65369a67e509ee3c3bdcc421254d7c1` | 0.43 MB |
+| DM Sans `DMSans[opsz,wght].ttf` | `8cd08d97e89c24d0aa92edd2f0f4c8ee6195eee9b7c9f154865a58b02f0c1c0d` | 0.23 MB |
+
+The cmap parser is **fontkit 2.0.x** as a workspace-root devDependency (build-time only; nothing
+ships it), pinned in `docs/data-sources.md`. It has **no default export under Node ESM** — import
+`{ create }`, not `fontkit.create`.
+
+### `--practice-soft: #ffe8e3` — the proposal C0 owed, and it is the owner's to confirm
+
+product-decisions §11 gives a soft tint for jade (`#d9ece6`) and gold (`#f3ead3`) and none for
+vermillion, and C0 says the builder proposes one against a stated constraint and the owner confirms
+it in the UX review. The proposal and its arithmetic:
+
+- **#ffe8e3.** Its OKLab lightness is 0.9481, which is **0.4162 above `#b93a26`'s 0.5319** — the same
+  distance `#d9ece6`'s 0.9273 sits above `#0f766e`'s 0.5109 (0.4164). That is C0's stated constraint,
+  met to four decimal places.
+- Its chroma, **0.0262**, sits between jade-soft's 0.0216 and gold-soft's 0.0319, and is the most
+  vermillion sRGB has at that lightness and hue — the gamut boundary, not a choice.
+- `--ink` on it is **14.80:1**, well past AA for the chip/badge role the constraint names.
+
+It renders in `/gallery`'s token section next to the other two tints. If the owner replaces it,
+change `apps/app/app/tokens.css` and the one assertion in `tests/unit/ui/tokens.test.ts` together.
+
+### The theme decision, and the `core.md` rule it overrides
+
+`wave-zero.md` §10c (as relayed) says Inkstone is the default and the dark variant is optional and
+not the default. `core.md` C0 rule 1 says the opposite for the one case that matters: "an unset
+`data-theme` means 'follow the system' … STACK §5.1's 'ship light as the default' is a
+recommendation about the command-palette shell's chrome, not an instruction to ignore
+`prefers-color-scheme`" — and its acceptance criterion asks for a fifth Playwright case "asserting
+the app follows the system".
+
+CLAUDE.md is explicit that wave-zero governs, so **§10c wins and `core.md` C0 rule 1's unset case is
+wrong**. Note also that rule 1 hangs its reasoning on STACK §5.1, the command-palette shell's own
+open question — and C9 is now deferred indefinitely, so that hook has come away from the wall.
+
+What shipped, and it keeps every structural thing rule 1 asked for:
+
+| `data-theme` | Palette |
+|---|---|
+| unset | Inkstone. **The default, on every device.** `prefers-color-scheme` is not consulted. |
+| `light` | Inkstone, pinned — an explicit choice, same palette. |
+| `dark` | The dark variant, pinned. |
+| `system` | Follows `prefers-color-scheme`. |
+
+`system` is the name of the opt-in that rule 1's `@media` block is reached through; `/gallery`'s
+theme control sets all four, C8 owns the learner-facing control, and
+`tests/e2e/core/theme.spec.ts` asserts all of it including the unset case under **both**
+emulations. **If the orchestrator meant rule 1 rather than §10c, one test and one block change** —
+that is the whole cost, and it is why the conflict is written down rather than smoothed over.
+
+### The radius scale could not be called what the plan calls it
+
+**A defect in `core.md` C0's token table.** It names the scale `--radius-sm` / `--radius-md` /
+`--radius-lg` = 12 / 16 / 24 px. **`--radius-*` is Tailwind 4's own theme namespace.** Tailwind
+defines `--radius-sm|md|lg` as 0.25/0.375/0.5rem inside `@layer theme` and emits
+`.rounded-md{border-radius:var(--radius-md)}`; a declaration of the same name on an **unlayered**
+`:root` beats every cascade layer. Writing the plan's names silently re-points every
+`rounded-sm|md|lg` in the app — eighteen call sites — with no diff in any component to show for it.
+It shipped in the first C0 draft and the review caught it on real pixels: the lookup input became a
+pill.
+
+The scale keeps its values and its sm/md/lg steps under **`--r-sm` / `--r-md` / `--r-lg`**, and
+`tests/unit/ui/tokens.test.ts` now fails if the app declares any `--radius-*` of its own. C1's
+primitives read `rounded-[var(--r-md)]`. **A later phase must not "fix" the names back.**
+
+### Two measured accessibility problems in the settled palette — the owner's call, not the builder's
+
+Both are pairs of product-decisions §11's own hexes, so C0 records them rather than changing them:
+the same rule that makes `--practice-soft` the owner's decision. `/gallery`'s token section renders
+the measured ratios so they are looked at rather than read about.
+
+1. **`--muted` on `--paper` is 4.23:1** — under AA's 4.5:1 for normal text, and a **regression**: at
+   `claude/integration` HEAD the pair was `#6d6a63` on `#fbfaf7` = 5.17:1. On `--surface` the new
+   pair is 4.56:1 and passes, so secondary text is compliant inside a card and non-compliant on the
+   page ground — which is where every route's subtitle sits. **Proposal: `--t1-ink-500: #756f64`**,
+   the same hue and chroma one step darker, 4.54:1 on paper and 4.90:1 on surface, visually
+   indistinguishable.
+2. **`--lookup` on `--lookup-soft` is 4.45:1** — a hair under, and inherited rather than introduced
+   (`#0f766e` on `#d7ece8` was 4.44:1 at HEAD). It is the active nav pill and the `seed` /
+   `looked-up` badges. **Proposal: `--t1-jade-050: #d2e8e1`** (4.63:1).
+
+Everything else measured clears AA: ink on paper 15.8:1, ink on surface 17.1:1, text on each filled
+accent 5.3–5.6:1, the warning pair 6.3:1, the focus ring 5.0:1 against a 3:1 requirement, and every
+dark-variant pair 5.5–14.9:1.
+
+### `pnpm font:coverage`'s exit rule is not the one `core.md` asks for
+
+C0's criterion says it "exits non-zero only when a declared stack leaves a character uncovered". The
+measurement makes that rule a permanently red command — the exact failure C0 rejects one paragraph
+earlier for the per-face case — because the 79-character residue has no glyph in any shipped face.
+Two rules replace it, and the script prints the substitution in its own output rather than leaving it
+in a header:
+
+1. a gated stack's residue must be a **subset of `scripts/font-residue.json`**, a committed,
+   reviewable list, regenerated only by `--update-baseline`;
+2. **no residue character may carry a jieba frequency rank** — which a regenerated baseline cannot
+   silence, and which is the property that actually matters: no word a learner can meet renders as
+   tofu.
+
+### Everything else C0 decided that the plan did not settle
+
+- **`--warning` / `--warning-soft` are tier-2 tokens and are not in §11's table.** They are the amber
+  pair the app already shipped, kept because `Badge tone="warning"` and the dictionary's `failed`
+  states need somewhere to land. Recorded rather than invented quietly.
+- **`--on-accent`** is one token, not two: both accents are dark enough to carry the raised paper.
+- **`@theme inline` keeps four aliases** — `--color-background`, `--color-foreground`,
+  `--color-accent`, `--color-accent-foreground` — because forty-odd components say `bg-accent` and
+  `text-foreground`, and C0 is "a rename plus a palette swap plus one script" (R8). **C7 and C8
+  rewrite those screens and take the class names with them.**
+- **The chart palette's warm series is now the Inkstone vermillion `#b93a26`**, replacing an
+  unrelated orange. Re-validated, not eyeballed (Viénot 1999 dichromat simulation + CIEDE2000): worst
+  adjacent CVD ΔE 26.8 protan / 31.9 deutan, normal-vision ΔE 55.9, contrasts 3.69:1 and 5.59:1 on
+  `#fffdf9` — better than the pair it replaced on every axis (protan 20.5, contrast 3.15:1). The jade
+  series and the six-step stability ramp are **unchanged**, because the palette's jade `--lookup` is
+  the same `#0f766e` the old `--accent` was, so there was nothing to re-derive.
+- **Scope taken from `web.md`'s PWA phase, deliberately.** `index.html`'s `theme-color`,
+  `public/manifest.webmanifest`'s `theme_color`/`background_color` and `public/offline.html` are not
+  in C0's Files list, and `web.md`'s PWA phase names the manifest row as its own ("`theme_color` /
+  `background_color` from `core.md` C0's tokens"). They were changed here anyway, because leaving the
+  installed app's chrome on jade while the ground became warm paper is worse than the scope
+  crossing. **`web.md`'s session should strike that row rather than re-decide it.**
+- **`public/offline.html` lost its `prefers-color-scheme: dark` block.** It is served by the service
+  worker with no app running, so it cannot read `data-theme`; with dark an explicit choice rather
+  than a system default, a media block there would have made it the one surface in the app that went
+  dark on its own.
+- **The PWA icon set is now inconsistent and C0 could not fix it.** `public/icon.svg`,
+  `public/icons/tangram.svg` and the two PNGs are a jade `#0f766e` tile with pieces in `#fbfaf7` —
+  the old background hex this palette deletes. Installing the app now paints an Inkstone-paper splash
+  behind a jade icon. The container has **no raster tooling** (no ImageMagick, rsvg, cairosvg or
+  PIL), so recolouring only the SVGs would leave them disagreeing with their own PNGs. **`web.md`'s
+  PWA phase owns the icon set and this is an item it owes**: a `#f8f4ec` tile with `#b93a26` pieces
+  puts the settled accent on the launcher.
+- **Vermillion reaches no pixels in C0 itself.** Every `--practice*` token is defined and referenced
+  by nothing until **C1** makes `Button variant="primary"` vermillion; the review's UX lens is right
+  that after C0 alone the app reads as the jade app on a warmer ground. That is the phase boundary
+  working as intended, not an omission — but a reviewer looking at C0 in isolation should expect it.
+
+### What the review found
+
+Four independent lenses (correctness against the acceptance criteria; what breaks that no test
+covers; cross-plan seams and conventions; UX on real pixels with 24 screenshots and measured
+contrast). **Fifteen findings; nine were acted on, six were recorded rather than fixed.** The lens
+that mutated the new test four ways and re-ran it is the one that proved the gate is a gate.
+
+Fixed before the commit:
+
+1. **The `--radius-*` collision** (above) — the blocking one, found by two lenses independently.
+2. **`accent-[var(--accent)]` in `components/lists/list-card.tsx:70` and
+   `production-list-toggle.tsx:151` resolved to nothing.** `--accent` existed on `:root` at HEAD; the
+   token layer replaced it with `--lookup` plus a `--color-accent` alias *inside* `@theme inline`,
+   which does not emit a `--accent` custom property. Tailwind compiles an arbitrary-value class
+   whatever it is given, so `accent-color: var(--accent)` became invalid at computed-value time and
+   Chromium painted **the Library checkboxes native blue** — the only saturated cool colour left in
+   the app. Both call sites now say `accent-[var(--lookup)]`.
+3. **`--font-display` never reached the cascade.** Tailwind emits a theme variable only when
+   something references it; declared solely inside `@theme inline` and used only through an arbitrary
+   value, it was pruned out of the stylesheet entirely. All three families are on bare `:root` now,
+   and an e2e case asserts each one computes.
+4. **The tokens test could be fooled four ways.** Its CSS reader anchored on the first textual
+   occurrence of a selector — which for `:root` was inside the header *comment* — and read only the
+   first matching block, so a second `:root` block would have changed the palette with all 21 tests
+   green. It now strips comments, anchors on a real selector, **merges** every matching block, and
+   asserts there is exactly one bare `:root`.
+5. **The tier-1 leak guard walked only `apps/app`.** Criterion 4 says "anywhere outside the tokens
+   block"; `packages/**`, `apps/server/**` and `scripts/**` were never scanned. It walks the
+   workspace root now.
+6. **Nothing tied `scripts/fonts.ts`'s stacks to `tokens.css`.** A stack edit would have had
+   `font:coverage` certify a stack the app no longer declares. A test parses the three `--font-*`
+   declarations and compares them.
+7. **New: every `var(--…)` in app source must name a token `tokens.css` declares** (`--viz-*`
+   excepted — the chart palette declares its own). This is the general form of finding 2, and it is
+   the guard that would have caught it.
+8. **`pnpm font:coverage` now prints the exit rule it applied against the one C0 asks for.**
+9. **This HANDOFF section**, which two files asserted existed before it did.
+
+Recorded rather than fixed, each above: the two settled-palette contrast failures, the §10c vs
+`core.md` rule 1 theme conflict, the font-coverage exit rule, the manifest scope crossing, the PWA
+icon set, and vermillion not appearing until C1.
+
+**Mutation-tested, because a guard nobody has seen fail is not a guard.** Re-introducing
+`--radius-md`, pointing a component at `var(--gone)`, reordering a font stack, and adding a second
+`:root` block each fail exactly one test and no others.
+
+## C1 — the primitives, and a gallery to review them in
+
+Commit: `core: the primitives, and the gallery every later phase is reviewed on (C1)`.
+
+Ten primitives (`Button` with a `grade` shape, `Card`, `Badge`, `Input`, plus new `Sheet`, `TabBar`,
+`Chip`, `Field`, `EmptyState`, `Skeleton`), a `/gallery` route that is **not in a production build**,
+and the two composite state sets C4a and C7 will assert against.
+
+### What `/gallery` is for, and how it stays out of production
+
+The guard is the **build mode**, and that took two attempts.
+
+| build | `/gallery` |
+|---|---|
+| `pnpm dev` | present — `import.meta.env.DEV` |
+| `pnpm build` | **absent**, and nothing in the environment can change that |
+| `pnpm build:e2e` (`vite build --mode e2e`) | present; `import.meta.env.PROD` is still true, so the service worker still registers and `tests/e2e/p6/pwa.spec.ts` is unaffected |
+
+The first draft keyed it to a `VITE_TANGRAM_GALLERY` environment variable set in
+`playwright.config.ts`, and the review found it **failed open in both directions**: `/gallery` did
+not exist under `pnpm dev` at all — the surface whose whole purpose is "what makes each later phase
+reviewable without driving the whole app" — and a plain `vite build` shipped the entire gallery
+whenever that variable happened to be in the environment, which `pnpm e2e` itself put there. Vite
+exposes `process.env.VITE_*` alongside `.env` files, so an env-var guard is ambient state; a mode is
+a build-time constant.
+
+`tests/e2e/core/gallery-excluded.spec.ts` builds **twice** and asserts both directions: a production
+build with `VITE_TANGRAM_GALLERY=1` deliberately in its environment (the gallery must be absent), and
+an `--mode e2e` build (the marker must be present). That second build is the positive control, and it
+is why the negative means something — the marker is prose, and without a control a reworded intro
+would have left the check passing against a bundle that contained the whole gallery. `GALLERY_MARKER`
+is exported from `components/gallery/gallery.tsx` and rendered from there, so a copy edit moves both.
+
+**`pnpm smoke` needs no exemption** and this is the record of it: W2 derives its cases from the
+production route table, which by construction has no `/gallery` in it. **W2 must not "fix" the
+missing case by adding one.** Verified: `pnpm smoke` reports 21 routes ok and no gallery case.
+
+### Decisions C1 made that the plan did not settle
+
+- **`--breakpoint-wide: 45rem` (720px), a new Tailwind breakpoint.** §1 says the wide shell is "the
+  same three destinations at ~720px and above"; `Sheet` is the first file that needs the number, and
+  Tailwind's `md:` is 768px, which would have left a 48px band where the wide shell rendered a
+  phone-shaped bottom sheet — R7 in miniature. It is a **new** variant rather than a re-pointing of
+  `md`, because `md` means 768px in forty existing components. **C7's two shells must use `wide:`**;
+  a component that hard-codes `md:` for this boundary reintroduces the band.
+- **The active tab wears its DESTINATION's accent, not one colour for all three.** §1 assigns the
+  accents by meaning — jade is Look up, vermillion is Practice and the single primary action — so a
+  bar that painted whatever tab was active in vermillion put a permanent vermillion-tinted region in
+  the chrome of every screen, next to the one vermillion action that screen is allowed, with Look up
+  (the app's home) worst affected. `TabItem.accent` is `'neutral' | 'lookup' | 'practice' | 'new'`,
+  defaulting to neutral (ink on a `--border` pill).
+- **`Chip`'s `practice` tone wears `text-practice`, like every other tone.** It wore `text-ink` in
+  the first draft, so the one tone that never showed vermillion was the vermillion tone — while
+  `TabBar` put `text-practice` on the identical ground. Two treatments of one token pair in one
+  phase. `--practice` on `--practice-soft` measures 4.84:1 and is now in the gallery's contrast
+  table.
+- **`--skeleton`, a fourth token outside product-decisions §11's table** (after `--warning` /
+  `--warning-soft` at C0). `Skeleton` painted `--border` at 60%, which measured **1.26:1** against a
+  card in light and 1.16:1 in dark — at the edge of perceivable on a phone in daylight, and the place
+  it matters most is the ask panel's `thinking` state, where those rows are the only evidence the
+  model is working. `#c5bdaf`, the same hue one step darker, is 1.83:1.
+- **The dictionary's progress bar is two divs, not `<progress>`.** An unstyled `<progress>` is
+  painted by the UA: Chromium draws **pure green on grey**, every other engine draws something else —
+  a saturated non-palette colour on the first screen of a first launch, different per engine. And its
+  indeterminate state does not animate under this stylesheet (measured as six byte-identical frames
+  over 1.3 s), so "the server sent no `Content-Length`" rendered as a bar **stuck at 0%** — worse
+  than the indeterminate spinner `data.md` D4 was trying to rule out. It is now tokens, a real
+  `dict-sweep` keyframe with `motion-reduce:animate-none`, and the same `role="progressbar"` ARIA the
+  element would have had, with `aria-valuenow` omitted when the value is genuinely unknown.
+- **`Sheet` locks body scroll while open**, with `scrollbar-gutter: stable` so the page does not jump
+  sideways on a pointer device. Without it a wheel or a touch drag over the dimmed backdrop scrolled
+  the document underneath — on a phone, the common miss — which undoes the one thing §1 promises
+  about a sheet.
+- **`Sheet`'s phone height is `min-h-[50dvh] max-h-[66dvh]`.** §1's "covers the lower two thirds" is
+  two-sided and the first draft implemented only the cap, so a short sheet rendered as a strip pinned
+  to the bottom edge. **If §1 meant the cap only, this is the line to change** — one class.
+- **`components/dict/dict-status.tsx` is C4a's file and C1 landed its presentational half.** C1's
+  criterion is that the gallery's ids are the ids C4a's specs assert, and the only way for that to be
+  true is for the gallery to render C4a's component. It is pure: status in, markup out. C4a adds
+  `store.status` / `store.subscribe()`, the retry, `dict-gate.tsx`, and deletes `data-banner.tsx`.
+- **`components/lookup/ask-state.ts` is C7's file and this is its types-only first commit**, the
+  pattern CLAUDE.md's shared-surface rule asks for. C1's gallery needs the five state names for its
+  three specimens and C4's in-context gloss line consumes `unavailable`. `backend.md` B2 fills
+  `answered` and changes none of the other four.
+- **`components/lists/word-search.tsx`'s "Find" is `variant="secondary"` now.** Since C1 the primary
+  variant is the screen's single filled vermillion action, and on `/lists/:id` a search submit sat in
+  the same colour as the delete confirmation. **The delete confirmation is still `primary`, i.e.
+  vermillion, and that is wrong** — an irreversible action wearing the same colour as a benign one.
+  A destructive treatment is a design decision rather than a rename, so it is **left for C8**, which
+  owns that screen's relabelling.
+
+### A third settled-palette contrast failure, for the owner alongside C0's two
+
+- **`--new` on `--new-soft` is 4.48:1**, under AA for the 12px text `Badge` and `Chip` use. C0 did not
+  measure it because nothing consumed the pair; C1 is the phase that creates it. **Proposal:
+  `--t1-gold-700: #886211`** — visually the same colour, 4.61:1 on the tint and 5.03:1 on paper. The
+  gallery's contrast table prints it as FAIL, so it is visible rather than buried here.
+
+### A defect in `web.md` W1, found by C1's exclusion spec
+
+**An unmatched URL in a production build renders "Something went wrong", not "Not found".**
+`src/routes/not-found.tsx` decides with `error === undefined || (isRouteErrorResponse(error) &&
+error.status === 404)`, but in a built SPA the `*` route reaches that component through the root
+`errorElement` with an error defined, so a learner who mistypes a URL — or follows a stale bookmark,
+which the SPA fallback makes routine — is told the app broke. Reproduced on `/nope` as well as on
+`/gallery`, against a plain `vite build` served with an SPA fallback. **Not fixed here**: the file is
+`web.md`'s and C7 rewrites the routing anyway. `gallery-excluded.spec.ts` deliberately asserts the
+"Go to Today" link rather than the heading, and says why, so it neither freezes the defect nor fails
+for a reason unrelated to the gallery.
+
+### What the review found
+
+Three lenses (acceptance criteria; what breaks that no test covers; UX on real pixels — 68
+screenshots, measured contrast). **Eighteen findings.** The three that matter most were all tests
+that could not fail:
+
+1. **The variant-map tests could not detect a dropped variant** — the phase's blocking finding, and
+   criterion 6 verbatim. Every assertion was `className.trim().length > 0`, and `className` always
+   carries the component's base classes, so `VARIANTS[v] = ''` passed. Verified by emptying three map
+   entries at once and watching 33 tests pass. The maps are exported now and asserted directly: every
+   key present, no entry empty, no two entries equal — with Badge's `accent`/`lookup` alias declared
+   as the one intentional duplicate, so a second one cannot slip in as "probably intentional".
+2. **The `Sheet` focus-trap tests were vacuous.** The candidate filter was `offsetParent !== null`;
+   jsdom implements no layout, so that is null for *every* element, the list collapsed to whichever
+   node already had focus, and every Tab re-focused it. The tests asserted containment, which is
+   trivially true of a sheet that swallows Tab entirely — they passed with the wrap inverted. The
+   filter is now `hidden` / `aria-hidden` / computed `display`+`visibility`, which mean the same
+   thing in both environments, and the tests assert the **sequence** (Close → first → second →
+   Close). Mutation-checked: inverting the wrap fails exactly those two tests.
+3. **The keyboard spec computed the `:focus-visible` outline and threw it away**, so the ring half of
+   criterion 4 was unverified — while `components/ui/input.tsx` shipped `focus:outline-none`, which
+   survived only because `globals.css`'s rule is unlayered and Tailwind's utilities are in
+   `@layer utilities`. An accident of cascade layering, not something any test stated. The spec
+   asserts the ring and a non-zero width on every focus stop now, and `focus:outline-none` is gone.
+
+Also fixed: the exclusion mechanism (above); the native first-launch specimens had no stable test id
+of their own, so C1's own "named here so no later phase can quietly skip them" did not hold for them;
+`Card`'s new docstring named `--radius-md`, the one token name C0 ruled out; the gallery read tokens
+through `var(${token})` interpolation, which C0's token guard cannot see (`gallery-tokens.test.ts`
+now checks those two lists through TypeScript, and asserts the swatch list covers every tier-2
+token); and the "no gallery module name in the manifest" assertion was vacuous on a single-chunk
+build — kept, with a comment saying it starts meaning something when W6 splits the bundle.
+
+## `core.md` C2 — `TTSProvider`, widened; and the block speaker
+
+**Landed.** `lib/tts/provider.ts` is now an interface with utterance identity, an event surface, a
+declared boundary capability, voice enumeration and `stop()`. `lib/tts/speech-synthesis.ts`
+implements it over Web Speech. New `lib/tts/sequence.ts` is the per-character queue C6 uses.
+`components/tts/speak-button.tsx` is one speaker per hanzi **block**, tap-to-play/tap-to-stop, with
+the pending / ready / unavailable triad and its **visible** reason unchanged.
+
+### The interface, verbatim — `ios.md` and `android.md` implement this
+
+```ts
+export type VoiceId = string;
+
+export interface TTSVoice {
+  id: VoiceId;
+  name: string;
+  /** BCP-47, as the engine reports it. */
+  lang: string;
+  /** The engine marks this the default for its language. */
+  isDefault: boolean;
+}
+
+export interface SpeakOptions {
+  /** BCP-47 tag handed to the utterance; defaults to the chosen voice's own. */
+  lang?: string;
+  /** 0.1–10, 1 is the browser default. Slower is the point for a learner. */
+  rate?: number;
+  /** Prefer this voice. An unknown id falls back to the provider's own ranking. */
+  voiceId?: VoiceId;
+}
+
+/** Where an utterance ended up. `done` resolves to one of these; it never rejects. */
+export type UtteranceOutcome = 'ended' | 'cancelled' | 'error' | 'unavailable';
+
+export interface BoundaryEvent {
+  /** Code-unit offset into the utterance's own `text`. */
+  charIndex: number;
+  /** Length of the run being spoken, when the engine reports one. */
+  charLength?: number;
+}
+
+export interface UtteranceEvents {
+  start: undefined;
+  end: undefined;
+  boundary: BoundaryEvent;
+  cancel: undefined;
+  error: { message: string };
+}
+
+export type UtteranceEventName = keyof UtteranceEvents;
+
+export interface Utterance {
+  /** Unique within a provider, and monotonic. Identity, not an index. */
+  readonly id: number;
+  readonly text: string;
+  /** Never rejects. */
+  readonly done: Promise<UtteranceOutcome>;
+  /** Returns an unsubscribe function. **`start` replays** — see rule 1. */
+  on<K extends UtteranceEventName>(
+    event: K,
+    listener: (payload: UtteranceEvents[K]) => void,
+  ): () => void;
+  /** Cancel this utterance and nothing else. A no-op once it has finished. */
+  cancel(): void;
+}
+
+export interface TTSProvider {
+  readonly name: string;
+  /** Whether `boundary` events can be relied on. **Declared, not detected.** */
+  readonly supportsBoundary: boolean;
+  /** Whether this provider can speak **Mandarin** here, now. */
+  available(): Promise<boolean>;
+  voices(): Promise<readonly TTSVoice[]>;
+  /** Queue `text` and return its handle **synchronously**. */
+  speak(text: string, opts?: SpeakOptions): Utterance;
+  /** Cancel everything this provider has queued or is speaking. */
+  stop(): void;
+  /**
+   * Subscribe to "the set of voices may have changed"; returns an unsubscribe.
+   * An adapter with no such signal returns a no-op and never calls back.
+   */
+  onVoicesChanged(listener: () => void): () => void;
+}
+```
+
+`lib/tts/sequence.ts` sits on top of it:
+
+```ts
+export type SequenceOutcome = 'ended' | 'stopped' | 'unavailable' | 'error';
+```
+
+### Four more C2 decisions the plan did not settle
+
+- **`speak()` enqueues; it does not cancel.** Before C2 the provider called `synth.cancel()` inside
+  every `speak()`, so a second tap replaced the first and there was no way to stop anything at all.
+  C6's hold-to-slow mode is N utterances *in order*, which a cancel-on-speak interface cannot
+  express, so the cancel moved **out of the provider and into `SpeakButton`**: a tap on a speaking
+  button stops it, and a tap on an idle one calls `stop()` before starting. The adapter keeps its
+  own one-at-a-time queue, because `speechSynthesis` is a single global queue shared with every
+  other script on the page and its `cancel()` empties all of it.
+- **The web adapter declares `supportsBoundary = false`, even though Chrome desktop does fire
+  `boundary`.** The flag is a *declaration*, not a detection: STACK §2.1 adopts per-character
+  utterances as the rule rather than the fallback, C6 repeats it ("do this even where boundary
+  events exist"), and a `true` here would invite a consumer to branch on something two of the three
+  engines cannot deliver. An adapter that means it may declare `true`; nothing in this app will read
+  it as permission to skip the per-character path.
+- **`lib/tts/sequence.ts` never reads `boundary` at all**, and behaves identically whichever way the
+  flag is set — which is what its unit test asserts (`it.each([false, true])`), rather than only
+  exercising the `false` branch.
+- **The outcome unions are part of the contract.** `UtteranceOutcome` is
+  `'ended' | 'cancelled' | 'error' | 'unavailable'`; `SequenceOutcome` is
+  `'ended' | 'stopped' | 'unavailable' | 'error'`. `'ended'` on a sequence means **every** character
+  was spoken: an engine failure on one used to fall through the loop and still report `'ended'`, so
+  a pass in which nothing was audible was indistinguishable from one that worked.
+
+**`HANDOFF.md`'s "Plan item 3 — TTS" section (above, around line 1333) is superseded by this one.**
+It describes the pre-C2 three-member seam — `available()`, `speak(text, opts?)` returning
+`Promise<void>` — and a reader who follows `core.md` C2's pointer to "the final interface" and stops
+at the first TTS heading gets the old one. Everything it says about voice ranking, the memoised
+`voiceschanged` wait and the visible unavailable reason still holds; everything it says about the
+*shape* of `speak()` does not.
+
+`onVoicesChanged` is the one addition beyond C2's list, and it is there because
+`available()` has a **different answer at different times**: Chrome's voice list is empty on a cold
+navigation and populates asynchronously — on Linux well past any timeout worth waiting through — so
+a `SpeakButton` that asked once on mount said "No voice" for the life of that mount while the next
+card's speaker worked. Two identical buttons on one screen, disagreeing. On mobile the same signal
+is an OS voice install or removal, which is also when a stored `SpeakOptions.voiceId` stops
+resolving.
+
+### Three rules the plan did not state, and a mobile adapter must honour
+
+**1. `start` is REPLAYED to a late subscriber. Only `start`.** C2 says to drive the highlight off
+per-character utterance `start` when boundaries are absent — and then leaves the *timing* of that
+event unspecified. `@capacitor-community/text-to-speech` has **no start event at all**: its
+`speak()` resolves when the utterance finishes, so the only honest thing an adapter can do is emit
+`start` synchronously inside `speak()`. A consumer written against the Web Speech adapter subscribes
+on the statement *after* `speak()` and, against that adapter, misses every one — which is zero
+highlights on exactly the platform the per-character path exists for. So an `Utterance` remembers
+that `start` fired and `on('start', …)` invokes a listener immediately if it already has.
+`tests/unit/tts/fake-provider.ts` has a `startsEagerly: true` mode that emits `start` inside
+`speak()`, and `sequence.ts`'s criterion-3 test runs against it.
+
+**2. `done` must EVENTUALLY settle.** A requirement on the adapter, not a hope about the engine.
+Consumers await it with no timeout of their own — `sequence.ts` awaits one per character — so a
+`done` that never resolves hangs the caller with a character lit and no way out but `stop()`. The
+engines drop utterances: Chrome cuts a long one without an `end`, and iOS drops the completion
+callback when the app backgrounds mid-utterance, which is precisely the case
+`@capacitor-community/text-to-speech`'s completion-resolved `speak()` promise cannot cover. **An
+adapter owns a watchdog of its own.** The Web Speech adapter's is `#watchdogMs`: four times the
+plausible duration, floored at 10s and capped at 30s.
+
+**3. A provider must never read Mandarin text in Cantonese.** The old adapter's voice ranking put
+`zh-HK` last rather than refusing it, which on a Cantonese-only device meant the learner heard the
+wrong language rather than the honest "no voice". The rule is now in the interface's own
+documentation: such a voice is **refused** — including when `SpeakOptions.voiceId` names one — and
+`available()` answers `false`. `isCantoneseVoice` is exported so an adapter applies the same
+predicate rather than re-deriving it.
+
+### What the review found in C2
+
+Two lenses — the plan's acceptance criteria, and what breaks that no test covers — then an
+adversarial refutation pass over every finding. **The blocking one was the watchdog, which had no
+test at all.**
+
+1. **The watchdog abandoned the utterance without taking it off the engine.** When it fired it
+   settled the handle and pumped the next utterance, but never called `synth.cancel()` — so the
+   engine was still speaking the abandoned one when the next `speak()` arrived. Two utterances in
+   the browser's single global, additive queue, which is the exact state the adapter's own header
+   says it exists to prevent. **And there was no way back**: `stop()` only reached
+   `synth.cancel()` inside `if (current)`, so after a watchdog fire it was a complete no-op, the
+   button had already reset to Play, and the learner's next tap *added* a third utterance.
+   `stop()` now cancels the engine unconditionally.
+   - A second bug fell out of the fix: cancelling *before* settling made the engine's own
+     `error: 'canceled'` arrive first, so the outcome came back `'cancelled'` and the
+     `'the speech engine never answered'` event — the one diagnostic this path exists to emit —
+     never reached a listener. Settle, then cancel, then pump.
+2. **The watchdog scaled without a cap**, so the longer the utterance the later the guard: a
+   40-character block at `BLOCK_RATE` worked out at 53 seconds. That is backwards — the failure it
+   guards is Chrome dropping a **long** utterance at ~15s — so it is capped at 30s now. The 10s
+   floor stays, including for `sequence.ts`'s one-code-point utterances, because firing early cuts
+   a character off mid-sound.
+3. **`SpeakButton` discarded the `UtteranceOutcome`.** The provider distinguishes `'error'` and
+   `'unavailable'` from `'ended'`; the only consumer threw all of it away and returned to the Play
+   glyph as if the word had been spoken — silence with no explanation, which contradicts the
+   component's own argument for why the unavailable reason is *visible text*. It reads the outcome
+   now and shows `Could not play` beside the glyph. `'cancelled'` says nothing: that is the
+   learner's own second tap.
+4. **Availability was asked once per mount and never again**, which is the `onVoicesChanged`
+   addition above.
+5. **`sequence.ts` spoke punctuation**, on the unverified reasoning that "an engine handed 。 says
+   nothing and returns, which is a free no-op". The cost of that being wrong is not free: the first
+   `'error'` stops the whole sequence, so an engine that answers a `，`-only utterance with
+   `synthesis-failed` kills a sentence at the comma. Punctuation is skipped now, alongside
+   whitespace — `\p{P}`, `\p{S}`, `\p{C}` — and Latin and digits still speak, so 卡拉OK keeps
+   its OK. The indexes handed to `onIndex` are still the original string's.
+
+**Three tests that could not fail**, each rewritten and each mutation-verified:
+
+- **"does nothing when pressed while unavailable"** clicked a `disabled` button and asserted
+  nothing was spoken — which React guarantees on its own, since it does not deliver a synthetic
+  click for a disabled form control. Deleting the component's `if (disabled) return;` guard left it
+  green, and *still* does: neither `.click()` nor `fireEvent.click` can reach the handler. So the
+  test now asserts the thing that actually holds the behaviour up — **the button carries `disabled`
+  in every state but `ready`** — and says in as many words that the guard in `toggle` is a second
+  line of defence for the day `disabled` is replaced by `aria-disabled`, and that this test has to
+  be rewritten deliberately on that day. Removing `disabled` from the button fails it.
+- **"cancelling twice, or after it ended, is a no-op"** re-asserted an already-settled promise's
+  value, which is immutable. The observable failure is a `cancel` **event** after `end` — what the
+  interface forbids and what a sequence would read as an interruption — so it counts `cancel`
+  emissions from a listener subscribed before the end. Removing the fake's `if (this.settled)
+  return;` fails it.
+- **"renders pending, then ready"** never asserted `pending`; it waited past it, as every other
+  test in the file does. `pending` is the state that renders the wrapper `invisible` so the pinyin
+  line does not jump when the probe lands — changing that class to `hidden` passed the whole suite
+  while every review card reflowed. It is asserted now.
+
+Also corrected: the `VoiceId` documentation — the id→index minting rule, which is the hardest part
+of a Capacitor adapter — was attached to `SpeakOptions` instead of to `VoiceId`, so the type it
+constrains carried no documentation at all on a settle-first surface that `ios.md` I4 reads as its
+specification.
+
+### Not done, and why
+
+- **`tests/unit/tts/provider.test.ts` is the contract, not a runnable conformance suite.** Its
+  header claimed `ios.md` I4 and `android.md` A4 "should be able to run this file against their
+  adapters". They cannot: every test drives the fake through methods that are deliberately not part
+  of `TTSProvider` — `start(id)`, `end(id)`, `fail(id, message)`, `loadVoices()`. Turning it into
+  `describeProviderContract(factory, driver)` means specifying a driver interface for "make this
+  utterance start now", which is a real design question about how a Capacitor adapter is testable
+  at all, and not one C2 should answer on the mobile plans' behalf. **The header says so now**
+  rather than promising something that does not exist.
+- **`stop()` immediately followed by `speak()` in the same task is the documented Chrome
+  stuck-synthesiser pattern**, and it is now the *normal* path for every tap on a second card's
+  speaker, because C2 moved the cancel out of `speak()` and into the consumer. Nothing here can
+  test it — the fake cancels synchronously and headless Chromium has no voices — and inserting a
+  `setTimeout` between them on a guess would be speculation. **Flagged for the first session with a
+  real browser and a real voice.**
+- **Audio itself is still unverified.** Headless Chromium ships no voices, so the e2e spec asserts
+  the disabled branch and its visible reason and nothing else. Unchanged from Phase 6 and unchanged
+  by this phase; `ios.md` and `android.md` are where a real voice first speaks.
+- **`boundary` has no real-engine test.** Nothing in this container emits one. The fake covers the
+  contract; the capability flag exists precisely because two of three engines cannot be trusted
+  with it.
+
+## `core.md` C3 — per-character ruby, and the alignment nobody had written
+
+**Landed.** New `lib/hanzi/align.ts` (`alignReading`), `components/hanzi/hanzi-text.tsx`
+(`<HanziText>` / `<HanziWord>`), `components/hanzi/pinyin-display.tsx` (the provider over
+`settings.pinyinDisplay`), `components/hanzi/ruby.css`. `lib/db/schema.ts` gains
+`pinyinDisplay?: 'always' | 'tap' | 'never'`, default `'always'`, optional and merged by
+`getSettings()` — **no Dexie version bump**, as C3 specifies. `lib/dict/pinyin.ts` exports
+`isNumberedSyllable`. `lib/srs/presentation.ts`'s `CardFace` carries `pinyinNum` so a card face can
+align.
+
+### The alignment rate, which C3 asks for by name
+
+Measured over the whole of `data/dict.json` by
+`tests/unit/hanzi/align.test.ts`'s property test, which prints it on every run:
+
+```
+  total:    248,376 headword/reading pairs
+  aligned:  248,248 (99.948%)
+  fallback: 128 (0.052%), of which 68 have no reading at all (xx5)
+```
+
+**0.052% is far below the "few percent" threshold C3 sets for needing another pass**, so C5a can
+build on it. The 60 non-`xx5` fallbacks are all the same shape: a Latin run CC-CEDICT writes as one
+multi-letter token against more than one character — `AA制 [AA zhi4]`, `BP机 [BP ji1]`, `4S店`,
+`CP值`, `21三体综合症 [er4 shi2 yi1 …]`. Nothing can say which character `AA` belongs to, so the
+aligner refuses and the caller renders one word-level annotation. That is the honest answer to the
+hazard C3 names, not a special case for it. `3C店 [san1 C dian4]` and `卡拉OK [ka3 la1 O K]` — where
+CC-CEDICT *does* write one token per letter — align per character.
+
+### The two recorded measurements
+
+Written by `tests/e2e/core/ruby.spec.ts` into `apps/app/test-results/c3-record.json`.
+
+**The clipboard — and it is now an assertion.** C3 says "if Chromium does exclude it, promote this
+to an assertion in the same commit and say so." **It excludes it.** Over a `Range` spanning the
+whole 284-character passage:
+
+| | length | contains the readings |
+|---|---|---|
+| `getSelection().toString()` | 1042 | yes |
+| the clipboard, after `Ctrl+C` | 284 | **no** — the hanzi exactly |
+
+So Blink honours `user-select: none` in the **copied-text** algorithm the same way WebKit has since
+Safari 16.4 (bug 80159), even though it does not honour it in the *selection* string. That
+distinction matters and is why the first measurement of this was wrong: a test that reads
+`getSelection().toString()` is not measuring the clipboard, and would have recorded "Chromium
+copies the pinyin" — the opposite of the truth. The spec now asserts both halves, so the claim is
+about copying rather than about nothing having been selected. **`rt { user-select: none }` is no
+longer sourced for one engine only**; R12 in `core.md`'s register can be closed for Blink. C5b still
+replaces this criterion when it takes the clipboard over explicitly.
+
+**Layout time for 500 characters:** 568 characters / 460 ruby annotations mount, commit and lay out
+in **~40ms** in headless desktop Chromium (42.4ms, 42.5ms and 36.5ms across runs). Recorded only —
+there is no budget to assert against and a number from this container is not one to turn into a
+gate.
+
+### `components/hanzi/ruby.css` did not exist, and nothing noticed
+
+The component shipped `.hanzi-band`, `.hanzi-rt` and `.hanzi-ruby` for a stylesheet **nobody had
+written**. C3's Files list names it; it was missed. Every unit test passed, because jsdom has no
+layout and every class name is just a string to it. What it cost:
+
+- `ruby-position: over` was never declared;
+- **`rt { user-select: none }` was never applied** — so the clipboard measurement above would have
+  been a measurement of unstyled ruby, and would have recorded the wrong answer twice over;
+- the annotations took the browser's default `<rt>` styling — the wrong family and no muted colour;
+- and the band was never reserved, so **the first line's readings sat 13px above the passage**,
+  overlapping whatever was printed there. The e2e criterion ("every `<rt>`'s bounding box inside its
+  container's") is what caught it, on its first run.
+
+`tests/e2e/core/ruby.spec.ts`'s first test asserts every one of those declarations reaches the page,
+because **a class that resolves to nothing is invisible in every other test in the file.**
+
+### Two CSS findings that only a browser could have produced
+
+**1. The band cannot be `padding-top` on an `inline-block`, because that stops the passage
+wrapping.** The obvious fix for the escaping first line is
+`.hanzi-band { display: inline-block; padding-top: 0.6em }`, and it works — until a run has no
+`<rt>` in it. Measured in Chromium: **an `inline-block` whose children are `<ruby>` elements with no
+`<rt>` has no line-break opportunities at all**, so the `'tap'` column's 200-character passage
+became a single unbreakable **2546px** box at a 390px viewport and the page scrolled sideways. The
+identical markup with annotations wraps at 358px — the annotations are what create the break
+opportunities. So the band is a **zero-width strut** instead: `.hanzi-band::before { content: '';
+display: inline-block; width: 0; height: 1.6em; vertical-align: baseline }`, which props the first
+line box open and leaves the element `display: inline`. The e2e asserts both halves — the strut has
+height, and the element is still `inline` — because each alone passes while the other is broken.
+
+**2. `ruby.css` has to be inside `@layer base`, or `rtClassName` is inert.** Tailwind 4 emits every
+utility into `@layer utilities`, and an **unlayered** rule beats a layered one whatever the
+specificity. Unlayered, `.hanzi rt { font-size: 0.5em }` silently beat `rtClassName="text-[0.28em]"`
+on the card faces — so the prop that this file's own prose calls an override did nothing, and a
+four-syllable answer at `text-7xl` rendered 36px annotations over 72px characters instead of 20px
+ones. This is the **second** Tailwind-4 layering trap in this plan; C0's was `--radius-*` on bare
+`:root` re-pointing every `rounded-*`. Both have the same shape: an unlayered declaration beating
+the framework's own, silently. **Assume it will happen again.**
+
+### `<ruby>` interleaves `textContent`, and that made a guarantee go vacuous
+
+`<ruby>打<rt>dǎ</rt></ruby><ruby>算<rt>suàn</rt></ruby>` reads back as `打dǎ算suàn`. Fifteen e2e
+specs went red on `toContainText('打算')`, which is a nuisance. **The dangerous half is the other
+direction**: `not.toContainText('打算')` — the production card's "the front may not contain the
+answer", the review session's "the graded one is gone" — keeps passing against a front that shows
+the word in full, because the interleaved string no longer contains the substring. Those assertions
+would have gone quietly vacuous and nothing would have failed.
+
+Two hooks, for two different jobs:
+
+- **`data-hanzi`** on every `<HanziText>` wrapper: the base characters of that one run, without the
+  readings. Unit tests and anything that wants *the word* read this.
+- **`tests/e2e/hanzi.ts`** — `baseText()` / `expectBaseText()` / `expectNoBaseText()` /
+  `expectExactBaseText()` / `baseTexts()`: the region's text with the `<rt>` elements dropped,
+  i.e. exactly what `textContent` used to return. Whole-region assertions (`card-front` is hanzi
+  plus glosses plus a peek line) go through these, in **both** directions. Playwright's
+  `filter({ hasText })` has the same problem and the one use of it is now `filter({ has:
+  locator('[data-hanzi="打算"]') })`.
+
+### `getSettings()` threw inside a live query, and every route rendered "Something went wrong"
+
+`PinyinDisplayProvider` reads the setting through Dexie's `liveQuery`, which refuses a readwrite
+transaction outright. `getSettings()`'s header already called its write best-effort — but only the
+*fill-in* write was guarded and **the create was not**, so the first read on a fresh database inside
+a live query threw "Readwrite transaction in liveQuery context", the error reached the router's
+`errorElement`, and *every* route rendered the error boundary. Seventeen e2e specs went red at once
+and no unit test saw it, because no unit test mounted a live query.
+`tests/unit/db/settings-read-only.test.ts` is the regression: `getSettings()` inside a read
+transaction, on a fresh database and on one missing the column. Mutation-verified.
+
+### A contradiction in C3 itself, and how it is resolved
+
+C3 asks for two things about `'tap'` that cannot both hold:
+
+> default state: no `<rt>` is rendered anywhere, and the ruby band is **not** reserved (no layout
+> shift on reveal — this is why it must be specified now: reserving the band changes the line box)
+
+Reserving the band *later* **is** the shift. **The stated reason wins over the stated mechanism**:
+in `'tap'` the band is reserved from the first render, before anything is revealed, so a reveal
+drops an `<rt>` into space that is already there. `'never'` reserves nothing; `'always'` and `force`
+reserve only when something is actually drawn, so a passage of `xx5` entries carries no empty band.
+The e2e compares the **whole block's** geometry and a far-end word's position, in document
+coordinates, before and after a tap — the first version captured a `top` and then never read it, and
+its only positional assertion (`offset >= 0`) could not be false under any layout the component can
+produce.
+
+### Decisions this plan's C3 left open, or got wrong
+
+- **`review/phrase-face.tsx` is NOT switched, deliberately.** C3's call-site table lists it (`:50
+  :69`, "card faces, both sides"). The file's own committed rule is *"No pinyin here… this is the
+  front of a review card, where the reading is the answer"*, and a phrase card has only a front —
+  rendering ruby on it hands the learner the answer. The table's justification cites
+  `product-decisions §4`, and **`docs/product-decisions.md` is not in this repository** (every plan
+  cites it; nothing carries it), so the citation cannot be checked. Left plain, with `lang="zh-Hans"`
+  added. If the owner's §4 really does mean the phrase front too, this is a two-line change.
+- **`docs/product-decisions.md` does not exist in the repo.** `core.md`, `ios.md`, `web.md`,
+  `data.md` and `README.md` all cite it by section. Four C3 decisions rest on §4 alone. Worth
+  committing, or worth the plans quoting the rules they depend on.
+- **`lookup/lookup-panel.tsx:67` is not "the `<h2>` headword"** that C3's table calls it. It renders
+  the **query as the learner typed it** — which may be pinyin, English, or a hanzi run the dictionary
+  has no entry for — so there is no cited reading to annotate and annotating it would be a guess.
+  It keeps `.hanzi` and `lang`; `<EntryDetail>` below it renders the resolved headword with its ruby.
+  Same for the provenance line at `:74`.
+- **`lookup/entry-detail.tsx`'s decomposition strip stays plain** (the IDS string `⿰扌丁`, the
+  radical). A decomposition is not a word and has no reading. This is also the licence boundary:
+  Make Me a Hanzi data must never travel with a reading that would make it look like dictionary
+  content.
+- **Example sentences and ask-panel phrase tokens are annotated at TOKEN granularity, not
+  character.** `RenderedToken` (`lib/ai/ground.ts`, under the frozen `packages/ai` surface) carries
+  `pinyin` as the **marked** word-level form and `alignReading` needs the **numbered** one. Adding
+  `pinyinNum` to that token is the change C3 would need; **it is a frozen surface, so it is recorded
+  here and not made.** Until then those runs align in `fallback` mode, which renders exactly one
+  annotation over the token — the correct word-level reading rather than a guessed per-character
+  one. Both sites are marked in code with this reason.
+- **The `'tap'` "one gesture, two effects" e2e is C4's, not C3's.** C3's criterion asks that the same
+  tap both reveal the reading *and open the word sheet*; the word sheet is C4. The reveal half is
+  asserted here (unit and e2e); the sheet half lands with the sheet. `<HanziText>` already fires
+  `onWord` in the same handler that performs the reveal, so the wiring is done.
+
+### What the review found in C3
+
+Three lenses on C3 (the acceptance criteria; what breaks that no test covers; tests that cannot
+fail) plus two on C2, each finding then put to an adversarial refutation pass. **The blocking one
+was the recognition card answering itself.**
+
+1. **A recognition card's front printed the reading it was testing.** `cardFace()` carries
+   `snapshot.pinyinNum` and the front rendered it through an unforced `<HanziWord>` — and
+   `DEFAULT_SETTINGS.pinyinDisplay` is `'always'`, so a fresh install showed 打(dǎ)算(suàn) above the
+   headword and then revealed `dǎsuàn` as the answer a keypress later. `phrase-face.tsx` had the
+   rule already ("this is the front of a review card, where the reading is the answer") and the two
+   card types behaved oppositely. The rule now stated in both places: **`pinyinDisplay` governs
+   reading surfaces, not the question side of a practice card.** The front is `display="never"`
+   until `revealed`, and then `force` — the annotation appears over each character *on the flip*,
+   which is where it belongs, and which the joined `card-pinyin` cannot show. Guarded in both a
+   unit test and `p2/review.spec.ts`, both mutation-verified.
+2. **`pinyinDisplay: 'tap'` could never reveal anything anywhere in the app.** The delegated handler
+   was attached only when a caller supplied `onWord`/`onCharacter`, and the reveal lives inside that
+   handler — the gallery was the single call site that passed one, specifically so the state could
+   be demonstrated. Every card, search result, list row and entry detail passed neither, so "only
+   when I tap" behaved exactly like "never". `revealsOnTap` is in the condition now.
+3. **`onCharacter` reported character 0 for every tap inside a fallback run.** The fallback branch
+   carried one hardcoded `data-char-index={0}` for the whole run — and fallback is not a rare path:
+   every `xx5` entry, every multi-letter Latin headword, and **every** example-sentence and
+   ask-panel token, which reach `<HanziWord>` with only `pinyinMarked`. C4's character sheet would
+   have opened on the wrong character with no signal. Each character carries its own index now:
+   fallback means the *reading* cannot be split, not that the characters cannot be counted.
+4. **The gallery passage printed four wrong readings.** Generated with `entryIds[0]`, which is the
+   most **frequent** entry and not the contextually cited one: jì over 骑 in 骑自行车, páo over 跑 in
+   跑完步, yāo over 要, kān over 看 — on the one surface the review looks at first, and on the phase
+   whose entire purpose is that a fabricated reading cannot reach the screen. Worse, the test that
+   claimed to guard it re-derived the fixture with the same function, so it pinned the bug. A
+   polyphone now gets **no** reading, and a second test names 骑 跑 要 看 会 的 和 东西 by hand rather
+   than deriving them.
+5. **The `'tap'` revealed set survived a change of passage.** It holds indexes into `runs`, and
+   React reuses the instance when the element type and position are stable — a reader swapping
+   texts, a sheet showing a second entry — so run 3 of the new passage came up revealed because run
+   3 of the old one had been tapped. Cleared on a `runs` change.
+6. **Ruby broke the accessible name.** With no `<rp>`, the `<ruby>`'s computed name is the
+   interleaved string, so the card's `<h2>` read back as "打dǎ算suàn" — the same interleaving that
+   broke fifteen e2e specs, except the sighted surface was fixed with `data-hanzi` and the assistive
+   one was not. `<rp>(` … `<rp>)` now travel with every annotation: a reader without ruby support
+   says "打 (dǎ)", one with it ignores them, and they are `user-select: none` so the clipboard is
+   unchanged. `baseText()` strips them alongside the `<rt>`s.
+7. **`lookup/entry-detail.tsx`'s "Characters" strip had no readings** — the one screen in the app
+   whose subject *is* individual characters. It aligns the **selected** reading now, so it changes
+   with the reading the learner picks, and a character that appears twice with two syllables (好好)
+   gets none rather than a guess.
+
+**Three more tests that could not fail**, on top of C2's three:
+
+- **`tests/e2e/hanzi.ts`'s `expectNoReadingOf` passed for every input it will ever see.**
+  `expect.not.arrayContaining([a, b, c])` passes as soon as *one* is absent — and it was handed the
+  word-level annotation together with its syllables, of which a run carries one set or the other,
+  never both. It filters term by term now. That is the second time the readings-versus-base-text
+  distinction produced a vacuous assertion; the first is why the helper exists at all.
+- **The "one delegated handler" test asserted `ruby.getAttribute('onclick') === null`**, which is
+  true of every React-rendered element ever, handler or not — React delegates from the root and
+  never writes the content attribute — and the render passed no callbacks, so nothing was attached
+  in any case. Adding a per-character `onClick` to `<Ruby>`, the exact regression named, left it
+  green. There is no DOM-level way to count React handlers, so it reads the module the way
+  `tokens.test.ts` reads `tokens.css`: exactly one `onClick=` binding, on the container.
+- **The alignment property test skipped itself when `data/dict.json` was absent**, and `pnpm test`
+  did not generate it — so on any fresh clone C3's headline guard silently vanished and the suite
+  was green without it. The root `test` script runs `data:ensure` now, the way `build` does, and the
+  test fails loudly rather than disappearing.
+
+Also fixed: `<HanziText>` stamped `data-testid="reader-token"` on **every** word grouping app-wide,
+which is the reader's hook — `tests/e2e/p5/helpers.ts` counts those elements on `/read` to assert
+how a passage segmented, and since C3 the reader panel contains groupings too. The default is
+`hanzi-word`; `wordTestId` is the override C5b passes when it switches `reader-text.tsx`.
+
+## `core.md` C4 — the word sheet, the character sheet, and the in-context line
+
+**Landed.** New `components/hanzi/word-sheet.tsx`, `char-sheet.tsx` and `context-gloss.tsx`.
+`components/reader/reader-lookup.tsx` is **deleted**, folded into the word sheet with its
+`markKnown()`; `components/reader/reader-screen.tsx` mounts the two sheets;
+`components/lookup/entry-detail.tsx` is re-homed inside them and gains two props
+(`onSelectedChange`, `belowHeadword`) plus an `entry-gloss` test id per sense.
+
+### The three §7 capabilities that were falling between plans
+
+- **"Mark known"** moved with the file rather than being left behind in it. Both properties the
+  plan names survive, and both are now unit-tested where they were only e2e-tested before: it marks
+  **the reading the sheet is showing** (the ranked entry by default, reading B when the learner has
+  picked reading B out of a polyphone), and **a rejected write is visible** rather than leaving a
+  button that looks pressed.
+- **The reader's known / learning / new colouring** is untouched and still comes from
+  `lib/reader/states.ts` through `reader-screen.tsx`. Nothing in this phase deletes or re-homes it;
+  `tests/e2e/p5/reader.spec.ts`'s colouring cases pass unchanged.
+- **The in-context gloss line** is `components/hanzi/context-gloss.tsx`, and it obeys the grounding
+  contract like everything else: the model returns an entry id and a sense index, the *words* come
+  from the entry, a match citing a different entry is dropped, an index outside the entry's own
+  senses is dropped, and the prose goes through `scrubProse` again — no hanzi, no readings — because
+  this line sits directly under a headword and that is the worst place in the product for a
+  fabricated character. **Absent, not empty**, when there is no answer: the senses and the Add never
+  wait on it and do not move when it arrives.
+
+### What the plan did not settle
+
+- **`Sheet` gained a non-modal mode, and the reader uses it.** C4 says to build the tap behaviour
+  "on the `Sheet` primitive", and C1's `Sheet` is modal — backdrop, `aria-modal`, scroll lock, Tab
+  trap. A reading session is tap-a-word, read, **tap the next word**, and with a backdrop over the
+  passage every word after the first costs two gestures: one to dismiss, one to open. That is not a
+  detail of the harness — it is the reader's core loop, and the existing p5 spec caught it by
+  timing out on the second tap. `modal={false}` means precisely: no backdrop element, no
+  `aria-modal`, no scroll lock, and **no Tab trap** (a dialog you can tab out of is what
+  `role="dialog"` without `aria-modal` describes; trapping Tab without a backdrop would be the worst
+  of both). Everything else is unchanged — the label, focus in on open and back to the opener on
+  close, Escape. Every other caller gets the modal default.
+- **The word sheet keeps `LookupPanel` inside it.** Dropping it in the fold would have thrown away
+  the query as the learner met it, the provenance sentence and the `from reader` badge — the
+  provenance the whole mining loop is built on — and the p5 suite says so in three places. The
+  sheet's own heading is `hideTitle`d so there is one `<h2>`, not two.
+- **`data-testid="reader-panel"` survives on the sheet.** The surface is the same one, re-homed;
+  renaming the reader's contract is not this phase's to do.
+- **The scroll-that-clears-the-tapped-word moved from `reader-text.tsx` to `reader-screen.tsx`**,
+  which is what "carry the behaviour, not the code" had to mean. In the click handler it could not
+  work: it measured the token *before* the sheet existed and before the column grew the bottom
+  padding that makes the document tall enough to lift it, so the tapped word stayed behind the sheet
+  exactly when it mattered. It runs two frames after the sheet opens now.
+- **…and its breakpoint was wrong.** It read `max-width: 767px` — Tailwind's `md` — while C1 puts
+  the sheet's switch to a side panel at **720px** (`--breakpoint-wide: 45rem`) and says nothing may
+  hard-code 768 for that boundary. In the 48px band between the two, the sheet was already a side
+  panel and the reader still scrolled as if it were covering the lower two thirds. It is the
+  complement of the `wide:` variant now, so the two cannot drift.
+- **The in-context line is asked for by the reader, not by the sheet.** A sheet opened from the
+  search box has no sentence, so it makes no request at all. `useContextGloss` posts the same
+  `/api/ask` body the panel posts and deliberately **does not write `ask_cache`**: the panel owns
+  that key and its trustworthiness rules (`cacheable`, the handshake, the provider), and a second
+  writer with a simpler idea of when an answer is worth keeping is how a cache starts lying. **C7
+  owns the ask module's state; when it lands, this hook is what it replaces.**
+- **The character sheet's "other words with this character" is a prop and is not wired.** C4 says
+  the whole-dictionary question is STACK §5.6's optional `chars` table and `data.md`'s call, not
+  this plan's. `DictStore.wordsContaining` exists in the frozen interface but no HTTP route answers
+  it — see the C4a section — so the panel renders the learner's own deck, filtered from
+  `allCards()` in the client exactly as C4 instructs, and the other list is absent until someone
+  passes it.
+
+### A defect in `core.md` C4's own text
+
+**`继续` does not have "both senses".** C4's first acceptance criterion is "tap a two-character word
+→ word sheet with both senses and an Add". In the built dictionary CC-CEDICT gives 继续 a **single**
+semicolon-joined gloss (`to continue; to proceed with; to go on with`), so the sheet renders one
+`<li>` and an assertion of two senses fails against correct behaviour. The spec uses **打扫** for
+that case (`to clean`, `to sweep`) and **看** for the polyphone case (kān / kàn), and says why in the
+test. Worth knowing generally: **a CC-CEDICT "sense" is a `/`-delimited field, and several of them
+carry internal semicolons** — a UI that counts senses is counting fields, not meanings.
+
+### What the review found in C4
+
+Three lenses — the plan's acceptance criteria, what breaks that no test covers, and tests that
+cannot fail — then an adversarial refutation pass. **The blocking one was "Mark known" marking the
+wrong word.**
+
+1. **The sheet showed one word and marked another.** `EntryDetail` reports the reading it is
+   showing, and the sheet remembered it in state that nothing cleared — but the sheet is *one
+   long-lived instance* in the reader, a tap swaps the word rather than remounting. So between the
+   tap and the entries resolving, and **permanently** for a word CC-CEDICT has no headword for (the
+   `via: 'fallback'` case), the sheet's heading read the new word while "Mark known" was enabled and
+   wrote the **previous** word's id — and the passage recoloured a word the learner never looked at.
+   The deleted `reader-lookup.tsx` could not do this: its entry came straight off the resolved
+   group. `marking` is derived that way again — `showing` is honoured only while it is still one of
+   the current group's entries — which is render-order-proof in a way an effect is not.
+   Mutation-verified in unit and in e2e.
+2. **One tap sent two `/api/ask` requests.** The sheet renders `LookupPanel`, and `LookupPanel`
+   mounts the full ask panel by default with the same query and context — so the in-context line and
+   the panel asked the same question independently. Not equivalent, either: the panel debounces,
+   reads `ask_cache` and writes it back under a trustworthiness gate; the line does none of that. So
+   the two could name **different senses of the same word on the same sheet**. `LookupPanel` gained
+   `noAsk`, which the sheet sets: the sheet wants the one line, not the panel. `integration.spec.ts`
+   asserted the panel was there and now asserts the line names one of the entry's own senses — the
+   same seam, one request.
+3. **Non-modal Escape died as soon as focus left the sheet**, which in the reader is the *normal*
+   case: tapping the next word moves focus onto that token, and a handler bound to the panel never
+   hears the key. A capture-phase document listener is the non-modal equivalent of the Tab trap.
+   Focus return had the mirror bug — `opener` is captured when the sheet opens and the reader keeps
+   one sheet open across taps — so focus is given back only when the sheet was actually holding it.
+4. **The character sheet showed the previous character's decomposition** under the new character,
+   for the length of a round trip. `looked` was keyed by character and `parts` was not.
+5. **A card added from the character sheet inherited the whole word's highlight span.** `offset` and
+   `length` decide what a card back highlights (PLAN.md §1, commitment 2), so a one-character card
+   highlighted 继续 for the life of the card. The character's index travels with the tap now.
+6. **The lists page died when the dictionary did.** Not C4's code, but C4a's rule: `readDetail`
+   awaited `source.entries()` and let the rejection take the whole page, so a learner with no
+   `data/` build could not see the words they had chosen. The row already renders a member with no
+   entry, by id; it never got the chance.
+
+**Four tests that could not fail**, each rewritten and each mutation-verified:
+
+- **The character sheet's licence test was a source-text grep.** It asserted the file *mentioned*
+  `decompose(` and did not mention `addCard` — a test of the file's spelling. Adding a
+  `fetch('/api/ask')` carrying the decomposition, the exact violation the header names, left it
+  green; renaming a local variable broke it. It renders the sheet now, records every request, and
+  searches each body for the IDS string and the radical.
+- **The licence test's "structural half" claimed something untrue.** "Nothing under `lib/db/**`
+  imports the decomposition modules" — but `DecompEntry` is declared in `lib/types.ts`, which every
+  file under `lib/db` already imports, and the regex only looked at `lib/dict/decomp*` and only at
+  single quotes. The check is by **name** now: nothing under `lib/db` says `DecompEntry`,
+  `decomposition` or `radical` at all.
+- **The Add-from-the-character-sheet spec collected `senseIndex` and `entryId` and asserted
+  neither.** Both are asserted now — `senseIndex` is `undefined`, which is the correct answer and
+  worth stating: `EntryDetail`'s Add chooses a *reading*, not a sense, and only the ask panel's
+  per-match Add fills that field.
+- **The `modal={false}` mode had no unit test at all**, while its header stated five precise
+  properties. All five are asserted now and each fails under its own mutation: no backdrop, no
+  `aria-modal`, no scroll lock, no Tab trap, and Escape from outside the panel.
+
+Also corrected: the `<Sheet>` open/close effect depended on `onClose`, which every caller passes as
+an inline arrow — so it tore down and re-ran on **every render**, re-capturing the opener as
+whatever inside the panel had focus, and Escape "returned" focus to the sheet that had just closed.
+`onClose` lives in a ref. And the badge headword, the character chips and the character sheet's word
+lists now render through `<HanziText>` like every other Chinese run — C3's table assigned that row
+to C4 and it was the last one open.
+
+## `core.md` C4a — the `DictStore` cutover, and the four states
+
+**Landed.** Every consumer above the dictionary layer codes against `DictStore` / `DecompStore`.
+`components/shell/data-banner.tsx` is **deleted** and `components/dict/dict-gate.tsx` replaces it
+one-for-one, driven by `store.status` and `store.subscribe()`. `lib/lists/entry-source.ts` pages.
+
+### The two greps `data.md` D6 is waiting for — and why D6 is not yet unblocked
+
+```
+$ grep -rn "lib/dict/client" --include=*.ts --include=*.tsx .          # apps/app
+./lib/dict/http-store.ts:10:  * have stayed on `lib/dict/client.ts` for a phase whose whole point …
+./vite-plugins/api.ts:129:    // shape `lib/dict/client.ts` then fails to parse, reporting a JSON …
+```
+
+Both hits are **prose in a comment**. No module imports it except one.
+
+```
+$ grep -rn "api/dict" components/ lib/                                  # code only, comments cut
+lib/dict/client.ts:65,81,105,113,124,136    — the fetchers themselves
+```
+
+Every other hit in that grep is a comment. So the honest statement of this phase is: **one file
+behind the interface still fetches**, and it is `lib/dict/http-store.ts`.
+
+**Why it exists.** Until `data.md` **D4** gives the browser a `SqlRunner` over sqlite-wasm on OPFS
+there is **no `DictStore` a browser can construct**: `lib/dict/runners/` contains a Node runner and
+nothing else. Without a bridge, C4's sheets would have had nothing to inject and C4a's cutover would
+have had nowhere to go, and every consumer would have stayed on `lib/dict/client.ts` for a phase
+whose entire point is that they do not. With it, the seam is real and **swapping in the OPFS store
+is a change to one file** — `lib/dict/browser-store.ts`, the single construction site.
+
+`tests/unit/dict/client-callers.test.ts` locks that state in: exactly one importer of the client,
+exactly one file naming an `/api/dict` route in code, exactly one construction site. It fails the
+day any of those changes, in either direction — which is how D6 finds out it has been unblocked.
+
+**What `HttpDictStore` cannot do**, stated rather than faked:
+
+- **`wordsContaining` throws.** It needs the `chars` table (STACK §5.6), which no route exposes.
+  Returning `[]` would be a lie a caller cannot tell from "no such words". Nothing calls it: C4's
+  character sheet takes that list as a prop for exactly this reason.
+- **`readingCount` is a search and a count.** Correct, one extra round trip, invisible to the caller.
+- **`hskBand`'s `limit`/`offset` slice after fetching.** The signature is honest so
+  `lib/lists/entry-source.ts` can be written against the interface today; the *cost* moves when the
+  real store lands. That is the opposite of what the paging is for, and it is written here so nobody
+  reads a green suite as a finished bridge.
+- **`entries(ids)` has no `AbortSignal`** on the frozen interface, where `fetchEntriesResponse` took
+  one. `search` does (`SearchOptions.signal`, already frozen). Callers drop stale answers with a
+  `cancelled` flag instead, so nothing that reaches the screen depends on it — but a needless
+  in-flight request is one the mobile bridge will feel. **A change to a frozen surface: recorded,
+  not made** (CLAUDE.md).
+
+### The page size, and the reasoning C4a asks to be written down
+
+**`BAND_PAGE = 250`** (`lib/lists/entry-source.ts`).
+
+`DictStore.hskBand` gained `limit`/`offset` because the call crosses a Capacitor JSON bridge now
+rather than a socket, and band 7 is 5,638 entries. The spine builder is the caller that pages, and
+250 is chosen against what it actually needs: it takes at most `settings.newPerDay` entries (10 by
+default) and discards those that fail `spineEligible` or sit at or below `knownBand`, which in the
+worst case is most of a window. 250 is ~25× the headroom the first window needs and an order of
+magnitude below a whole band; when it is not enough, `draw.ts` asks for the next one rather than
+guessing bigger. **This is the first number a low-end device will feel**: too small and the draw
+makes five bridge trips before it has a queue, too large and the first one blocks.
+
+**The paging loop hung `pnpm test` before it worked.** `EntrySource.band`'s options are optional, so
+a fake — or any implementation that has not caught up — may hand back the whole band however it is
+asked; then `offset` grows, the page is never short, and the loop never ends. It presented as a
+hang, which reads as an infrastructure problem rather than as the bug it is. Three guards now, two
+of them mutation-verified: a short page ends it, a page whose first entry repeats the last page's
+ends it (and that one is worth ~60 saved bridge round trips per band against a source that ignores
+the window), and a hard cap of 64 windows bounds it whatever happens.
+
+### The four states
+
+`DictStatusView` (C1) already drew all four against literals. C4a makes them **real screens driven
+by a store**: `components/dict/dict-gate.tsx` subscribes to `store.status`, renders its children
+only on `ready`, and offers `open()` as the retry. `useDictStatus` subscribes *before* it reads, so
+a store that warms between the two is not missed.
+
+`tests/e2e/core/dict-states.spec.ts` asserts the things a literal cannot show — that the gate
+re-renders from `subscribe()`, that the determinate bar's `aria-valuenow` **moves** across three
+advances, that an indeterminate one omits the value rather than inventing one, that each of the four
+failure reasons has its **own** copy (four states sharing one sentence would satisfy every other
+assertion in the file), and that a retry reaches `open()`. It drives
+`components/gallery/fake-dict-store.ts` — the hand-written fake `core.md` §4 allows until D2/D3's
+in-Node store can run in a browser. The fake lives under `components/gallery/` so it leaves the
+production bundle with the gallery.
+
+**Only `/lookup` and `/read` are gated.** Practice, lists, Today and stats are the learner's own data
+and are untouched by a missing dictionary — `data.md` D4 requires it and it is the easiest thing to
+lose, so a spec runs a whole review to completion and opens a list with every dictionary route
+answering 503.
+
+### A defect that rule found
+
+**`/lists/:id` died when the dictionary did.** `readDetail` awaited `source.entries(page)` and let
+the rejection take the whole page, so a learner with no `data/` build got an error message instead
+of the words they had chosen — even though the member row already renders an entry-less member by
+id. It catches now: the list is the learner's, the gloss beside it is the dictionary's, and losing
+the second must not lose the first.
+
+### Not done, and why
+
+- **`components/lookup/lookup-view.tsx` no longer has a "dictionary data is missing" message.** It
+  is `store.status` and `<DictGate>` draws it — a message inside a search box the learner is still
+  typing into told them something was wrong and left them typing.
+- **`tests/unit/reader/store.test.ts` still spies on `globalThis.fetch`.** It exercises
+  `lib/stores/reader.ts` through `DictStore` now, and passes because the bridge behind it is HTTP —
+  so it asserts one layer lower than it reads. When D4 lands it needs a store fake. Harmless today,
+  and worth knowing before someone is surprised by it.
+- **`open()` is called by the gate, not by the stores' constructors.** A surface that reads
+  `store.status` before any gate has mounted would have seen `absent` for the session, and that
+  value is what a card is stamped with — so every answer that carries a version moves the store to
+  `ready` as well. `?seed=demo` caught this: it writes cards without ever mounting a gate, and every
+  one of them was stamped `dictVersion: 'unknown'`.
+
+## `core.md` C5a — the drag-select harness, measured before anything is built
+
+**Landed.** `components/gallery/span-select-harness.tsx`, `src/routes/span-select.tsx`, a
+`::highlight(span-select)` rule in `app/globals.css`, and
+`tests/e2e/core/span-select-harness.spec.ts`.
+
+### The URL `ios.md` I2 opens on the device
+
+```
+/span-select
+```
+
+**Standalone, outside `<Root>`.** It is a top-level route rather than a child of the shell, so it
+boots with no header, no nav, no dictionary, no providers and no app state — which is what R2 needs:
+I2 loads it on a physical device with no sign-in, and the crash it is looking for happens during
+touch on the passage. It carries the **same build-mode guard as the gallery**, and
+`tests/e2e/core/gallery-excluded.spec.ts` now proves both halves for it: an `--mode e2e` build
+contains it, a production build contains neither the module nor the path, and requesting it in
+production renders the not-found surface.
+
+### The criterion `ios.md` I2 is relying on, asserted
+
+`git diff --name-only` for this commit:
+
+```
+HANDOFF.md
+apps/app/app/globals.css
+apps/app/components/gallery/span-select-harness.tsx
+apps/app/src/routes.tsx
+apps/app/src/routes/span-select.tsx
+apps/app/tests/e2e/core/gallery-excluded.spec.ts
+apps/app/tests/e2e/core/span-select-harness.spec.ts
+apps/app/tests/unit/gallery/span-select-scope.test.ts
+```
+
+**Nothing under `components/hanzi/`, `components/reader/`, `lib/stores/` or `lib/reader/`.**
+`tests/unit/gallery/span-select-scope.test.ts` holds the durable half after the fact: the harness
+imports nothing from the reader, the reader stores or `lib/reader`; it imports `<HanziText>` and
+nothing else from `components/hanzi`; and `components/hanzi/use-span-select.ts` and
+`span-clipboard.ts` — the two modules C5a names as C5b's — do not exist.
+
+### The numbers
+
+**Which caret API this engine chose:** `caretPositionFromPoint`, in headless desktop Chromium; the
+CSS Custom Highlight API is present. Recorded rather than assumed, because **register #2 is open**:
+WebKit landed `caretPositionFromPoint` behind a flag in late 2024 and whether Safari 26 ships it on
+is unverified. The harness feature-detects at runtime and prints which path it took, so I2 reads the
+answer off the device rather than inferring it.
+
+**`pointermove` handler time over a 568-character passage**, one sample per move, the whole handler
+including the highlight update, during a full-width drag:
+
+| | |
+|---|---|
+| samples | 60 |
+| p50 | **1.0 ms** |
+| p95 | **1.2 ms** |
+| max | 10.4 ms |
+| frames during the drag | 61 |
+| dropped frames (> 20 ms) | **0** |
+| budget (C5a) | 16.7 ms |
+
+Comfortably inside one frame, and the max is the first move, which pays for the initial hit-test.
+**This is the baseline, not a pass mark** — no audit measured it, headless Chromium on a container
+is not a phone, and `ios.md`/`android.md` re-measure on hardware.
+
+### The axis-discrimination threshold
+
+**`AXIS_THRESHOLD_PX = 8`**, and the rule has two halves, both of which matter:
+
+> commit when horizontal travel ≥ 8 CSS px **and** horizontal travel > vertical travel.
+
+Chosen against the harness: a drag of 120px down with 6px of horizontal drift never commits, and a
+drag of 120px across with 6px of vertical drift always does — both asserted. The second half is what
+makes a *long* vertical scroll with 20px of accumulated drift stay the browser's; a bare distance
+threshold would have taken it. C5b consumes this number and `ios.md`/`android.md` re-check it on
+hardware, **where thumbs are less precise than Playwright** and 8px may well be too eager.
+
+### `touch-action` is dynamic, and AUDIT 2 was right
+
+AUDIT 1 (iOS) says `touch-action: none` on the reader container; AUDIT 2 (Android) says
+`touch-action` handling **on pointer-down**; STACK §2.1 flattened both into the iOS wording. A static
+`touch-action: none` is exactly the declaration that stops the browser panning that element — on the
+one screen made of a long scrolling passage. The harness takes AUDIT 2's version: the passage rests
+at `pan-y`, `pointerdown` records the origin and does nothing else, and `touch-action: none` is set
+**after** capture, for the duration of the drag only. A spec drives a real touch scroll through CDP
+over the passage and asserts the page scrolled and no selection started.
+
+### Three things the harness found that a plan could not
+
+1. **A caret position is a boundary, not a character.** `caretPositionFromPoint` snaps to the nearer
+   boundary, so a point in the right half of character *c* comes back as `c + 1` — a drag from
+   character 3 to 7 reported 4 to 8. The boundary is disambiguated by asking which character's box
+   the point is actually in: one range and one rect per move, and the cost is **inside** the
+   `pointermove` measurement above rather than hidden from it. C5b inherits this or inherits the
+   off-by-one.
+2. **A whole gesture can arrive inside one task**, and React state is useless there. Every
+   `pointermove` and the release can dispatch in a single burst — which is what a synthetic touch
+   sequence does and what a fast real drag does — so React never re-renders in between. Reading the
+   anchor out of state meant every move saw `null` and committed nothing; reading the span out of
+   state at release meant the release overwrote a correct report with an empty one. The drag path
+   reads refs and the state is only what is drawn.
+3. **`setPointerCapture` throws for a pointer the browser is not tracking** (`NotFoundError`), which
+   is both a synthetic event and, in the wild, a pointer already cancelled. Capture is best-effort:
+   the selection does not depend on it, and throwing there abandons the gesture instead.
+
+### Decisions this plan's C5a left open
+
+- **The highlight takes the practice accent** (`--practice-soft` / `--practice`), not the jade
+  `--lookup-soft`. The reader already uses jade for a word in learning, and a span the learner is
+  dragging must not look like a word state they have earned. `::highlight()` accepts only colour,
+  background, decoration and shadow by spec, so that is the whole rule.
+- **`data-span-index` is stamped from the character map, not from a count of elements.** Counting
+  elements looked equivalent and is not: a run with no reading — every punctuation mark — renders as
+  one plain `<span>` with no per-character element, so a counter drifts out of step with the text at
+  the first comma and every later "character N" is a different character. C5b's `spanOf()` has the
+  same hazard.
+- **The `<rt>` exclusion is structural, not a filter.** The character map is built by a TreeWalker
+  that rejects anything inside `<rt>` or `<rp>`, so every range the harness can build is already
+  base text. The spec asserts it against the live highlight registry anyway, and asserts there are
+  more than fifty `<rt>`s on screen to have been swept up.
+- **The Copy affordance derives its string from the harness's own character index**, not from the
+  DOM or the selection — base characters, no readings, asserted against the real clipboard. C5b
+  promotes this into `span-clipboard.ts` reading `spanOf()`, rather than inventing it twice.
+- **The fallback is reached by deleting both caret APIs from `Document.prototype` before the app
+  loads**, which is what a browser without them looks like; the detection is at runtime, so it
+  engages by itself. Tap-then-tap gives the same span as the drag, and a drag in that mode correctly
+  does nothing.
+
+## `core.md` C0–C5a — what the next session needs, in one place
+
+**Landed: C0, C1, C2, C3, C4, C4a, C5a.** The sections above carry each phase in full; this one is
+the short list a later session actually needs, plus the loose ends that belong to nobody else.
+
+### Where the build stopped, and why
+
+**C5b is not built, deliberately.** It is gated on a physical iOS 26 device answering the WKWebView
+crash check against `-webkit-user-select: none` during touch (STACK register #1; `ios.md` I2), and
+that device does not exist in a container. C5a — the harness I2 runs against, touching no production
+reader file — is exactly the right place to stop. **C6, C7 and C8 are not built either**, and
+**C9 (the command palette) is deferred indefinitely** per `wave-zero.md` §10c.
+
+`ios.md` I2 opens **`/span-select`**, in a build made with `pnpm -w run build:e2e` (the mode guard;
+a production build does not serve it). The numbers it should compare against are in the C5a section:
+`caretPositionFromPoint`, p50 1.0 ms / p95 1.2 ms per `pointermove` over 568 characters, zero dropped
+frames, and an 8px axis threshold **plus** a more-horizontal-than-vertical rule.
+
+### Two small changes to files other plans call theirs
+
+- **`lib/dict/pinyin.ts` exports `isNumberedSyllable`** (C3). `data.md` §5 D2 calls that module
+  "unchanged"; this is a one-word `export` in front of an existing private function, additive, and
+  it touches nothing D2 cares about. `lib/hanzi/align.ts` has to ask "is this token one character's
+  worth of reading, or is it punctuation?", and re-deriving that regex in a second file is how the
+  two come to disagree about `lu:4` or `r5`.
+- **`components/reader/reader-text.tsx` lost its scroll-into-view** (C4), which moved to
+  `reader-screen.tsx`. That file is C5b's, and C5b replaces it wholesale — the behaviour is what C4
+  was told to carry, and it could not work where it was. See the C4 section.
+
+### Frozen surfaces: what was needed and not taken
+
+Three, all recorded rather than landed, per CLAUDE.md:
+
+1. **`RenderedToken` (`lib/ai/ground.ts`, under `packages/ai`) has no `pinyinNum`.** It carries
+   `pinyin` as the **marked** word-level form and `alignReading` needs the **numbered** one, so
+   example sentences and the ask panel's phrase tokens annotate at token granularity — one correct
+   word-level reading rather than a guessed per-character one. Adding `pinyinNum` there is the change
+   C3 would have needed.
+2. **`DictStore.entries(ids)` takes no `AbortSignal`**, where the fetch client it replaced did.
+   `search` has one (`SearchOptions.signal`, already frozen). Callers drop stale answers with a
+   `cancelled` flag, so nothing on screen depends on it — but a needless in-flight request is one
+   the Capacitor bridge will feel.
+3. **`DictStore.entries(ids)` does not promise to preserve request order.** `entryIds` is
+   frequency-ordered and the whole "Mark known takes the ranked reading" rule rests on it, so the
+   word sheet re-orders defensively. Saying so in the interface would be better than every caller
+   re-deriving it.
+
+### Documents this plan set depends on that are not in the repository
+
+- **`docs/product-decisions.md` does not exist here.** `core.md`, `ios.md`, `web.md`, `data.md` and
+  `README.md` all cite it by section, and four C3 decisions rest on its §4 alone. Worth committing,
+  or worth the plans quoting the rules they depend on.
+- **`wave-zero.md` has no §10b and no §10c.** The brief for this session quotes both as binding
+  rulings — §10b (C7 is not gated on C5b; register #1 gates C5b and nothing else) and §10c (the
+  default theme is Inkstone; C9 is deferred). They are applied throughout; the document itself stops
+  before them. This was already noted in the C0 section and is repeated here because the next
+  session will look for them too.
+
+### What is still owed on the surfaces this plan built
+
+- **`pinyinDisplay` has no control.** The setting exists, defaults to `'always'`, and all three
+  values work — but C8 owns `/settings`, so today it can only be changed through the repository.
+  `'tap'` in particular is worth a look on a device before it is offered.
+- **The dictionary is still fetched over HTTP.** `lib/dict/http-store.ts` is the bridge; `data.md`
+  D4 replaces it and D6 then deletes the routes. `tests/unit/dict/client-callers.test.ts` fails the
+  day that changes, in either direction.
+- **`ask_cache` has one writer and two readers.** The in-context gloss line reads the route and not
+  the cache, deliberately — C7 owns the ask module's state and that hook is what it replaces.
+- **The three settled-palette contrast failures** recorded in the C0 and C1 sections are still
+  failures: `--muted`/`--paper` 4.23:1, `--lookup`/`--lookup-soft` 4.45:1, `--new`/`--new-soft`
+  4.48:1, each with a proposed hex. The gallery prints them as FAIL rather than hiding them.
+
+---
+
+## C4a, second pass — what the adversarial review found after the phase was closed
+
+The C4 review treated C4a's code as out of scope, so the cutover and the four dictionary states
+shipped without a review of their own. This round was two independent lenses over C4a's files (the
+acceptance criteria; what breaks that no test covers) with every finding sent to a refuter. **22
+findings, 18 refuted, four confirmed.** All four are fixed below. The 18 refutations are worth the
+same note the earlier rounds got: most were real readings of the code that turned out not to be
+defects, and a couple were the reviewer mis-reading a guard that was already there.
+
+### 1. The `import` failure told the learner the opposite of what the app does
+
+`components/dict/dict-status.tsx` said, for `failed{reason:'import'}`:
+
+> …if it fails twice, **the reader and lookup keep working** without it.
+
+`DictGate` hides lookup and the reader when the store is not `ready` — they are precisely the two
+that do *not* keep working — and practice, lists, Today and stats are what carry on. The same file
+states the rule correctly three other times (its header, the `storage` body, the `absent` body).
+One string inverted it.
+
+**It also described an event that had not happened.** Two producers land on `reason:'import'`:
+`data.md` D4's genuine import failure (the bytes arrived, OPFS refused them) and `HttpDictStore`'s
+mapping of a `503 dict-data-missing` — which means the artifact was never built or served, so
+nothing downloaded and nothing arrived. That second case is the one CLAUDE.md treats as *expected*
+on a deploy, and it was being told "the file arrived and this browser would not store it", under a
+button offering to retry a download that never started.
+
+The body now asserts nothing about a transfer and states the rule the right way round; the truthful
+diagnosis stays on the `dict-failure-detail` line, which carries `run pnpm data` for one producer
+and the OPFS error for the other.
+
+**Why no test saw it.** The only copy assertion anywhere was `new Set(copy).size === 4` — four
+*distinguishable* screens. A screen that is distinguishable and wrong satisfies it. Two guards in
+`tests/unit/dict/dict-status.test.tsx` now cover the class: no failure body may claim the reader or
+lookup keep working, and the `import` body may name no transfer. Both were mutation-verified against
+the old string.
+
+### 2. `/lists/:id` still died with the dictionary — the other call
+
+C4a wrapped `source.entries(page)` so a list would render its words by id when the glosses were out
+of reach. `readDetail` makes **two** calls that can reject, and the unwrapped one is the one a fresh
+install hits first: `ensureMembers` materialises an HSK band from `source.band()` on that band's
+first visit. The rejection escaped the component, `data` stayed `undefined`, and the page sat on
+"Loading words…" for ever — under a raw `run pnpm data` — with no retry. The custom-list e2e passed
+throughout, because its members were already in IndexedDB and `materialise` returns before it can
+throw. On a fresh install this is all eight system lists.
+
+An unfilled band has no learner-owned ids to degrade to: its membership *is* derived from the
+dictionary. So the fix is not an empty list — an empty list is a claim the learner emptied it — but
+an explicit state. `DetailData` gained `unfilled`, and the empty paragraph carries
+`data-unfilled` and says the words are the dictionary's. Covered at both levels
+(`tests/unit/lists/list-detail-offline.test.tsx`, and a case in `tests/e2e/core/dict-states.spec.ts`),
+and mutation-verified at both.
+
+### 3. The cutover test searched three directories; the criterion says the whole app
+
+C4a's first acceptance criterion is `grep -rn "lib/dict/client" --include=*.ts --include=*.tsx .`
+and `tests/unit/dict/client-callers.test.ts` exists to *be* that grep, because there is no CI. It
+searched `components/`, `lib/` and `src/`. **`apps/app/app/` is a real directory of client
+components** — `app/(today)/today-view.tsx`, `app/settings/settings-form.tsx` — and was not
+searched, nor was `vite-plugins/`. An import of `lib/dict/client` added to any of them left the
+suite green while the criterion's own grep reported two importers.
+
+`data.md` D6 is gated verbatim on this evidence, so the blind spot was a false "unblocked" rather
+than a missed nit. The file now carries two root lists, because the plan states two different greps:
+`wholeApp` (criterion one's `.`, everything under `apps/app` except `node_modules`, `dist`,
+`test-results`, `playwright-report` and `tests/`) for the importer and constructor tests, and
+`routeScope` (criterion two's `components/ lib/`, plus `src/`) for the `/api/dict` test. Mutation
+-verified by adding both an import and a `new HttpDictStore(` to `app/(today)/today-view.tsx`.
+
+`tests/` is excluded deliberately: a spec that routes `**/api/dict/**` is not a caller.
+
+### 4. `HttpDictStore.open()`'s failure mapping was asserted nowhere
+
+`dict-states.spec.ts` drives the four reasons off literals set on the gallery's fake store, which
+proves the four screens and nothing about which one a real failure produces; `smoke.spec.ts` only
+asserts that *a* `dict-status` is visible. The mapping from an HTTP failure onto a `DictStatus`
+reason — the thing that chooses the screen — had no test at all.
+
+`tests/unit/dict/http-store.test.ts` pins it: `503 dict-data-missing` → `failed{import}` with the
+hint as the message, any other refusal → `failed{download}`, a dead connection → `failed{download}`
+rather than a throw at the caller, `ready` stamped with the version the route answered with, plus
+`open()`'s idempotence and its `preparing → ready` transition. `data.md` D4 swaps the store under
+this bridge; with no CI this file is the only thing that will notice if the mapping changes with it.
+
+### A frozen surface this phase works around, recorded rather than changed
+
+**The frozen `DictStatus` union has no reason meaning "the artifact was never built or served."**
+`data.md` D1 froze `failed{reason: 'download'|'import'|'storage'|'corrupt'}` around a browser that
+downloads a file and imports it into OPFS. `HttpDictStore` has no such transfer: its failure is a
+503 from a server with no `data/` build. It folds that onto `import` — the closest of the four — and
+carries the real diagnosis in `message`, which is why the `import` copy may no longer describe a
+transfer. A fifth reason (`unavailable`, say) would let that screen say what actually happened.
+Per CLAUDE.md the builder records the need and continues without it: **this is not a change to the
+frozen surface, it is a note for whoever owns it.** `data.md` D4 may find it moot, since the store
+that replaces this bridge does download and import.
+
+
+---
+
+## C5a, second pass — the drag-select review, and the six things it found
+
+C5a is the phase the brief singled out: "the riskiest UI in the project… give it the review
+attention that deserves." Three independent lenses (the ten acceptance criteria one at a time; what
+breaks on a real device; tests that cannot fail), every finding sent to a refuter with instructions
+to default to refuted. **29 findings, 23 refuted, six confirmed — one blocking, four major, one
+minor.** All six are fixed, and every guard below was mutation-verified: the fix reverted, the test
+watched to fail, the fix restored.
+
+The reviewers reproduced rather than reasoned, which is why these survived: CDP touch for the
+pointer cases, a real `vite build` for the bundle case, and an A/B with one injected CSS line for
+the layout case.
+
+### 1 (blocking) A second finger left the passage unable to scroll, for ever
+
+`onPointerDown` overwrote the gesture unconditionally. A pinch, a second thumb or a palm landing
+mid-drag therefore **orphaned** the drag in flight: the first pointer's moves were dropped by the id
+guard, `dragging.current` was already false when a release arrived, and the teardown — which ran
+only `if (dragging.current)` — never restored `touch-action: pan-y`. The passage was left at
+`none` **permanently**, on the one screen made of a long scrolling passage, and Clear did not
+recover it. Only a later horizontal drag that happened to complete cleanly did.
+
+That is C5a's "scrolling is not broken" criterion, broken by a routine gesture, in the gesture code
+C5b promotes and on the page `ios.md` I2 opens on a physical device.
+
+Two changes, both small: a second pointer is ignored while a drag is in flight (so the first
+pointer keeps its id in `origin` and its own release still tears the gesture down), and the teardown
+is **unconditional** — `touch-action` is only ever `none` because a drag put it there. React never
+repairs it on its own: the JSX `style` object is unchanged across renders, so React's style diff
+writes nothing.
+
+**The event order, measured, because it is not obvious:** `pointerdown 2 → pointerdown 3 →
+pointerup 2 → pointerup 3`. The second finger's `pointerdown` arrives *while* the first is captured,
+and no `pointercancel` is sent.
+
+### 2 (major) The production-exclusion test keyed on a constant rolldown deletes
+
+`gallery-excluded.spec.ts` grepped the emitted bundles for `HARNESS_PATH`. Nothing in the app reads
+that export — `src/routes.tsx` carries its own `'/span-select'` literal — so rolldown shook it out,
+and the marker tracked **the route table, not the harness module**. The reviewer proved it: adding
+`<SpanSelectHarness />` to a production route emitted a bundle containing `span-select-harness`,
+`span-copy` and `Copy the span`, containing `/span-select` zero times, with the spec green. So did
+I, on the fix.
+
+The gallery's own marker never had the hole, because it is *rendered*. The harness now exports
+`HARNESS_MARKER` and uses it as the root element's `data-testid`, so it cannot be shaken out while
+the harness ships; the path check stays as a second assertion, guarding the route table. Do not
+grep the bare string `span-select` — `globals.css`'s `::highlight(span-select)` rule ships in
+production CSS.
+
+This one mattered beyond its own test: with no CI, this spec is the sole enforcement of the ground
+rule that the gallery and the harness must both leave a production build.
+
+### 3 (major) With no Custom Highlight API the harness selected invisibly
+
+core.md C5a specifies a fallback that "needs no `caretRangeFromPoint`, no Custom Highlight API and
+no `pointermove` at all, and **paints with a class on the already-per-character DOM**." The first
+draft degraded only on the caret APIs: `paint()` returned early when the highlight registry was
+missing and nothing else painted. Below Chrome 105 / Safari 17.2 the span was computed, the map was
+right, Copy was enabled — and the learner saw nothing at all. `ios.md` I2 is where that would have
+been found, on the one run that cannot be repeated cheaply, and "the highlight cannot be made to
+land only on base characters" is one of the outcomes register #1 is waiting for.
+
+`paint()` now falls back to a class. The targets are derived **from the char map's own pieces**, not
+from a query for `[data-char-index]`, for the same reason the `data-span-index` stamp is: a run the
+dictionary has no reading for renders as one plain `<span>` with the whole run's text and no
+per-character elements, so a query misses every punctuation mark in the passage. A piece's parent
+element is exact for an annotated character and coarse for a plain run — a two-character run paints
+whole when the span touches either half. That is a visible difference from the Custom Highlight
+API's exact ranges and it is the most a class on the existing DOM can do. It still never covers an
+`<rt>`, because an `<rt>`'s text node is not in the map.
+
+`.span-selected` in `globals.css` is **unlayered**, deliberately, so it beats the Tailwind utilities
+the passage's characters carry — including the reader's known/learning/new colours, which the span a
+learner is actively dragging has to sit on top of. C0 and C3 were each bitten by that cascade rule
+from the other side.
+
+**A deviation from the plan, recorded rather than taken silently.** core.md says the tap-then-tap
+fallback "ships as the automatic degrade when **either** API is missing". It stays gated on the
+caret APIs alone. With class painting in place, a missing highlight registry costs a DOM mutation
+per move and nothing else, so disabling a working drag would be a larger degrade than the plan
+intends — and two live selection models on one container is how a click after a drag starts an
+anchor nobody asked for.
+
+### 4 (major) A press on the pinyin killed the whole gesture, silently
+
+An `<rt>` renders *above* its `<ruby>`'s box, and `caretPositionFromPoint` happily answers with the
+`<rt>`'s own text node for a point in it — measured at 390px as a **~13px band per line, sitting
+directly over the pinyin**, which is the most natural thing for a thumb to aim at. That node is in
+no piece of the char map (the TreeWalker rejected it), so `indexOfNode` returned `undefined`, the
+anchor was `null`, and because the anchor was hit-tested **exactly once** nothing ever recomputed
+it. No highlight, no span, Copy disabled, no feedback distinguishing it from a broken app. Pressing
+again 10px lower worked.
+
+**The spec had found this band and routed around it**: `centreOf` aims at `box.height * 0.75` with a
+comment naming the hazard. A hazard found in a test and dodged there, rather than handled in the
+code or recorded here, is the shape of defect this review round exists to catch.
+
+Two fixes. `indexFromPoint` falls back to `elementFromPoint(...).closest('[data-span-index]')` when
+the caret API answers with something the map cannot name — the same element hit-test the two-tap
+fallback always used, which is why that path was never affected. It is a **rescue for a caret API
+that answered, not a third hit-test**: with no caret API at all the answer stays `undefined`, so the
+drag path still goes quiet and the two-tap fallback is still what engages. And the anchor is now
+taken from the first nameable move when the press could not be named, which costs a few characters
+of precision on a press that was already off the text and is the difference between a short
+selection and a drag that does nothing.
+
+### 5 (major) The instrument moved the thing it was measuring
+
+The selected-text readout sits above the passage and grew with the selection. Once the string
+wrapped, the passage below was pushed down a line box **mid-drag**: the finger then landed on an
+earlier character, the selection shrank, the readout shrank, the passage rose, and the span
+oscillated. Measured at 390px: passage top 132 → 152 → 172 during one continuous drag, with `to`
+jumping 12–18 characters against a uniform 32px per move, and runs of moves committing nothing at
+all because the shifted hit point fell into the `<rt>` band from finding 4.
+
+The reviewer isolated it with one injected CSS line as the only difference: pinned, the same gesture
+was strictly monotone and ended 14 characters further on.
+
+No existing case could see it. Every drag in the spec stays under the wrap threshold (5, 10, 12
+characters), and the RECORD drag runs at 1280px where the readout holds ~89 characters on one line.
+At 390px the passage fits ~11 characters a visual line, so the first wrap is about three lines into
+a drag — which is why the line-break case at 12 characters never reached it.
+
+The readout is now one `text-sm` line box high and truncated. The text is clipped, not shortened:
+`textContent` is intact for the spec and for anyone reading the DOM. **This is a defect in a
+measurement, not a style preference** — the phase's whole output is an instrument and I2 reads it on
+a device. It also reproduced on the harness the exact failure the harness exists to replace:
+core.md C5a rejects the platform's selection because "its precision degrades from characters to
+lines as the selection grows."
+
+### 6 (minor) A comment that claimed the opposite of the code
+
+"The report only exists once something has happened" — the harness writes `window.__spanSelect` at
+the end of the char-map effect, on mount, precisely so I2 can read the instrument before touching
+anything, and the RECORD test below that comment disproves it by reading `characters: 568` with no
+prior interaction. Fixed, and the `?? (await page.evaluate(...))` fallback the false belief
+justified is gone, because `seen` is always defined.
+
+### A note on mutation-verification itself
+
+Two of my first mutation attempts **passed**, and both were vacuous rather than reassuring. One
+reverted `endDrag`'s id check with a string that also appears in `onPointerMove`, so the drag never
+started and the assertion was trivially satisfied. The other added a second touch point with a CDP
+`touchMove` rather than a `touchStart`, so no second `pointerdown` was ever produced. A mutation
+that breaks something else, or that fails to inject the defect at all, proves nothing — when a
+mutation passes, the first suspicion should be the mutation.
+
+### Measurements, re-recorded on the fixed harness
+
+`caretPositionFromPoint`; Custom Highlight API present. `pointermove` over 568 characters, 60
+samples: **p50 0.5 ms, p95 0.8 ms, max 12.5 ms, 61 frames, 0 dropped**, against a 16.7 ms budget.
+The earlier C5a section recorded p50 1.0 / p95 1.2 / max 10.4 on the same machine and the same code
+path — the highlight branch is what runs here, since Chromium has the registry — so the spread
+between two runs is larger than the difference either number would need to matter. **Treat the
+order of magnitude as the result and the digits as noise**; `ios.md` I2 and `android.md` re-measure
+on hardware, which is the number that decides anything.
+
+### Gates after this round
+
+`pnpm lint` clean · `pnpm typecheck` clean · `pnpm test` 113 files / 1454 tests, server 6 / 75 ·
+`pnpm e2e` **187 passed** (180 before; +7 cases across both rounds) · `pnpm build` clean ·
+`pnpm smoke` 21 routes ok.
+
+C5a's diff stays inside its own scope: `app/globals.css`, `components/gallery/span-select-harness.tsx`
+and the two specs. Nothing under `components/hanzi/`, `components/reader/`, `lib/stores/` or
+`lib/reader/` — which `tests/unit/gallery/span-select-scope.test.ts` still enforces.
+

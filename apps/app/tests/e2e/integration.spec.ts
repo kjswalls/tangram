@@ -2,6 +2,8 @@ import { expect, test, type Page } from '@playwright/test';
 
 import { DEMO_PARAGRAPH } from './p5/paragraph';
 
+import { baseText, expectBaseText } from './hanzi';
+
 /**
  * The post-merge integration spec (PLAN.md §4, "Phases 1–3").
  *
@@ -48,7 +50,7 @@ test('the loop: look up 打算, add it, meet it on Today, review it, grade it', 
   await page.getByTestId('lookup-input').fill('dasuan');
   await expect(page.getByTestId('search-results')).toHaveAttribute('data-query', 'dasuan');
   const first = page.getByTestId('search-result').first();
-  await expect(first).toContainText('打算');
+  await expectBaseText(first, '打算');
   await first.click();
 
   await expect(page.getByTestId('entry-detail')).toBeVisible();
@@ -76,12 +78,12 @@ test('the loop: look up 打算, add it, meet it on Today, review it, grade it', 
   // --- Today counts it (P3) ------------------------------------------------
   await page.goto('/');
   await expect(page.getByTestId('today-new-count')).toHaveText('1');
-  await expect(page.getByTestId('today-new-list')).toContainText('打算');
+  await expectBaseText(page.getByTestId('today-new-list'), '打算');
 
   // --- review it (P2) ------------------------------------------------------
   await page.getByTestId('start-review').click();
   await expect(page).toHaveURL(/\/review$/);
-  await expect(page.getByTestId('card-front')).toContainText('打算');
+  await expectBaseText(page.getByTestId('card-front'), '打算');
 
   await page.keyboard.press('Space');
   await expect(page.getByTestId('card-back')).toBeVisible();
@@ -158,15 +160,15 @@ async function walkSession(page: Page, rating: 1 | 2 | 3 | 4 = 3): Promise<Seen[
     const card = page.getByTestId('review-card');
     await expect(card).toBeVisible();
     const id = await card.getAttribute('data-card-id');
-    const front = ((await page.getByTestId('card-front').textContent()) ?? '').trim();
+    const front = await baseText(page.getByTestId('card-front'));
 
     await page.keyboard.press('Space');
     await expect(page.getByTestId('card-back')).toBeVisible();
     const back = page.getByTestId('card-back');
     const line = back.getByTestId('context-back');
-    const context = (await line.count()) > 0 ? await line.textContent() : null;
+    const context = (await line.count()) > 0 ? await baseText(line) : null;
     const highlight = back.getByTestId('context-target');
-    const target = (await highlight.count()) > 0 ? await highlight.textContent() : null;
+    const target = (await highlight.count()) > 0 ? await baseText(highlight) : null;
     seen.push({ front, context, target });
 
     // The next card renders into the same element, so "graded" is the card id
@@ -255,13 +257,24 @@ test('the whole product: demo → ask → phrase card → read → mine → revi
 
   const panel = page.getByTestId('reader-panel');
   await expect(panel).toContainText(MINED_SENTENCE);
-  // The reader's panel is the lookup panel, so P4's ask region is in it too,
-  // asking about the tapped word *with the sentence as its context* — the
-  // cross-phase seam this merge wired.
-  await expect(panel.getByTestId('lookup-ask')).toBeVisible();
-  await expect(panel.getByTestId('ask-panel')).toHaveAttribute('data-status', 'ready', {
-    timeout: 30_000,
-  });
+  /**
+   * The cross-phase seam this merge wired — the module asked about the tapped
+   * word *with the sentence as its context* — is now **one line**, not the
+   * whole ask panel (core.md C4).
+   *
+   * The sheet used to render `LookupPanel` with its default ask region, so a
+   * single tap fired two independent `/api/ask` requests: the panel's and the
+   * sheet's own in-context line. They were not equivalent — the panel debounces
+   * and caches, the line does not — so they could also name different senses of
+   * the same word on the same sheet. The sheet asks once now, and what proves
+   * the seam is that the answer names one of the entry's own senses.
+   */
+  await expect(panel.getByTestId('lookup-ask')).toHaveCount(0);
+  const gloss = panel.getByTestId('context-gloss');
+  await expect(gloss).toBeVisible({ timeout: 30_000 });
+  const named = (await panel.getByTestId('context-gloss-sense').textContent())?.trim();
+  const senses = (await panel.getByTestId('entry-gloss').allTextContents()).map((s) => s.trim());
+  expect(senses).toContain(named);
 
   await panel.getByTestId('add-card').click();
   await expect(page.getByTestId('add-state')).toContainText('Added');

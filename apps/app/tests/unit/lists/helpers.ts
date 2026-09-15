@@ -17,14 +17,33 @@ export function freshRepository(): { db: TangramDb; repo: Repository } {
   return { db, repo: createDexieRepository(db) };
 }
 
-/** The routes' behaviour without the HTTP hop: same rows, same order. */
-export function dictEntrySource(): EntrySource & { bandCalls: HskBand[] } {
+/**
+ * The store's behaviour without the bridge: same rows, same order — **and the
+ * same paging**.
+ *
+ * Honouring `limit`/`offset` is not politeness, it is the point: `draw.ts`
+ * walks a band a window at a time (core.md C4a) and stops when a page comes
+ * back short. A fake that ignored the window handed back the whole band every
+ * time, the page was never short, `offset` grew for ever and the unit suite
+ * hung. `bandPages` records what was actually asked for, so a test can assert
+ * the draw pages rather than pulling 5,638 rows to take ten.
+ */
+export function dictEntrySource(): EntrySource & {
+  bandCalls: HskBand[];
+  bandPages: { band: HskBand; limit?: number; offset?: number }[];
+} {
   const bandCalls: HskBand[] = [];
+  const bandPages: { band: HskBand; limit?: number; offset?: number }[] = [];
   return {
     bandCalls,
-    async band(band) {
+    bandPages,
+    async band(band, page) {
       bandCalls.push(band);
-      return hskBand(band);
+      bandPages.push({ band, ...(page ?? {}) });
+      const all = hskBand(band);
+      if (page?.limit === undefined && page?.offset === undefined) return all;
+      const offset = page.offset ?? 0;
+      return page.limit === undefined ? all.slice(offset) : all.slice(offset, offset + page.limit);
     },
     async entries(ids) {
       return getEntries(ids);
@@ -54,8 +73,11 @@ export function fakeEntrySource(bands: Partial<Record<HskBand, Entry[]>>): Entry
   const byId = new Map<EntryId, Entry>();
   for (const entries of Object.values(bands)) for (const entry of entries ?? []) byId.set(entry.id, entry);
   return {
-    async band(band) {
-      return bands[band] ?? [];
+    async band(band, page) {
+      const all = bands[band] ?? [];
+      if (page?.limit === undefined && page?.offset === undefined) return all;
+      const offset = page.offset ?? 0;
+      return page.limit === undefined ? all.slice(offset) : all.slice(offset, offset + page.limit);
     },
     async entries(ids) {
       return ids.flatMap((id) => {

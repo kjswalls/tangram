@@ -7,13 +7,42 @@
  * handful of entries instead of a 35 MB file.
  */
 
-import { fetchEntriesResponse, fetchHskResponse, fetchSearch } from '@/lib/dict/client';
+import { getDictStore } from '@/lib/dict/browser-store';
 import { normalizePinyin } from '@/lib/dict/pinyin';
+import type { DictStore } from '@/lib/dict/store';
 import type { Entry, EntryId, HskBand } from '@/lib/types';
 
+/**
+ * How many entries one band request asks for (core.md C4a).
+ *
+ * `DictStore.hskBand` gained `limit`/`offset` because the call crosses a bridge
+ * now rather than a socket, and band 7 is 5,638 entries — not a thing to
+ * serialise whole over a Capacitor JSON round trip. The spine builder is the
+ * caller that pages, and 250 is chosen against what it actually needs: it takes
+ * at most `settings.newPerDay` entries (default 10), and it discards the ones
+ * that fail `spineEligible` or that sit at or below `knownBand`, which in the
+ * worst observed case is most of a window. 250 is ~25× the headroom the first
+ * window needs and still an order of magnitude below a whole band; when it is
+ * not enough, `draw.ts` asks for the next window rather than guessing bigger.
+ *
+ * Written down because it is the first number a low-end device will feel: too
+ * small and the draw makes five bridge trips before it has a queue, too large
+ * and the first one blocks.
+ */
+export const BAND_PAGE = 250;
+
+export interface BandOptions {
+  limit?: number;
+  offset?: number;
+}
+
 export interface EntrySource {
-  /** One HSK band, frequency-ordered — the order the spine introduces it in. */
-  band(band: HskBand): Promise<Entry[]>;
+  /**
+   * One HSK band, frequency-ordered — the order the spine introduces it in.
+   * With no options it is the whole band, which is what the reader index and
+   * the demo seed want; the spine passes a window.
+   */
+  band(band: HskBand, options?: BandOptions): Promise<Entry[]>;
   /** Entries by id, in the order asked for. Unknown ids are simply absent. */
   entries(ids: readonly EntryId[]): Promise<Entry[]>;
   /** Headword search for "add a word to this list". */
@@ -72,13 +101,18 @@ function escapeRegExp(value: string): string {
 }
 
 export interface HttpEntrySourceOptions {
-  /** Origin to prefix. Empty in the browser, set it on the server or in a test. */
-  baseUrl?: string;
+  /** The store to read through. Defaults to the browser's one. */
+  store?: DictStore;
 }
 
 /**
- * The real source. Band responses are memoised per instance: the spine draw, the
- * lists page and the seed all want band 3, and it is the same 1 MB either way.
+ * The real source, over `DictStore` (core.md C4a).
+ *
+ * Whole-band responses are memoised per instance: the reader index, the lists
+ * page and the seed all want band 3, and it is the same rows either way. A
+ * **paged** request is not memoised — it is a window into a band the caller is
+ * walking, and caching windows would mean caching the band one slice at a time
+ * under a different key for no gain.
  */
 export function createHttpEntrySource(options: HttpEntrySourceOptions = {}): EntrySource {
   const bands = new Map<HskBand, Promise<Entry[]>>();
@@ -86,16 +120,32 @@ export function createHttpEntrySource(options: HttpEntrySourceOptions = {}): Ent
   // last answer is the current one.
   let version: string | undefined;
 
-  const band: EntrySource['band'] = (value) => {
+  const store = () => options.store ?? getDictStore();
+
+  const noteVersion = () => {
+    const status = store().status;
+    if (status.state === 'ready') version = status.version || version;
+  };
+
+  const band: EntrySource['band'] = (value, page) => {
+    if (page?.limit !== undefined || page?.offset !== undefined) {
+      return store()
+        .hskBand(value, page)
+        .then((entries) => {
+          noteVersion();
+          return entries;
+        });
+    }
     const cached = bands.get(value);
     if (cached) return cached;
-    const pending = fetchHskResponse(value, options)
-      .then((body) => {
-        version = body.meta.version || version;
-        return body.entries;
+    const pending = store()
+      .hskBand(value)
+      .then((entries) => {
+        noteVersion();
+        return entries;
       })
       .catch((error: unknown) => {
-        // A failed fetch must not poison the cache: the next visit should retry.
+        // A failed read must not poison the cache: the next visit should retry.
         bands.delete(value);
         throw error;
       });
@@ -111,10 +161,9 @@ export function createHttpEntrySource(options: HttpEntrySourceOptions = {}): Ent
     async entries(ids) {
       const out: Entry[] = [];
       for (let i = 0; i < ids.length; i += ID_CHUNK) {
-        const body = await fetchEntriesResponse(ids.slice(i, i + ID_CHUNK), options);
-        version = body.meta.version || version;
-        out.push(...body.entries);
+        out.push(...(await store().entries(ids.slice(i, i + ID_CHUNK))));
       }
+      noteVersion();
       return out;
     },
 
@@ -126,7 +175,7 @@ export function createHttpEntrySource(options: HttpEntrySourceOptions = {}): Ent
      * plausibly built from, and it is better than an empty box.
      */
     async search(query, limit = SEARCH_LIMIT) {
-      const viaRoute = await searchRoute(query, limit, options, (seen) => {
+      const viaRoute = await searchRoute(query, limit, store(), (seen) => {
         version = seen || version;
       });
       if (viaRoute) return viaRoute;
@@ -151,10 +200,10 @@ export function createHttpEntrySource(options: HttpEntrySourceOptions = {}): Ent
 }
 
 /**
- * `null` when the route could not answer (a 503 with no `data/` build, a network
+ * `null` when the store could not answer (no dictionary on device, a network
  * failure), so the caller falls back to scanning the bands.
  *
- * The route answers in *groups* — one per headword, carrying every reading — and
+ * The store answers in *groups* — one per headword, carrying every reading — and
  * a list holds entries, so the groups are flattened in display order. Each
  * group already lists the readings that matched first, so the flattening keeps
  * P1's ranking rather than inventing one.
@@ -162,11 +211,11 @@ export function createHttpEntrySource(options: HttpEntrySourceOptions = {}): Ent
 async function searchRoute(
   query: string,
   limit: number,
-  options: HttpEntrySourceOptions,
+  store: DictStore,
   noteVersion: (version: string) => void,
 ): Promise<Entry[] | null> {
   try {
-    const result = await fetchSearch(query, { baseUrl: options.baseUrl, limit });
+    const result = await store.search(query, { limit });
     if (result.dictVersion) noteVersion(result.dictVersion);
     // An empty answer is still an answer: the router looked and there is nothing
     // there, so do not pull 11k rows over the wire to confirm a typo.

@@ -7,6 +7,7 @@ import { ProductionListToggle } from '@/components/lists/production-list-toggle'
 import { WordSearch } from '@/components/lists/word-search';
 import { WordStateBadge } from '@/components/lists/word-state';
 import { Badge } from '@/components/ui/badge';
+import { HanziWord } from '@/components/hanzi/hanzi-text';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { getRepository } from '@/lib/db/get-db';
@@ -30,6 +31,13 @@ interface MemberView {
 interface DetailData {
   list?: ListRow;
   missing: boolean;
+  /**
+   * An HSK band nobody has opened yet, whose membership the dictionary cannot
+   * supply. Distinct from "no words": a custom list with nothing in it is the
+   * learner's own empty list, while this one has words and they are out of
+   * reach, so the two need different words on screen.
+   */
+  unfilled: boolean;
   entryIds: EntryId[];
   members: MemberView[];
 }
@@ -43,13 +51,43 @@ async function readDetail(listId: string, limit: number): Promise<DetailData> {
   const repo = getRepository();
   const source = getEntrySource();
   const row = (await repo.lists()).find((list) => list.id === listId);
-  if (!row) return { missing: true, entryIds: [], members: [] };
+  if (!row) return { missing: true, unfilled: false, entryIds: [], members: [] };
 
   const settings = await repo.getSettings();
-  const entryIds = (await ensureMembers(repo, row, source)).map((member) => member.entryId);
+  /**
+   * **The other half of "a dictionary that cannot answer must not take the list
+   * with it"**, and the half the first fix missed. `ensureMembers` fills an HSK
+   * band from `source.band()` the first time that band is opened, so on a fresh
+   * install every one of the eight system lists rejects here when the
+   * dictionary is down — before the guarded `entries()` call below is ever
+   * reached. The rejection escaped `readDetail`, `data` stayed undefined, and
+   * the page sat on "Loading words…" under a raw `run pnpm data` for ever, with
+   * no retry.
+   *
+   * An unfilled band has no learner-owned ids to degrade to — its membership
+   * *is* derived from the dictionary — so the honest answer is to say so, not
+   * to render an empty list that looks like one the learner emptied.
+   */
+  let unfilled = false;
+  const members = await ensureMembers(repo, row, source).catch(() => {
+    unfilled = true;
+    return [];
+  });
+  const entryIds = members.map((member) => member.entryId);
   const page = entryIds.slice(0, limit);
   const [entries, cards, known] = await Promise.all([
-    source.entries(page),
+    /**
+     * **A dictionary that cannot answer must not take the list with it**
+     * (core.md C4a; `data.md` D4: "the app runs without a dictionary").
+     *
+     * A list is the learner's own data — ids in IndexedDB — and the dictionary
+     * only supplies the gloss and the reading beside each one. Letting this
+     * rejection propagate turned the whole page into an error message, so a
+     * learner with no `data/` build could not see the words they had chosen.
+     * The row below already renders a member whose entry is missing, by id; it
+     * just never got the chance.
+     */
+    source.entries(page).catch(() => []),
     repo.allCards(),
     repo.knownEntryIds(),
   ]);
@@ -68,6 +106,7 @@ async function readDetail(listId: string, limit: number): Promise<DetailData> {
   return {
     list: row,
     missing: false,
+    unfilled,
     entryIds,
     members: page.map((entryId) => {
       const entry = byId.get(entryId);
@@ -185,7 +224,11 @@ export function ListDetail({ listId }: { listId: string }) {
         {!data ? (
           <p className="text-sm text-muted">Loading words…</p>
         ) : members.length === 0 ? (
-          <p className="text-sm text-muted">This list has no words yet.</p>
+          <p className="text-sm text-muted" data-testid="list-empty" data-unfilled={data.unfilled ? 'true' : 'false'}>
+            {data.unfilled
+              ? 'This list is drawn from the dictionary, which is not available on this device yet. Your own lists, your practice and your progress do not need it.'
+              : 'This list has no words yet.'}
+          </p>
         ) : (
           <ul data-testid="list-members" className="flex flex-col divide-y divide-border">
             {members.map((member) => (
@@ -197,7 +240,19 @@ export function ListDetail({ listId }: { listId: string }) {
                 className="flex items-center justify-between gap-3 py-2"
               >
                 <span className="min-w-0">
-                  <span className="hanzi text-lg">{member.entry?.simp ?? member.entryId}</span>{' '}
+                  {member.entry ? (
+                    <HanziWord
+                      text={member.entry.simp}
+                      pinyinNum={member.entry.pinyinNum}
+                      className="text-lg"
+                    />
+                  ) : (
+                    // A member whose entry the dictionary no longer has: the id
+                    // is not a word and must not be annotated as one.
+                    <span className="hanzi text-lg" lang="zh-Hans">
+                      {member.entryId}
+                    </span>
+                  )}{' '}
                   <span className="text-sm text-muted">{member.entry?.pinyinMarked}</span>
                   <span className="block truncate text-sm text-muted">
                     {member.entry?.glosses.slice(0, 3).join('; ')}

@@ -317,6 +317,24 @@ export interface SettingsRow {
   freeRecall?: boolean;
 
   /**
+   * When the per-character reading shows (core.md C3; product-decisions §4
+   * rule 1). **Default `'always'`** — the learner is a beginner.
+   *
+   * - `'always'` — every `<rt>` is rendered.
+   * - `'tap'` — none is, until a word is tapped; that word's characters keep
+   *   theirs for the life of the rendered passage. The tap that reveals is the
+   *   same tap that opens the word sheet: one gesture, two effects (C3).
+   * - `'never'` — none, **except on a practice card's answer side**, which the
+   *   product never hides. `<HanziText force>` is that exception.
+   *
+   * Optional, like the two Phase 6 toggles: a `settings` row written before this
+   * field existed does not carry it, and `getSettings` merges `DEFAULT_SETTINGS`
+   * under the stored row, so a reader never sees `undefined`. **No Dexie version
+   * bump** — `STORES_V1.settings` indexes `id` and nothing else.
+   */
+  pinyinDisplay?: PinyinDisplay;
+
+  /**
    * FSRS's target recall probability at review time — `request_retention`
    * (Phase 8). 0.9 is FSRS's own default and the one v1 ran on. Higher means
    * shorter intervals: more reviews, more of them remembered.
@@ -362,6 +380,9 @@ export interface SettingsRow {
   updatedAt: number;
 }
 
+/** See `SettingsRow.pinyinDisplay`. C8 is where the learner reaches this. */
+export type PinyinDisplay = 'always' | 'tap' | 'never';
+
 export const SETTINGS_ID = 'singleton';
 
 export const DEFAULT_SETTINGS: Omit<SettingsRow, 'createdAt' | 'updatedAt'> = {
@@ -374,6 +395,8 @@ export const DEFAULT_SETTINGS: Omit<SettingsRow, 'createdAt' | 'updatedAt'> = {
   provider: 'fake',
   examplesOnBack: true,
   freeRecall: false,
+  // product-decisions §4 rule 1: "Always (the default while starting)".
+  pinyinDisplay: 'always',
   // 0.9 is FSRS's own `default_request_retention`; the settings slider spans
   // 0.70–0.97 (`lib/srs/params.ts` clamps to the same range).
   requestRetention: 0.9,

@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 
 import { ContextLine } from '@/components/review/context-line';
 import { SpeakButton } from '@/components/tts/speak-button';
+import { HanziWord } from '@/components/hanzi/hanzi-text';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/cn';
 import type { CardRow, ScriptPreference } from '@/lib/db/schema';
@@ -166,13 +167,24 @@ export function ProductionCard({
       {revealed ? (
         <div data-testid="card-back" className="space-y-4 border-t border-border px-4 py-5 sm:px-5">
           <div className="flex flex-col items-center gap-2 text-center">
-            <h2 data-testid="production-answer" className="hanzi text-6xl font-medium sm:text-7xl">
-              {face.primary}
+            <h2 data-testid="production-answer" className="text-6xl font-medium sm:text-7xl">
+              {/* The ANSWER face of a write card: the product never hides the
+                  reading here, whatever `pinyinDisplay` says. */}
+              <HanziWord
+                text={face.primary}
+                {...(face.pinyinNum === undefined ? {} : { pinyinNum: face.pinyinNum })}
+                force
+                rtClassName="text-[0.28em]"
+              />
             </h2>
             {face.secondary ? (
-              <p className="hanzi text-2xl text-muted">
+              <p className="text-2xl text-muted">
                 <span className="sr-only">{face.secondaryLabel}: </span>
-                {face.secondary}
+                <HanziWord
+                  text={face.secondary}
+                  {...(face.pinyinNum === undefined ? {} : { pinyinNum: face.pinyinNum })}
+                  force
+                />
               </p>
             ) : null}
             <div className="flex items-center gap-2">
@@ -213,7 +225,7 @@ export function ProductionCard({
           {back.classifiers.length > 0 ? (
             <p data-testid="card-classifiers" className="text-sm text-muted">
               Classifier{' '}
-              <span className="hanzi text-foreground">{back.classifiers.join(' · ')}</span>
+              <HanziWord text={back.classifiers.join(' · ')} className="text-ink" force />
             </p>
           ) : null}
 

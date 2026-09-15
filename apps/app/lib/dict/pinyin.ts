@@ -72,8 +72,16 @@ export function hasUnknownReading(pinyinNum: string): boolean {
   return pinyinNum.trim().split(/\s+/).includes(UNKNOWN_SYLLABLE);
 }
 
-/** `true` when `token` is a numbered pinyin syllable such as `da3`, `lu:4`, `r5`. */
-function isNumberedSyllable(token: string): boolean {
+/**
+ * `true` when `token` is a numbered pinyin syllable such as `da3`, `lu:4`, `r5`.
+ *
+ * **Exported at core.md C3**, which is a one-line change to a module `data.md`
+ * §5 D2 calls "unchanged". It is additive and does not touch the purity D2
+ * cares about — `lib/hanzi/align.ts` needs to ask "is this token one
+ * character's worth of reading, or is it punctuation?" and re-deriving that
+ * regex in a second file is how the two come to disagree. Noted in HANDOFF.md.
+ */
+export function isNumberedSyllable(token: string): boolean {
   return /^[A-Za-züÜvV:]+[1-5]$/.test(token);
 }
 

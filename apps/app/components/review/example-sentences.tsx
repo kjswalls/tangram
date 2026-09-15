@@ -31,6 +31,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 
+import { HanziWord } from '@/components/hanzi/hanzi-text';
 import type { ExamplesRouteInfo, ExamplesRouteResponse } from '@/app/api/examples/route';
 import { examplesCacheKey } from '@/lib/ai/cache-key';
 import {
@@ -43,8 +44,25 @@ import {
 import { entryLookup, renderPhrase, type PhraseScript } from '@/lib/ai/ground';
 import { cn } from '@/lib/cn';
 import { getRepository } from '@/lib/db/get-db';
-import { fetchEntriesResponse } from '@/lib/dict/client';
+import { getDictStore } from '@/lib/dict/browser-store';
 import { buildLearnerProfile } from '@/lib/srs/profile';
+
+/**
+ * Entries by id, through `DictStore` (core.md C4a), in the
+ * `{ meta: { version }, entries }` shape the cache path already reads.
+ *
+ * `DictStore.entries` returns rows and no version — the version is the store's
+ * own `status`, not a property of a query — so it is read from there. The
+ * `AbortSignal` the old fetch took has no equivalent on the frozen interface;
+ * the caller's `cancelled` flag already drops a stale answer, so nothing that
+ * reaches the screen depends on it. Recorded in HANDOFF.md.
+ */
+async function resolveEntries(ids: readonly string[]) {
+  const store = getDictStore();
+  const entries = await store.entries(ids);
+  const version = store.status.state === 'ready' ? store.status.version : '';
+  return { meta: { version }, entries };
+}
 import type { Entry } from '@/lib/types';
 
 /**
@@ -184,7 +202,7 @@ export function ExampleSentences({
           const ids = citedEntryIds(cached.data.sentences);
           const resolved =
             ids.length > 0
-              ? await fetchEntriesResponse(ids, { signal: controller.signal })
+              ? await resolveEntries(ids)
               : { meta: { version: '' }, entries: [] };
           if (cancelled) return;
           // The row is a statement about a known set the key does not hold, so
@@ -359,11 +377,29 @@ export function ExampleSentences({
                         : undefined
                     }
                   >
-                    <span className="hanzi text-xl">{token.text || '?'}</span>
-                    <span className="text-xs text-muted">
-                      {token.pinyin || '—'}
-                      {token.polyphone ? ' · polyphone' : ''}
-                    </span>
+                    {/*
+                      The reading is ABOVE the token now, through the same
+                      `<HanziText>` every other Chinese run goes through.
+                      **It is still token-granular, not character-granular**,
+                      and that is a frozen-surface limit rather than a choice:
+                      `RenderedToken` (lib/ai/ground.ts) carries `pinyin` as the
+                      MARKED word-level form, and `alignReading` needs the
+                      NUMBERED one. Adding `pinyinNum` to that token is the
+                      change C3 would need and did not make — recorded in
+                      HANDOFF.md. Until then the run aligns in `fallback` mode,
+                      which renders exactly one annotation over the token: the
+                      correct word-level reading rather than a guessed
+                      per-character one.
+                    */}
+                    <HanziWord
+                      text={token.text || '?'}
+                      {...(token.pinyin ? { pinyinMarked: token.pinyin } : {})}
+                      className="text-xl"
+                      force
+                    />
+                    {token.polyphone ? (
+                      <span className="text-xs text-muted">polyphone</span>
+                    ) : null}
                   </span>
                 ))}
               </p>

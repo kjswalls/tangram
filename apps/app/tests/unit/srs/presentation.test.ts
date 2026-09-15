@@ -35,7 +35,7 @@ const PHRASE: PhraseSnapshot = {
 
 describe('cardFace', () => {
   it('shows one form when the two scripts agree', () => {
-    expect(cardFace(SIMPLE, 'simp')).toEqual({ primary: '打算' });
+    expect(cardFace(SIMPLE, 'simp')).toEqual({ primary: '打算', pinyinNum: SIMPLE.pinyinNum });
   });
 
   it('shows the other script alongside when they differ', () => {
@@ -43,6 +43,7 @@ describe('cardFace', () => {
       primary: '书',
       secondary: '書',
       secondaryLabel: 'Traditional',
+      pinyinNum: SPLIT.pinyinNum,
     });
   });
 
@@ -51,10 +52,25 @@ describe('cardFace', () => {
       primary: '書',
       secondary: '书',
       secondaryLabel: 'Simplified',
+      pinyinNum: SPLIT.pinyinNum,
     });
   });
 
-  it('renders a phrase card from its rendered form', () => {
+  /**
+   * core.md C3: `<HanziText>` aligns `pinyinNum` character by character, and it
+   * has to be the SNAPSHOT's reading rather than the dictionary's — a card
+   * renders from the snapshot so a dictionary rebuild cannot silently change
+   * what is on it, and the reading is part of that. One reading serves both
+   * scripts, because CC-CEDICT's two columns are the same word.
+   */
+  it('carries the snapshot’s own numbered reading, for the per-character ruby', () => {
+    expect(cardFace(SIMPLE, 'simp').pinyinNum).toBe(SIMPLE.pinyinNum);
+    expect(cardFace(SPLIT, 'trad').pinyinNum).toBe(cardFace(SPLIT, 'simp').pinyinNum);
+  });
+
+  it('renders a phrase card from its rendered form, with no word-level reading', () => {
+    // A phrase's reading is the model's, token by token, and `PhraseFace`
+    // renders those tokens itself.
     expect(cardFace(PHRASE, 'simp')).toEqual({ primary: '我随便看看' });
     expect(cardTargetText(PHRASE, 'simp')).toBe('我随便看看');
   });

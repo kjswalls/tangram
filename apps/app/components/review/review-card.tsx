@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { ContextLine } from '@/components/review/context-line';
 import { PhraseFace } from '@/components/review/phrase-face';
 import { SpeakButton } from '@/components/tts/speak-button';
+import { HanziWord } from '@/components/hanzi/hanzi-text';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/cn';
@@ -105,12 +106,51 @@ export function ReviewCard({
         {phrase ? (
           <PhraseFace card={card} />
         ) : (
-          <h2 className="hanzi text-6xl font-medium sm:text-7xl">{face.primary}</h2>
+          <h2 className="text-6xl font-medium sm:text-7xl">
+            {/*
+              **The question side shows no reading, whatever the setting says.**
+
+              `display="never"` is the mirror of the `force` on the answer face
+              below, and it is not what C3 first built: the front rendered
+              unforced, which with the default `pinyinDisplay: 'always'` meant
+              a fresh install printed 打(dǎ)算(suàn) above the headword and then
+              offered `dǎsuàn` as the answer a keypress later. Recognition
+              grading answered itself. `phrase-face.tsx` had the rule already —
+              "this is the front of a review card, where the reading is the
+              answer" — and the two card types disagreed.
+
+              The line that settles it: `pinyinDisplay` governs **reading**
+              surfaces (lookup, the reader, lists, example sentences), not the
+              side of a practice card whose job is to withhold. Recorded in
+              HANDOFF.md, because core.md C3 states only the `force` half.
+
+              `revealed` is what flips it, and this element is where it has to
+              flip: the headword is rendered once, on the front, and the back
+              is appended below it — so the answer face never re-renders the
+              characters and `force` further down would annotate nothing. On
+              reveal the reading appears over each character, which is the
+              per-character mapping the learner is here for and the thing
+              `card-pinyin`'s joined `dǎsuàn` cannot show.
+            */}
+            <HanziWord
+              text={face.primary}
+              {...(revealed && face.pinyinNum !== undefined
+                ? { pinyinNum: face.pinyinNum, force: true }
+                : { display: 'never' as const })}
+              rtClassName="text-[0.28em]"
+            />
+          </h2>
         )}
         {face.secondary ? (
-          <p className="hanzi text-2xl text-muted">
+          <p className="text-2xl text-muted">
             <span className="sr-only">{face.secondaryLabel}: </span>
-            {face.secondary}
+            {/* The other script of the same question: same rule. */}
+            <HanziWord
+              text={face.secondary}
+              {...(revealed && face.pinyinNum !== undefined
+                ? { pinyinNum: face.pinyinNum, force: true }
+                : { display: 'never' as const })}
+            />
           </p>
         ) : null}
 
@@ -162,8 +202,15 @@ export function ReviewCard({
             </p>
             <SpeakButton text={face.primary} label={face.primary} />
             {face.secondary ? (
-              <p className="hanzi text-sm text-muted">
-                {face.secondaryLabel} {face.secondary}
+              <p className="text-sm text-muted">
+                {face.secondaryLabel}{' '}
+                <HanziWord
+                  text={face.secondary}
+                  {...(face.pinyinNum === undefined ? {} : { pinyinNum: face.pinyinNum })}
+                  // The BACK of the card: the product never hides the reading
+                  // here, whatever the setting says (product-decisions §4).
+                  force
+                />
               </p>
             ) : null}
             {back.hskLabel ? <Badge tone="accent">{back.hskLabel}</Badge> : null}
@@ -198,7 +245,8 @@ export function ReviewCard({
 
           {back.classifiers.length > 0 ? (
             <p data-testid="card-classifiers" className="text-sm text-muted">
-              Classifier <span className="hanzi text-foreground">{back.classifiers.join(' · ')}</span>
+              Classifier{' '}
+              <HanziWord text={back.classifiers.join(' · ')} className="text-ink" force />
             </p>
           ) : null}
 

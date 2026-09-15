@@ -30,7 +30,15 @@ export default defineConfig({
     // pipeline, so the API adapter cannot import a `.ts` route handler without
     // tsx's loader hook (docs/plans/web.md W1). PORT rather than a flag because
     // that is what the script reads and what `pnpm smoke` already passes.
-    command: 'pnpm -w build && pnpm -w run preview',
+    //
+    // `build:e2e`, not `build`: it is the same production build with
+    // `--mode e2e`, which is the only thing that puts the dev-only `/gallery`
+    // route in the bundle (docs/plans/core.md C1, and the note in
+    // src/routes.tsx). `import.meta.env.PROD` is still true — the mode changes
+    // which constants Vite substitutes, not whether this is a production build
+    // — so the service worker still registers and tests/e2e/p6/pwa.spec.ts is
+    // unaffected. A plain `pnpm build` has no gallery and no way to get one.
+    command: 'pnpm -w run build:e2e && pnpm -w run preview',
     env: { PORT: String(PORT) },
     url: baseURL,
     reuseExistingServer: true,

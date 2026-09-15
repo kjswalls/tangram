@@ -1,3 +1,4 @@
+import { DictGate } from '@/components/dict/dict-gate';
 import { LookupView } from '@/components/lookup/lookup-view';
 import { PageHeader } from '@/components/shell/page-header';
 
@@ -10,7 +11,7 @@ export function LookupRoute() {
       {/* No `askSlot`: the ask panel is `LookupPanel`'s default ask content, and
           the slot is the override hook for a caller that wants something else
           there. Either way the dictionary body never waits on it (§3.4). */}
-      <LookupView />
+      <DictGate><LookupView /></DictGate>
     </>
   );
 }

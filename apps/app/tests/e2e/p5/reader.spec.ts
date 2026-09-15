@@ -11,6 +11,7 @@ import {
   token,
   tokenStates,
 } from './helpers';
+import { expectBaseText, expectExactBaseText } from '../hanzi';
 
 /**
  * PLAN.md §4, P5. Every line of the acceptance row is here:
@@ -85,10 +86,10 @@ test.describe('/read', () => {
 
     const panel = page.getByTestId('reader-panel');
     await expect(panel).toBeVisible();
-    await expect(panel).toContainText(NEW_WORD);
+    await expectBaseText(panel, NEW_WORD);
     // The provenance line the frozen panel renders: the whole sentence, bounded
     // by the full stops on either side of it (§3.5).
-    await expect(panel).toContainText(JIXU_SENTENCE);
+    await expectBaseText(panel, JIXU_SENTENCE);
     await expect(panel).toContainText('from reader');
     await expect(panel.getByTestId('entry-detail')).toBeVisible();
     await expect(panel.getByTestId('reading-pinyin').first()).toHaveText('jìxù');
@@ -117,10 +118,10 @@ test.describe('/read', () => {
     // And the same sentence is on the back of the card in the review session.
     await page.goto('/review');
     await ready(page);
-    await expect(page.getByTestId('card-front')).toContainText(NEW_WORD);
+    await expectBaseText(page.getByTestId('card-front'), NEW_WORD);
     await page.keyboard.press('Space');
-    await expect(page.getByTestId('context-back')).toHaveText(JIXU_SENTENCE);
-    await expect(page.getByTestId('context-target')).toHaveText(NEW_WORD);
+    await expectExactBaseText(page.getByTestId('context-back'), JIXU_SENTENCE);
+    await expectExactBaseText(page.getByTestId('context-target'), NEW_WORD);
   });
 
   test('"Mark known" recolours the token immediately, without re-segmenting', async ({ page }) => {
@@ -200,7 +201,7 @@ test.describe('/read', () => {
     await expect(page).toHaveURL(/\/review$/);
     await page.getByRole('link', { name: 'Read' }).click();
     await expect(page).toHaveURL(/\/read$/);
-    await expect(page.getByTestId('reader-text')).toContainText(NEW_WORD);
+    await expectBaseText(page.getByTestId('reader-text'), NEW_WORD);
     expect(await page.getByTestId('reader-token').count()).toBe(before);
 
     // A reload empties the store, and the `texts` row is what is left (§3.5).
@@ -210,7 +211,7 @@ test.describe('/read', () => {
     const saved = page.getByTestId('saved-text');
     await expect(saved).toHaveCount(1);
     await saved.first().click();
-    await expect(page.getByTestId('reader-text')).toContainText(NEW_WORD);
+    await expectBaseText(page.getByTestId('reader-text'), NEW_WORD);
     expect(await page.getByTestId('reader-token').count()).toBe(before);
   });
 
@@ -220,7 +221,7 @@ test.describe('/read', () => {
 
     await token(page, '买').click();
     const panel = page.getByTestId('reader-panel');
-    await expect(panel.getByTestId('lookup-panel')).toContainText('买');
+    await expectBaseText(panel.getByTestId('lookup-panel'), '买');
 
     const extend = page.getByTestId('extend-span');
     await expect(extend).toHaveText('Extend to 东西');
@@ -230,7 +231,7 @@ test.describe('/read', () => {
     // `/api/dict/search` as an exact headword.
     await expect(panel.getByTestId('entry-detail')).toBeVisible();
     await expect(panel.getByTestId('reading-pinyin').first()).toHaveText('mǎidōngxi');
-    await expect(panel.getByTestId('lookup-panel').locator('h2')).toHaveText('买东西');
+    await expectExactBaseText(panel.getByTestId('lookup-panel').locator('h2'), '买东西');
 
     // Adding it keeps the sentence, as a single-token add does.
     await page.getByTestId('add-card').click();

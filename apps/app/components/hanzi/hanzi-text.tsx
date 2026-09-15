@@ -1,0 +1,465 @@
+'use client';
+
+/**
+ * `<HanziText>` — the component every Chinese run in the app renders through
+ * (docs/plans/core.md C3).
+ *
+ * **One `<ruby>` element per character**, mono-ruby, the reading above. Per-
+ * character pairs are one glyph wide, so they wrap naturally in any Chromium
+ * version. The WebKit half carries a floor: unprefixed `ruby-position` shipped
+ * in **Safari 18.2** (AUDIT 1; STACK §6's floors table), and `ios.md` register
+ * #12 records that Capacitor 8's stated iOS 15 minimum is itself a
+ * search-snippet fact. The practical risk is cosmetic — `over` is the engine
+ * default for horizontal text, so an engine that ignores the declaration lays
+ * it out the same way — but the floor is written down here rather than
+ * rediscovered. **The `-webkit-ruby-position` question goes to `ios.md`
+ * alongside its deployment-target decision; do not add the prefix
+ * speculatively.**
+ *
+ * **The DOM's unit is the character; the token is a grouping over characters.**
+ * Each character carries `data-char-index`; each word grouping carries
+ * `data-token-index` and, when the caller supplies states, `data-state`. That
+ * is what lets a tap resolve to a word by default (rule 2) while a second tap
+ * resolves to a character, and it is the shape C5b's character-granular span
+ * model needs. **The container keeps ONE delegated handler**, as
+ * `reader-text.tsx` does today, because a pasted passage is hundreds of
+ * characters and a handler per character is hundreds of closures per recolour.
+ *
+ * **`rt { user-select: none }`** so a copy excludes the pinyin — the rule
+ * lives in `ruby.css` with the rest of the styling. AUDIT 1 sources the
+ * behaviour for WebKit only (Safari 16.4, bug 80159) and no audit establishes
+ * Blink's, so C3 asked for it to be measured: `tests/e2e/core/ruby.spec.ts`
+ * found that **Chromium excludes it too** and asserts it, which is what C3
+ * instructs in that case. C5b makes the question moot for the reader anyway by
+ * taking the clipboard over explicitly.
+ *
+ * **Pinyin visibility** is `SettingsRow.pinyinDisplay`, three states, default
+ * `'always'`. `'never'` hides every `<rt>` **except** on a practice card's
+ * answer side, which is what the `force` prop is for. The mirror of `force` is
+ * `display="never"`, which the **question** side of a practice card passes:
+ * the setting governs reading surfaces, not the side of a card whose whole job
+ * is to withhold the answer. See `review-card.tsx`. `'tap'` is the one with a
+ * collision in it and C3 resolves it: a tap on a word **reveals that word's
+ * readings and opens the sheet in the same gesture**. Concretely —
+ *
+ *   - default state: no `<rt>` is rendered anywhere and **the ruby band is not
+ *     reserved**, so revealing shifts nothing;
+ *   - one tap on a word: the sheet opens (rule 2, unchanged) *and* that word's
+ *     characters gain their `<rt>`, persisted for the life of the rendered
+ *     passage, not to the database;
+ *   - a second tap on a character inside it: the character sheet opens; the
+ *     reveal has already happened and does not re-fire;
+ *   - nothing dismisses a reveal. The set clears when the passage unmounts. A
+ *     learner who wants pinyin gone has the `'never'` setting.
+ *
+ * Layout-shift-free reveal is what makes this cheap: `mode` and the aligned
+ * syllables are computed once, so revealing is a class toggle on an
+ * already-rendered `<ruby>`, not a re-render.
+ */
+import { memo, useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react';
+
+import { usePinyinDisplay } from '@/components/hanzi/pinyin-display';
+import { alignReading, type Alignment } from '@/lib/hanzi/align';
+import { cn } from '@/lib/cn';
+import type { PinyinDisplay } from '@/lib/db/schema';
+import type { WordState } from '@/lib/srs/states';
+
+/** One word-sized run: the text, its reading, and what the learner knows. */
+export interface HanziRun {
+  /** The characters. One `<ruby>` per code point. */
+  text: string;
+  /**
+   * CC-CEDICT numbered pinyin for `text`, when the dictionary has one. Absent
+   * means "not a word the dictionary knows" — punctuation, a Latin run, or an
+   * unsegmented fragment — and such a run renders plain and untappable.
+   */
+  pinyinNum?: string;
+  /** Word-level marked reading, when the caller already has one. */
+  pinyinMarked?: string;
+}
+
+export interface HanziTextProps {
+  /**
+   * The runs, in order. A plain string is the common case and
+   * `<HanziText text="打算" pinyinNum="da3 suan4" />` is the shorthand for it.
+   */
+  runs: readonly HanziRun[];
+  /**
+   * One state per run, aligned by index — exactly the shape
+   * `lib/reader/states.ts`'s `tokenStates()` already returns, `undefined` for
+   * runs that are not words. Rendered as `data-state` on the **word grouping**,
+   * never per character: a word has one state and a character inside it does
+   * not have its own.
+   */
+  states?: readonly (WordState | undefined)[];
+  /**
+   * Overrides the learner's setting. Omitted — which is every call site except
+   * the gallery — it comes from `PinyinDisplayProvider`, defaulting to
+   * `'always'` (product-decisions §4 rule 1).
+   */
+  display?: PinyinDisplay;
+  /**
+   * Show every reading whatever `display` says. The practice card's **answer**
+   * face sets this: the product never hides pinyin there.
+   */
+  force?: boolean;
+  /** A tap on a word grouping. The index is into `runs`. */
+  onWord?: (index: number) => void;
+  /** A tap on a single character. Indexes are into `runs` and into its code points. */
+  onCharacter?: (run: number, char: number) => void;
+  className?: string;
+  /** Extra classes for the ruby text, e.g. a smaller scale on a card. */
+  rtClassName?: string;
+  /**
+   * `data-testid` for the plain (unreadable, untappable) runs. The reader
+   * passes `"reader-text-run"`, which is the hook `tests/e2e/p5/helpers.ts`
+   * already reads; everywhere else there is nothing to select and a shared id
+   * would be a collision rather than a hook.
+   */
+  plainRunTestId?: string;
+  /**
+   * `data-testid` for the word groupings. Defaults to `"hanzi-word"`, and
+   * **the reader is the only caller that should override it**, to
+   * `"reader-token"` when C5b switches `reader-text.tsx`.
+   *
+   * It defaulted to `"reader-token"` at first, which quietly made every
+   * classifier, every search-result headword and every card face a "reader
+   * token" — and `tests/e2e/p5/helpers.ts` counts `reader-token` elements on
+   * `/read` to assert how a passage segmented. Since C3 the reader panel
+   * contains `<HanziWord>` groupings too, so those counts were about to start
+   * measuring the panel as well as the passage.
+   */
+  wordTestId?: string;
+  'data-testid'?: string;
+}
+
+/** The colouring, carried across from `reader-text.tsx` unchanged in meaning. */
+const STATE_CLASS: Record<WordState, string> = {
+  known: 'token-known',
+  learning: 'token-learning rounded bg-lookup-soft text-lookup',
+  new: 'token-new rounded underline decoration-new decoration-dotted decoration-2 underline-offset-4',
+};
+
+interface RunView {
+  run: HanziRun;
+  alignment: Alignment;
+  tappable: boolean;
+}
+
+function viewOf(run: HanziRun): RunView {
+  const alignment = run.pinyinNum
+    ? alignReading(run.text, run.pinyinNum)
+    : {
+        chars: [...run.text].map((char) => ({ char })),
+        mode: 'fallback' as const,
+        // A caller with only the marked word-level form — an example-sentence
+        // token, whose reading the model returned already marked — still gets
+        // one annotation over the run. It is not per character, because
+        // `alignReading` needs the NUMBERED form, and guessing the split from
+        // marked text is the silent error R5 is about.
+        reading: run.pinyinMarked ?? '',
+      };
+  // "Is this a word the dictionary knows?" — which is what makes it annotatable
+  // AND tappable. A run with neither form of reading is punctuation, a Latin
+  // run, or an unsegmented fragment: plain, and not a tap target.
+  return { run, alignment, tappable: Boolean(run.pinyinNum ?? run.pinyinMarked) };
+}
+
+function Ruby({
+  char,
+  syllable,
+  revealed,
+  runIndex,
+  charIndex,
+  rtClassName,
+}: {
+  char: string;
+  syllable: string | undefined;
+  revealed: boolean;
+  runIndex: number;
+  charIndex: number;
+  rtClassName?: string;
+}) {
+  // No `<rt>` at all when there is nothing to show. An empty one reserves the
+  // ruby band and teaches nothing (C3, the `xx5` rule).
+  const annotation = revealed && syllable ? syllable : undefined;
+  return (
+    <ruby
+      data-testid="hanzi-char"
+      data-char-index={charIndex}
+      data-run-index={runIndex}
+      className="hanzi-ruby"
+    >
+      {char}
+      {annotation === undefined ? null : (
+        <>
+          {/*
+            `<rp>` is not decoration and not a legacy fallback here: it is what
+            keeps the ACCESSIBLE NAME readable. A `<ruby>` with no `<rp>`
+            computes its name from the interleaved text, so the review card's
+            `<h2>` read back as "打dǎ算suàn" — the same interleaving that broke
+            fifteen e2e specs, except that the sighted surface was fixed with
+            `data-hanzi` and the assistive one was not. With the parentheses a
+            reader that does not understand ruby says "打 (dǎ) 算 (suàn)", and
+            one that does ignores them. They are `user-select: none` alongside
+            the `<rt>`, so a copy still yields the bare hanzi.
+          */}
+          <rp>(</rp>
+          <rt data-testid="hanzi-rt" className={rtClassName}>
+            {annotation}
+          </rt>
+          <rp>)</rp>
+        </>
+      )}
+    </ruby>
+  );
+}
+
+const Runs = memo(function Runs({
+  views,
+  states,
+  revealedRuns,
+  showAll,
+  rtClassName,
+  plainRunTestId,
+  wordTestId,
+}: {
+  views: readonly RunView[];
+  states: readonly (WordState | undefined)[] | undefined;
+  revealedRuns: ReadonlySet<number>;
+  showAll: boolean;
+  rtClassName?: string;
+  plainRunTestId?: string;
+  wordTestId: string;
+}) {
+  return (
+    <>
+      {views.map((view, index) => {
+        const state = states?.[index];
+        const revealed = showAll || revealedRuns.has(index);
+        // A run the dictionary has no reading for renders plain: no ruby, no
+        // state, not a tap target. `data-testid="reader-text-run"` is the hook
+        // `tests/e2e/p5` already reads, and it survives verbatim.
+        if (!view.tappable) {
+          return (
+            <span key={index} {...(plainRunTestId ? { 'data-testid': plainRunTestId } : {})}>
+              {view.run.text}
+            </span>
+          );
+        }
+        const wordLevel = view.alignment.mode === 'fallback';
+        return (
+          <span
+            key={index}
+            data-testid={wordTestId}
+            data-token-index={index}
+            data-token={view.run.text}
+            data-state={state ?? 'unknown'}
+            data-align={view.alignment.mode}
+            className={cn(
+              'hanzi-token cursor-pointer align-baseline transition-colors',
+              state ? STATE_CLASS[state] : undefined,
+            )}
+          >
+            {wordLevel ? (
+              // One annotation over the whole run, or none at all when the
+              // dictionary has no reading. Never a per-character guess.
+              <ruby data-testid="hanzi-char" data-run-index={index}>
+                {/*
+                  One annotation, but still one `data-char-index` PER
+                  CHARACTER. The index used to be a hardcoded 0 on the whole
+                  run, so a tap anywhere inside AA制 — or any `xx5` entry, or
+                  any example-sentence token, all of which take this branch —
+                  reported character 0, and C4's character sheet would have
+                  opened on the wrong character with no signal that it had.
+                  What fallback means is that the READING cannot be split, not
+                  that the characters cannot be counted.
+                */}
+                {[...view.run.text].map((char, charIndex) => (
+                  <span key={charIndex} data-char-index={charIndex}>
+                    {char}
+                  </span>
+                ))}
+                {revealed && view.alignment.reading ? (
+                  <>
+                    <rp>(</rp>
+                    <rt data-testid="hanzi-rt" className={rtClassName}>
+                      {view.alignment.reading}
+                    </rt>
+                    <rp>)</rp>
+                  </>
+                ) : null}
+              </ruby>
+            ) : (
+              view.alignment.chars.map((aligned, charIndex) => (
+                <Ruby
+                  key={charIndex}
+                  char={aligned.char}
+                  syllable={aligned.syllable}
+                  revealed={revealed}
+                  runIndex={index}
+                  charIndex={charIndex}
+                  {...(rtClassName === undefined ? {} : { rtClassName })}
+                />
+              ))
+            )}
+          </span>
+        );
+      })}
+    </>
+  );
+});
+
+export function HanziText({
+  runs,
+  states,
+  display,
+  force = false,
+  onWord,
+  onCharacter,
+  className,
+  rtClassName,
+  plainRunTestId,
+  wordTestId = 'hanzi-word',
+  'data-testid': testId = 'hanzi-text',
+}: HanziTextProps) {
+  const views = useMemo(() => runs.map(viewOf), [runs]);
+  const [revealedRuns, setRevealedRuns] = useState<ReadonlySet<number>>(() => new Set<number>());
+  const setting = usePinyinDisplay();
+  const effective = display ?? setting;
+
+  const showAll = force || effective === 'always';
+  const revealsOnTap = !force && effective === 'tap';
+
+  /**
+   * A change of passage clears the reveals.
+   *
+   * `revealedRuns` holds **indexes into `runs`**, and React reuses a component
+   * instance whenever the element type and position are stable — a reader
+   * swapping texts, a sheet showing a second entry, `<HanziWord>` re-rendered
+   * with new `text`. Without this, run 3 of the new passage came up already
+   * revealed because run 3 of the old one had been tapped, and the word the
+   * learner actually tapped did not. The header's "the set clears when the
+   * passage unmounts" was only true when a new passage *was* an unmount.
+   */
+  useEffect(() => {
+    setRevealedRuns((previous) => (previous.size === 0 ? previous : new Set<number>()));
+  }, [runs]);
+  /**
+   * Reserved only when something in the passage **actually renders an
+   * annotation** — not merely when the setting would allow one. A passage of
+   * entries the dictionary has no reading for (`xx5`), or of punctuation, has
+   * nothing above the line and must not carry an empty band; `'always'` alone
+   * is not evidence that anything will be drawn.
+   */
+  const bandReserved = useMemo(() => {
+    const annotatable = (view: RunView) =>
+      view.alignment.mode === 'aligned'
+        ? view.alignment.chars.some((char) => Boolean(char.syllable))
+        : Boolean(view.alignment.reading);
+    /**
+     * In `'tap'` the band is reserved **from the first render**, before
+     * anything is revealed.
+     *
+     * core.md C3 asks for two things that cannot both hold: "the ruby band is
+     * **not** reserved" in the default state, and "no layout shift on reveal —
+     * this is why it must be specified now: reserving the band changes the line
+     * box". Reserving it later *is* the shift. The stated reason wins over the
+     * stated mechanism: a learner who chose "only when I tap" is going to tap,
+     * and a passage that jumps a line every time they do is the failure the
+     * criterion names. Recorded in HANDOFF.md as a contradiction in the plan.
+     *
+     * `'never'` reserves nothing, and `'always'`/`force` reserve only when
+     * something is actually drawn — a passage of `xx5` entries or of
+     * punctuation has nothing above the line and must not carry an empty band.
+     */
+    if (revealsOnTap) return views.some(annotatable);
+    return views.some((view, index) => (showAll || revealedRuns.has(index)) && annotatable(view));
+  }, [revealedRuns, revealsOnTap, showAll, views]);
+
+  const onClick = useCallback(
+    (event: MouseEvent<HTMLElement>) => {
+      const target = event.target as HTMLElement | null;
+      const ruby = target?.closest<HTMLElement>('[data-char-index]');
+      const token = target?.closest<HTMLElement>('[data-token-index]');
+      if (!token) return;
+      const runIndex = Number(token.getAttribute('data-token-index'));
+      if (Number.isNaN(runIndex)) return;
+
+      if (revealsOnTap && !revealedRuns.has(runIndex)) {
+        // One gesture, two effects: the reading appears AND the sheet opens.
+        setRevealedRuns((previous) => new Set(previous).add(runIndex));
+      }
+
+      // A character tap only means "character" once the word is already open —
+      // which is the caller's business, so both are reported and the caller
+      // decides. `onWord` always fires; `onCharacter` fires alongside it when
+      // the tap landed on an identifiable character.
+      onWord?.(runIndex);
+      if (ruby && onCharacter) {
+        const charIndex = Number(ruby.getAttribute('data-char-index'));
+        if (!Number.isNaN(charIndex)) onCharacter(runIndex, charIndex);
+      }
+    },
+    [onCharacter, onWord, revealedRuns, revealsOnTap],
+  );
+
+  return (
+    <span
+      data-testid={testId}
+      data-display={force ? 'forced' : effective}
+      /**
+       * The base characters, without the readings. `<ruby>` interleaves the
+       * `<rt>` into `textContent` — `打dǎ算suàn` — which is correct for the DOM
+       * and useless as a hook, so every consumer that wants the string reads
+       * this instead of the text. The e2e suite's same-text-at-both-widths
+       * check (C7) and every card assertion go through it.
+       */
+      data-hanzi={runs.map((run) => run.text).join('')}
+      data-band={bandReserved ? 'reserved' : 'none'}
+      lang="zh-Hans"
+      /**
+       * One delegated handler for the whole passage. See the header.
+       *
+       * `revealsOnTap` is in the condition because the reveal lives in this
+       * handler: attached only when a caller supplied a callback, `'tap'` was
+       * dead everywhere in the app. The gallery was the single call site that
+       * passed `onWord`, and it passes `() => undefined` precisely so the state
+       * can be demonstrated — so "only when I tap" behaved exactly like
+       * "never" on every card, every search result and every list row.
+       */
+      onClick={onWord || onCharacter || revealsOnTap ? onClick : undefined}
+      className={cn('hanzi', bandReserved && 'hanzi-band', className)}
+    >
+      <Runs
+        views={views}
+        states={states}
+        revealedRuns={revealedRuns}
+        showAll={showAll}
+        wordTestId={wordTestId}
+        {...(rtClassName === undefined ? {} : { rtClassName })}
+        {...(plainRunTestId === undefined ? {} : { plainRunTestId })}
+      />
+    </span>
+  );
+}
+
+/** The one-run shorthand, which is most call sites. */
+export function HanziWord({
+  text,
+  pinyinNum,
+  pinyinMarked,
+  ...rest
+}: Omit<HanziTextProps, 'runs' | 'states'> & HanziRun) {
+  const runs = useMemo(
+    () => [
+      {
+        text,
+        ...(pinyinNum === undefined ? {} : { pinyinNum }),
+        ...(pinyinMarked === undefined ? {} : { pinyinMarked }),
+      },
+    ],
+    [pinyinMarked, pinyinNum, text],
+  );
+  return <HanziText runs={runs} {...rest} />;
+}

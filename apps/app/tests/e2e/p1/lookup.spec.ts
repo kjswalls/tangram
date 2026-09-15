@@ -1,5 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 
+import { baseTexts, expectBaseText } from '../hanzi';
+
 /**
  * /lookup — the front door (PLAN.md §1). One input; results grouped by headword;
  * a panel that can turn the one you meant into a card that remembers the query it
@@ -52,7 +54,7 @@ test.describe('searching', () => {
     await look(page, 'dasuan');
 
     const first = result(page).first();
-    await expect(first).toContainText('打算');
+    await expectBaseText(first, '打算');
     await expect(first.getByTestId('result-readings')).toContainText('dǎsuàn');
     await expect(first.getByTestId('hsk-badge')).toHaveText('HSK 2');
     await expect(first.getByTestId('match-source')).toHaveText('pinyin');
@@ -62,18 +64,18 @@ test.describe('searching', () => {
     await openLookup(page);
     for (const query of ['dǎsuàn', 'da3suan4']) {
       await look(page, query);
-      await expect(result(page).first()).toContainText('打算');
+      await expectBaseText(result(page).first(), '打算');
     }
     await look(page, 'dasu');
-    await expect(result(page).filter({ hasText: '打算' }).first()).toBeVisible();
+    // `hasText` matches `textContent`, which C3's per-character ruby
+    // interleaves (`打dǎ算suàn`), so the row is found by the hanzi hook.
+    await expect(result(page).filter({ has: page.locator('[data-hanzi="打算"]') }).first()).toBeVisible();
   });
 
   test('an English word finds it too, in the labelled English section', async ({ page }) => {
     await openLookup(page);
     await look(page, 'plan');
-    const first3 = await result(page).evaluateAll((nodes) =>
-      nodes.slice(0, 3).map((node) => node.textContent ?? ''),
-    );
+    const first3 = (await baseTexts(result(page))).slice(0, 3);
     expect(first3.join(' ')).toContain('打算');
     await expect(page.getByTestId('section-english')).toBeVisible();
   });
@@ -82,8 +84,8 @@ test.describe('searching', () => {
     await openLookup(page);
     await look(page, 'sun');
     // English leads for a three-letter gloss word, but the reading is right there.
-    await expect(page.getByTestId('section-english')).toContainText('太阳');
-    await expect(page.getByTestId('section-pinyin')).toContainText('孙');
+    await expectBaseText(page.getByTestId('section-english'), '太阳');
+    await expectBaseText(page.getByTestId('section-pinyin'), '孙');
   });
 
   test('"show more" pages past the cap of 50', async ({ page }) => {
@@ -118,7 +120,7 @@ test.describe('the panel', () => {
     await expect(detail).toBeVisible();
     await expect(detail.getByTestId('reading-pinyin').first()).toHaveText('dǎsuàn');
     await expect(detail).toContainText('to plan');
-    await expect(detail).toContainText('个');
+    await expectBaseText(detail, '个');
     await expect(detail.getByTestId('decomposition')).toContainText('⿰扌丁');
     await expect(detail.getByTestId('decomposition')).toContainText('⺮');
     // Nobody injects a slot on this route — Phase 4 made the ask panel the

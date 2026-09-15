@@ -11,9 +11,11 @@
  * review back highlights later (§1, commitment 2).
  */
 
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
-import { ReaderLookup } from '@/components/reader/reader-lookup';
+import { CharSheet } from '@/components/hanzi/char-sheet';
+import { useContextGloss } from '@/components/hanzi/context-gloss';
+import { WordSheet } from '@/components/hanzi/word-sheet';
 import { ReaderText } from '@/components/reader/reader-text';
 import { useReaderIndex } from '@/components/reader/use-reader-index';
 import { Badge } from '@/components/ui/badge';
@@ -21,9 +23,13 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/cn';
 import { sentenceAt } from '@/lib/reader/sentence';
 import { tokenStates } from '@/lib/reader/states';
+import { getDecompStore, getDictStore } from '@/lib/dict/browser-store';
 import { useLookupStore } from '@/lib/stores/lookup';
 import { nextExtendable, useReaderStore } from '@/lib/stores/reader';
 import type { WordState } from '@/lib/srs/states';
+
+/** Clear of the sticky header, and clear of the sheet. */
+const SHEET_SAFE_TOP = 96;
 
 export function ReaderScreen() {
   const body = useReaderStore((state) => state.body);
@@ -38,6 +44,56 @@ export function ReaderScreen() {
 
   const openLookup = useLookupStore((state) => state.openLookup);
   const closeLookup = useLookupStore((state) => state.closeLookup);
+  const query = useLookupStore((state) => state.query);
+  const entryIds = useLookupStore((state) => state.entryIds);
+  const lookupContext = useLookupStore((state) => state.context);
+
+  // The character sheet stacks on top of the word sheet: rule 2's second tap.
+  // The index comes with it so the character's own span can be worked out.
+  const [character, setCharacter] = useState<{ char: string; index: number }>();
+
+  const store = getDictStore();
+  const decompStore = getDecompStore();
+
+  // §7's third capability: one line on what the word means in THIS sentence.
+  // Asked here rather than inside the sheet so that a sheet opened from the
+  // search box — which has no sentence — makes no request at all.
+  const gloss = useContextGloss(query, lookupContext);
+
+  /**
+   * Lift the tapped word clear of the sheet (core.md C4).
+   *
+   * On a phone the sheet covers the lower two thirds, so a word tapped near the
+   * bottom would answer from behind it. `reader-text.tsx` used to do this in
+   * its click handler, and it could not work there: it measured the token
+   * before the sheet existed and before the column grew the bottom padding that
+   * makes the document tall enough to lift it. Here it runs after the sheet has
+   * opened — two frames, because the first commits the padding and the second
+   * lays it out.
+   *
+   * The media query is the complement of the `wide:` variant, so the boundary
+   * cannot drift from C1's `--breakpoint-wide: 45rem`; above it the sheet is a
+   * side panel and covers nothing.
+   */
+  useEffect(() => {
+    if (selected === undefined) return;
+    // jsdom implements neither `matchMedia` nor layout, so there is nothing to
+    // scroll and nothing to measure; the criterion this serves is a Playwright
+    // one (core.md C4) and the unit suite must not throw on the way past it.
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    if (window.matchMedia('(min-width: 45rem)').matches) return;
+    let frame = 0;
+    frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => {
+        const target = document.querySelector(`[data-token-index="${selected}"]`);
+        if (!target) return;
+        const top = target.getBoundingClientRect().top;
+        // Clear of the sticky header, and clear of the sheet.
+        if (top > SHEET_SAFE_TOP) window.scrollBy({ top: top - SHEET_SAFE_TOP });
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [selected]);
 
   const index = useReaderIndex();
   const states = useMemo(
@@ -86,6 +142,27 @@ export function ReaderScreen() {
       },
     });
   };
+
+  /**
+   * The character's own span inside the sentence, not the word's.
+   *
+   * `lookupContext` locates the whole tapped word, and `lib/srs/context.ts`
+   * uses `offset`/`length` to decide what a card back highlights (PLAN.md §1,
+   * commitment 2). Handing it straight to the character sheet made a
+   * one-character card highlight the two-character word it came out of, for the
+   * life of the card. The sentence and the source are the word's; the span is
+   * the character's.
+   */
+  const characterContext =
+    lookupContext === undefined
+      ? undefined
+      : character === undefined || lookupContext.offset === undefined
+        ? lookupContext
+        : {
+            ...lookupContext,
+            offset: lookupContext.offset + character.index,
+            length: [...character.char].length,
+          };
 
   const nextIndex = nextExtendable({ tokens, selected, spanEnd });
   const onExtend =
@@ -163,21 +240,43 @@ export function ReaderScreen() {
         </div>
 
         <div className="order-2 md:sticky md:top-4">
-          {open ? (
-            <ReaderLookup
-              onClose={close}
-              {...(onExtend ? { onExtend } : {})}
-              {...(nextIndex === undefined
-                ? {}
-                : { extendLabel: `Extend to ${tokens[nextIndex].text}` })}
-            />
-          ) : (
+          {open ? null : (
             <p className="hidden text-sm text-muted md:block" data-testid="reader-panel-empty">
               Tap a word to look it up. What you add keeps the sentence you met it in.
             </p>
           )}
         </div>
       </div>
+
+      {/*
+        The two sheets, mounted at the end of the screen rather than inside the
+        column, because a `Sheet` is a fixed layer and the column it used to sit
+        in is a grid cell (core.md C4; the `Sheet` primitive is C1's).
+      */}
+      <WordSheet
+        open={open}
+        // Non-modal, deliberately: the reader's loop is tap-a-word,
+        // tap-the-next-word, and a backdrop over the passage would make every
+        // word after the first cost two taps — the first to dismiss.
+        modal={false}
+        query={query}
+        {...(entryIds === undefined ? {} : { entryIds })}
+        {...(lookupContext === undefined ? {} : { context: lookupContext })}
+        store={store}
+        gloss={gloss}
+        onClose={close}
+        onCharacter={(char, index) => setCharacter({ char, index })}
+        {...(onExtend ? { onExtend } : {})}
+        {...(nextIndex === undefined ? {} : { extendLabel: `Extend to ${tokens[nextIndex].text}` })}
+      />
+      <CharSheet
+        open={character !== undefined}
+        char={character?.char ?? ''}
+        store={store}
+        decomp={decompStore}
+        {...(characterContext === undefined ? {} : { context: characterContext })}
+        onClose={() => setCharacter(undefined)}
+      />
     </div>
   );
 }

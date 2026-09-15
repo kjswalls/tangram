@@ -67,7 +67,7 @@ export function ListCard({ view, busy, onToggleActive, onMarkAllKnown }: ListCar
             checked={list.active}
             aria-label={`Active: ${list.name}`}
             onChange={(event) => onToggleActive(event.target.checked)}
-            className="h-4 w-4 accent-[var(--accent)]"
+            className="h-4 w-4 accent-[var(--lookup)]"
           />
           Active
         </label>

@@ -1,0 +1,104 @@
+/*
+ * PER-CHARACTER RUBY (docs/plans/core.md C3).
+ *
+ * `<HanziText>` renders one `<ruby>` per character and hangs three classes off
+ * the result; this file is all three. It is imported by `app/globals.css`
+ * rather than by the component, because Vite would otherwise emit it only when
+ * the component is in the graph — and `.hanzi`, which it extends, is already in
+ * the global sheet.
+ *
+ * Nothing here names a colour: every value is a tier-2 token (C0 rule 1).
+ *
+ * **Everything is inside `@layer base`, and that is load-bearing.** Tailwind 4
+ * emits every utility into `@layer utilities`, and an *unlayered* rule beats a
+ * layered one whatever its specificity — so with these rules at the top level,
+ * `.hanzi rt { font-size: 0.5em }` silently beat `rtClassName="text-[0.28em]"`
+ * on the card faces, and the prop this file's own prose calls an override
+ * did nothing at all. A 4-syllable answer face at `text-7xl` rendered its
+ * annotations at 36px rather than 20px, each wider than the character it sat
+ * over. In `base` the utilities win, which is what an override means.
+ */
+@layer base {
+
+  /*
+   * The annotation sits ABOVE the character. `over` is the engine default for
+   * horizontal text, so this is a declaration of intent more than a change —
+   * but `ruby-position` only shipped in Safari **18.2** (AUDIT 1; STACK §6's
+   * floors table), and an engine below that floor lays it out the same way by
+   * default. `ios.md` register #12 holds the "do we also emit
+   * `-webkit-ruby-position`" question; it is deliberately NOT emitted here.
+   */
+  .hanzi ruby {
+    ruby-position: over;
+    ruby-align: center;
+  }
+
+  /*
+   * The reading. Scaled to the character it annotates rather than set in px, so
+   * a card at `text-6xl` and a passage at `text-2xl` both get a proportionate
+   * band; `rtClassName` overrides the scale where a card wants a smaller one.
+   *
+   * `user-select: none` so a copy excludes the pinyin, on the `<rp>`
+   * parentheses as well as the `<rt>`. AUDIT 1 sources that exclusion for
+   * **WebKit only** (Safari 16.4, bug 80159) and STACK §6 carries it as a
+   * floor; no audit establishes Blink's. `tests/e2e/core/ruby.spec.ts`
+   * measured it, found that **Chromium excludes it too** — the selection
+   * string carries the readings and the clipboard does not — and, as C3
+   * instructs in that case, asserts it. It is no longer a one-engine claim.
+   */
+  .hanzi rt,
+  .hanzi rp {
+    font-family: var(--font-ui);
+    font-size: 0.5em;
+    font-weight: 400;
+    line-height: 1.1;
+    letter-spacing: 0;
+    color: var(--muted);
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  /*
+   * THE BAND — a zero-width strut, not padding.
+   *
+   * A ruby annotation is laid out above the line box and, on the FIRST line of
+   * a block, it overflows the block's top; the e2e criterion caught exactly
+   * that, thirteen `<rt>` boxes sitting 13px above their container. Line-height
+   * alone does not fix it, because the overflow is above the first baseline and
+   * line-height distributes space between lines.
+   *
+   * The obvious fix — `display: inline-block; padding-top: 0.6em` — reserves
+   * the space and **breaks line wrapping**. Measured in Chromium: an
+   * inline-block whose children are `<ruby>` elements with no `<rt>` has no
+   * break opportunities at all, so the `'tap'` column's 200-character passage
+   * became one unbreakable 2546px box at a 390px viewport. (With `<rt>`s
+   * present the same markup wraps at 358px. The annotations are what create
+   * the break opportunities.) That is why this is a strut: an inline
+   * zero-width box, one em-and-a-half tall, sitting on the first baseline. It
+   * props the first line box open and changes nothing about breaking, because
+   * the element stays `display: inline`.
+   *
+   * It is applied only when `<HanziText>` says something is annotated
+   * (`data-band="reserved"`), which is also what makes the `'tap'` reveal
+   * free: in that mode the band is reserved before anything is revealed, so
+   * revealing a word adds an `<rt>` into space that is already there.
+   */
+  .hanzi-band::before {
+    content: '';
+    display: inline-block;
+    width: 0;
+    height: 1.6em;
+    vertical-align: baseline;
+  }
+
+  /*
+   * Between lines, the same problem in the other direction: line N+1's
+   * characters would sit under line N's readings. `1.35` is the plain-text
+   * value `.hanzi` sets; an annotated run needs room for a 0.5em annotation
+   * above each line.
+   */
+  .hanzi-band,
+  .hanzi-band ruby {
+    line-height: 2;
+  }
+}

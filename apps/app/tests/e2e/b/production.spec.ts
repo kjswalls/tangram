@@ -3,6 +3,13 @@ import { expect, test, type Page } from '@playwright/test';
 import { DASUAN, KANKAN, openReview, readerContext, reviewRows, seed, storedCard } from '../p2/fixtures';
 import { ready, resetApp } from '../p3/helpers';
 
+import {
+  expectBaseText,
+  expectExactBaseText,
+  expectNoBaseText,
+  expectNoReadingOf,
+} from '../hanzi';
+
 /**
  * The production direction (PLAN.md §3.3; Phase 8, builder B), as a learner
  * meets it: turn it on in /settings, add the reverse from the back of a card
@@ -74,10 +81,13 @@ test.describe('/review, both directions', () => {
     // reading, and not the sentence it was mined from, which is blanked.
     const front = page.getByTestId('card-front');
     await expect(front).toContainText('to plan');
-    await expect(front).not.toContainText('打算');
-    await expect(front).not.toContainText('dǎsuàn');
-    await expect(page.getByTestId('context-peek')).toContainText('明天去北京');
-    await expect(page.getByTestId('context-peek')).not.toContainText('打算');
+    await expectNoBaseText(front, '打算');
+    // Through the READINGS, not through the base text: `expectNoBaseText`
+    // strips every `<rt>`, so asking it about a reading is asking a question it
+    // cannot see — it would pass for a front that printed `打dǎ算suàn`.
+    await expectNoReadingOf(front, 'dǎsuàn', ['dǎ', 'suàn']);
+    await expectBaseText(page.getByTestId('context-peek'), '明天去北京');
+    await expectNoBaseText(page.getByTestId('context-peek'), '打算');
 
     // An exact answer is judged in the browser. Any request is a failure.
     let asked = 0;
@@ -90,7 +100,7 @@ test.describe('/review, both directions', () => {
     await page.getByTestId('recall-answer').press('Enter');
 
     await expect(page.getByTestId('card-back')).toBeVisible();
-    await expect(page.getByTestId('production-answer')).toHaveText('打算');
+    await expectExactBaseText(page.getByTestId('production-answer'), '打算');
     const suggestion = page.getByTestId('recall-suggestion');
     await expect(suggestion).toHaveAttribute('data-suggested', '3');
     await expect(page.getByTestId('grade-3')).toHaveAttribute('data-suggested', 'true');

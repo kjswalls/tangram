@@ -23,6 +23,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import type { AskRouteInfo, AskRouteResponse } from '@/app/api/ask/route';
+import { HanziWord } from '@/components/hanzi/hanzi-text';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { askCacheKey } from '@/lib/ai/cache-key';
@@ -37,10 +38,27 @@ import {
 import { cn } from '@/lib/cn';
 import type { PhraseToken } from '@/lib/db/schema';
 import { getRepository } from '@/lib/db/get-db';
-import { fetchEntriesResponse } from '@/lib/dict/client';
+import { getDictStore } from '@/lib/dict/browser-store';
 import { addCardChecked, addPhraseCardChecked, phraseCardFor } from '@/lib/lists/looked-up';
 import { getLearnerProfile } from '@/lib/srs/profile';
 import { orderGlosses } from '@/lib/srs/presentation';
+
+/**
+ * Entries by id, through `DictStore` (core.md C4a), in the
+ * `{ meta: { version }, entries }` shape the cache path already reads.
+ *
+ * `DictStore.entries` returns rows and no version — the version is the store's
+ * own `status`, not a property of a query — so it is read from there. The
+ * `AbortSignal` the old fetch took has no equivalent on the frozen interface;
+ * the caller's `cancelled` flag already drops a stale answer, so nothing that
+ * reaches the screen depends on it. Recorded in HANDOFF.md.
+ */
+async function resolveEntries(ids: readonly string[]) {
+  const store = getDictStore();
+  const entries = await store.entries(ids);
+  const version = store.status.state === 'ready' ? store.status.version : '';
+  return { meta: { version }, entries };
+}
 import { hskBandLabel, type CardContext, type Entry } from '@/lib/types';
 
 /** Long enough that typing a sentence is one ask, short enough to feel answered. */
@@ -204,7 +222,7 @@ function MatchCard({
       className="rounded-lg border border-border px-3 py-2"
     >
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        <span className="hanzi text-lg font-medium">{entry.simp}</span>
+        <HanziWord text={entry.simp} pinyinNum={entry.pinyinNum} className="text-lg font-medium" />
         <span className="text-sm text-accent">{entry.pinyinMarked || '—'}</span>
         {entry.hskBand ? <Badge tone="accent">HSK {hskBandLabel(entry.hskBand)}</Badge> : null}
       </div>
@@ -359,19 +377,38 @@ function PhraseCard({
                     : undefined
             }
           >
-            <span
+            {/*
+              The reading is ABOVE the token now (core.md C3), through the same
+              `<HanziText>` every other Chinese run goes through, and `force`
+              because the ask panel is answering a question: it prints the
+              reading whatever `pinyinDisplay` says.
+
+              **Token-granular, not character-granular**, and that is a
+              frozen-surface limit rather than a choice — `RenderedToken`
+              (lib/ai/ground.ts) carries `pinyin` as the MARKED word-level form
+              and `alignReading` needs the NUMBERED one, so the run aligns in
+              `fallback` mode: one correct word-level annotation rather than a
+              guessed per-character one. Recorded in HANDOFF.md.
+            */}
+            <HanziWord
+              text={token.text || '?'}
+              {...(token.pinyin ? { pinyinMarked: token.pinyin } : {})}
+              force
               className={cn(
-                'hanzi text-2xl',
+                'text-2xl',
                 (token.unverified || token.aiGenerated) &&
                   'decoration-warning decoration-dotted underline underline-offset-4',
               )}
-            >
-              {token.text || '?'}
-            </span>
-            <span className="text-xs text-muted">
-              {token.pinyin || (token.aiGenerated ? 'AI' : '—')}
-              {token.polyphone ? ' · polyphone' : ''}
-            </span>
+            />
+            {/*
+              A token the model invented has no reading to put above it, and
+              the flag is the whole point of the row — so it keeps its own line
+              rather than vanishing with the pinyin.
+            */}
+            {token.pinyin ? null : (
+              <span className="text-xs text-warning">{token.aiGenerated ? 'AI' : '—'}</span>
+            )}
+            {token.polyphone ? <span className="text-xs text-muted">polyphone</span> : null}
           </span>
         ))}
       </p>
@@ -520,7 +557,7 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
           const ids = citedIds(cached.data);
           const resolved =
             ids.length > 0
-              ? await fetchEntriesResponse(ids, { signal: controller.signal })
+              ? await resolveEntries(ids)
               : { meta: { version: '' }, entries: [] };
           if (cancelled) return;
           setState({

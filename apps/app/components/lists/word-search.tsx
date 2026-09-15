@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 
+import { HanziWord } from '@/components/hanzi/hanzi-text';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { getEntrySource } from '@/lib/lists/entry-source';
@@ -57,7 +58,11 @@ export function WordSearch({
           onChange={(event) => setQuery(event.target.value)}
           className="max-w-xs"
         />
-        <Button type="submit" disabled={pending || !query.trim()}>
+        {/* `secondary`, not the default `primary`: since C1 the primary variant
+            is the screen's single filled vermillion action (§1), and a search
+            submit inside a card is not it. On /lists/:id it sat next to the
+            delete confirmation, which is. */}
+        <Button type="submit" variant="secondary" disabled={pending || !query.trim()}>
           {pending ? 'Searching…' : 'Find'}
         </Button>
       </form>
@@ -73,7 +78,7 @@ export function WordSearch({
           {results.map((entry) => (
             <li key={entry.id} className="flex items-center justify-between gap-3 py-2">
               <span className="min-w-0">
-                <span className="hanzi text-lg">{entry.simp}</span>{' '}
+                <HanziWord text={entry.simp} pinyinNum={entry.pinyinNum} className="text-lg" />{' '}
                 <span className="text-sm text-muted">{entry.pinyinMarked}</span>
                 <span className="block truncate text-sm text-muted">{entry.glosses[0]}</span>
               </span>

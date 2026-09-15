@@ -20,7 +20,7 @@ import { SearchResults } from '@/components/lookup/search-results';
 import { LookupPanel } from '@/components/lookup/lookup-panel';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/cn';
-import { DictRequestError, fetchSearch } from '@/lib/dict/client';
+import { getDictStore } from '@/lib/dict/browser-store';
 import { useLookupStore } from '@/lib/stores/lookup';
 
 /** Long enough that a fast typist makes one request per word, short enough to feel live. */
@@ -30,11 +30,15 @@ function isAbort(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'AbortError';
 }
 
+/**
+ * The "dictionary data is missing" case is **not** here any more (core.md
+ * C4a): it is `store.status`, and `<DictGate>` around this route draws it — a
+ * message inside a search box the learner is still typing into told them
+ * something was wrong and left them typing. What is left is the ordinary
+ * failure of a query the store could not answer.
+ */
 function message(error: unknown): string {
-  if (error instanceof DictRequestError) {
-    return error.dataMissing ? 'Dictionary data is missing — run pnpm data.' : error.message;
-  }
-  return 'Search failed. Try again.';
+  return error instanceof Error && error.message ? error.message : 'Search failed. Try again.';
 }
 
 export function LookupView({ askSlot }: { askSlot?: ReactNode }) {
@@ -69,7 +73,8 @@ export function LookupView({ askSlot }: { askSlot?: ReactNode }) {
     setLoading(true);
     const controller = new AbortController();
     const timer = setTimeout(() => {
-      fetchSearch(trimmed, { signal: controller.signal })
+      getDictStore()
+        .search(trimmed, { signal: controller.signal })
         .then(setSearch)
         .catch((cause: unknown) => {
           if (!isAbort(cause)) setError(message(cause));
@@ -86,7 +91,7 @@ export function LookupView({ askSlot }: { askSlot?: ReactNode }) {
     if (!cursor) return;
     setLoadingMore(true);
     try {
-      appendSearch(await fetchSearch(query.trim(), { cursor }));
+      appendSearch(await getDictStore().search(query.trim(), { cursor }));
     } catch (cause) {
       setError(message(cause));
     } finally {

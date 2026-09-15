@@ -16,7 +16,7 @@
 
 import type { CardRow, ListRow, SettingsRow } from '@/lib/db/schema';
 import type { Repository } from '@/lib/db/repository';
-import { getEntrySource, type EntrySource } from '@/lib/lists/entry-source';
+import { BAND_PAGE, getEntrySource, type EntrySource } from '@/lib/lists/entry-source';
 import { spineEligible } from '@/lib/lists/spine';
 import { memberEntryIds } from '@/lib/lists/members';
 import { hskLists, userLists } from '@/lib/lists/system-lists';
@@ -83,10 +83,49 @@ export async function collectDrawCandidates(input: DrawInput): Promise<DrawCandi
     if (band <= input.settings.knownBand) continue;
     const list = banded.find((row) => row.band === band);
     if (!list || !list.active) continue;
-    for (const entry of await source.band(band)) {
-      if (!spineEligible(entry)) continue;
-      if (entry.hskBand !== undefined && entry.hskBand <= input.settings.knownBand) continue;
-      if (take({ entryId: entry.id, from: 'spine', listId: list.id, band, entry })) return out;
+    /**
+     * **Paged, not pulled whole** (core.md C4a).
+     *
+     * A band is up to 5,638 entries and this loop stops as soon as it has
+     * `input.limit` of them — ten, by default. Reading the whole band to take
+     * ten was affordable over a socket and is not over a Capacitor JSON
+     * bridge, which is why `DictStore.hskBand` gained `limit`/`offset`. The
+     * window asks for the next one only when the queue is still short; a short
+     * answer means the band is exhausted.
+     */
+    let previousFirst: EntryId | undefined;
+    /**
+     * A hard bound as well as the two soft ones below.
+     *
+     * The largest HSK band is 5,638 entries, so 64 windows of 250 is nearly
+     * three times the whole spine — a number no correct source can reach. It is
+     * here because the failure mode of a loop that does not terminate is a
+     * **hang**, and a hang in `pnpm test` reads as an infrastructure problem
+     * rather than as the bug it is. Bounded, the same mistake becomes a short
+     * queue, which a test can see.
+     */
+    const MAX_PAGES = 64;
+    for (let offset = 0, page = 0; page < MAX_PAGES; offset += BAND_PAGE, page += 1) {
+      const window = await source.band(band, { limit: BAND_PAGE, offset });
+      /**
+       * **Terminate on a source that ignores the window, not only on a short
+       * page.** `EntrySource.band`'s options are optional, and a fake — or an
+       * implementation that has not caught up — may hand back the whole band
+       * every time. Then `offset` grows, the page stays full, and the loop
+       * never ends: it hung the unit suite the first time this was written. A
+       * page whose first entry is the one the last page started with has not
+       * advanced, whatever its length says.
+       */
+      const first = window[0]?.id;
+      if (offset > 0 && first !== undefined && first === previousFirst) break;
+      previousFirst = first;
+
+      for (const entry of window) {
+        if (!spineEligible(entry)) continue;
+        if (entry.hskBand !== undefined && entry.hskBand <= input.settings.knownBand) continue;
+        if (take({ entryId: entry.id, from: 'spine', listId: list.id, band, entry })) return out;
+      }
+      if (window.length < BAND_PAGE) break;
     }
   }
 

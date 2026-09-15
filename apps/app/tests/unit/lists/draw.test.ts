@@ -6,6 +6,7 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import type { Repository } from '@/lib/db/repository';
 import { collectDrawCandidates } from '@/lib/lists/draw';
+import { BAND_PAGE, type EntrySource } from '@/lib/lists/entry-source';
 import { ensureSystemLists, findHskList, hskListName } from '@/lib/lists/system-lists';
 import { requireDictData } from '../dict/data-required';
 import { dictEntrySource, entry, fakeEntrySource, freshRepository } from './helpers';
@@ -46,6 +47,90 @@ describe('collectDrawCandidates', () => {
     // Bands below the start band are never fetched, let alone drawn.
     expect(source.bandCalls).not.toContain(1);
   });
+
+  /**
+   * **The draw pages a band; it does not pull one** (core.md C4a).
+   *
+   * `DictStore.hskBand` gained `limit`/`offset` because the call crosses a
+   * Capacitor JSON bridge now rather than a socket, and band 7 is 5,638
+   * entries. The draw takes at most `limit` of them — ten by default — so it
+   * asks for a window and asks again only if the window was not enough.
+   */
+  it('asks for a WINDOW of the band rather than the whole thing', async () => {
+    const repo = setup();
+    const lists = await ensureSystemLists(repo);
+    const source = dictEntrySource();
+    const settings = await repo.getSettings();
+
+    await collectDrawCandidates({ repo, settings, lists, limit: 5, source });
+
+    const spine = source.bandPages.filter((page) => page.limit !== undefined);
+    expect(spine.length).toBeGreaterThan(0);
+    for (const page of spine) expect(page.limit).toBe(BAND_PAGE);
+    // Five candidates come out of the first window; there is no second.
+    expect(spine.map((page) => page.offset)).toEqual([0]);
+    // …and the window is a real bound: HSK 3 is far more than one page.
+    expect((await source.band(3)).length).toBeGreaterThan(BAND_PAGE);
+  });
+
+  it('asks for the NEXT window when the first one is not enough', async () => {
+    const repo = setup();
+    const lists = await ensureSystemLists(repo);
+    // A band longer than one page whose first page is entirely ineligible, so
+    // the draw has to come back for more.
+    const long = Array.from({ length: BAND_PAGE + 5 }, (_, i) =>
+      entry({ simp: `字${i}`, isVariant: i < BAND_PAGE }),
+    );
+    const source = fakeEntrySource({ 3: long });
+    const settings = await repo.getSettings();
+
+    const candidates = await collectDrawCandidates({ repo, settings, lists, limit: 3, source });
+    expect(candidates).toHaveLength(3);
+    expect(candidates.map((row) => row.entryId)).toEqual(
+      long.slice(BAND_PAGE, BAND_PAGE + 3).map((row) => row.id),
+    );
+  });
+
+  it('terminates against a source that ignores the window', async () => {
+    /**
+     * `EntrySource.band`'s options are optional, so an implementation may hand
+     * back the whole band however it is asked. Before the guard in `draw.ts`
+     * that was an infinite loop — `offset` grew, the page stayed full, and
+     * `pnpm test` hung rather than failed, which is the worst way for a bug to
+     * present itself. This test is the one that would have said so.
+     */
+    const repo = setup();
+    const lists = await ensureSystemLists(repo);
+    const all = Array.from({ length: BAND_PAGE + 10 }, (_, i) =>
+      entry({ simp: `字${i}`, isVariant: true }),
+    );
+    let asks = 0;
+    const source: EntrySource = {
+      async band() {
+        asks += 1;
+        return all;
+      },
+      async entries() {
+        return [];
+      },
+      async search() {
+        return [];
+      },
+    };
+    const settings = await repo.getSettings();
+
+    // Nothing is eligible, so the draw exhausts the band; it must come back.
+    const candidates = await collectDrawCandidates({ repo, settings, lists, limit: 3, source });
+    expect(candidates).toEqual([]);
+    /**
+     * **Two asks per band, not sixty-four.** The hard page cap alone would let
+     * this finish while making 64 pointless round trips over the bridge per
+     * band — which on a phone is the difference between a draw and a stall, and
+     * is invisible to an assertion about the result. The no-advance check is
+     * what turns the second identical answer into a stop.
+     */
+    expect(asks).toBeLessThanOrEqual(2 * 5);
+  }, 10_000);
 
   it('moves to the next band when the current one is exhausted', async () => {
     const repo = setup();

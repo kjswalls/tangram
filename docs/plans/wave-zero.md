@@ -303,3 +303,28 @@ files that are themselves being moved. If W0 has already run, they land at the p
 Nothing else in wave 0 touches code.
 
 After that, the build sequence in [README.md](README.md) is executable as written.
+
+---
+
+## Provenance note — why §10a, §10b and §10c arrived late
+
+The Android session building A0–A3 caught a process failure worth recording, because it is the kind
+that repeats.
+
+`claude/build-web-shell` was cut from the planning branch at `d494e88`. Every ruling after that —
+§10a (the access gate's prefix match), §10b (V1: C7 is not gated on C5b) and §10c (the two shells and
+the Inkstone default) — was committed to the planning branch **only**. Three build sessions were then
+briefed with those rulings in their prompts and worked from them correctly, while the binding document
+in their own tree ended at row 16e and carried none of them.
+
+`ios.md` I0 reported it first. Nothing landed. `core.md` C0 then implemented §10c in `tokens.css` and
+cited it by number, so the repository briefly contained code justified by a ruling the rulings document
+did not carry. The Android session reported it again, correctly identified the gate-row rewrite as the
+unresolved half of register **V1**, and asked for someone with authority over this file to land both.
+
+Both are now merged into `claude/integration` and reach every branch cut from it afterwards.
+
+**The rule this implies, for whoever orchestrates next:** a ruling is not landed when it is written on
+the branch the plans live on. It is landed when it reaches the branch the builders are cutting from.
+Relaying a ruling in a session prompt is how you unblock a session today; merging it forward is how the
+next session does not have to be told. Do both, in that order, and never only the first.

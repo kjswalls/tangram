@@ -16,12 +16,13 @@
  * commit re-runs this (`web.md` §2) — nothing here needs editing for it.
  *
  * Proved falsifiable by hand before it was trusted, the way the plan asks:
- * removing the entry chunk from `dist/` turns every case here red, and removing
- * one `<RouteMarker />` turns exactly that route's case red. Recorded in
- * HANDOFF.md.
+ * removing the entry chunk from `dist/` turned 9 of these 11 cases red, and
+ * adding a ninth route with no `<RouteMarker />` turned two unit cases red.
+ * Both runs are recorded in `HANDOFF.md` under `web.md` W2.
  */
 import { expect, test } from '@playwright/test';
 
+import { NAV_ITEMS } from '../../../components/shell/nav';
 import { appRoot } from '../../../lib/server/roots';
 import { discoverPageRoutes, pageRouteUrl } from '../../../lib/server/route-inventory';
 
@@ -31,7 +32,14 @@ const PAGES = discoverPageRoutes(ROOT);
 test.describe('every route in the table renders', () => {
   test('the table is not empty, and it is the production one', () => {
     // A discovery bug that found nothing would make every case below vacuous.
-    expect(PAGES.length).toBeGreaterThanOrEqual(7);
+    // NOT a count: `core.md` C7 collapses seven routes to three tabs, and a
+    // floor of 7 here would fail on that change for no reason — while this
+    // file's own header claims C7 needs no edit here. The nav is the honest
+    // lower bound, because it is derived from the same collapse.
+    expect(PAGES.length).toBeGreaterThan(0);
+    expect(PAGES.map((page) => page.pattern)).toEqual(
+      expect.arrayContaining(NAV_ITEMS.map((item) => item.href)),
+    );
     expect(PAGES.map((page) => page.pattern)).not.toContain('/gallery');
   });
 
@@ -57,15 +65,15 @@ test.describe('every route in the table renders', () => {
     });
   }
 
-  test('a path in no table renders the in-shell 404, not the router’s own', () => {
+  test('an unknown path renders the in-shell 404, not the router’s own', async ({ page }) => {
     // W1's review: an unmatched URL is routine under the SPA fallback, and
-    // without an errorElement it replaced the whole app with React Router's
-    // unstyled built-in page — no header, no nav, no way back.
-    expect(PAGES.map((page) => page.pattern)).not.toContain('*');
-  });
-
-  test('an unknown path keeps the shell', async ({ page }) => {
+    // without an `errorElement` it replaced the whole app with React Router's
+    // unstyled built-in page — no header, no nav, no way back. The previous
+    // version of this case asserted that the table contains no `*`, which
+    // `discoverPageRoutes` skips unconditionally — true for every possible
+    // content of the file, and it never opened a browser.
     await page.goto('/no/such/route');
     await expect(page.getByRole('navigation', { name: 'Main' })).toBeVisible();
+    await expect(page.locator('main')).not.toBeEmpty();
   });
 });

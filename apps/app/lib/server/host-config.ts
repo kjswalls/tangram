@@ -14,7 +14,9 @@
  *  1. `vite-plugins/headers.ts` applies it to the dev and preview servers, so a
  *     rule that is wrong is wrong locally too. That plugin used to hold a
  *     second, hand-written copy of two of the rules; `STATIC_HEADERS` is gone
- *     and this is what replaced it.
+ *     and this is what replaced it. **It applies headers only.** Applying
+ *     rewrites locally was how W2's first version hid a defect rather than
+ *     catching it — see the note on ordering below.
  *  2. `tests/unit/server/routes.test.ts` asserts every rule is present and that
  *     the artifact pattern matches the filename `pnpm data` actually produced.
  *  3. `scripts/smoke.ts` asserts the *served* response carries them, which
@@ -29,6 +31,17 @@
  * is the failure `wave-zero.md` §10a names twice.) Whether the deployed host
  * honours the rules is a measurement taken against the deployment; see
  * `docs/deploy.md` §7.
+ *
+ * **And one ordering fact that this module must never paper over.** Vercel
+ * applies `rewrites` only AFTER the filesystem check — a `source` that names a
+ * real file in the build output can never be rewritten — while `headers` rules
+ * decorate whatever the filesystem serves. W2's first `vercel.json` broke on
+ * exactly that seam: it rewrote `/dict-….sqlite` to its `.br` sibling and set
+ * `content-encoding: br` on the same path, and on the deployed host only the
+ * second half would have fired, serving 43 MB of raw SQLite labelled brotli.
+ * `tests/unit/server/routes.test.ts` now refuses any rewrite whose `source`
+ * matches a file in `dist/`, and any `content-encoding` header on a path that
+ * is one.
  *
  * Node-only: `readHostConfig()` reads the filesystem. The matcher half is pure
  * and is what the tests drive.
@@ -176,7 +189,14 @@ function conditionHolds(condition: HostCondition, request: HostRequest): boolean
   return new RegExp(condition.value).test(value);
 }
 
-function ruleApplies(
+/**
+ * Does this rule apply to this request, and with what captures?
+ *
+ * Exported because `vite-plugins/headers.ts` needs to ask whether the SPA
+ * fallback covers a path without applying it, and because the test that keeps
+ * `vercel.json` honest asks the same question of every rule.
+ */
+export function matchRule(
   rule: { source: string; has?: HostCondition[]; missing?: HostCondition[] },
   request: HostRequest,
 ): RegExpExecArray | null {
@@ -197,7 +217,7 @@ function ruleApplies(
 export function headersFor(config: HostConfig, request: HostRequest): Record<string, string> {
   const out: Record<string, string> = {};
   for (const rule of config.headers) {
-    if (!ruleApplies(rule, request)) continue;
+    if (!matchRule(rule, request)) continue;
     for (const { key, value } of rule.headers) out[key.toLowerCase()] = value;
   }
   return out;
@@ -212,7 +232,7 @@ export function headersFor(config: HostConfig, request: HostRequest): Record<str
  */
 export function rewriteFor(config: HostConfig, request: HostRequest): string | null {
   for (const rule of config.rewrites) {
-    const match = ruleApplies(rule, request);
+    const match = matchRule(rule, request);
     if (!match) continue;
     const { params } = sourceToRegExp(rule.source);
     let destination = rule.destination;

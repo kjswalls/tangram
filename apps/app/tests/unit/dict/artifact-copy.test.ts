@@ -72,7 +72,13 @@ describe('copying the artifacts into public/', () => {
     const result = copyDictArtifacts({ from, to, quality: 1 });
 
     expect(readdirSync(to).sort()).toEqual(
-      [manifest.file, `${manifest.file}.br`, MANIFEST_FILE, DECOMP_FILE].sort(),
+      [
+        manifest.file,
+        `${manifest.file}.br`,
+        `${manifest.file}.br.json`,
+        MANIFEST_FILE,
+        DECOMP_FILE,
+      ].sort(),
     );
     expect(statSync(resolve(to, manifest.file)).size).toBe(manifest.bytes);
     // The `.br` must be the same bytes, or a negotiated response is a
@@ -143,14 +149,60 @@ describe('copying the artifacts into public/', () => {
   });
 
   it('reuses the brotli sibling only when it belongs to this exact artifact', () => {
-    const { from, manifest } = fakeData();
+    const { from } = fakeData();
     const to = scratch();
     copyDictArtifacts({ from, to, quality: 1 });
     expect(copyDictArtifacts({ from, to, quality: 1 }).brotliReused).toBe(true);
+  });
 
-    // Same filename, different bytes in public/ — which is what a half-finished
-    // copy leaves behind. The sibling must not be carried across it.
-    writeFileSync(resolve(to, manifest.file), 'something else entirely');
+  it('does NOT reuse it at a different quality — the release setting is not a no-op', () => {
+    // `TANGRAM_DICT_BROTLI_QUALITY=11` is documented as the release trade
+    // (2.2 MB for 95 s). Keyed only on the artifact, it silently kept the q9
+    // bytes on any tree that had already built once, and the operator's only
+    // clue was the absence of a log line.
+    const { from } = fakeData();
+    const to = scratch();
+    copyDictArtifacts({ from, to, quality: 1 });
+    const bumped = copyDictArtifacts({ from, to, quality: 11 });
+    expect(bumped.brotliReused).toBe(false);
+    expect(bumped.brotliQuality).toBe(11);
+    // …and having recompressed at 11, a second q11 run may reuse.
+    expect(copyDictArtifacts({ from, to, quality: 11 }).brotliReused).toBe(true);
+  });
+
+  it('does NOT reuse a TRUNCATED sibling, which is what a killed build leaves', () => {
+    // The check that matters most, because the result would be served under a
+    // content-addressed name with `immutable` on it for a year. Nothing about a
+    // truncated file looks wrong from the outside — only decompressing it does.
+    const { from, manifest } = fakeData();
+    const to = scratch();
+    copyDictArtifacts({ from, to, quality: 1 });
+    const sibling = resolve(to, `${manifest.file}.br`);
+    writeFileSync(sibling, readFileSync(sibling).subarray(0, 4));
+
+    const again = copyDictArtifacts({ from, to, quality: 1 });
+    expect(again.brotliReused).toBe(false);
+    expect(brotliDecompressSync(readFileSync(sibling))).toEqual(
+      readFileSync(resolve(from, manifest.file)),
+    );
+  });
+
+  it('does NOT reuse a sibling whose sidecar names a different artifact', () => {
+    const { from, manifest } = fakeData();
+    const to = scratch();
+    copyDictArtifacts({ from, to, quality: 1 });
+    writeFileSync(
+      resolve(to, `${manifest.file}.br.json`),
+      JSON.stringify({ quality: 1, sha256: 'f'.repeat(64), bytes: manifest.bytes }),
+    );
+    expect(copyDictArtifacts({ from, to, quality: 1 }).brotliReused).toBe(false);
+  });
+
+  it('does NOT reuse a sibling with no sidecar at all', () => {
+    const { from, manifest } = fakeData();
+    const to = scratch();
+    copyDictArtifacts({ from, to, quality: 1 });
+    rmSync(resolve(to, `${manifest.file}.br.json`));
     expect(copyDictArtifacts({ from, to, quality: 1 }).brotliReused).toBe(false);
   });
 });
@@ -161,18 +213,20 @@ describe('the bytes actually in apps/app/public/', () => {
   const manifest = built ? (JSON.parse(readFileSync(manifestPath, 'utf8')) as DictManifest) : null;
   const copied = manifest ? resolve(PUBLIC, manifest.file) : '';
 
-  it.skipIf(!built || !existsSync(copied))(
-    'are byte-identical to the artifact the manifest names',
-    () => {
-      const bytes = readFileSync(copied);
-      expect(bytes.byteLength).toBe((manifest as DictManifest).bytes);
-      expect(createHash('sha256').update(bytes).digest('hex')).toBe(
-        (manifest as DictManifest).sha256,
-      );
-    },
-  );
+  it.skipIf(!built)('are byte-identical to the artifact the manifest names', () => {
+    // NOT skipped when the copy is missing: `public/` holding a stale artifact
+    // the manifest no longer names is the exact failure this file's header
+    // describes, and skipping on it would hide the staleness guard below in
+    // precisely the state it exists for.
+    expect(existsSync(copied), `${copied} is missing — run pnpm build`).toBe(true);
+    const bytes = readFileSync(copied);
+    expect(bytes.byteLength).toBe((manifest as DictManifest).bytes);
+    expect(createHash('sha256').update(bytes).digest('hex')).toBe(
+      (manifest as DictManifest).sha256,
+    );
+  });
 
-  it.skipIf(!built || !existsSync(copied))('carry exactly one artifact, never two', () => {
+  it.skipIf(!built)('carry exactly one artifact, never two', () => {
     const artifacts = readdirSync(PUBLIC).filter((name) => /^dict-.+\.sqlite$/.test(name));
     expect(artifacts).toEqual([(manifest as DictManifest).file]);
   });

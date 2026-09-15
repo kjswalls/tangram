@@ -5,11 +5,6 @@
   "outputDirectory": "dist",
   "rewrites": [
     {
-      "source": "/:artifact(dict-.+\\.sqlite)",
-      "has": [{ "type": "header", "key": "accept-encoding", "value": ".*br.*" }],
-      "destination": "/:artifact.br"
-    },
-    {
       "source": "/((?!api/|assets/|.*\\.[A-Za-z0-9]+$).*)",
       "destination": "/index.html"
     }
@@ -31,14 +26,16 @@
       "source": "/:artifact(dict-.+\\.sqlite)",
       "headers": [
         { "key": "content-type", "value": "application/vnd.sqlite3" },
-        { "key": "cache-control", "value": "public, max-age=31536000, immutable" },
-        { "key": "vary", "value": "accept-encoding" }
+        { "key": "cache-control", "value": "public, max-age=31536000, immutable" }
       ]
     },
     {
-      "source": "/:artifact(dict-.+\\.sqlite)",
-      "has": [{ "type": "header", "key": "accept-encoding", "value": ".*br.*" }],
-      "headers": [{ "key": "content-encoding", "value": "br" }]
+      "source": "/:artifact(dict-.+\\.sqlite\\.br)",
+      "headers": [
+        { "key": "content-type", "value": "application/vnd.sqlite3" },
+        { "key": "content-encoding", "value": "br" },
+        { "key": "cache-control", "value": "public, max-age=31536000, immutable" }
+      ]
     },
     {
       "source": "/dict-manifest.json",

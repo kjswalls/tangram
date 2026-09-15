@@ -42,14 +42,27 @@
  *
  * 9 is the default because it is the only one that can sit in front of every
  * `vite build` without being resented; `TANGRAM_DICT_BROTLI_QUALITY=11` is the
- * release setting and buys 2.2 MB for 95 s. Note that **no setting reproduces
- * the 13.9 MB `data.md` D1 records** — see `HANDOFF.md`.
+ * release setting and buys 2.2 MB for 95 s — and it is honoured on a tree that
+ * has already built, because the quality is part of the sibling's recorded
+ * identity. Note that **no setting reproduces the 13.9 MB `data.md` D1
+ * records**; 14.7 MB at q11 is the floor `node:zlib` reaches here. Recorded in
+ * `HANDOFF.md` as a question for `data.md`.
  */
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { brotliCompressSync, constants } from 'node:zlib';
+import { brotliCompressSync, brotliDecompressSync, constants } from 'node:zlib';
 
 import { MANIFEST_FILE, type DictManifest } from '../apps/app/lib/dict/artifact';
 import { dataDir } from '../apps/app/lib/dict/load';
@@ -67,13 +80,17 @@ export const DEFAULT_BROTLI_QUALITY = 9;
 export const PUBLIC_ARTIFACT_PATTERNS = [
   'dict-*.sqlite',
   'dict-*.sqlite.br',
+  'dict-*.sqlite.br.json',
   MANIFEST_FILE,
   DECOMP_FILE,
 ] as const;
 
 function isArtifactName(name: string): boolean {
   return (
-    /^dict-.+\.sqlite(\.br)?$/.test(name) || name === MANIFEST_FILE || name === DECOMP_FILE
+    /^dict-.+\.sqlite(\.br(\.json)?)?$/.test(name) ||
+    /^dict-.+\.sqlite(\.br)?\.tmp-\d+$/.test(name) ||
+    name === MANIFEST_FILE ||
+    name === DECOMP_FILE
   );
 }
 
@@ -100,6 +117,23 @@ export interface CopyResult {
   /** Compressed size, and whether this run had to produce it. */
   brotliBytes: number;
   brotliReused: boolean;
+  /** The quality the sibling in `public/` was actually produced at. */
+  brotliQuality: number;
+}
+
+/**
+ * What is recorded beside the sibling, so the next run can tell whether it may
+ * keep it.
+ *
+ * `quality` is here because it is NOT derivable from the bytes, and without it
+ * `TANGRAM_DICT_BROTLI_QUALITY=11` silently no-ops on any tree that has already
+ * built once — the operator believes they shipped 14.7 MB and shipped 16.9.
+ */
+interface BrotliSidecar {
+  quality: number;
+  /** The SOURCE artifact's digest, so a sibling can never outlive its artifact. */
+  sha256: string;
+  bytes: number;
 }
 
 function sha256(path: string): string {
@@ -151,19 +185,23 @@ export function copyDictArtifacts(options: CopyOptions = {}): CopyResult {
 
   mkdirSync(to, { recursive: true });
 
-  // Reuse the brotli sibling only when it belongs to *this* artifact: same
-  // name, and a `.sqlite` beside it that is still the manifest's bytes. Any
-  // doubt and it is recompressed — 15 s is cheaper than shipping the wrong
-  // 15 MB under a content-addressed name that says it cannot be wrong.
+  // Reuse the brotli sibling only when it is provably the right bytes at the
+  // right quality. Three things are checked and none of them is optional:
+  //
+  //  - the sidecar names THIS artifact's sha256, so a sibling cannot outlive
+  //    the artifact it was made from;
+  //  - the sidecar names the quality being asked for, or the release setting
+  //    would silently no-op on a tree that had already built at the default;
+  //  - the sibling **decompresses to the artifact**. It is written in one
+  //    16.9 MB `writeFileSync`, so a build killed mid-write, a full disk or an
+  //    interrupted `pnpm dev` leaves a truncated file — which would then be
+  //    carried forward for ever and served under a content-addressed name with
+  //    `immutable` on it for a year. Decompressing costs ~0.2 s and is the only
+  //    check that can tell a good sibling from a plausible one.
   const brotliName = `${manifest.file}${BROTLI_SUFFIX}`;
   const brotliPath = resolve(to, brotliName);
-  const existingArtifact = resolve(to, manifest.file);
-  const canReuse =
-    existsSync(brotliPath) &&
-    existsSync(existingArtifact) &&
-    statSync(existingArtifact).size === manifest.bytes &&
-    sha256(existingArtifact) === manifest.sha256;
-  const carried = canReuse ? readFileSync(brotliPath) : undefined;
+  const sidecarPath = `${brotliPath}.json`;
+  const carried = reusable(brotliPath, sidecarPath, manifest, quality);
 
   for (const name of readdirSync(to)) {
     if (isArtifactName(name)) rmSync(resolve(to, name), { force: true });
@@ -180,6 +218,7 @@ export function copyDictArtifacts(options: CopyOptions = {}): CopyResult {
   let brotli: Buffer;
   if (carried) {
     brotli = carried;
+    log(`copy-dict: reusing the q${quality} brotli sibling (${(brotli.length / 1e6).toFixed(1)} MB)`);
   } else {
     const started = Date.now();
     brotli = brotliCompressSync(readFileSync(source), {
@@ -195,14 +234,60 @@ export function copyDictArtifacts(options: CopyOptions = {}): CopyResult {
       ).toFixed(1)} s`,
     );
   }
-  writeFileSync(brotliPath, brotli);
-  written.push(brotliName);
+  // Atomically: a half-written 16.9 MB sibling beside an intact artifact is
+  // exactly what the reuse check above exists to refuse, and the cheapest way
+  // to refuse it is never to create one.
+  writeAtomic(brotliPath, brotli);
+  writeAtomic(sidecarPath, Buffer.from(JSON.stringify(
+    { quality, sha256: manifest.sha256, bytes: manifest.bytes } satisfies BrotliSidecar,
+  )));
+  written.push(brotliName, `${brotliName}.json`);
 
   log(
     `copy-dict: ${manifest.file} (${(manifest.bytes / 1e6).toFixed(1)} MB), ${MANIFEST_FILE}, ` +
       `${DECOMP_FILE} and ${brotliName} → ${to}`,
   );
-  return { manifest, written, brotliBytes: brotli.length, brotliReused: Boolean(carried) };
+  return {
+    manifest,
+    written,
+    brotliBytes: brotli.length,
+    brotliReused: Boolean(carried),
+    brotliQuality: quality,
+  };
+}
+
+/** The sibling's bytes, if it is provably this artifact's at this quality. */
+function reusable(
+  brotliPath: string,
+  sidecarPath: string,
+  manifest: DictManifest,
+  quality: number,
+): Buffer | undefined {
+  if (!existsSync(brotliPath) || !existsSync(sidecarPath)) return undefined;
+  let sidecar: BrotliSidecar;
+  try {
+    sidecar = JSON.parse(readFileSync(sidecarPath, 'utf8')) as BrotliSidecar;
+  } catch {
+    return undefined;
+  }
+  if (sidecar.quality !== quality || sidecar.sha256 !== manifest.sha256) return undefined;
+  try {
+    const bytes = readFileSync(brotliPath);
+    const decoded = brotliDecompressSync(bytes);
+    if (decoded.byteLength !== manifest.bytes) return undefined;
+    if (createHash('sha256').update(decoded).digest('hex') !== manifest.sha256) return undefined;
+    return bytes;
+  } catch {
+    // A truncated or corrupt sibling throws here rather than being believed.
+    return undefined;
+  }
+}
+
+/** Write through a temporary name in the same directory, then rename. */
+function writeAtomic(path: string, bytes: Buffer): void {
+  const temporary = `${path}.tmp-${process.pid}`;
+  writeFileSync(temporary, bytes);
+  renameSync(temporary, path);
 }
 
 const invokedDirectly =

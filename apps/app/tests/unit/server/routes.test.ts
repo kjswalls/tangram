@@ -2,13 +2,21 @@
  * Three things that only fail once the build is somewhere else
  * (docs/plans/web.md W2).
  *
- *  1. **`outputFileTracingIncludes`.** Vercel traces and bundles every route
- *     separately, so a route that reads the dictionary and is not listed in
- *     `tracing.config.ts` works under the dev and preview adapters — the file
- *     is on disk in both — and 500s in the deployment, on that route alone.
- *     `/api/examples` and `/api/recall` shipped exactly that way and were found
- *     by hand. The *value* is checked too, not only the key: after the
- *     workspace move all four globs were well-formed and matched nothing.
+ *  1. **`outputFileTracingIncludes`.** This one is **no longer a live
+ *     deployment failure mode and the honest thing is to say so.** It was: when
+ *     the app deployed as per-route serverless functions, a route that read the
+ *     dictionary and was not listed worked under `next dev` and 500'd in the
+ *     deployment, and `/api/examples` and `/api/recall` shipped exactly that
+ *     way. From W2 the app deploys as **static files with no functions at all**
+ *     (`docs/deploy.md`), so nothing reads `tracing.config.ts` and no route can
+ *     500 in a deployment — because no route is in the deployment. What the
+ *     three cases below still guard is the config's internal consistency for
+ *     as long as the file exists, which `tracing.config.ts`'s own header ties
+ *     to `data.md` D6 and `backend.md` taking the routes over. They are kept
+ *     rather than deleted for that reason and for one more: the *value* check
+ *     ("the key is not the whole answer") is the test that caught W0's
+ *     silently-empty globs, and it is the pattern, not the config, that is
+ *     worth keeping alive until the file goes.
  *  2. **A route or a page nobody exercises.** `pnpm smoke` is only as good as
  *     its case list, so a new API route with no case, or a page route with no
  *     DOM marker, has to fail *here*, cheaply.
@@ -20,13 +28,19 @@
  * not from memory.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
 import { MANIFEST_FILE, type DictManifest } from '@/lib/dict/artifact';
-import { headersFor, readHostConfig, rewriteFor, sourceToRegExp } from '@/lib/server/host-config';
+import {
+  headersFor,
+  matchRule,
+  readHostConfig,
+  rewriteFor,
+  sourceToRegExp,
+} from '@/lib/server/host-config';
 import { appRoot, workspaceRoot } from '@/lib/server/roots';
 import { NAV_ITEMS } from '@/components/shell/nav';
 import { OUTPUT_FILE_TRACING_INCLUDES } from '@/tracing.config';
@@ -48,6 +62,25 @@ import {
 
 const ROOT = appRoot(__dirname);
 const HOST = readHostConfig(ROOT);
+const DIST = resolve(ROOT, HOST.outputDirectory ?? 'dist');
+
+/**
+ * Every file the host would serve verbatim, at the path it would serve it from.
+ *
+ * Files, not directory entries: a directory is not something the filesystem
+ * handle answers with, so including one would make the guard below refuse a
+ * rewrite that is perfectly correct.
+ */
+function distFiles(dir: string = DIST, prefix = ''): string[] {
+  if (!existsSync(dir)) return [];
+  const out: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const served = `${prefix}/${entry.name}`;
+    if (entry.isDirectory()) out.push(...distFiles(resolve(dir, entry.name), served));
+    else out.push(served);
+  }
+  return out;
+}
 
 /** The artifact the *current* `data/` holds, when `pnpm data` has run. */
 function dictManifest(): DictManifest | null {
@@ -278,18 +311,63 @@ describe('the host config (apps/app/vercel.json)', () => {
     const headers = headersFor(HOST, { pathname: `/${name}` });
     expect(headers['cache-control']).toBe('public, max-age=31536000, immutable');
     expect(headers['content-type']).toBe('application/vnd.sqlite3');
-    expect(headers['vary']).toBe('accept-encoding');
   });
 
-  it('rule 4 — and negotiates the pre-compressed sibling', () => {
+  it('rule 4 — the brotli sibling is served under its OWN name, decodable', () => {
+    // **Not by content negotiation.** W2's first version rewrote
+    // `/dict-….sqlite` to the sibling under `accept-encoding` and set
+    // `content-encoding: br` on the same path. Vercel consults `rewrites` only
+    // after the filesystem, and the `.sqlite` IS a file in `dist/`, so on the
+    // deployed host only the header would have fired: 43 MB of raw SQLite
+    // labelled brotli, which no browser can decode. The sibling now has its own
+    // path and its own rules, which is the fallback `web.md` W2 already named.
     const name = dictManifest()?.file ?? 'dict-1-1.3.20251213.sqlite';
-    const brotli = { pathname: `/${name}`, headers: { 'accept-encoding': 'gzip, deflate, br' } };
-    expect(rewriteFor(HOST, brotli)).toBe(`/${name}.br`);
-    expect(headersFor(HOST, brotli)['content-encoding']).toBe('br');
-    // A client that cannot take brotli gets the raw file and no claim about it.
-    const plain = { pathname: `/${name}`, headers: { 'accept-encoding': 'gzip' } };
-    expect(rewriteFor(HOST, plain)).toBeNull();
-    expect(headersFor(HOST, plain)['content-encoding']).toBeUndefined();
+    const sibling = headersFor(HOST, { pathname: `/${name}.br` });
+    expect(sibling['content-encoding']).toBe('br');
+    expect(sibling['content-type']).toBe('application/vnd.sqlite3');
+    expect(sibling['cache-control']).toBe('public, max-age=31536000, immutable');
+  });
+
+  it('never claims an encoding it is not applying, and never rewrites a real file', () => {
+    // The class of bug, not the instance: both halves of W2's first version
+    // were individually reasonable and only wrong together, and both were green
+    // locally because the preview plugin applied them in the host's opposite
+    // order. `wave-zero.md` §10a names this shape twice; this is the third.
+    const emitted = distFiles();
+    expect(emitted.length, 'run pnpm build first').toBeGreaterThan(0);
+
+    for (const pathname of emitted) {
+      // Vercel: "the source property should NOT be a file, because precedence
+      // is given to the filesystem prior to rewrites being applied."
+      for (const rule of HOST.rewrites) {
+        expect(
+          matchRule(rule, { pathname, headers: { 'accept-encoding': 'gzip, deflate, br' } }),
+          `${rule.source} → ${rule.destination} can never fire: ${pathname} is a real file in dist/`,
+        ).toBeNull();
+      }
+      // …and a `content-encoding` on a path the filesystem serves verbatim is a
+      // promise about bytes nobody re-encoded.
+      const headers = headersFor(HOST, {
+        pathname,
+        headers: { 'accept-encoding': 'gzip, deflate, br' },
+      });
+      if (headers['content-encoding'] !== undefined) {
+        expect(
+          pathname.endsWith('.br'),
+          `${pathname} claims content-encoding: ${headers['content-encoding']} but is served verbatim`,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it('serves the uncompressed artifact honestly, with no encoding claimed', () => {
+    const name = dictManifest()?.file ?? 'dict-1-1.3.20251213.sqlite';
+    const headers = headersFor(HOST, {
+      pathname: `/${name}`,
+      headers: { 'accept-encoding': 'gzip, deflate, br' },
+    });
+    expect(headers['content-encoding']).toBeUndefined();
+    expect(headers['cache-control']).toBe('public, max-age=31536000, immutable');
   });
 
   it('rule 5 — the manifest that POINTS at rule 4 is not immutable', () => {

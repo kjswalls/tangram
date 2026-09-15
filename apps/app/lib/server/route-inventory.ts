@@ -120,8 +120,25 @@ export function discoverPageRoutes(repoRoot: string): PageRoute[] {
   const seen = new Set<string>();
   // `index: true` is the parent path itself; every other entry is a `path:`
   // string literal, relative to the parent unless it starts with `/`.
-  for (const match of table.matchAll(/\bindex:\s*true|\bpath:\s*'([^']*)'/g)) {
-    const raw = match[1];
+  //
+  // **Every quote style, and a THROW for anything else.** The first version
+  // read single quotes only, so `{ path: "practice" }` or a template literal
+  // would have been invisible to all four consumers at once — the marker test,
+  // the Playwright spec, the smoke's page cases and the nav-coverage check —
+  // and every one of them would have stayed green. That is precisely the
+  // failure W2's first acceptance criterion exists to prevent (a route nobody
+  // exercises), and `core.md` C7 is about to rewrite this table. A parse that
+  // cannot see a route has to be loud, exactly as this file already is about a
+  // route file that exports no handler.
+  for (const match of table.matchAll(/\bindex:\s*true|\bpath:\s*(['"`])((?:[^\\]|\\.)*?)\1|\bpath:\s*([^'"`\s])/g)) {
+    if (match[3] !== undefined) {
+      throw new Error(
+        `${PAGE_ROUTE_TABLE}: a \`path:\` this cannot read (${match[0].trim()}…). ` +
+          'Route patterns must be plain quoted strings, or nothing derived from this ' +
+          'table will know the route exists.',
+      );
+    }
+    const raw = match[2];
     let pattern: string;
     if (raw === undefined) pattern = '/';
     else if (raw === '*') continue;

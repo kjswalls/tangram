@@ -10,21 +10,26 @@
  * against and the same one `scripts/smoke.ts` checks the served responses
  * against.
  *
- * Two things it applies, in Vercel's own order:
+ * What it applies: **headers**, all matching rules, later key wins.
  *
- *  1. **Rewrites**, by rewriting `req.url` before Vite's static middleware sees
- *     it. Only one matters in the container — the artifact's `.br` sibling
- *     under `accept-encoding` negotiation — and it matters because otherwise
- *     nothing local would ever exercise it.
- *  2. **Headers**, all matching rules, later key wins.
+ * **It deliberately applies no rewrites, and that is the correction W2's
+ * adversarial review forced.** The first version of `vercel.json` negotiated
+ * the dictionary's brotli sibling with a rewrite from `/dict-….sqlite` to
+ * `/dict-….sqlite.br` under `accept-encoding`, and this plugin applied that
+ * rewrite BEFORE Vite's static middleware — the opposite of the order the host
+ * uses. Vercel consults `rewrites` only after the filesystem, and
+ * `/dict-….sqlite` is a real file in `dist/`, so on the deployed host the
+ * rewrite could never fire while the paired `content-encoding: br` header
+ * still would: 43 MB of raw SQLite labelled brotli, which no browser can
+ * decode. Every gate in this container was green, because this plugin was
+ * quietly making the local server behave in a way the host would not. The
+ * negotiation is gone; the sibling is served under its own name (`docs/deploy.md`
+ * §3 rule 4), which is the fallback `web.md` W2 already named.
  *
  * The SPA fallback rewrite is Vite's own (`appType: 'spa'`) and is NOT applied
  * from here: Vercel checks the filesystem before its rewrites and Vite's
  * history fallback middleware runs after its static one, so the two agree
- * without this plugin repeating the pattern. What this plugin must not do is
- * rewrite a page path to `/index.html` *before* the static middleware, which
- * would serve the document for a real file. `ruleApplies` is therefore called
- * only for rewrites whose destination is not `/index.html`.
+ * without this plugin repeating the pattern.
  *
  * **And one thing it has to UNDO.** `vite preview` answers a missing
  * `/assets/<hash>.js` with 200 and `index.html`, because Vite's own history
@@ -49,8 +54,8 @@ import type { Connect, Plugin } from 'vite';
 import { appRoot, dirOf } from '../lib/server/roots.ts';
 import {
   headersFor,
+  matchRule,
   readHostConfig,
-  rewriteFor,
   type HostConfig,
   type HostRequest,
 } from '../lib/server/host-config.ts';
@@ -72,8 +77,6 @@ function toHostRequest(req: Connect.IncomingMessage): HostRequest {
 }
 
 function middleware(config: HostConfig): Connect.NextHandleFunction {
-  const rewrites = config.rewrites.filter((rule) => rule.destination !== SPA_FALLBACK);
-  const routing: HostConfig = { ...config, rewrites };
   return (req, res, next) => {
     let request: HostRequest;
     try {
@@ -85,14 +88,8 @@ function middleware(config: HostConfig): Connect.NextHandleFunction {
       return;
     }
 
-    for (const [key, value] of Object.entries(headersFor(routing, request))) {
+    for (const [key, value] of Object.entries(headersFor(config, request))) {
       res.setHeader(key, value);
-    }
-
-    const rewritten = rewriteFor(routing, request);
-    if (rewritten !== null && rewritten !== request.pathname) {
-      const query = (req.url ?? '').slice((req.url ?? '').indexOf('?') + 1);
-      req.url = (req.url ?? '').includes('?') ? `${rewritten}?${query}` : rewritten;
     }
     next();
   };
@@ -126,7 +123,7 @@ function notFound(config: HostConfig, distDir: string): Connect.NextHandleFuncti
     }
     // Covered by the fallback: the host would answer index.html, and so does
     // Vite. Nothing to do.
-    if (rewriteFor({ ...config, rewrites: [fallback] }, request) !== null) {
+    if (matchRule(fallback, request) !== null) {
       next();
       return;
     }

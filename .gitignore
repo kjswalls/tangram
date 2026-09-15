@@ -35,6 +35,8 @@ apps/app/public/sw.js
 # is the only thing that may produce the originals, at the workspace root.
 apps/app/public/dict-*.sqlite
 apps/app/public/dict-*.sqlite.br
+apps/app/public/dict-*.sqlite.br.json
+apps/app/public/dict-*.tmp-*
 apps/app/public/dict-manifest.json
 apps/app/public/decomp.json
 

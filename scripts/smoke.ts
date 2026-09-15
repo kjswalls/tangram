@@ -294,10 +294,13 @@ export function pageCases(repoRoot: string = REPO_ROOT): SmokeCase[] {
       must(script !== null, `${route.pattern} served a document with no module script`);
       // Falsifiable, unlike a 200: the SPA fallback hands the same document to
       // every path, so the only thing worth asserting about it is that it is
-      // THIS build's document and its script is one the asset cases fetched.
+      // THIS build's document — and `entryScript` is read from the LOCAL
+      // `dist/.vite/manifest.json`, not from the served `/`. Comparing the
+      // deployment against itself would pass for a build whose index.html
+      // points at a chunk that is not there.
       must(
         script === context.entryScript,
-        `${route.pattern} served ${script}, but / served ${context.entryScript}`,
+        `${route.pattern} served ${script}; this build's entry is ${context.entryScript}`,
       );
     },
   }));
@@ -345,6 +348,26 @@ export function staticCases(manifest: DictManifest | null): SmokeCase[] {
         },
       },
       {
+        name: `the brotli sibling (${manifest.file}.br)`,
+        method: 'GET',
+        route: null,
+        url: () => `/${manifest.file}${'.br'}`,
+        expectResponse: (response) => {
+          // Served under its own name with `content-encoding: br`, so a client
+          // that asks for it gets the artifact's bytes transparently decoded.
+          // NOT content negotiation on the canonical path: Vercel consults
+          // rewrites only after the filesystem and the `.sqlite` is a real
+          // file, so the rewrite could never fire while the paired header
+          // still would — 43 MB of raw SQLite labelled brotli.
+          const encoding = response.headers.get('content-encoding');
+          must(
+            encoding === 'br',
+            `the sibling answered content-encoding: ${encoding ?? '(none)'}`,
+          );
+        },
+        expect: () => {},
+      },
+      {
         name: 'the dictionary manifest',
         method: 'GET',
         route: null,
@@ -383,6 +406,29 @@ const ASSET_CONTENT_TYPES: Record<string, string> = {
   '.mjs': 'javascript',
   '.css': 'text/css',
 };
+
+/**
+ * The entry script **this build** emitted, read out of Vite's manifest.
+ *
+ * The page cases used to compare each served document against the served `/`.
+ * Both sides came from the deployment, so the check proved only that every path
+ * returns the same document — which the SPA fallback guarantees by
+ * construction, and which is true of a `dist/` whose `index.html` points at a
+ * chunk that is not there. Anchoring to the local manifest is what makes it an
+ * assertion about the build rather than about the host's self-consistency.
+ */
+export function manifestEntryScript(distDir: string): string | null {
+  const path = resolve(distDir, VITE_MANIFEST);
+  if (!existsSync(path)) return null;
+  const manifest = JSON.parse(readFileSync(path, 'utf8')) as Record<
+    string,
+    { file?: string; isEntry?: boolean }
+  >;
+  for (const chunk of Object.values(manifest)) {
+    if (chunk.isEntry && chunk.file) return `/${chunk.file}`;
+  }
+  return null;
+}
 
 /** Every hashed asset Vite emitted, read out of its own build manifest. */
 export function assetCases(distDir: string): SmokeCase[] {
@@ -424,6 +470,16 @@ export interface SmokeOptions {
   /** Where the API lives. Same origin until `web.md` W4 configures one. */
   apiBaseURL?: string;
   /**
+   * Skip the API cases entirely.
+   *
+   * `docs/deploy.md`'s after-deploy command runs against the STATIC deployment,
+   * which has no `/api/**` at all until `backend.md` ships a server — the SPA
+   * fallback deliberately excludes `/api/` so those paths 404. Without this the
+   * documented checklist command fails by construction on a healthy
+   * deployment, which is how a red smoke stops meaning anything.
+   */
+  skipApi?: boolean;
+  /**
    * Sent as `X-Tangram-Access` to the gated routes only; needed only against a
    * gated deployment. Gated-only rather than everywhere because a credential
    * that travels to routes that do not need it is a credential in more logs.
@@ -449,6 +505,10 @@ export interface SmokeResult {
   assetsChecked: number;
   /** How many paths had their `vercel.json` headers asserted. */
   hostRulesChecked: number;
+  /** API cases not run because `--no-api` was passed. */
+  apiSkipped: number;
+  /** Dictionary cases not run because the local `data/` has no manifest. */
+  dictSkipped: boolean;
 }
 
 function readDictManifest(dataDir: string): DictManifest | null {
@@ -520,19 +580,35 @@ export async function runSmoke(options: SmokeOptions): Promise<SmokeResult> {
   // `/` first and on its own: every page case compares its document against
   // this one's, and the asset cases are only meaningful once something has
   // said which script the build actually references.
+  const apiCases = options.skipApi ? [] : SMOKE_CASES;
   const cases = [
     ...assets,
     ...staticCases(dictManifest),
-    ...SMOKE_CASES,
+    ...apiCases,
     ...pageCases(repoRoot),
   ];
 
-  const root = await fetchRoot(base, timeout);
-  if (root instanceof Error) {
-    failures.push(`GET ${base}/ → ${root.message}`);
-    return { passed, failures, timings, assetsChecked: 0, hostRulesChecked };
+  const entry = manifestEntryScript(distDir);
+  if (entry === null) {
+    // No local build to anchor against; fall back to the served `/`, which is
+    // weaker and says so in the CLI's own warning line.
+    const root = await fetchRoot(base, timeout);
+    if (root instanceof Error) {
+      failures.push(`GET ${base}/ → ${root.message}`);
+      return {
+        passed,
+        failures,
+        timings,
+        assetsChecked: 0,
+        hostRulesChecked,
+        apiSkipped: apiCases.length === 0 ? SMOKE_CASES.length : 0,
+        dictSkipped: dictManifest === null,
+      };
+    }
+    context.entryScript = root;
+  } else {
+    context.entryScript = entry;
   }
-  context.entryScript = root;
 
   for (const smokeCase of cases) {
     const started = Date.now();
@@ -607,7 +683,15 @@ export async function runSmoke(options: SmokeOptions): Promise<SmokeResult> {
     }
   }
 
-  return { passed, failures, timings, assetsChecked: assets.length, hostRulesChecked };
+  return {
+    passed,
+    failures,
+    timings,
+    assetsChecked: assets.length,
+    hostRulesChecked,
+    apiSkipped: options.skipApi ? SMOKE_CASES.length : 0,
+    dictSkipped: dictManifest === null,
+  };
 }
 
 /** The served `/`, reduced to the one fact every page case compares against. */
@@ -631,26 +715,30 @@ function parseArgs(argv: readonly string[]): {
   baseURL: string;
   apiBaseURL?: string;
   secret?: string;
+  skipApi: boolean;
 } {
   let baseURL = process.env.SMOKE_BASE_URL ?? `http://127.0.0.1:${process.env.PORT ?? '3000'}`;
   let apiBaseURL = process.env.TANGRAM_API_BASE;
   let secret = process.env.TANGRAM_ACCESS_SECRET;
+  let skipApi = false;
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === '--base-url' && argv[i + 1]) baseURL = argv[(i += 1)];
     else if (argv[i] === '--api-base' && argv[i + 1]) apiBaseURL = argv[(i += 1)];
     else if (argv[i] === '--key' && argv[i + 1]) secret = argv[(i += 1)];
+    else if (argv[i] === '--no-api') skipApi = true;
   }
   return {
     baseURL,
+    skipApi,
     ...(apiBaseURL ? { apiBaseURL } : {}),
     ...(secret ? { secret } : {}),
   };
 }
 
 async function main(): Promise<void> {
-  const { baseURL, apiBaseURL, secret } = parseArgs(process.argv.slice(2));
+  const { baseURL, apiBaseURL, secret, skipApi } = parseArgs(process.argv.slice(2));
 
-  const uncovered = checkRouteCoverage();
+  const uncovered = skipApi ? [] : checkRouteCoverage();
   if (uncovered.length > 0) {
     console.error('smoke: routes with no case (add one to SMOKE_CASES in scripts/smoke.ts):');
     for (const line of uncovered) console.error(`  - ${line}`);
@@ -663,18 +751,30 @@ async function main(): Promise<void> {
   );
   const result = await runSmoke({
     baseURL,
+    skipApi,
     ...(apiBaseURL ? { apiBaseURL } : {}),
     secret,
     log: (line) => console.log(line),
   });
 
+  // Loud, and not failures: every one of these is "run from a tree that is not
+  // the one that was deployed". Silence would turn each into a claim nobody
+  // checked — which is the shape of the page cases W2 was written to fix.
   if (result.assetsChecked === 0) {
-    // Loud, and not a failure: run against a deployment from a tree that has
-    // not been built and there is no manifest to read. Silence here would make
-    // "every asset is 200" a claim nobody checked.
     console.warn(
-      `smoke: no ${VITE_MANIFEST} — the hashed assets were NOT checked. Run pnpm build first.`,
+      `smoke: no ${VITE_MANIFEST} — the hashed assets were NOT checked, and the page ` +
+        'cases fell back to comparing the deployment against itself. Run pnpm build first.',
     );
+  }
+  if (result.dictSkipped) {
+    console.warn(
+      `smoke: no ${MANIFEST_FILE} in the local data/ — the artifact, its brotli sibling, ` +
+        'the manifest and decomp.json were NOT checked, and neither were host rules 4 and 5. ' +
+        'Run pnpm data first.',
+    );
+  }
+  if (result.apiSkipped > 0) {
+    console.warn(`smoke: --no-api — ${result.apiSkipped} API cases were NOT run.`);
   }
 
   const slowest = [...result.timings].sort((a, b) => b.ms - a.ms).slice(0, 3);
@@ -688,7 +788,8 @@ async function main(): Promise<void> {
   }
   console.log(
     `smoke: ${result.passed} ok — ${result.assetsChecked} assets, ` +
-      `${result.hostRulesChecked} paths with host rules`,
+      `${result.hostRulesChecked} paths with host rules` +
+      `${result.apiSkipped > 0 ? `, ${result.apiSkipped} API cases skipped` : ''}`,
   );
 }
 

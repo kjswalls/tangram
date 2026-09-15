@@ -110,20 +110,38 @@ same file to `pnpm dev` and `pnpm preview` so a wrong rule is wrong locally too.
    no-store, must-revalidate`, `Service-Worker-Allowed: /`. A worker at the root
    must be revalidated or a bad one is permanent.
 4. The dictionary artifact: `Cache-Control: public, max-age=31536000,
-   immutable`, `Content-Type: application/vnd.sqlite3`,
-   `Vary: accept-encoding` — plus a rewrite to the `.br` sibling, with
-   `Content-Encoding: br`, for a client that asks for it.
+   immutable`, `Content-Type: application/vnd.sqlite3`. Its brotli sibling,
+   `dict-<…>.sqlite.br`, is served **under its own name** with the same
+   immutable caching plus `Content-Encoding: br`, so a client that requests it
+   gets the artifact's bytes transparently decoded.
 5. `dict-manifest.json`: **`no-cache`**. Rules 4 and 5 are two halves of one
    decision — an immutable pointer is a dictionary that can never be updated.
 
-**Rule 4's negotiation is the one thing nothing local can prove.** Whether
-Vercel honours a rewrite to a pre-compressed sibling for a 43 MB binary is not
-established by any audit, and this repository does not assume it. `pnpm smoke`
-against the deployment reads `content-encoding` and the transferred length off
-the real response; §7 says what to record. If the host will not negotiate, the
-`.br` is already uploaded under its own name and the fallback is for the
-client's fetch to ask for it explicitly — that is a `data.md` change, recorded
-as a question in `HANDOFF.md`.
+**Rule 4 is NOT content negotiation, and the reason is worth reading once.**
+The first version of this file negotiated: a `rewrites` entry sent
+`/dict-<…>.sqlite` to the `.br` sibling when the request carried
+`accept-encoding: br`, and a `headers` entry put `Content-Encoding: br` on the
+same path under the same condition. Vercel consults `rewrites` **only after the
+filesystem** — its own documentation says the `source` "should NOT be a file
+because precedence is given to the filesystem prior to rewrites being applied" —
+and the `.sqlite` is a real file in `dist/`. So the rewrite could never fire,
+while the header, which decorates whatever the filesystem serves, still would:
+every browser would have received 43 MB of raw SQLite labelled brotli and failed
+to decode it. The dictionary would never have imported.
+
+Every gate in the container was green, because `vite-plugins/headers.ts` was
+applying the rewrite *before* Vite's static middleware — the opposite of the
+host's order. That plugin now applies headers only, and
+`tests/unit/server/routes.test.ts` refuses any rewrite whose `source` matches a
+file in `dist/`, and any `content-encoding` header on a path the filesystem
+serves verbatim.
+
+**What this leaves open, as a `data.md` question rather than a decision taken
+here** (`web.md` W2 names this fallback in as many words): the client has to ask
+for `dict-<…>.sqlite.br` by name to get the ~17 MB instead of the 43 MB.
+`data.md` D4 owns the fetch. Until it does, a first load transfers the full
+43,208,704 bytes, and that number — not 13.9 MB, and not 16.9 — is what `web.md`
+W6's budget should start from. `HANDOFF.md` carries it.
 
 ## 4. Environment variables
 
@@ -243,29 +261,38 @@ it is still a `tsx` CLI:
 
 ```bash
 pnpm build                      # so there is a build manifest to check assets against
-pnpm smoke --base-url https://<your-app>.vercel.app
+pnpm smoke --base-url https://<your-app>.vercel.app --no-api
 ```
 
+**`--no-api` is required until `backend.md` ships a server**, and leaving it off
+is not a near miss: this deployable emits no functions, `vercel.json`'s fallback
+deliberately excludes `/api/` so those paths 404, and every API case would fail
+against a perfectly healthy deployment. Once the server exists, replace it with
+`--api-base https://<the server>` and the same run covers both halves.
+
 It walks every hashed asset in `dist/.vite/manifest.json`, the three files the
-PWA needs, the dictionary's three, every page route in `src/routes.tsx`, and —
-against whatever `--api-base` names — every API route. It asserts the headers
+PWA needs, the dictionary's four, and every page route in `src/routes.tsx` —
+checking that each page serves **this build's** document, anchored to the local
+manifest rather than to the deployment's own `/`. It asserts the headers
 `vercel.json` promises, so a host that is not applying the file fails here
-rather than in a learner's browser. It also runs inside `pnpm e2e`
-(`tests/e2e/d/smoke.spec.ts`) against the local built server.
+rather than in a learner's browser. Anything it could not check (no build
+manifest, no local `data/`, `--no-api`) it says so, loudly, rather than passing
+quietly. It also runs inside `pnpm e2e` (`tests/e2e/d/smoke.spec.ts`) against
+the local built server, where the API half does run.
 
 Then, by hand, the things a script cannot tell you:
 
-1. **The artifact's real transfer**, which is a **measurement to record in
+1. **Both dictionary paths**, which is a **measurement to record in
    `HANDOFF.md` and to feed into `web.md` W6's budget**:
 
    ```bash
-   curl -sI -H 'accept-encoding: br, gzip' https://<app>/dict-<schema>-<cedict>.sqlite
+   curl -sI https://<app>/dict-<schema>-<cedict>.sqlite      # expect 43,208,704, no encoding
+   curl -sI https://<app>/dict-<schema>-<cedict>.sqlite.br   # expect ~16.9 MB, content-encoding: br
    ```
 
-   Record `content-encoding`, `content-length` against the 43,208,704-byte
-   on-disk length, and `cache-control`. If `content-encoding` is not `br`, the
-   pre-compression question goes into `HANDOFF.md` as a `data.md` question and
-   the uncompressed number goes into W6's budget.
+   Record `content-length` and `cache-control` for both, and `content-encoding`
+   for the sibling. The canonical path must carry **no** `content-encoding`: a
+   raw file labelled with one is undecodable, and is the defect §3 describes.
 
 2. **The manifest is not being cached immutably.**
    `curl -sI https://<app>/dict-manifest.json` → `cache-control: no-cache`. If

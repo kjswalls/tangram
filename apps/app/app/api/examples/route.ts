@@ -46,7 +46,7 @@ import { getDictIndex, getEntry, readingCount } from '@/lib/dict/index';
 import { dictErrorResponse } from '@/lib/dict/load';
 import { segment } from '@/lib/dict/segment';
 import { HSK_BANDS, type Entry, type EntryId, type HskBand, type LearnerProfile } from '@/lib/types';
-import { requireAccess } from '@/lib/server/access';
+import { requireAccess } from '@tangram/access';
 
 // The dictionary is read from disk per process; never prerender this at build time.
 export const dynamic = 'force-dynamic';
@@ -373,15 +373,16 @@ function info(provider: ProviderName): ExamplesRouteInfo {
 }
 
 /**
- * The access gate (lib/server/access.ts). A no-op unless
- * `TANGRAM_ACCESS_SECRET` is set in the environment; when it is, this route
- * costs money and answers nothing without the cookie. Until web.md W1 this was
- * the SECOND of two layers — `middleware.ts` refused the same request one
- * earlier — and it is now the only one, because there is no middleware in a
- * Vite SPA. **Nothing can set the cookie between W1 and W4**, so with the
- * secret set this route refuses everything; W4 rebuilds the exchange as a
- * header check. The check staying here is what makes that a re-plumbing rather
- * than a hole.
+ * The access gate (`@tangram/access`). A no-op unless `TANGRAM_ACCESS_SECRET`
+ * is set in the environment; when it is, this route costs money and answers
+ * nothing without the `X-Tangram-Access` header. Until `web.md` W1 this was the
+ * SECOND of two layers — `middleware.ts` refused the same request one earlier —
+ * and it is the only one here, because there is no middleware in a Vite SPA.
+ * `backend.md` B1 puts the front layer back on the server, matching the gated
+ * paths by PREFIX (`isGatedPath`, `wave-zero.md` §10a), because B2's contract
+ * adds `/api/ask/propose` and `/api/ask/answer` underneath this path. The check
+ * staying in the handler is what makes a missing front layer a redundancy
+ * rather than a hole.
  */
 export function GET(request: Request): Response {
   const denied = requireAccess(request);

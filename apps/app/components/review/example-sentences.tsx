@@ -65,6 +65,12 @@ async function resolveEntries(ids: readonly string[]) {
 }
 import type { Entry } from '@/lib/types';
 
+// `apiFetch`, not `fetch` (docs/plans/web.md W4). It applies the configured
+// API base and attaches `X-Tangram-Access`; without it this call 401s on any
+// deployment with `TANGRAM_ACCESS_SECRET` set, and goes to the wrong origin
+// once `backend.md` moves the route off this one.
+import { apiFetch } from '@/src/access/client';
+
 /**
  * Longer than the route's own deadline (20 s), so a slow provider normally
  * comes back as the route's 502 with a reason. This one is the backstop for the
@@ -109,7 +115,7 @@ let infoRequest: Promise<ExamplesRouteInfo> | undefined;
 const FALLBACK_INFO: ExamplesRouteInfo = { provider: 'fake', promptVersion: 'v1' };
 
 function examplesInfo(): Promise<ExamplesRouteInfo> {
-  infoRequest ??= fetch('/api/examples', { headers: { accept: 'application/json' } })
+  infoRequest ??= apiFetch('/api/examples', { headers: { accept: 'application/json' } })
     .then((res) => {
       if (res.ok) return res.json() as Promise<ExamplesRouteInfo>;
       infoRequest = undefined;
@@ -228,7 +234,7 @@ export function ExampleSentences({
           }
         }
 
-        const res = await fetch('/api/examples', {
+        const res = await apiFetch('/api/examples', {
           method: 'POST',
           signal: controller.signal,
           headers: { 'content-type': 'application/json', accept: 'application/json' },

@@ -159,7 +159,7 @@ describe('sw.js', () => {
   it('denies the dictionary artifact outright, brotli sibling included', () => {
     // It is imported into OPFS (`data.md` D4); an HTTP-cache copy is the same
     // 43 MB again on an origin the browser is willing to evict wholesale.
-    expect(sw).toMatch(/dict-\.\+\\\.sqlite/);
+    expect(sw).toContain('/^\\/dict-.+\\.sqlite(\\.br)?$/');
     const deny = sw.indexOf('.sqlite');
     const assets = sw.indexOf(`startsWith('${ASSET_DIR}')`);
     expect(deny).toBeGreaterThan(-1);

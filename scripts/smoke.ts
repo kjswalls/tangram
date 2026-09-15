@@ -36,7 +36,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { MANIFEST_FILE, type DictManifest } from '../apps/app/lib/dict/artifact';
-import { ACCESS_COOKIE } from '../apps/app/lib/server/access';
+import { ACCESS_HEADER } from '@tangram/access';
 import {
   headersFor,
   readHostConfig,
@@ -423,7 +423,11 @@ export interface SmokeOptions {
   baseURL: string;
   /** Where the API lives. Same origin until `web.md` W4 configures one. */
   apiBaseURL?: string;
-  /** Sent to the gated routes only; needed only against a gated deployment. */
+  /**
+   * Sent as `X-Tangram-Access` to the gated routes only; needed only against a
+   * gated deployment. Gated-only rather than everywhere because a credential
+   * that travels to routes that do not need it is a credential in more logs.
+   */
   secret?: string | undefined;
   /** `apps/app/dist`, for the build manifest. */
   distDir?: string;
@@ -541,10 +545,12 @@ export async function runSmoke(options: SmokeOptions): Promise<SmokeResult> {
       // The artifact is the one thing worth asking for compressed: the `.br`
       // rule exists or it does not, and only a request that says `br` finds out.
       headers['accept-encoding'] = 'br, gzip';
-      // W4 replaces this with the `X-Tangram-Access` header; `docs/deploy.md`'s
-      // checklist runs this command against a gated deployment, so the day the
-      // credential changes this line changes with it.
-      if (options.secret && smokeCase.gated) headers.cookie = `${ACCESS_COOKIE}=${options.secret}`;
+      // The credential is `X-Tangram-Access` (docs/plans/web.md W4), the same
+      // header the app attaches. It went on being a cookie here for two phases
+      // after the cookie stopped existing, which would have made
+      // `pnpm smoke --key` 401 everything against a gated deployment — the one
+      // command `docs/deploy.md`'s checklist runs there.
+      if (options.secret && smokeCase.gated) headers[ACCESS_HEADER] = options.secret;
       let payload: BodyInit | undefined;
       if (smokeCase.body) {
         headers['content-type'] = 'application/json';

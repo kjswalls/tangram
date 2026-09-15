@@ -112,7 +112,7 @@ export function isDevelopment(env: Env = process.env): boolean {
 /**
  * The values the redactor must scrub, in the current environment.
  *
- * Whitespace-only counts as unset, the same reading `lib/server/access.ts`
+ * Whitespace-only counts as unset, the same reading `@tangram/access`
  * already takes of `TANGRAM_ACCESS_SECRET`, and very short values are skipped:
  * scrubbing every occurrence of a one-character "secret" would redact the whole
  * log and teach everyone to turn the redactor off.

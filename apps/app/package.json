@@ -24,6 +24,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "0.124.0",
     "@capacitor-community/sqlite": "8.1.1",
+    "@tangram/access": "workspace:*",
     "@capacitor-community/text-to-speech": "8.0.2",
     "@capacitor/app": "8.1.1",
     "@capacitor/core": "8.5.2",

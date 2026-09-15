@@ -9,7 +9,7 @@ than asserted.
 directory of files and nothing else. There is no framework runtime, no function,
 no server-rendered page. `apps/server` is a separate deployable (`backend.md`)
 and is not deployed by any of this; until it exists, **a deployed build has no
-`/api/*` at all** — see §5.
+`/api/*` at all** — see §4 and §5.
 
 > Rewritten for `web.md` W2. The previous version described a single-package
 > Next.js repository with per-route serverless functions and a `middleware.ts`
@@ -131,7 +131,7 @@ The static build reads **one** variable, at build time:
 
 | Variable | Required | Effect when absent |
 |---|---|---|
-| `VITE_API_BASE` | not yet | empty, i.e. same-origin. `web.md` W4 introduces it; until `backend.md` deploys a server there is nothing to point it at |
+| `VITE_API_BASE` | once `apps/server` is deployed | empty, i.e. same-origin — which on this static host means **no API at all**. Build-time, so changing it needs a redeploy |
 | `TANGRAM_DATA_DIR` | no | the workspace root's `data/`, found by walking up for `pnpm-workspace.yaml` |
 | `TANGRAM_DICT_BROTLI_QUALITY` | no | 9 (§2) |
 
@@ -140,26 +140,87 @@ timeouts, `TANGRAM_LLM_PROVIDER`, `TANGRAM_MODEL` — belongs to **`apps/server`
 and must never be set on this project. A model key in a static site's build
 environment is a key in a bundle. `.env.example` lists them with the server.
 
-## 5. The access gate — DOWN between `web.md` W1 and W4
+## 5. The access gate
 
-`middleware.ts` performed the `?key=` → cookie exchange and Next invoked it.
-There is no middleware in a static SPA and both are gone.
+**The problem.** `/api/ask`, `/api/examples` and `/api/recall` reach a paid
+model. With a key set and nothing in front of them, anybody who finds the URL
+can spend your money by POSTing to them in a loop. Nothing else in the app costs
+anything: the dictionary is the visitor's own CPU, and every card lives in the
+visitor's own browser.
 
-**Consequence, stated plainly:** on any deployment made in this window with
-`TANGRAM_ACCESS_SECRET` set, the three routes that reach a paid model refuse
-everyone and cannot be authorised from a phone. With the secret unset there is
-no gate at all. **Do not deploy the model-backed routes before W4 lands.**
+**Where it runs.** `TANGRAM_ACCESS_SECRET` belongs to the **server**
+(`apps/server`, `backend.md`), never to this static project — §4. Each handler
+calls `requireAccess` from `@tangram/access` as its first line, and
+`backend.md` B1 adds the layer in front of them. That front layer matches the
+gated paths by **prefix**, not by exact string, and the reason is not
+stylistic: `backend.md` B2's frozen contract adds `/api/ask/propose` and
+`/api/ask/answer` — the two routes that actually spend the money — underneath
+`/api/ask`, and an exact-string gate leaves both open with the secret set while
+every existing test passes (`wave-zero.md` §10a). `isGatedPath` is that rule;
+`tests/unit/server/access.test.ts` names both children explicitly.
 
-W4 rebuilds the client half as an `X-Tangram-Access` header that page script
-attaches; `backend.md` B1 owns the enforcing half, on the server, matching the
-gated paths **by prefix** (`wave-zero.md` §10a — `/api/ask/propose` and
-`/api/ask/answer` sit under `/api/ask`, and an exact-string gate leaves the two
-routes that actually spend money wide open). This section is rewritten by W4.
+**The credential is a header now: `X-Tangram-Access`,** carrying the secret
+verbatim exactly as the cookie did. Set `TANGRAM_ACCESS_SECRET` to a URL-safe
+random string:
 
-**The gate never protected the page HTML and now visibly does not.** A static
-host serves the shell to anyone who asks. If the app's HTML itself must be
-private, that is host-level protection (Vercel's Deployment Protection), not
-application code.
+```bash
+openssl rand -base64 24 | tr '+/' '-_' | tr -d '='
+```
+
+Use only `A-Z a-z 0-9 . _ ~ -`. The client stores and sends the value verbatim,
+and refuses to store anything outside that alphabet.
+
+**Authorising a phone**, which is the whole reason there was ever a cookie — a
+phone browser cannot set a request header, but page script can:
+
+1. Visit `https://<your-app>/?key=<the secret>` once.
+2. The key is taken out of the URL **immediately**, so it is not in your
+   history, not in a bookmark and not in the `Referer` of the next link you tap.
+   The app then presents it to `GET /api/ask` once and rewrites the URL with
+   the verdict: `?access=granted` means the server accepted it and the phone is
+   set up; `?access=denied` means it was wrong, and any credential that device
+   held is **revoked**, because arriving with a bad key is an attempt to change
+   the key; `?access=unverified` means the check could not be completed (no
+   network), and the key is kept rather than thrown away.
+3. The secret lives in `localStorage` under `tangram.access.secret`.
+
+**A change in posture, stated rather than buried.** The credential used to be an
+`HttpOnly` cookie. It is now script-readable, attached by page script, and there
+is no CSP in this repository. That is acceptable for exactly one reason: this
+gate protects **spend on three routes**, not user data — every card, review and
+setting lives in the learner's own IndexedDB and was never behind it — and it is
+superseded by real accounts (STACK §2.8). Why a header rather than keeping the
+cookie, when a cookie *would* cross from `app.<domain>` to `api.<domain>`: a
+Capacitor WebView on `capacitor://localhost` or `http://localhost` is cross-site
+to the API and gets no cookie at all, and iOS, Android and the desktop shell all
+consume the same build. A header also avoids credentialed CORS everywhere.
+
+**CORS is not optional and it is the server's.** A custom request header makes
+every cross-origin POST a *preflighted* one: the browser sends `OPTIONS` first,
+and a server that does not answer it with `X-Tangram-Access` in
+`Access-Control-Allow-Headers` fails every gated call before the handler is
+reached. `tests/e2e/d/access-gate.spec.ts` drives exactly that against a second
+local origin, because a same-origin run proves none of it.
+
+**What is gated and what is not.** The three paid routes, `GET` handshakes
+included. The pages, the dictionary, the manifest, the service worker and
+`/offline.html` stay open: the PWA has to install, and the offline review
+session has to work, without anyone typing a key. **The gate never protected the
+page HTML and now visibly does not** — a static host serves the shell to anyone
+who asks. If the HTML itself must be private, that is Vercel's Deployment
+Protection, not application code.
+
+**Rotating.** Change the variable and redeploy. Every issued secret stops
+working at the same instant — there is no session store to fall out of sync
+with — and every device visits `?key=` once more.
+
+**What a refusal looks like.** `401 {"error":"unauthorized"}`, `Cache-Control:
+no-store`, and nothing else: no hint, no stack, no echo of what was sent. The
+secret is never logged and never appears in a response body.
+
+**With no secret set, none of this exists.** `pnpm dev`, `pnpm test` and
+`pnpm e2e` run in exactly that state, which is deliberate: a gate that changed
+local behaviour would be switched off within a week.
 
 ## 6. Storage, not function memory
 

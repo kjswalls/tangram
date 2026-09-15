@@ -53,7 +53,7 @@ describe('redactString', () => {
     expect(redactString('leak supersecretvalueEXTRA here', nested)).toBe(`leak ${REDACTION} here`);
   });
 
-  it('treats whitespace-only as unset, the same reading lib/server/access.ts takes', () => {
+  it('treats whitespace-only as unset, the same reading @tangram/access takes', () => {
     expect(secretValues({ TANGRAM_ACCESS_SECRET: '   ' })).toEqual([]);
   });
 });

@@ -62,7 +62,7 @@ import {
   type ProviderName as ProviderProviderName,
 } from '@/lib/ai/provider';
 import { RECALL_ANSWER_MAX_CHARS } from '@/lib/ai/recall';
-import { GATED_PATHS } from '@/lib/server/access';
+import { GATED_PATHS, isGatedPath } from '@tangram/access';
 import type {
   AskMatch as AppAskMatch,
   AskResponse as AppAskResponse,
@@ -266,7 +266,7 @@ describe('the caps agree with the values already in the app', () => {
 });
 
 describe('the paths', () => {
-  it('keeps every gated path literally true, so lib/server/access.ts needs no edit', () => {
+  it('keeps every gated path literally true, so @tangram/access needs no edit', () => {
     for (const path of GATED_PATHS) expect(CONTRACT_PATHS).toContain(path);
   });
 
@@ -277,6 +277,19 @@ describe('the paths', () => {
     const extra = CONTRACT_PATHS.filter((path) => !(GATED_PATHS as readonly string[]).includes(path));
     expect(extra).toEqual(['/api/ask/propose', '/api/ask/answer']);
     for (const path of extra) expect(path.startsWith('/api/ask/')).toBe(true);
+  });
+
+  it('and the matcher that exists actually covers them', () => {
+    // `wave-zero.md` §10a, ruling 4: the assertion must name the two children
+    // explicitly, because a test that only proves the three parents are gated
+    // is the test that would have passed while both children were open. The
+    // test above pins the CONTRACT; this one pins the implementation
+    // `web.md` W4 shipped and `backend.md` B1 enforces with.
+    for (const path of CONTRACT_PATHS) expect(isGatedPath(path), path).toBe(true);
+    expect(isGatedPath('/api/ask/propose')).toBe(true);
+    expect(isGatedPath('/api/ask/answer')).toBe(true);
+    // …and it stops at a separator, so it never covers a route nobody listed.
+    expect(isGatedPath('/api/asking')).toBe(false);
   });
 });
 

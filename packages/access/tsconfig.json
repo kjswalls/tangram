@@ -1,0 +1,19 @@
+{
+  "//": "Declarations and a little logic — `noEmit`, and nothing here is compiled by anyone. The app reads this package through Vite, the dev/preview adapter through tsx, and apps/server through tsc; all three resolve the `.ts` source named in `exports`. docs/plans/web.md W4.",
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "incremental": true,
+    "types": ["node"]
+  },
+  "include": ["*.ts"],
+  "exclude": ["node_modules"]
+}

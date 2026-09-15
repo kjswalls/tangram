@@ -10,8 +10,8 @@
     "dev": "pnpm -F app dev",
     "build": "pnpm run typecheck && pnpm run data:ensure && pnpm -F app build && pnpm -F server build",
     "build:e2e": "pnpm run typecheck && pnpm run data:ensure && pnpm -F app build:e2e && pnpm -F server build",
-    "lint": "eslint . && pnpm -F app lint && pnpm -F server lint && pnpm -F @tangram/ai lint",
-    "typecheck": "tsc --noEmit && pnpm -F app typecheck && pnpm -F server typecheck && pnpm -F @tangram/ai typecheck",
+    "lint": "eslint . && pnpm -F app lint && pnpm -F server lint && pnpm -F @tangram/ai lint && pnpm -F @tangram/access lint",
+    "typecheck": "tsc --noEmit && pnpm -F app typecheck && pnpm -F server typecheck && pnpm -F @tangram/ai typecheck && pnpm -F @tangram/access typecheck",
     "test": "pnpm run data:ensure && pnpm -F app test && pnpm -F server test",
     "e2e": "pnpm -F app e2e",
     "data": "TANGRAM_DATA_DIR=\"$PWD/data\" tsx scripts/build-data.ts",
@@ -29,6 +29,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
+    "@tangram/access": "workspace:*",
     "@types/fontkit": "^2.0.9",
     "@types/node": "^22.20.1",
     "cedict-json": "1.3.20251213",

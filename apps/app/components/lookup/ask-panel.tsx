@@ -61,6 +61,12 @@ async function resolveEntries(ids: readonly string[]) {
 }
 import { hskBandLabel, type CardContext, type Entry } from '@/lib/types';
 
+// `apiFetch`, not `fetch` (docs/plans/web.md W4). It applies the configured
+// API base and attaches `X-Tangram-Access`; without it this call 401s on any
+// deployment with `TANGRAM_ACCESS_SECRET` set, and goes to the wrong origin
+// once `backend.md` moves the route off this one.
+import { apiFetch } from '@/src/access/client';
+
 /** Long enough that typing a sentence is one ask, short enough to feel answered. */
 const DEBOUNCE_MS = 500;
 
@@ -110,7 +116,7 @@ const FALLBACK_INFO: AskRouteInfo = { provider: 'fake', promptVersion: 'v1' };
  * badge over an answer a model wrote. One transient error must not do that.
  */
 function askInfo(): Promise<AskRouteInfo> {
-  infoRequest ??= fetch('/api/ask', { headers: { accept: 'application/json' } })
+  infoRequest ??= apiFetch('/api/ask', { headers: { accept: 'application/json' } })
     .then((res) => {
       if (res.ok) return res.json() as Promise<AskRouteInfo>;
       infoRequest = undefined;
@@ -571,7 +577,7 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
           return;
         }
 
-        const res = await fetch('/api/ask', {
+        const res = await apiFetch('/api/ask', {
           method: 'POST',
           signal: controller.signal,
           headers: { 'content-type': 'application/json', accept: 'application/json' },

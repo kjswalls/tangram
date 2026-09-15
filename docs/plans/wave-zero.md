@@ -422,6 +422,50 @@ which is the exact cost choosing Capacitor was meant to avoid. The prior was alr
 in a property this widely used would have been fixed, but "probably fine" and "read the thread" are
 different things, and the thread was three minutes away.
 
+## 10e. `MAX_GLOSS_CANDIDATES` stays at 5,000 — SETTLED 2026-09-15 (raised by the D4 build session)
+
+`data.md` D4's criterion 2 — *"if any interactive query exceeds 50 ms, stop and report rather than
+proceeding"* — fired. `search('to')` and `search('the')` measure **89–100 ms** in wasm; every other
+interactive call is under 15 ms. D4 correctly declined to pull the one lever that would work, because
+the cap is `data.md` **D3's** and D3 requires any change to say what to and why. The session stopped
+and asked. This is the answer.
+
+**The cap stays at 5,000.** The trade is not the one it looks like, and the measurement that decides
+it was not in either plan. Posting-list sizes over the built artifact, from
+`fts5vocab(gloss_fts, 'row')`:
+
+| cap | gloss tokens it binds |
+|---|---|
+| 5,000 | **8** |
+| 3,000 | 14 |
+| 2,000 | 26 |
+| 1,000 | **52** |
+
+The eight at 5,000 are `to` (31,561), `of` (20,839), `a` (15,969), `in` (13,978), `the` (12,447),
+`and` (8,706), `idiom` (5,926), `or` (5,506) — English function words, plus one CC-CEDICT gloss
+marker. Nobody searches a Chinese dictionary for "of". The forty-four that a cap of 1,000 would newly
+bind are content words a learner actually types: `bird`, `city`, `county`, `china`, `chinese`, `name`,
+`specie`, `taiwan`, `district`, `old`, `time`. D3's three stated consequences — a low-frequency
+tier-0 match falling outside the cap, a capped `SearchResult.total`, earlier `nextCursor` termination
+— are free on `of` and are a worse dictionary on `bird`. **Lowering the cap spends ranking quality on
+real searches to buy 50 ms on eight queries nobody makes.**
+
+**5,000 is not arbitrary, and the reason is now written down** — it sits on a natural boundary in this
+artifact, between `or` at 5,506 and `for` at 4,918: the last function word and the first content word.
+D3 did not record that, so the constant read as a round number somebody picked. It is in
+`lib/dict/query/gloss.ts` now.
+
+**The exemption is permanent, not provisional.** D4 pinned the two queries by name in
+`tests/e2e/d/dict-wasm.spec.ts` at a 200 ms ceiling, with every *other* interactive query still failing
+the suite at 50 ms. That pin stays. It is a measured exemption for two degenerate queries, not a hole.
+
+**The untried lever, named so it is not rediscovered.** D4's own table shows the cost is per-row,
+per-column marshalling — rowid-only at `LIMIT 5000` is 10 ms, the full projection 46–51 ms — so a
+two-pass query (pass 1 selects only what `glossTier` reads; pass 2 fetches the full projection for the
+survivors) would close the breach with **no ranking change at all**. It is unowned and it is **not
+obviously a win**: `glosses` is plausibly most of the payload, and if it is, pass 1 costs nearly what
+the single pass costs today. Measure it before believing it.
+
 ## 11. `ios.md`'s contested-surfaces table — DELETE IT (issue 4)
 
 `android.md` is correct on all three rows and `ios.md` misquotes it on all three. Verified at HEAD:

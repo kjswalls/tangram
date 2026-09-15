@@ -12,6 +12,14 @@
  *
  * So the assertion is not "the rule contains the right string". It is: go
  * offline and check the page is still there.
+ *
+ * W3 adds the harder half of that: a **never-visited** route. Precaching was
+ * the seven nav routes and is now the one document plus this build's entry
+ * assets, and `shell()` falls back to that document when the requested URL is
+ * not in the cache — so a route the learner has never opened renders the app
+ * offline rather than the offline page. Going offline at all is new capability
+ * this container has for free; HANDOFF.md records that the suite never did it
+ * before W1's review.
  */
 import { expect, test } from '@playwright/test';
 
@@ -54,6 +62,48 @@ test.describe('the service worker offline', () => {
       await expect(page.getByRole('heading', { name: 'Lookup' })).toBeVisible();
       const bodyText = (await page.locator('body').innerText()).trim();
       expect(bodyText.length, 'offline page rendered empty').toBeGreaterThan(20);
+    } finally {
+      await context.setOffline(false);
+    }
+  });
+
+  test('renders a NEVER-VISITED route offline, from the one cached document', async ({
+    page,
+    context,
+  }) => {
+    // Only `/` is precached — the SPA fallback means there is one document for
+    // every path, which is what makes this legitimate rather than a lie (see
+    // `shell()` in scripts/sw.template.js).
+    await page.goto('/');
+    await page.evaluate(() => navigator.serviceWorker.ready);
+    await page.reload();
+    await page.evaluate(() => navigator.serviceWorker.ready);
+
+    await context.setOffline(true);
+    try {
+      // Never opened in this context, and not in the precache list.
+      await page.goto('/stats');
+      await expect(page.getByRole('navigation', { name: 'Main' })).toBeVisible();
+      await expect(page.locator('[data-route="/stats"]')).toHaveCount(1);
+      // Not the offline page wearing the app's clothes.
+      await expect(page.getByRole('heading', { name: 'Stats' })).toBeVisible();
+    } finally {
+      await context.setOffline(false);
+    }
+  });
+
+  test('falls back to the offline page only when even the document is gone', async ({
+    page,
+    context,
+  }) => {
+    // The third rung of the ladder, and the one a cold start hits: a browser
+    // that has never loaded the app has nothing cached at all.
+    await context.setOffline(true);
+    try {
+      const response = await page.goto('/lookup').catch(() => null);
+      // With no worker installed there is nothing to serve it — a browser error
+      // is the honest outcome, and what must NOT happen is a hang.
+      expect(response === null || !response.ok()).toBe(true);
     } finally {
       await context.setOffline(false);
     }

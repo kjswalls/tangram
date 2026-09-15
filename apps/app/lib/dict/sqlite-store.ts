@@ -40,6 +40,7 @@ import {
   type MatchSource,
 } from './rank';
 import { SCHEMA_VERSION, decodeRowids } from './artifact';
+import { DictOpenError } from './open-error';
 import { normalizePinyin } from './pinyin';
 import {
   MAX_HANZI_PREFIX_IDS,
@@ -401,9 +402,13 @@ function englishCandidates(plan: EnglishPlan, results: readonly SqlRow[][]): Gro
  * a whole *sense* of some entry (tier 0 or 1), which is what "the English word"
  * means: 太阳 is "sun", 女人 is "woman", and no entry is "shi".
  *
- * "First candidate that matches" is only meaningful in frequency order, so the
- * statement is `ORDER BY rowid` like every other one and this walk must not be
- * reordered by relevance.
+ * "First candidate that matches" is only meaningful in frequency order, which
+ * rowid order is (D1). The statement carries no `ORDER BY`: FTS5 scans ascending
+ * by rowid and `data.md` D4 took the clause out because the sort costs 1,117 ms
+ * in wasm. What holds the invariant now is a pair of assertions rather than a
+ * clause — `tests/unit/dict/gloss-order.test.ts` on the artifact, and
+ * `tests/e2e/d/dict-wasm.spec.ts` on the wasm runner. This walk must still not
+ * be reordered by relevance.
  */
 function isGlossToken(plan: EnglishPlan, results: readonly SqlRow[][]): boolean {
   for (const i of plan.glossTokenAt) {
@@ -419,12 +424,26 @@ function isGlossToken(plan: EnglishPlan, results: readonly SqlRow[][]): boolean 
 // The store
 // ---------------------------------------------------------------------------
 
+/** What `connect()` is handed, so a slow open can say how far along it is. */
+export interface ConnectContext {
+  /**
+   * Report import progress. Ignored once the attempt has settled, so a late
+   * chunk cannot drag a `ready` store back to `preparing`.
+   *
+   * This is the inbound half of the status model and it is why `connect` takes
+   * an argument at all: `onStatus` below is a *listener*, and D4's first web
+   * load is a 43 MB download that `core.md` draws a determinate bar in front of.
+   * A runner with no way to say "17 of 43 MB" leaves that bar indeterminate.
+   */
+  progress: (received: number, total?: number) => void;
+}
+
 export interface SqliteStoreOptions {
   /**
    * Opens the connection. Called once by `open()`, and never before — a store
    * may be constructed on a page that never looks a word up.
    */
-  connect: () => Promise<SqlRunner>;
+  connect: (context: ConnectContext) => Promise<SqlRunner>;
   /** Status while `connect()` runs; the web store reports download progress. */
   onStatus?: (status: DictStatus) => void;
   cacheSize?: number;
@@ -484,8 +503,19 @@ export class SqliteDictStore implements DictStore {
 
   async #attemptOpen(): Promise<void> {
     let runner: SqlRunner | undefined;
+    let settled = false;
+    const context: ConnectContext = {
+      progress: (received, total) => {
+        if (settled) return;
+        this.#setStatus({
+          state: 'preparing',
+          received,
+          ...(total === undefined ? {} : { total }),
+        });
+      },
+    };
     try {
-      runner = await this.#options.connect();
+      runner = await this.#options.connect(context);
       const results = await runner.query(OPEN_BATCH);
       const opened = readOpenBatch(results as SqlRow[][]);
       // The artifact says which schema it is, and a store that reads a file
@@ -495,7 +525,8 @@ export class SqliteDictStore implements DictStore {
       // else's database — but the check belongs here, where every runner gets
       // it for free.
       if (opened.meta.schemaVersion !== SCHEMA_VERSION) {
-        throw new Error(
+        throw new DictOpenError(
+          'corrupt',
           `the dictionary is schema ${opened.meta.schemaVersion}, this build reads ${SCHEMA_VERSION}`,
         );
       }
@@ -509,10 +540,17 @@ export class SqliteDictStore implements DictStore {
       if (runner) await runner.close().catch(() => {});
       this.#setStatus({
         state: 'failed',
-        reason: 'corrupt',
+        // D4 refines the four reasons, and this is where it lands: a runner that
+        // fetched bytes knows whether the download was short, the import failed,
+        // storage refused it, or the file simply is not this dictionary. A
+        // runner that cannot tell (the Node one has none of those failure modes)
+        // reports the one that means "the file did not open as this dictionary".
+        reason: error instanceof DictOpenError ? error.reason : 'corrupt',
         message: error instanceof Error ? error.message : String(error),
       });
       throw error;
+    } finally {
+      settled = true;
     }
   }
 

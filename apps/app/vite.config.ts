@@ -12,6 +12,7 @@ import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 
 import { apiRoutes } from './vite-plugins/api.ts';
+import { dictAssets } from './vite-plugins/dict-assets.ts';
 import { staticHeaders } from './vite-plugins/headers.ts';
 
 const root = import.meta.dirname;
@@ -48,7 +49,21 @@ export default defineConfig({
     apiRoutes(),
     // The two header rules next.config.ts's headers() block carried, per path.
     staticHeaders(),
+    // The dictionary artifacts, out of the workspace-root `data/`, until
+    // `web.md` W2's copy step puts them in `public/` (docs/plans/data.md D4).
+    dictAssets(),
   ],
+  optimizeDeps: {
+    /**
+     * `@sqlite.org/sqlite-wasm` is excluded on the package's own instruction.
+     * Pre-bundling rewrites the module, and the wasm binary is located with
+     * `new URL('sqlite3.wasm', import.meta.url)` — relative to wherever the
+     * module ended up. Left alone, dev serves it from `node_modules` and the
+     * URL resolves; pre-bundled, it resolves into `.vite/deps` where the binary
+     * is not.
+     */
+    exclude: ['@sqlite.org/sqlite-wasm'],
+  },
   resolve: {
     alias: {
       '@': resolve(root),

@@ -43,6 +43,7 @@
 import type { RouteObject } from 'react-router';
 
 import { Root } from './root';
+import { DictWasmRoute } from './routes/dict-wasm';
 import { GalleryRoute } from './routes/gallery';
 import { SpanSelectRoute } from './routes/span-select';
 import { ListDetailRoute } from './routes/list-detail';
@@ -72,7 +73,14 @@ const devOnlyRoutes: RouteObject[] =
  */
 const devOnlyStandalone: RouteObject[] =
   import.meta.env.DEV || import.meta.env.MODE === 'e2e'
-    ? [{ path: '/span-select', element: <SpanSelectRoute /> }]
+    ? [
+        { path: '/span-select', element: <SpanSelectRoute /> },
+        // `/dict-wasm` — the OPFS dictionary harness (docs/plans/data.md D4).
+        // Outside the shell for the same reason: D4's criteria are about a cold
+        // open of a 43 MB artifact in a page that has nothing else running, and
+        // `<Root>` already opens a `DictStore` of its own.
+        { path: '/dict-wasm', element: <DictWasmRoute /> },
+      ]
     : [];
 
 export const routes: RouteObject[] = [

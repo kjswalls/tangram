@@ -7797,3 +7797,425 @@ does everything that plugin does, better, on the platform where insets matter. A
 per `CLAUDE.md`'s rule about frozen surfaces, and the config above makes the common case agree. But
 the package is not merely redundant on Android: it is a second, self-starting owner of the window.
 If I5 has no iOS reason to keep it, dropping it is the smaller change.
+
+---
+
+## `data.md` D4 — the OPFS dictionary, in a worker, measured
+
+One commit on `claude/build-data-2`, cut from `claude/integration` at `6c35091`.
+
+`@sqlite.org/sqlite-wasm` **3.53.4-build1** — re-checked against the npm registry on 2026-09-15 and
+still the latest publish (2026-09-08), so STACK §6's pin stands as written.
+
+`lib/dict/runners/wasm-worker.ts` owns everything about `sqlite-wasm`; `lib/dict/runners/wasm.ts` is
+a `postMessage` bridge that hands `SqliteDictStore` a `SqlRunner` and nothing else. The store is the
+one D2 and D3 built, unchanged in substance: the Playwright suite runs 37 calls against the browser
+and against `node:sqlite` in the test process and compares the answers, which is what the seam was
+for.
+
+### The measurements D4 asks for
+
+Container Chromium (`/opt/pw-browsers/chromium`), the real 43.2 MB artifact, served over localhost by
+the dev/preview server. Raw numbers land in `apps/app/test-results/d4-record.json` on every
+`pnpm e2e` (gitignored — this section is the durable copy).
+
+**1. Query latency (criterion 2), beside D2's and D3's native figures.** Mean of 10 runs after one
+warm-up, with the store's result cache disabled (`cacheSize: 0`) — with it on, every run after the
+first is a `Map` lookup and the table measures the cache. One representative run; the container is
+shared and the same numbers move ±15% between runs, so read the column as an order of magnitude and
+a multiplier, not as three significant figures.
+
+| call | native (D2/D3) | WASM (D4) | × |
+|---|---|---|---|
+| `search('打算')` — hanzi exact | 0.26 ms | **2.9 ms** | 11× |
+| `search('打')` — hanzi prefix, LIMIT 400/script | 4.2 ms | **12.0 ms** | 2.9× |
+| `search('中')` — hanzi prefix | 5.1 ms | **14.3 ms** | 2.8× |
+| `search('dasuan')` / `search('da3suan4')` — pinyin exact | 0.20 / 0.18 ms | **3.0 / 4.6 ms** | 15–26× |
+| `search('da')` — pinyin prefix, LIMIT 600 | 6.4 ms | **13.3 ms** | 2.1× |
+| `search('plan')` — gloss FTS5, cap 5000 | 0.4 ms | **7.1 ms** | 18× |
+| `search('to plan')` — two terms | 0.6 ms | **6.3 ms** | 10× |
+| **`search('to')`** — 31,561 postings, over the cap | 25 ms | **95 ms** | 3.8× |
+| **`search('the')`** — 12,447 postings, over the cap | — | **89 ms** | — |
+| `segment(77 hanzi)` | ~1.8 ms | **9.5 ms** | ~5× |
+| `entries(50 ids)` | 0.08 ms | **2.2 ms** | 27× |
+| `hskBand(1)` — the whole 5,638-entry band | 3.6 ms | **11.7 ms** | 3.2× |
+| `hskBand(7, {limit:50, offset:100})` | 0.36 ms | **2.0 ms** | 5.7× |
+| `readingCount('看')` | 0.02 ms | **0.66 ms** | 33× |
+| `wordsContaining('算', {limit:50})` — 2 trips | 0.55 ms | **2.9 ms** | 5.3× |
+| **`open()`'s two statements** — `meta` + all 14,625 `chars` rows | 39.6 ms | **44–49 ms** | **~1.2×** |
+
+**STACK known-unknown #10 is settled, and its "2–5× native" is right about the wrong thing.** Every
+call that moves a real number of rows is **2.1–5×**, comfortably inside the estimate. The 20–33× rows
+are the *small* calls, and they are not slower work: they are a **fixed cost of roughly 0.5–3 ms per
+`DictStore` call** — `postMessage`, structured clone, and the store's own bookkeeping — which a
+0.02 ms native query is simply dwarfed by. The practical consequence is the opposite of what a 33×
+multiplier suggests: **D2's round-trip budget matters more in the browser than the SQL does.**
+
+**D2 handed D4 one number to measure and here it is.** D2's section says *"`open()` at 39.6 ms is the
+biggest single cost in the layer and it is almost entirely the 14,625-row `chars` read. At STACK's
+extrapolated 2–5× that is 80–200 ms in WASM… If that hurts, the lever is to load `chars` lazily on
+the first `segment()` — at the cost of making `detectScript` asynchronous, which is exactly what D3
+goes to some trouble to avoid. **Measure it in D4 before changing anything.*** Measured: **44–49 ms**,
+~1.2× native, not 80–200. **Do not make `chars` lazy.** `detectScript` stays synchronous and D3's care
+was worth it.
+
+Two other open figures, because they answer different questions: a **cold open including the 43.2 MB
+fetch and the OPFS import is 550–680 ms** (of which ~300 ms is the localhost transfer — a real network
+is the dominant term and this container cannot measure it), and a **warm open on a reload is ~180–195 ms**,
+which is the 44 ms read plus the worker's start-up and the wasm module's instantiation.
+
+**2. What a second tab transfers (criterion 5) — and D4's paragraph about it is wrong.** The second
+tab cannot take `opfs-sahpool`'s exclusive per-origin lock, falls to the in-memory rung as designed,
+and **re-fetched all 43,208,704 bytes over the network**: `transferSize` 43,209,004,
+`encodedBodySize` 43,208,704, i.e. not one byte from the HTTP cache, reproduced on every run. D4 says
+the content-addressed, `max-age=31536000, immutable` response *"should be served with zero network
+bytes — should: whether a ~14 MB entry survives in the HTTP cache is not something any audit
+established"*, and instructs: *"If measurement in D4 shows the re-fetch usually reaches the network,
+revisit."* **It does. This is the revisit.**
+
+Two caveats before anyone builds on it. The local server does **not** pre-compress, so the entry
+offered to the cache was 43 MB rather than the ~15.3 MB brotli a host under content negotiation would
+send; and Chromium caps a single cache entry at a fraction of the disk cache, which in a fresh
+Playwright profile is small. **Re-measure against the deployed host once `web.md` W2's `.br`
+negotiation lands.** If it still misses, D4's declined alternative — writing the response into Cache
+Storage during the first import — stops being a theoretical second copy and becomes the fix, at +15
+to +43 MB on disk. Either way the second tab is a working dictionary; what it costs is bytes, not
+correctness.
+
+The measurement had to move to get this right, and the trap is worth naming: **the fetch happens in
+the worker, so `performance.getEntriesByType('resource')` on the page returns nothing for the
+artifact.** The first version of this criterion summed that empty list, reported 0 bytes, and read
+exactly like a cache hit. `OpenReport.transfer` now carries the worker's own resource timing.
+
+**3. `PRAGMA integrity_check` on the real 43.2 MB file in wasm: ~5.9 s**, answer `ok`. That settles
+D4's "only on `SQLITE_CORRUPT`" rule as a measured choice — six seconds is not something to spend on
+every open, and the three header checks that *are* run on every open touch a handful of pages and
+cost nothing measurable. **The rule is now implemented rather than merely justified**: `markLost`
+runs the check when a query fails with `SQLITE_CORRUPT` or `SQLITE_NOTADB`, and puts its verdict in
+the message. Nothing else calls it.
+
+**4. Where the gloss path spends its time** — not on D4's list, but criterion 2 fired and a number
+without a diagnosis is not a report. On `"to"`, whose FTS5 posting list is **31,561 rows**, six times
+the 5,000 cap (`"the"` is 12,447):
+
+| statement | ms | rows |
+|---|---|---|
+| `SELECT rowid FROM gloss_fts WHERE … MATCH ? LIMIT 5000` | 11 | 5000 |
+| joined to `entries`, rowid only, LIMIT 5000 | 10 | 5000 |
+| joined, full projection, LIMIT 5000 — *what `search` sends* | 46–51 | 5000 |
+| joined, full projection, LIMIT 1000 | 12 | 1000 |
+| joined, full projection, **`ORDER BY e.rowid`**, LIMIT 5000 — *D3's form* | **1,117–1,137** | 5000 |
+| joined, full projection, **`ORDER BY e.rowid`**, LIMIT **400** | **1,031–1,127** | 400 |
+| a plain `rowid <= 5000` range over `entries`, same projection | 47–61 | 5000 |
+
+### Criterion 2 fired: two queries are over the 50 ms bar, and the remaining lever is D3's to pull
+
+`search('to')` and `search('the')` — measured across runs at **89–100 ms** — exceed D4's 50 ms interactive threshold.
+Every other measured call is under 15 ms. D4 says *stop and report rather than proceed*, so this is
+the report and **`MAX_GLOSS_CANDIDATES` was not touched**.
+
+- **What is left after the sort came out is marshalling, not search.** 5,000 rows of nine columns
+  cost 46–61 ms whether they come from the FTS join or from a plain rowid range; 1,000 rows cost
+  12 ms. The cost is per row and per column, and `glossTier` needs `glosses` for every candidate, so
+  there is no projection to trim.
+- **`data.md` §6's stated lever — "a smaller `LIMIT`" — does nothing for the shape D3 shipped.** With
+  `ORDER BY e.rowid` in place the query costs 1,031–1,127 ms at `LIMIT 400` against 1,117–1,137 ms at
+  `LIMIT 5000`, because SQLite materialises and sorts all 31,561 joined rows before the limit
+  applies. A session that reached for that lever first would have spent a day for 8%.
+- **The lever that would work is lowering the cap, and that is D3's decision, not D4's to take
+  quietly.** D3 states the three consequences in full — `glossTier` ranks only what the cap admits,
+  so a low-frequency tier-0 match drops out of a broad query; `SearchResult.total` becomes a capped
+  count; `nextCursor` paging terminates earlier — and requires any change to say what to, why, and
+  what happened to the group sequence of `da` and `to` paged to the end. At 1,000 the query would be
+  ~12 ms of SQL, comfortably inside the bar. **Somebody should own that trade**; the measurement it
+  needs is on the table above.
+- The two breaches are pinned by name in `tests/e2e/d/dict-wasm.spec.ts` as `KNOWN_BREACH`, at a
+  ceiling of 200 ms each (~2× the measurement). Any *other* interactive query over 50 ms fails the
+  suite, and either of these regressing past its ceiling fails it too. It is a pinned measurement,
+  not a hole — but it is an exemption, and it should close when the cap decision is taken.
+
+### The one change to a landed phase's code: `ORDER BY e.rowid` is gone from the gloss query
+
+`lib/dict/query/gloss.ts` no longer sorts. D3 put the clause there deliberately and wrote down why:
+FTS5's ascending-rowid scan *"is not a documented guarantee and the correct result is worth the
+sort"*, measured at *about 10 ms* on the worst query — in native SQLite. In wasm the same sort is
+**1,117 ms** on a query a learner reaches by typing two letters.
+
+What replaces the guarantee is stronger than the sentence it replaces:
+
+- `tests/unit/dict/gloss-order.test.ts` asserts against the built artifact that the unsorted query
+  returns **strictly ascending rowids and exactly the same rows as the sorted form** — for every
+  token whose posting list exceeds the cap (derived from the artifact, not from a hand-written list),
+  for the `isGlossToken` routing examples, and again at `LIMIT 10`, where a non-rowid-ordered scan
+  would almost certainly pick a different ten out of 31,561. It also asserts that the sorted oracle
+  is a genuinely different query: it is built by rewriting the plain one, and `String.replace` with a
+  needle that stops matching would silently turn every comparison into a query against itself.
+- `tests/e2e/d/dict-wasm.spec.ts` asserts the same property against **`@sqlite.org/sqlite-wasm`
+  3.53.4**, which is the build the removal was made for. The unit test runs on `node:sqlite`, a
+  different SQLite, and an adversarial reviewer was right that its header originally claimed to cover
+  runners it cannot reach.
+- **The third runner is owed by D5a/D5b.** The SQLCipher FTS5 behind `@capacitor-community/sqlite`
+  is a different build again (STACK register #20) and nothing asserts its scan order. Porting either
+  of the two assertions above onto the Capacitor runner is a few lines, and it should happen in the
+  same device session as the `char_words` BLOB probe.
+
+Two properties depend on the order and neither is cosmetic: rowid order is frequency order (D1), so
+`LIMIT 5000` means "the 5,000 most frequent matches"; and `isGlossToken` returns true on the *first*
+candidate whose `glossTier` is 0 or 1, which is the `sun`/`can`/`women`-versus-`shi` rule that decides
+which section of a result page leads. Every D2/D3 differential test passes unchanged with the sort
+removed, and the parity list in D4's own suite now includes `to` and `the` — the only two queries
+where the two forms *could* differ.
+
+### Decisions the plan did not settle
+
+- **Three modules beyond D4's Files list, and one in a different place than it says.**
+  `runners/wasm-protocol.ts` is the types-only message contract, so the worker can name a message
+  without importing the main-thread runner (an accidental value import there pulls `SqliteDictStore`
+  and everything under it into the worker bundle). `open-error.ts` is `DictOpenError`, one small class
+  both the runner and the store need and that neither frozen module may carry. `wasm-store.ts` is the
+  factory — store plus runner plus recovery — kept out of `runners/` because a runner is a dumb pipe
+  and should not import the store it feeds.
+- **`data.md` D4's Files list is wrong about `lib/dict/decomp-store.ts`.** It puts the `decomp.json`
+  implementation in the module D1 froze as types-only, and `tests/unit/dict/store-contract.test.ts`
+  asserts that module emits nothing at runtime — *"the day someone adds a function to one of these
+  three modules this fails, which is the point"*. The test is right and the Files list is a slip: the
+  interface stays frozen where it is and `JsonDecompStore` landed in **`lib/dict/decomp-json.ts`**,
+  beside `sqlite-store.ts` and `http-store.ts`. `decomp-store.ts` is byte-identical to HEAD.
+- **`SqliteStoreOptions.connect` gained a parameter, and it is not a freeze violation.**
+  `connect: (context: ConnectContext) => Promise<SqlRunner>` — `context.progress(received, total)`
+  moves the store to `preparing` with real numbers, which is what `core.md` needs to draw a
+  determinate bar in front of a 43 MB first load. The frozen surfaces are `DictStore`, `SqlRunner`
+  and `DictStatus` in `store.ts` and `sql.ts` (CLAUDE.md's settle-first list); `SqliteStoreOptions`
+  lives in `sqlite-store.ts`, which is D2's implementation module and not on that list. Existing
+  zero-arg callers (`connect: async () => nodeRunner(path)`) still typecheck.
+- **The four `DictStatus.failed` reasons are now distinguished, as D2's section said D4 would.**
+  `download` is a non-ok response or a chunk-sum that disagrees with the manifest's `bytes`;
+  `corrupt` is a file that opens but is not this artifact, **and a response that is not a SQLite
+  database at all**; `import` is `importDb` failing for any other reason, which falls through to the
+  in-memory rung; `storage` is the wasm heap refusing 43 MB. Anything unclassified still reports
+  `corrupt`, which is what the Node runner can honestly say.
+- **A body that is not a database is `corrupt`, not `import`, and that distinction is a deployment
+  mistake this repo can make.** The SPA fallback answers a path it does not have with 200 and an HTML
+  document — exactly what a manifest naming a file the deploy did not carry looks like. "The
+  dictionary could not be imported" would blame the learner's storage and offer the wrong remedy, and
+  there is no point retrying those bytes in the heap either, so the header is checked on the first
+  chunk and the artifact is fetched once.
+- **`lib/dict/browser-store.ts` was NOT re-pointed at the wasm store, deliberately.** C4a's comment
+  says D4 is "the single edit" that flips it. It is not D4's to flip: `data.md` D6 re-points consumers
+  and deletes `/api/dict/*`, and it is explicitly out of this session's scope. Flipping it here would
+  take the app off the HTTP routes while those routes still exist, put a 43 MB import in front of
+  every e2e test, and do part of D6 in a phase nobody would review as D6. **D6 should expect to make
+  that change** — `createWasmDictStore()` and `new JsonDecompStore()` in place of
+  `HttpDictStore`/`HttpDecompStore` — and to inherit D4's Playwright suite as the proof it works.
+  **Hold the handle, not the store**: `handle.close()` is the teardown API (below).
+- **The store is driven from `/dict-wasm`, a standalone dev/`--mode e2e`-only page**, exactly like
+  `core.md` C5a's `/span-select`: outside `<Root>`, no providers, nothing else open.
+  `window.__dictWasm` is what Playwright drives, and a person can drive it from the console.
+  `tests/e2e/core/gallery-excluded.spec.ts` gained the same control-and-negative pair the other two
+  harnesses have, greping for a rendered marker rather than the route path.
+- **`vite-plugins/dict-assets.ts` is a bridge and says so.** `web.md` W2 owns the web delivery
+  (wave-zero §6) and is landing in parallel: a build step copies the three artifacts into
+  `apps/app/public/` and the host config carries the caching rules. D4 needed bytes today, so this
+  middleware answers the same three URLs out of the workspace-root `data/`, **with the same headers**
+  (`public, max-age=31536000, immutable` on the `.sqlite`, `no-cache` on the manifest), and stands
+  down the moment a real file exists under `public/` — it checks and calls `next()`. When W2 lands
+  the plugin does nothing and can be deleted in the same commit. Nothing in `dist/` depends on it.
+  The client fetches `/dict-manifest.json` and then `/${manifest.file}`, which is where W2 puts them.
+- **The pool is named `tangram-dict`** rather than left at the default `opfs-sahpool`, so the app's
+  pool cannot share a directory with any other sqlite-wasm on the origin — the VFS's own
+  documentation calls that undefined behaviour.
+- **`installOpfsSAHPoolVfs` is retried for ~240 ms before the ladder gives up.** `acquireAccessHandles`
+  does not retry: it throws on the first `NoModificationAllowedError`. That matters for a very
+  ordinary case — **a reload**. The outgoing document's worker releases its handles asynchronously,
+  with no ordering guarantee relative to the incoming one, so a plain refresh can lose the race and
+  take the in-memory rung: a 43 MB re-download into the heap, gone again next time, with nothing that
+  ever tries OPFS again. A genuine second tab holds the lock for its whole session and pays the delay
+  before falling back, which is the right way round.
+- **A version bump sweeps the old file.** `open()` unlinks any other `/dict-<n>-*.sqlite` in the pool
+  before importing the one the manifest names, so a schema or snapshot bump does not leave 43 MB
+  holding a pool slot and a share of the origin's quota.
+- **The pool's handles are released on every path that stops using them** — a failed open, a fall to
+  the memory rung, a `close()` — and the main thread asks the worker to close before terminating it.
+  Measured honestly: with the explicit release removed, terminating the worker frees the handles fast
+  enough for the retry test to pass anyway in this Chromium. That is an engine's teardown timing, not
+  a promise.
+- **Recovery is the store's own two public calls.** The worker posts `lost`; `createWasmDictStore`
+  runs `close()` then `open()`, so the learner sees `ready → absent → preparing → ready` — the banner
+  `core.md` already draws for a first load. Guarded on `ready`, so a worker that dies *during* an
+  open cannot drive a reopen loop.
+- **A real eviction is detected from the query that trips over it**, which is the only way it can be:
+  it arrives as a `step()` throw carrying `SQLITE_IOERR` (or `SQLITE_CORRUPT`/`SQLITE_NOTADB`), and
+  `markLost` turns that into the `lost` message recovery is driven by. An adversarial reviewer caught
+  this: before the fix, `lost` was posted only by the test-only `evict` command, so criterion 4 was
+  testing a signal the test supplied, and a real eviction would have left the store answering every
+  keystroke with an error for the rest of the session. `evict()` no longer posts `lost` either — it
+  leaves the worker in the state an eviction leaves it in and lets the next query take the production
+  path.
+- **The in-memory rung streams into the wasm heap.** The obvious shape — `await response.arrayBuffer()`
+  then `allocFromTypedArray` — holds the artifact twice at the peak, so rung (a) would cost ~86 MB
+  rather than the ~43 MB `data.md` budgets. The buffer is allocated up front and each chunk is written
+  straight into it (`heap8u()` re-read per chunk, because the view detaches if wasm memory grows), so
+  the peak is one chunk over 43 MB — and the rung can report real progress, which one unstreamed read
+  cannot. `sqlite3_deserialize` takes the allocation with
+  `SQLITE_DESERIALIZE_FREEONCLOSE | SQLITE_DESERIALIZE_READONLY`.
+- **Rows are extracted with `stmt.get(array)` into a reused scratch array, with the column names read
+  once per statement**, rather than oo1's `get({})` per row. Measured on the 5,000-row gloss query:
+  71 ms → 59 ms, and 16 → 11 ms on a one-column 5,000-row scan. Same rows either way; it is pure
+  marshalling.
+- **Integrity is the two cheap checks D4 specifies, and no hash.** `crypto.subtle.digest` is one-shot,
+  so hashing the download would mean buffering 43 MB (defeating the chunked import) or a new
+  dependency. Truncation is the chunk-length sum against `manifest.bytes`; corruption is
+  `application_id` / `user_version` / `meta.dict_version` after opening, compared **as they are
+  read**, cheapest first, so the message names which one caught it. The manifest's `sha256` stays a
+  build-side fact that `pnpm data:verify` checks.
+- **A partially written import can never be trusted, and that is the VFS's doing, not ours.**
+  `importDbChunked` associates the filename with its storage slot only *after* the last chunk is
+  written, so a page closed mid-import leaves no file under the manifest's name and the next load
+  re-imports. What the byte-count check catches is the other case: a download that *completes* short,
+  which does get named — and is unlinked before the error is reported.
+
+### What is NOT proven
+
+- **Safari and iOS.** STACK register **#4** — the reported 10 MB per-file OPFS cap in WKWebView — is
+  untouched by this phase; the container has no Safari and no Apple hardware. The check is unchanged:
+  import the real 43.2 MB file into `opfs-sahpool` on desktop Safari and on an iPhone. **The web
+  dictionary on Apple platforms is unproven and D4 does not claim otherwise.** If it fails, the
+  fallbacks are the in-memory rung this phase built (which a per-*file* cap would not touch) or the
+  bare-table variant in `data.md` §7.
+- **Every browser except the container's Chromium.** One engine, one version, one machine.
+- **The native stores.** D5a and D5b are blocked on hardware. Three things they should carry: the
+  `char_words` BLOB is the only non-TEXT, non-INTEGER column in the artifact and `SqlValue` promises
+  `Uint8Array` (D1's open question); the FTS5 scan-order assertion above; and D2's note that
+  `wordsContaining`'s two round trips should be measured on a real device.
+- **D6.** `/api/dict/*` is untouched, `browser-store.ts` still constructs `HttpDictStore`, and
+  `grep -rn "api/dict" apps/app/lib/` is not empty.
+- **The deployed host.** Brotli content negotiation, the real transfer size, and whether a real
+  browser profile caches the artifact are `web.md` W2's to measure once it is deployed. The
+  second-tab number above is a localhost number against an uncompressed response.
+- **A real network.** A 550–680 ms cold open is ~300 ms of localhost transfer plus the import. On a
+  phone over LTE the transfer dominates, and the progress bar this phase wired up is the whole
+  experience.
+- **The install retry.** `installWithRetry` exists for the reload race and nothing in the container
+  reproduces that race — the first attempt has always succeeded here. What *is* proven is that the
+  option it now passes is the one the library's own source requires for a retry to reach OPFS at all;
+  what is not is that the window it closes is ever open in practice.
+- **A Content-Security-Policy.** There is none in this repo (STACK §1, `web.md`), so nothing here has
+  been run under one. See item 14 below: the dictionary needs `'wasm-unsafe-eval'` in `script-src`
+  and `worker-src 'self'`, and `web.md` W7 is where that has to land.
+- **Actual byte corruption.** The header triple detects *substitution* — a file that is not the one
+  the manifest names — not corruption: flip bytes inside a b-tree page and `application_id`,
+  `user_version` and `meta.dict_version` all still read correctly. That is D4's design, and the
+  backstop is now real rather than notional: a query that trips over the damage raises
+  `SQLITE_CORRUPT`, `markLost` runs `PRAGMA integrity_check` (~5.9 s) and reports its verdict, and the
+  store recovers by re-downloading. Nothing tests that path with a genuinely damaged page, because
+  producing one that SQLite reaches only mid-session is not something this container can do reliably.
+- **The `import` rung of the fallback ladder.** `importDb` failing for a storage reason — a full
+  pool, a quota error — falls through to the in-memory rung, and no test reaches it: there is no
+  honest way to exhaust OPFS quota in the container. The two neighbouring branches are covered (a
+  second tab takes rung (a) for real; a non-database body is classified and does *not* fall through).
+
+### Other things found wrong, in the plans and in the repo
+
+1. **`data.md` D4, criterion 5** cannot be measured the way it is written — the page's resource
+   timeline has no entry for a fetch the worker made.
+2. **`data.md` D4's "the browser's HTTP cache should serve it with zero network bytes"** is measured
+   false here. The paragraph's own hedge was right and should now be the text.
+3. **`data.md` §6's WASM-latency risk row lists "a smaller `LIMIT`" as a lever.** For the query that
+   actually breaches the bar it is worth 8%.
+4. **`data.md` D4's Files list** puts the decomp implementation in a frozen module (above).
+5. **HANDOFF, `data.md` D1's review section**, lists nine tokens as exceeding the 5,000-candidate cap:
+   `of`, `to`, `a`, `the`, `in`, `and`, `or`, `for`, `idiom`. **`for` has 4,918 postings in this
+   snapshot — just under.** Eight exceed it. `gloss-order.test.ts` derives the set from the artifact
+   rather than trusting the list.
+6. **STACK §3's "the same under WASM: 2–5× the above"** is right for the calls that move rows and
+   wrong for the small ones, where a fixed per-call cost dominates (above). D2's worry about
+   `open()` specifically does not survive measurement: 44–49 ms, ~1.2×.
+7. **The production build carries 1.31 MB it never loads.** Vite compiles
+   `new Worker(new URL('./wasm-worker.ts', import.meta.url))` at transform time and emits the worker
+   as its own build input, so `wasm-worker-*.js` (220 KB), `sqlite3.wasm` (869 KB),
+   `sqlite3-worker1` (212 KB, the deprecated API this app does not use) and `sqlite3-opfs-async-proxy`
+   (33 KB, the *other* OPFS VFS, which needs the COOP/COEP headers `opfs-sahpool` exists to avoid)
+   land in `dist/` whether or not anything references them. The main bundle is unchanged at 692.5 KB
+   and contains **zero** references to any of them, so this is deploy size rather than first-load
+   bytes, and D6 makes two of the four load-bearing. `gallery-excluded.spec.ts` records this in a
+   comment rather than asserting "no `.wasm` in `dist/`", which would be a false fact. `web.md` W6's
+   budget should count the bytes a page actually fetches, not `du dist/`.
+8. **`tests/unit/dict/deps.test.ts` needed the new dependency added by hand**, which is the test doing
+   its job.
+
+### Gates, and what the adversarial review changed
+
+`pnpm lint`, `pnpm typecheck`, `pnpm test` (124 files / 1,604 tests in `apps/app`, 6 / 75 in
+`apps/server`) and `PORT=3000 pnpm e2e` (204 passed, from a clean `dist/`) all green.
+
+Four independent lenses read the diff cold and in parallel — correctness against the eight criteria;
+what breaks that no test covers; the frozen surfaces and the scope boundaries; and whether it works
+as a web build — followed by a refuter per finding instructed to refute by default. **34 findings; 24 verified adversarially, one survived refutation** — the missing HANDOFF section
+this text is. The other 23 were refuted against the code *because they had already been fixed*: the
+verifiers ran after the fixes, so the survivor count understates what the review was worth. The ten
+lowest-severity findings were not machine-verified and were read by hand instead. These are the ones
+that changed code:
+
+1. **A real eviction had no detection path at all** (above). The strongest finding in the set:
+   criterion 4's test supplied the very signal it was testing.
+2. **The dev middleware could kill the preview server.** `createReadStream(file).pipe(res)` leaves the
+   read stream's `error` event unhandled, and an unhandled stream `error` throws in the Node process.
+   This middleware streams 43 MB to a suite that abandons requests on purpose, so a whole `pnpm e2e`
+   run could die against a refused connection with nothing pointing back at the cause. The stream now
+   has an error handler and is destroyed when the response closes.
+3. **Criterion 3 was asserting one boolean twice.** `report.downloaded` and `report.transfer` are both
+   assigned only inside the "the pool did not have it" branch, so neither is independent evidence.
+   The test now counts artifact requests across the reload, and **reloads without closing first** —
+   the explicit close removed exactly the race a reload is subject to, which is what the install
+   retry exists for.
+4. **The gloss scan-order guard ran only on `node:sqlite`**, the runner the change was *not* made for.
+   A wasm-side assertion was added and the file's header corrected.
+5. **`glossCandidatesSorted` was a `String.replace` that could silently become a no-op**, turning the
+   guard into a query compared against itself. It throws now, and a test pins that.
+6. **The `KNOWN_BREACH` comment quoted a number from before the sort was removed**, and set a ceiling
+   3× the real measurement. Both corrected; the same figures are now quoted consistently in the four
+   files that cite them (`query/gloss.ts`, `sqlite-store.ts`, `gloss-order.test.ts`, the spec).
+7. **Criterion 7's rule was measured but not implemented** — nothing ran `integrity_check` on
+   `SQLITE_CORRUPT`. It does now, inside `markLost`.
+8. **`decompFetched()` could not fail before the first call**, because the store was built lazily. It
+   is built eagerly in the harness; the criterion no longer stands on one leg.
+9. **The `isGlossToken` comment still described an `ORDER BY` the SQL no longer had**, in a file this
+   change had already edited.
+10. **Criterion 1's query list was a re-typed subset of D2's** and omitted the polyphone, the
+    cross-script pair, half the ü/v folding, the three-headword astral case, and — most importantly —
+    `to` and `the`, the only queries where the `ORDER BY` removal could change an answer. It also had
+    no `entries()` case, so D3's 900-value chunking was never compared across runners. All added; the
+    chunked case now feeds 1,200 ids.
+11. **`installWithRetry` could not retry.** `installOpfsSAHPoolVfs` memoises its result per VFS name
+    *including rejections* and rethrows the cached error unless `forceReinitIfPreviouslyFailed` is
+    set, which the first version did not pass — so attempts 2 and 3 slept and rethrew attempt 1's
+    failure without touching OPFS, and the reload race the retry exists for was exactly the case it
+    did not fix. The option is undeclared in the shipped typings and is widened locally.
+12. **Every dictionary URL was root-absolute**, ignoring `import.meta.env.BASE_URL`, which
+    `vite build --base=/sub/` — a deploy shape `vite.config.ts` and `src/main.tsx` both document as
+    supported — would have broken into a manifest fetch that returns the SPA fallback's HTML with a
+    200. `lib/dict/asset-url.ts` now prefixes the base, defensively enough to survive being imported
+    into plain Node by Playwright's spec loader, which it was (and which took a whole suite down once
+    before the guard went in).
+13. **`decomp.json` is not service-worker cached and the comment said it was**, copied from
+    `web.md` W2's own text: `scripts/sw.template.js` only intercepts `/assets/**` and navigations, so
+    a root-level `/decomp.json` matches nothing. One `url.pathname === '/decomp.json'` rule in the
+    worker fixes it and it is W2/W3's to add; until then a character sheet re-fetches 0.92 MB per page
+    and does not work offline. Corrected in the comment and recorded here.
+14. **The CSP that does not exist yet now has a constraint on it.** `web.md` W7 will write the app's
+    first Content-Security-Policy, and `default-src 'self'; script-src 'self'` — the obvious first
+    policy — breaks every dictionary open: `WebAssembly.instantiate` needs `'wasm-unsafe-eval'` in
+    `script-src`, and the dedicated worker needs `worker-src 'self'`. Nothing in the dictionary layer
+    can detect or work around that; the failure surfaces as `failed (corrupt)` on the banner for every
+    web learner. **W7 must include both.**
+
+Mutation-tested rather than trusted, each mutation applied to a copy-aside and restored (never
+`git checkout` — D3's lesson): the batch/result-length check, the abandoned-id drop, the recovery
+guard, the progress `settled` latch in both directions, the download truncation check, the worker's
+header validation, the fatal-error detection behind eviction recovery, and the ladder's fall-through.
+Every one of them turned a passing test red. Two did **not**, and both led to a change rather than a
+shrug: neutering the header check left "a valid SQLite database that is not this artifact" still
+reporting `corrupt` (the store's own `meta` read fails on a database with no `meta` table), so that
+case now asserts the message; and removing the explicit pool release left the retry test green,
+because this Chromium's worker teardown happens to be fast — so the test's comment now claims the
+outcome rather than the mechanism.

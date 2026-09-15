@@ -74,12 +74,33 @@ export function buildMatch(tokens: readonly string[]): string | null {
 /**
  * The ranked candidate path.
  *
- * `ORDER BY e.rowid` is the frequency ordering (D1 assigned the rowids in
+ * Rowid order **is** the frequency ordering (D1 assigned the rowids in
  * `compareEntries` order), which is exactly the ordering today's posting lists
- * have and which today's 5,000-row slice depends on. It costs about 10 ms of
- * temp B-tree on the worst query: FTS5 happens to return rowids ascending
- * already, but that is not a documented guarantee and the correct result is
- * worth the sort. See HANDOFF.md, D3.
+ * have; the 5,000-row slice and `isGlossToken`'s "first candidate that matches"
+ * both depend on it.
+ *
+ * **There is deliberately no `ORDER BY`, and D4 changed that.** D3 wrote
+ * `ORDER BY e.rowid` because FTS5's ascending-rowid scan "is not a documented
+ * guarantee and the correct result is worth the sort", and measured the sort at
+ * about 10 ms on the worst query — native. In wasm it is not 10 ms. Measured in
+ * the container's Chromium against the real artifact: `"to"` matches **31,561**
+ * rows, and `ORDER BY` makes SQLite materialise and sort *all* of them before
+ * the `LIMIT` applies, so this statement costs **1,117–1,137 ms with the sort
+ * and 46–51 ms without** — and, tellingly, **1,031–1,127 ms at `LIMIT 400`, the
+ * same as at `LIMIT 5000`**, which is why `data.md` §6's "a smaller `LIMIT`"
+ * lever does nothing at all for this shape. The whole `search('to')` call is
+ * 89–100 ms without the sort. A one-second keystroke is not a thing to leave in
+ * because a sort is tidier.
+ *
+ * What replaces the guarantee is two assertions rather than a clause, on two
+ * different SQLites. `tests/unit/dict/gloss-order.test.ts` checks, against the
+ * built artifact through `node:sqlite`, that this query returns strictly
+ * ascending rowids and exactly the same rows as the sorted form — for **every**
+ * token whose posting list exceeds the cap, which is the only case where the two
+ * could differ. `tests/e2e/d/dict-wasm.spec.ts` checks the same property against
+ * `@sqlite.org/sqlite-wasm`, which is the build the removal was made for. The
+ * third runner, the SQLCipher FTS5 behind `@capacitor-community/sqlite`, is
+ * `data.md` D5a/D5b's to add; HANDOFF.md names it as theirs.
  *
  * `glosses` is in the projection because `glossTier` needs the text, and it is
  * the only place in the layer where up to 5,000 rows carry it.
@@ -89,7 +110,28 @@ export function glossCandidates(match: string, cap = MAX_GLOSS_CANDIDATES): SqlQ
     sql:
       `SELECT e.${RANK_COLUMNS.split(', ').join(', e.')}, e.glosses ` +
       `FROM gloss_fts f JOIN entries e ON e.rowid = f.rowid ` +
-      `WHERE f.gloss_fts MATCH ? ORDER BY e.rowid LIMIT ?`,
+      `WHERE f.gloss_fts MATCH ? LIMIT ?`,
     params: [match, cap],
   };
+}
+
+/**
+ * The sorted form, kept only so the guard test has something to compare against.
+ *
+ * It is never used at runtime. Exported rather than copied into the test because
+ * a copy is a copy: the thing being proved is that `glossCandidates` and this
+ * return the same rows, and a test that re-types the projection would go on
+ * passing after somebody changed one of them.
+ */
+export function glossCandidatesSorted(match: string, cap = MAX_GLOSS_CANDIDATES): SqlQuery {
+  const plain = glossCandidates(match, cap);
+  const sql = plain.sql.replace(' LIMIT ?', ' ORDER BY e.rowid LIMIT ?');
+  // `String.replace` returns its input when the needle is absent, so a future
+  // edit to `glossCandidates` could quietly make this the identity function —
+  // and the guard test would then be comparing a query against itself and
+  // passing forever. Cheap to check, impossible to notice otherwise.
+  if (sql === plain.sql) {
+    throw new Error('glossCandidates no longer ends in ` LIMIT ?`; the sorted oracle is a no-op');
+  }
+  return { ...plain, sql };
 }

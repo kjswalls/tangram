@@ -31,6 +31,10 @@ const loaders: Record<string, () => Promise<Record<string, unknown>>> = {
   '@capacitor/keyboard': () => import('@capacitor/keyboard'),
   '@capacitor/splash-screen': () => import('@capacitor/splash-screen'),
   '@capacitor/status-bar': () => import('@capacitor/status-bar'),
+  // The OPFS dictionary's wasm (docs/plans/data.md D4). The module factory is
+  // all that is imported here — initialising it would fetch and instantiate
+  // 869 KB of wasm, which is the worker's job and not a dependency check's.
+  '@sqlite.org/sqlite-wasm': () => import('@sqlite.org/sqlite-wasm'),
   clsx: () => import('clsx'),
   dexie: () => import('dexie'),
   'dexie-react-hooks': () => import('dexie-react-hooks'),

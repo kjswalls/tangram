@@ -5906,3 +5906,132 @@ the second must not lose the first.
   value is what a card is stamped with — so every answer that carries a version moves the store to
   `ready` as well. `?seed=demo` caught this: it writes cards without ever mounting a gate, and every
   one of them was stamped `dictVersion: 'unknown'`.
+
+## `core.md` C5a — the drag-select harness, measured before anything is built
+
+**Landed.** `components/gallery/span-select-harness.tsx`, `src/routes/span-select.tsx`, a
+`::highlight(span-select)` rule in `app/globals.css`, and
+`tests/e2e/core/span-select-harness.spec.ts`.
+
+### The URL `ios.md` I2 opens on the device
+
+```
+/span-select
+```
+
+**Standalone, outside `<Root>`.** It is a top-level route rather than a child of the shell, so it
+boots with no header, no nav, no dictionary, no providers and no app state — which is what R2 needs:
+I2 loads it on a physical device with no sign-in, and the crash it is looking for happens during
+touch on the passage. It carries the **same build-mode guard as the gallery**, and
+`tests/e2e/core/gallery-excluded.spec.ts` now proves both halves for it: an `--mode e2e` build
+contains it, a production build contains neither the module nor the path, and requesting it in
+production renders the not-found surface.
+
+### The criterion `ios.md` I2 is relying on, asserted
+
+`git diff --name-only` for this commit:
+
+```
+HANDOFF.md
+apps/app/app/globals.css
+apps/app/components/gallery/span-select-harness.tsx
+apps/app/src/routes.tsx
+apps/app/src/routes/span-select.tsx
+apps/app/tests/e2e/core/gallery-excluded.spec.ts
+apps/app/tests/e2e/core/span-select-harness.spec.ts
+apps/app/tests/unit/gallery/span-select-scope.test.ts
+```
+
+**Nothing under `components/hanzi/`, `components/reader/`, `lib/stores/` or `lib/reader/`.**
+`tests/unit/gallery/span-select-scope.test.ts` holds the durable half after the fact: the harness
+imports nothing from the reader, the reader stores or `lib/reader`; it imports `<HanziText>` and
+nothing else from `components/hanzi`; and `components/hanzi/use-span-select.ts` and
+`span-clipboard.ts` — the two modules C5a names as C5b's — do not exist.
+
+### The numbers
+
+**Which caret API this engine chose:** `caretPositionFromPoint`, in headless desktop Chromium; the
+CSS Custom Highlight API is present. Recorded rather than assumed, because **register #2 is open**:
+WebKit landed `caretPositionFromPoint` behind a flag in late 2024 and whether Safari 26 ships it on
+is unverified. The harness feature-detects at runtime and prints which path it took, so I2 reads the
+answer off the device rather than inferring it.
+
+**`pointermove` handler time over a 568-character passage**, one sample per move, the whole handler
+including the highlight update, during a full-width drag:
+
+| | |
+|---|---|
+| samples | 60 |
+| p50 | **1.0 ms** |
+| p95 | **1.2 ms** |
+| max | 10.4 ms |
+| frames during the drag | 61 |
+| dropped frames (> 20 ms) | **0** |
+| budget (C5a) | 16.7 ms |
+
+Comfortably inside one frame, and the max is the first move, which pays for the initial hit-test.
+**This is the baseline, not a pass mark** — no audit measured it, headless Chromium on a container
+is not a phone, and `ios.md`/`android.md` re-measure on hardware.
+
+### The axis-discrimination threshold
+
+**`AXIS_THRESHOLD_PX = 8`**, and the rule has two halves, both of which matter:
+
+> commit when horizontal travel ≥ 8 CSS px **and** horizontal travel > vertical travel.
+
+Chosen against the harness: a drag of 120px down with 6px of horizontal drift never commits, and a
+drag of 120px across with 6px of vertical drift always does — both asserted. The second half is what
+makes a *long* vertical scroll with 20px of accumulated drift stay the browser's; a bare distance
+threshold would have taken it. C5b consumes this number and `ios.md`/`android.md` re-check it on
+hardware, **where thumbs are less precise than Playwright** and 8px may well be too eager.
+
+### `touch-action` is dynamic, and AUDIT 2 was right
+
+AUDIT 1 (iOS) says `touch-action: none` on the reader container; AUDIT 2 (Android) says
+`touch-action` handling **on pointer-down**; STACK §2.1 flattened both into the iOS wording. A static
+`touch-action: none` is exactly the declaration that stops the browser panning that element — on the
+one screen made of a long scrolling passage. The harness takes AUDIT 2's version: the passage rests
+at `pan-y`, `pointerdown` records the origin and does nothing else, and `touch-action: none` is set
+**after** capture, for the duration of the drag only. A spec drives a real touch scroll through CDP
+over the passage and asserts the page scrolled and no selection started.
+
+### Three things the harness found that a plan could not
+
+1. **A caret position is a boundary, not a character.** `caretPositionFromPoint` snaps to the nearer
+   boundary, so a point in the right half of character *c* comes back as `c + 1` — a drag from
+   character 3 to 7 reported 4 to 8. The boundary is disambiguated by asking which character's box
+   the point is actually in: one range and one rect per move, and the cost is **inside** the
+   `pointermove` measurement above rather than hidden from it. C5b inherits this or inherits the
+   off-by-one.
+2. **A whole gesture can arrive inside one task**, and React state is useless there. Every
+   `pointermove` and the release can dispatch in a single burst — which is what a synthetic touch
+   sequence does and what a fast real drag does — so React never re-renders in between. Reading the
+   anchor out of state meant every move saw `null` and committed nothing; reading the span out of
+   state at release meant the release overwrote a correct report with an empty one. The drag path
+   reads refs and the state is only what is drawn.
+3. **`setPointerCapture` throws for a pointer the browser is not tracking** (`NotFoundError`), which
+   is both a synthetic event and, in the wild, a pointer already cancelled. Capture is best-effort:
+   the selection does not depend on it, and throwing there abandons the gesture instead.
+
+### Decisions this plan's C5a left open
+
+- **The highlight takes the practice accent** (`--practice-soft` / `--practice`), not the jade
+  `--lookup-soft`. The reader already uses jade for a word in learning, and a span the learner is
+  dragging must not look like a word state they have earned. `::highlight()` accepts only colour,
+  background, decoration and shadow by spec, so that is the whole rule.
+- **`data-span-index` is stamped from the character map, not from a count of elements.** Counting
+  elements looked equivalent and is not: a run with no reading — every punctuation mark — renders as
+  one plain `<span>` with no per-character element, so a counter drifts out of step with the text at
+  the first comma and every later "character N" is a different character. C5b's `spanOf()` has the
+  same hazard.
+- **The `<rt>` exclusion is structural, not a filter.** The character map is built by a TreeWalker
+  that rejects anything inside `<rt>` or `<rp>`, so every range the harness can build is already
+  base text. The spec asserts it against the live highlight registry anyway, and asserts there are
+  more than fifty `<rt>`s on screen to have been swept up.
+- **The Copy affordance derives its string from the harness's own character index**, not from the
+  DOM or the selection — base characters, no readings, asserted against the real clipboard. C5b
+  promotes this into `span-clipboard.ts` reading `spanOf()`, rather than inventing it twice.
+- **The fallback is reached by deleting both caret APIs from `Document.prototype` before the app
+  loads**, which is what a browser without them looks like; the detection is at runtime, so it
+  engages by itself. Tap-then-tap gives the same span as the drag, and a drag in that mode correctly
+  does nothing.

@@ -68,3 +68,21 @@ body {
     transform: translateX(300%);
   }
 }
+
+/*
+ * The painted span (docs/plans/core.md C5a).
+ *
+ * The **CSS Custom Highlight API**: the harness registers ranges and the
+ * browser paints them, so a pointer move costs no DOM mutation — which is the
+ * whole reason the design survives a 500-character passage at 60fps.
+ *
+ * `::highlight()` accepts only a few properties by spec — colour, background,
+ * decoration, shadow — so this is the whole of it. It takes the **practice**
+ * accent rather than `--lookup-soft`: the reader already uses the jade tint for
+ * a word in learning, and a span the learner is dragging must not look like a
+ * word state they have earned.
+ */
+::highlight(span-select) {
+  background-color: var(--practice-soft);
+  color: var(--practice);
+}

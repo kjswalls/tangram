@@ -44,6 +44,7 @@ import type { RouteObject } from 'react-router';
 
 import { Root } from './root';
 import { GalleryRoute } from './routes/gallery';
+import { SpanSelectRoute } from './routes/span-select';
 import { ListDetailRoute } from './routes/list-detail';
 import { ListsRoute } from './routes/lists';
 import { NotFoundRoute } from './routes/not-found';
@@ -60,7 +61,22 @@ const devOnlyRoutes: RouteObject[] =
     ? [{ path: 'gallery', element: <GalleryRoute /> }]
     : [];
 
+/**
+ * `/span-select` — the drag-select harness (docs/plans/core.md C5a), **outside
+ * the shell**.
+ *
+ * It is a top-level route rather than a child of `<Root>` because `ios.md` I2
+ * opens it on a physical device with nothing else booted: no header, no nav, no
+ * dictionary, no providers. Same build-mode guard as the gallery, so it leaves
+ * a production build with it.
+ */
+const devOnlyStandalone: RouteObject[] =
+  import.meta.env.DEV || import.meta.env.MODE === 'e2e'
+    ? [{ path: '/span-select', element: <SpanSelectRoute /> }]
+    : [];
+
 export const routes: RouteObject[] = [
+  ...devOnlyStandalone,
   {
     path: '/',
     element: <Root />,

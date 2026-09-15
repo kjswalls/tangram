@@ -36,6 +36,7 @@ import { basename, extname, join, resolve } from 'node:path';
 import { expect, test } from '@playwright/test';
 
 import { GALLERY_MARKER } from '../../../components/gallery/gallery';
+import { HARNESS_PATH } from '../../../components/gallery/span-select-harness';
 
 const APP_DIR = resolve(import.meta.dirname, '..', '..', '..');
 const VITE = resolve(APP_DIR, 'node_modules', 'vite', 'bin', 'vite.js');
@@ -130,6 +131,33 @@ test.describe('a production build has no gallery', () => {
     expect(emitted.map((path) => basename(path)).filter((name) => /gallery/i.test(name))).toEqual(
       [],
     );
+  });
+
+  /**
+   * The drag-select harness goes with it (core.md C5a).
+   *
+   * It is a **top-level** route, outside `<Root>`, so it does not benefit from
+   * the gallery's guard by accident — it carries the same one, and it has to,
+   * because `ios.md` I2 opens it on a device and nothing else may.
+   */
+  test('the control: an --mode e2e build DOES contain the span-select harness', () => {
+    const carriers = emittedText(E2E_DIR).filter((path) =>
+      readFileSync(path, 'utf8').includes(HARNESS_PATH),
+    );
+    expect(carriers.length).toBeGreaterThan(0);
+  });
+
+  test('no span-select module reaches a production build', () => {
+    const offenders = emittedText(PROD_DIR).filter((path) =>
+      readFileSync(path, 'utf8').includes(HARNESS_PATH),
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  test('requesting /span-select renders the not-found surface', async ({ page }) => {
+    await page.goto(`http://localhost:${PORT}/span-select`);
+    await expect(page.getByTestId('span-select-harness')).toHaveCount(0);
+    await expect(page.getByRole('link', { name: 'Go to Today' })).toBeVisible();
   });
 
   test('requesting /gallery renders the not-found surface, not the gallery', async ({ page }) => {

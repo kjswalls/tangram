@@ -64,8 +64,39 @@ import { Button } from '@/components/ui/button';
 /** The URL `ios.md` I2 opens on the device. Recorded in HANDOFF.md. */
 export const HARNESS_PATH = '/span-select';
 
+/**
+ * **The string `gallery-excluded.spec.ts` greps the bundles for, and it is the
+ * root element's `data-testid` because a marker has to be *rendered*.**
+ *
+ * The spec used to key on `HARNESS_PATH`, which nothing in the app reads —
+ * `src/routes.tsx` carries its own `'/span-select'` literal. Rolldown dropped
+ * the unused export, so the marker tracked the route table rather than this
+ * module: a production component importing `SpanSelectHarness` shipped the
+ * whole harness, its 500-character passage included, and the spec still passed
+ * because the constant it greps for had been shaken out. The gallery's own
+ * marker never had that hole, because it is rendered — so this one is too.
+ *
+ * Do not grep the bare string `span-select`: `app/globals.css`'s
+ * `::highlight(span-select)` rule ships in production CSS.
+ */
+export const HARNESS_MARKER = 'span-select-harness';
+
 /** The name the Custom Highlight API registers the painted span under. */
 export const HIGHLIGHT_NAME = 'span-select';
+
+/**
+ * The class the **degrade** paints with, when there is no Custom Highlight API.
+ *
+ * core.md C5a specifies the fallback as one that "needs no `caretRangeFromPoint`,
+ * no Custom Highlight API and no `pointermove` at all, and paints with a class
+ * on the already-per-character DOM". The first draft degraded only on the caret
+ * APIs: `paint()` returned early when the highlight registry was missing and
+ * nothing else painted, so below Chrome 105 / Safari 17.2 — and on whatever
+ * WebKit does with `::highlight` in `ios.md` I2, which is one of the outcomes
+ * register #1 is waiting on — the harness selected **invisibly**. The span was
+ * computed, Copy was enabled, and the learner saw nothing.
+ */
+export const SELECTED_CLASS = 'span-selected';
 
 /**
  * Horizontal travel, in CSS pixels, before a gesture counts as a sweep.
@@ -120,6 +151,41 @@ interface CharMap {
   pieces: Piece[];
   /** The passage's base characters, `<rt>` and `<rp>` excluded. */
   text: string;
+}
+
+/**
+ * One element the class degrade can paint, and the characters it holds.
+ *
+ * Derived from the **char map's own pieces**, not from a query for
+ * `[data-char-index]`, and for the same reason the `data-span-index` stamp is:
+ * a run the dictionary has no reading for renders as one plain `<span>` with
+ * the whole run's text and no per-character elements, so a query misses every
+ * punctuation mark in the passage. A piece's parent element is exact for an
+ * annotated character and coarse for a plain run — a two-character run paints
+ * whole when the span touches either half. That is a visible difference from
+ * the Custom Highlight API's exact ranges; it is also the most a class on the
+ * existing DOM can do, and it never covers an `<rt>`, because an `<rt>`'s text
+ * node is not in the map.
+ */
+interface PaintTarget {
+  element: HTMLElement;
+  start: number;
+  /** Exclusive. */
+  end: number;
+}
+
+function paintTargets(map: CharMap): PaintTarget[] {
+  const targets: PaintTarget[] = [];
+  for (const piece of map.pieces) {
+    const element = piece.node.parentElement;
+    if (!element) continue;
+    targets.push({
+      element,
+      start: piece.start,
+      end: piece.start + (piece.node.nodeValue?.length ?? 0),
+    });
+  }
+  return targets;
 }
 
 /**
@@ -207,10 +273,37 @@ export function indexFromPoint(
       offset = range.startOffset;
     }
   }
-  if (!node) return undefined;
-  const boundary = indexOfNode(map, node, offset);
-  if (boundary === undefined) return undefined;
-  return characterAt(map, boundary, x);
+  if (node) {
+    const boundary = indexOfNode(map, node, offset);
+    if (boundary !== undefined) return characterAt(map, boundary, x);
+  }
+  /**
+   * **The pinyin band, which the caret API answers and the char map cannot.**
+   *
+   * An `<rt>` renders *above* its `<ruby>`'s box, and `caretPositionFromPoint`
+   * happily returns the `<rt>`'s own text node for a point in it — measured at
+   * 390px as a ~13px band per line, sitting directly over the pinyin, which is
+   * the most natural thing for a thumb to aim at. That node is in no piece (the
+   * TreeWalker rejected it), so `indexOfNode` returned `undefined` and the whole
+   * gesture died silently: no highlight, no span, Copy disabled, and no signal
+   * distinguishing it from a broken app. The spec's own helper had found the
+   * band and aimed 75% down the glyph to avoid it.
+   *
+   * The two-tap fallback was never affected, because it hit-tests by element
+   * and an `<rt>` resolves up to its `<ruby>`. So does this: the same
+   * `data-span-index` stamp, asked for the same way.
+   *
+   * **A rescue for a caret API that answered, not a third hit-test.** With no
+   * caret API at all the answer stays `undefined`, so the drag path still goes
+   * quiet and the two-tap fallback is still what engages — the degrade C5a
+   * specifies, rather than two live selection models on one container.
+   */
+  if (api === 'none') return undefined;
+  const element = (doc as Document).elementFromPoint?.(x, y) ?? null;
+  const stamped = (element as HTMLElement | null)?.closest<HTMLElement>('[data-span-index]');
+  if (!stamped) return undefined;
+  const index = Number(stamped.dataset.spanIndex);
+  return Number.isNaN(index) ? undefined : index;
 }
 
 /** Ranges covering `[from, to]` inclusive, over base text nodes only. */
@@ -259,6 +352,8 @@ export function SpanSelectHarness({ minChars = 500 }: SpanSelectHarnessProps) {
   const runs = useMemo(() => passageRuns(minChars), [minChars]);
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<CharMap>({ pieces: [], text: '' });
+  const targets = useRef<PaintTarget[]>([]);
+  const painted = useRef<HTMLElement[]>([]);
 
   const [api, setApi] = useState<CaretApi>('none');
   const [highlights, setHighlights] = useState(false);
@@ -298,6 +393,8 @@ export function SpanSelectHarness({ minChars = 500 }: SpanSelectHarnessProps) {
     const root = container.current;
     if (!root) return;
     map.current = buildCharMap(root);
+    targets.current = paintTargets(map.current);
+    painted.current = [];
     /**
      * Stamped from the **char map**, not from a running count of elements.
      *
@@ -322,25 +419,49 @@ export function SpanSelectHarness({ minChars = 500 }: SpanSelectHarnessProps) {
     reportRef.current(null);
   }, [runs]);
 
+  /** Undo the class degrade. Cheap and idempotent: it walks what it painted. */
+  const unpaintClasses = useCallback(() => {
+    for (const element of painted.current) element.classList.remove(SELECTED_CLASS);
+    painted.current = [];
+  }, []);
+
   const paint = useCallback(
     (from: number, to: number) => {
       const root = container.current;
       if (!root) return;
-      if (!highlightsSupported()) return;
-      const ranges = rangesFor(map.current, from, to);
-      const registry = (CSS as unknown as { highlights: Map<string, unknown> }).highlights;
+      const lo = Math.min(from, to);
+      const hi = Math.max(from, to);
       const HighlightCtor = (globalThis as unknown as { Highlight?: new (...r: Range[]) => unknown })
         .Highlight;
-      if (!HighlightCtor) return;
-      registry.set(HIGHLIGHT_NAME, new HighlightCtor(...ranges));
+      if (highlightsSupported() && HighlightCtor) {
+        const ranges = rangesFor(map.current, lo, hi);
+        const registry = (CSS as unknown as { highlights: Map<string, unknown> }).highlights;
+        registry.set(HIGHLIGHT_NAME, new HighlightCtor(...ranges));
+        return;
+      }
+      /**
+       * **The degrade, and it runs rather than existing.** One class per
+       * element that holds a character in the span — a DOM mutation per move,
+       * which is what the Custom Highlight API exists to avoid and what this
+       * path pays because the alternative is an invisible selection.
+       */
+      unpaintClasses();
+      const next: HTMLElement[] = [];
+      for (const target of targets.current) {
+        if (target.end <= lo || target.start > hi) continue;
+        target.element.classList.add(SELECTED_CLASS);
+        next.push(target.element);
+      }
+      painted.current = next;
     },
-    [],
+    [unpaintClasses],
   );
 
   const clearPaint = useCallback(() => {
+    unpaintClasses();
     if (!highlightsSupported()) return;
     (CSS as unknown as { highlights: Map<string, unknown> }).highlights.delete(HIGHLIGHT_NAME);
-  }, []);
+  }, [unpaintClasses]);
 
   const report = useCallback((next: { from: number; to: number } | null) => {
     const text = next
@@ -382,8 +503,23 @@ export function SpanSelectHarness({ minChars = 500 }: SpanSelectHarnessProps) {
   );
 
   const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    // Record and nothing else: no capture, no preventDefault. Whatever this
-    // gesture turns out to be, the browser still owns it at this instant.
+    /**
+     * **A second finger is not a new gesture.**
+     *
+     * This used to overwrite `origin` unconditionally. A pinch, a second thumb
+     * or a palm landing mid-drag therefore orphaned the drag in flight: the
+     * first pointer's moves were dropped by the id guard below, `dragging` was
+     * reset to false, and so the teardown's `touch-action: pan-y` never ran —
+     * the passage was left at `touch-action: none` **for ever**, on the one
+     * screen made of a long scrolling passage. Confirmed with real touch
+     * through CDP: after one interrupted drag, a vertical touch drag on the
+     * passage moved `scrollY` 0 → 0, while the same drag started outside it
+     * scrolled normally. Not even Clear recovered it.
+     *
+     * Ignoring the second pointer keeps the first one's id in `origin`, so its
+     * moves keep arriving and its release still tears the gesture down.
+     */
+    if (origin.current && dragging.current) return;
     origin.current = { x: event.clientX, y: event.clientY, id: event.pointerId };
     dragging.current = false;
     moves.current = [];
@@ -436,22 +572,44 @@ export function SpanSelectHarness({ minChars = 500 }: SpanSelectHarnessProps) {
 
     event.preventDefault();
     const at = indexFromPoint(map.current, event.clientX, event.clientY, detectCaretApi());
-    const from = anchorRef.current;
-    if (at !== undefined && from !== null && from !== undefined) commit(from, at);
+    if (at !== undefined) {
+      /**
+       * **Anchor late rather than not at all.** The origin is hit-tested once,
+       * and a press the hit test cannot name left `anchorRef` null for the life
+       * of the gesture — every later move then had a character and nowhere to
+       * measure it from. Taking the first nameable point as the anchor costs a
+       * few characters of precision on a press that was already off the text,
+       * and it is the difference between a slightly short selection and a drag
+       * that does nothing at all.
+       */
+      if (anchorRef.current === null) {
+        anchorRef.current = at;
+        setAnchor(at);
+      }
+      commit(anchorRef.current, at);
+    }
     moves.current.push(performance.now() - t0);
   };
 
   const endDrag = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!origin.current) return;
-    if (dragging.current) {
-      event.currentTarget.style.touchAction = 'pan-y';
-      try {
-        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-          event.currentTarget.releasePointerCapture(event.pointerId);
-        }
-      } catch {
-        /* never captured */
+    const started = origin.current;
+    // Only the pointer that owns the gesture ends it. A second finger's release
+    // is not this drag's release.
+    if (!started || started.id !== event.pointerId) return;
+    /**
+     * **Unconditional, not `if (dragging.current)`.** `touch-action` is only
+     * ever `none` because a drag put it there, so restoring it costs nothing
+     * when no drag was in flight — and leaving it is how the passage stopped
+     * scrolling. React never repairs it on its own: the JSX `style` object is
+     * unchanged across renders, so React's style diff writes nothing.
+     */
+    event.currentTarget.style.touchAction = 'pan-y';
+    try {
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
       }
+    } catch {
+      /* never captured */
     }
     origin.current = null;
     dragging.current = false;
@@ -510,7 +668,7 @@ export function SpanSelectHarness({ minChars = 500 }: SpanSelectHarnessProps) {
     : '';
 
   return (
-    <div className="flex flex-col gap-4 p-4" data-testid="span-select-harness">
+    <div className="flex flex-col gap-4 p-4" data-testid={HARNESS_MARKER}>
       <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
         <span data-testid="caret-api">caret: {api}</span>
         <span data-testid="highlight-api">highlight: {highlights ? 'yes' : 'no'}</span>
@@ -522,7 +680,24 @@ export function SpanSelectHarness({ minChars = 500 }: SpanSelectHarnessProps) {
         ) : null}
       </div>
 
-      <p className="text-sm" data-testid="span-text">
+      {/*
+        **One line, always, and that is load-bearing.**
+
+        This readout sits above the passage and grew with the selection. Once
+        the selected string wrapped, the whole passage below was pushed down a
+        line box mid-drag — so the finger landed on an earlier character, the
+        selection shrank, the readout shrank, the passage rose, and the span
+        oscillated: measured at 390px as jumps of 12–18 characters against a
+        uniform 32px per move. The phase's entire output is an instrument and
+        `ios.md` I2 reads it on a device, so a readout that moves the thing
+        being measured is a defect in the measurement. Pinning the height to one
+        `text-sm` line box held the passage still and made the same gesture
+        strictly monotone.
+
+        The text is clipped, not shortened: `textContent` is intact for the spec
+        and for anyone reading the DOM.
+      */}
+      <p className="h-5 truncate text-sm" data-testid="span-text">
         {selected || '(nothing selected)'}
       </p>
 

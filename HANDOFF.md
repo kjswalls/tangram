@@ -6207,3 +6207,174 @@ Per CLAUDE.md the builder records the need and continues without it: **this is n
 frozen surface, it is a note for whoever owns it.** `data.md` D4 may find it moot, since the store
 that replaces this bridge does download and import.
 
+
+---
+
+## C5a, second pass — the drag-select review, and the six things it found
+
+C5a is the phase the brief singled out: "the riskiest UI in the project… give it the review
+attention that deserves." Three independent lenses (the ten acceptance criteria one at a time; what
+breaks on a real device; tests that cannot fail), every finding sent to a refuter with instructions
+to default to refuted. **29 findings, 23 refuted, six confirmed — one blocking, four major, one
+minor.** All six are fixed, and every guard below was mutation-verified: the fix reverted, the test
+watched to fail, the fix restored.
+
+The reviewers reproduced rather than reasoned, which is why these survived: CDP touch for the
+pointer cases, a real `vite build` for the bundle case, and an A/B with one injected CSS line for
+the layout case.
+
+### 1 (blocking) A second finger left the passage unable to scroll, for ever
+
+`onPointerDown` overwrote the gesture unconditionally. A pinch, a second thumb or a palm landing
+mid-drag therefore **orphaned** the drag in flight: the first pointer's moves were dropped by the id
+guard, `dragging.current` was already false when a release arrived, and the teardown — which ran
+only `if (dragging.current)` — never restored `touch-action: pan-y`. The passage was left at
+`none` **permanently**, on the one screen made of a long scrolling passage, and Clear did not
+recover it. Only a later horizontal drag that happened to complete cleanly did.
+
+That is C5a's "scrolling is not broken" criterion, broken by a routine gesture, in the gesture code
+C5b promotes and on the page `ios.md` I2 opens on a physical device.
+
+Two changes, both small: a second pointer is ignored while a drag is in flight (so the first
+pointer keeps its id in `origin` and its own release still tears the gesture down), and the teardown
+is **unconditional** — `touch-action` is only ever `none` because a drag put it there. React never
+repairs it on its own: the JSX `style` object is unchanged across renders, so React's style diff
+writes nothing.
+
+**The event order, measured, because it is not obvious:** `pointerdown 2 → pointerdown 3 →
+pointerup 2 → pointerup 3`. The second finger's `pointerdown` arrives *while* the first is captured,
+and no `pointercancel` is sent.
+
+### 2 (major) The production-exclusion test keyed on a constant rolldown deletes
+
+`gallery-excluded.spec.ts` grepped the emitted bundles for `HARNESS_PATH`. Nothing in the app reads
+that export — `src/routes.tsx` carries its own `'/span-select'` literal — so rolldown shook it out,
+and the marker tracked **the route table, not the harness module**. The reviewer proved it: adding
+`<SpanSelectHarness />` to a production route emitted a bundle containing `span-select-harness`,
+`span-copy` and `Copy the span`, containing `/span-select` zero times, with the spec green. So did
+I, on the fix.
+
+The gallery's own marker never had the hole, because it is *rendered*. The harness now exports
+`HARNESS_MARKER` and uses it as the root element's `data-testid`, so it cannot be shaken out while
+the harness ships; the path check stays as a second assertion, guarding the route table. Do not
+grep the bare string `span-select` — `globals.css`'s `::highlight(span-select)` rule ships in
+production CSS.
+
+This one mattered beyond its own test: with no CI, this spec is the sole enforcement of the ground
+rule that the gallery and the harness must both leave a production build.
+
+### 3 (major) With no Custom Highlight API the harness selected invisibly
+
+core.md C5a specifies a fallback that "needs no `caretRangeFromPoint`, no Custom Highlight API and
+no `pointermove` at all, and **paints with a class on the already-per-character DOM**." The first
+draft degraded only on the caret APIs: `paint()` returned early when the highlight registry was
+missing and nothing else painted. Below Chrome 105 / Safari 17.2 the span was computed, the map was
+right, Copy was enabled — and the learner saw nothing at all. `ios.md` I2 is where that would have
+been found, on the one run that cannot be repeated cheaply, and "the highlight cannot be made to
+land only on base characters" is one of the outcomes register #1 is waiting for.
+
+`paint()` now falls back to a class. The targets are derived **from the char map's own pieces**, not
+from a query for `[data-char-index]`, for the same reason the `data-span-index` stamp is: a run the
+dictionary has no reading for renders as one plain `<span>` with the whole run's text and no
+per-character elements, so a query misses every punctuation mark in the passage. A piece's parent
+element is exact for an annotated character and coarse for a plain run — a two-character run paints
+whole when the span touches either half. That is a visible difference from the Custom Highlight
+API's exact ranges and it is the most a class on the existing DOM can do. It still never covers an
+`<rt>`, because an `<rt>`'s text node is not in the map.
+
+`.span-selected` in `globals.css` is **unlayered**, deliberately, so it beats the Tailwind utilities
+the passage's characters carry — including the reader's known/learning/new colours, which the span a
+learner is actively dragging has to sit on top of. C0 and C3 were each bitten by that cascade rule
+from the other side.
+
+**A deviation from the plan, recorded rather than taken silently.** core.md says the tap-then-tap
+fallback "ships as the automatic degrade when **either** API is missing". It stays gated on the
+caret APIs alone. With class painting in place, a missing highlight registry costs a DOM mutation
+per move and nothing else, so disabling a working drag would be a larger degrade than the plan
+intends — and two live selection models on one container is how a click after a drag starts an
+anchor nobody asked for.
+
+### 4 (major) A press on the pinyin killed the whole gesture, silently
+
+An `<rt>` renders *above* its `<ruby>`'s box, and `caretPositionFromPoint` happily answers with the
+`<rt>`'s own text node for a point in it — measured at 390px as a **~13px band per line, sitting
+directly over the pinyin**, which is the most natural thing for a thumb to aim at. That node is in
+no piece of the char map (the TreeWalker rejected it), so `indexOfNode` returned `undefined`, the
+anchor was `null`, and because the anchor was hit-tested **exactly once** nothing ever recomputed
+it. No highlight, no span, Copy disabled, no feedback distinguishing it from a broken app. Pressing
+again 10px lower worked.
+
+**The spec had found this band and routed around it**: `centreOf` aims at `box.height * 0.75` with a
+comment naming the hazard. A hazard found in a test and dodged there, rather than handled in the
+code or recorded here, is the shape of defect this review round exists to catch.
+
+Two fixes. `indexFromPoint` falls back to `elementFromPoint(...).closest('[data-span-index]')` when
+the caret API answers with something the map cannot name — the same element hit-test the two-tap
+fallback always used, which is why that path was never affected. It is a **rescue for a caret API
+that answered, not a third hit-test**: with no caret API at all the answer stays `undefined`, so the
+drag path still goes quiet and the two-tap fallback is still what engages. And the anchor is now
+taken from the first nameable move when the press could not be named, which costs a few characters
+of precision on a press that was already off the text and is the difference between a short
+selection and a drag that does nothing.
+
+### 5 (major) The instrument moved the thing it was measuring
+
+The selected-text readout sits above the passage and grew with the selection. Once the string
+wrapped, the passage below was pushed down a line box **mid-drag**: the finger then landed on an
+earlier character, the selection shrank, the readout shrank, the passage rose, and the span
+oscillated. Measured at 390px: passage top 132 → 152 → 172 during one continuous drag, with `to`
+jumping 12–18 characters against a uniform 32px per move, and runs of moves committing nothing at
+all because the shifted hit point fell into the `<rt>` band from finding 4.
+
+The reviewer isolated it with one injected CSS line as the only difference: pinned, the same gesture
+was strictly monotone and ended 14 characters further on.
+
+No existing case could see it. Every drag in the spec stays under the wrap threshold (5, 10, 12
+characters), and the RECORD drag runs at 1280px where the readout holds ~89 characters on one line.
+At 390px the passage fits ~11 characters a visual line, so the first wrap is about three lines into
+a drag — which is why the line-break case at 12 characters never reached it.
+
+The readout is now one `text-sm` line box high and truncated. The text is clipped, not shortened:
+`textContent` is intact for the spec and for anyone reading the DOM. **This is a defect in a
+measurement, not a style preference** — the phase's whole output is an instrument and I2 reads it on
+a device. It also reproduced on the harness the exact failure the harness exists to replace:
+core.md C5a rejects the platform's selection because "its precision degrades from characters to
+lines as the selection grows."
+
+### 6 (minor) A comment that claimed the opposite of the code
+
+"The report only exists once something has happened" — the harness writes `window.__spanSelect` at
+the end of the char-map effect, on mount, precisely so I2 can read the instrument before touching
+anything, and the RECORD test below that comment disproves it by reading `characters: 568` with no
+prior interaction. Fixed, and the `?? (await page.evaluate(...))` fallback the false belief
+justified is gone, because `seen` is always defined.
+
+### A note on mutation-verification itself
+
+Two of my first mutation attempts **passed**, and both were vacuous rather than reassuring. One
+reverted `endDrag`'s id check with a string that also appears in `onPointerMove`, so the drag never
+started and the assertion was trivially satisfied. The other added a second touch point with a CDP
+`touchMove` rather than a `touchStart`, so no second `pointerdown` was ever produced. A mutation
+that breaks something else, or that fails to inject the defect at all, proves nothing — when a
+mutation passes, the first suspicion should be the mutation.
+
+### Measurements, re-recorded on the fixed harness
+
+`caretPositionFromPoint`; Custom Highlight API present. `pointermove` over 568 characters, 60
+samples: **p50 0.5 ms, p95 0.8 ms, max 12.5 ms, 61 frames, 0 dropped**, against a 16.7 ms budget.
+The earlier C5a section recorded p50 1.0 / p95 1.2 / max 10.4 on the same machine and the same code
+path — the highlight branch is what runs here, since Chromium has the registry — so the spread
+between two runs is larger than the difference either number would need to matter. **Treat the
+order of magnitude as the result and the digits as noise**; `ios.md` I2 and `android.md` re-measure
+on hardware, which is the number that decides anything.
+
+### Gates after this round
+
+`pnpm lint` clean · `pnpm typecheck` clean · `pnpm test` 113 files / 1454 tests, server 6 / 75 ·
+`pnpm e2e` **187 passed** (180 before; +7 cases across both rounds) · `pnpm build` clean ·
+`pnpm smoke` 21 routes ok.
+
+C5a's diff stays inside its own scope: `app/globals.css`, `components/gallery/span-select-harness.tsx`
+and the two specs. Nothing under `components/hanzi/`, `components/reader/`, `lib/stores/` or
+`lib/reader/` — which `tests/unit/gallery/span-select-scope.test.ts` still enforces.
+

@@ -86,3 +86,24 @@ body {
   background-color: var(--practice-soft);
   color: var(--practice);
 }
+
+/*
+ * …and the **degrade**, for an engine with no Custom Highlight API (below
+ * Chrome 105 / Safari 17.2, and whichever way WebKit answers `ios.md` I2).
+ *
+ * core.md C5a specifies it: the fallback "paints with a class on the
+ * already-per-character DOM". Without it the harness selected invisibly — the
+ * span was computed and Copy was enabled and the learner saw nothing — because
+ * `paint()` returned early when the registry was missing and nothing else
+ * painted. Same two colours, so the two paths cannot drift apart visually.
+ *
+ * **Unlayered, deliberately.** An unlayered rule beats a layered one whatever
+ * the specificity, so this wins over the Tailwind utilities the passage's
+ * characters carry — including the reader's known/learning/new colours, which
+ * the span a learner is actively dragging must sit on top of. C0 and C3 were
+ * each bitten by the same cascade rule from the other side.
+ */
+.span-selected {
+  background-color: var(--practice-soft);
+  color: var(--practice);
+}

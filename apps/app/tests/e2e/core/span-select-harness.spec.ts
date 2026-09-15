@@ -89,14 +89,22 @@ test.describe('the harness itself', () => {
 
   test('RECORD: which caret API this engine offers', async ({ page }) => {
     await openHarness(page);
-    // The report only exists once something has happened; ask for it directly.
+    /**
+     * The report exists at load: the char-map effect writes it on mount,
+     * precisely so `ios.md` I2 can read the instrument on a device before
+     * touching anything. The comment here used to claim the opposite — and the
+     * RECORD test below disproves it by reading `characters: 568` with no prior
+     * interaction. The click stays because it exercises the clear path; it is
+     * not what makes the report appear, and the `??` fallback it justified is
+     * gone, because `seen` is always defined.
+     */
     await page.getByTestId('span-clear').click();
     const seen = await report(page);
     const api = (await page.getByTestId('caret-api').textContent()) ?? '';
     record.caret = {
       note: 'feature detection, desktop Chromium (headless), as the harness reports it',
       label: api.trim(),
-      api: seen?.api ?? (await page.evaluate(() => (('caretPositionFromPoint' in document) ? 'caretPositionFromPoint' : 'caretRangeFromPoint'))),
+      api: seen?.api,
       customHighlightApi: await page.evaluate(() => 'highlights' in CSS),
     };
     write();
@@ -295,6 +303,198 @@ test.describe('the gesture, and the page it sits on', () => {
     }
   });
 
+  /**
+   * **The instrument must not move the thing it measures.**
+   *
+   * The selected-text readout sits above the passage and grew with the
+   * selection. Once the string wrapped, the passage below was pushed down a
+   * line box *mid-drag*: the finger then landed on an earlier character, the
+   * selection shrank, the readout shrank, the passage rose, and the span
+   * oscillated — measured at 390px as jumps of 12–18 characters against a
+   * uniform 32px per move, with runs of moves that committed nothing at all
+   * because the shifted hit point fell into the `<rt>` band.
+   *
+   * No existing case could see it: every drag in this file stays under the wrap
+   * threshold, and the RECORD drag runs at 1280px where the readout holds ~89
+   * characters on one line. This one drags far enough at 390px to wrap several
+   * times over, and asserts on the geometry rather than on the span, because
+   * the span is the symptom.
+   */
+  test('the readout never reflows the passage mid-drag, however long the span', async ({
+    browser,
+  }) => {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const page = await context.newPage();
+    try {
+      await openHarness(page);
+      const top = () =>
+        page.evaluate(
+          () =>
+            (document.querySelector('[data-testid="span-passage"]') as HTMLElement).getBoundingClientRect()
+              .top + window.scrollY,
+        );
+
+      const a = await centreOf(page, 2);
+      const before = await top();
+      await page.mouse.move(a.x, a.y);
+      await page.mouse.down();
+      const seen: number[] = [];
+      // Straight down five lines: at 390px the passage fits ~11 characters a
+      // line, so this selects well past the point the readout used to wrap.
+      for (let step = 1; step <= 12; step += 1) {
+        await page.mouse.move(a.x + 40, a.y + step * 24);
+        seen.push(await top());
+      }
+      await page.mouse.up();
+
+      const selected = (await report(page))?.text ?? '';
+      expect(selected.length, 'the drag must be long enough to have wrapped the readout').toBeGreaterThan(40);
+      expect(new Set([before, ...seen, await top()]).size, `passage top moved: ${seen.join(',')}`).toBe(1);
+    } finally {
+      await context.close();
+    }
+  });
+
+  /**
+   * **A second finger must not leave the passage unable to scroll** — the
+   * blocking finding of C5a's review, reproduced there with real touch through
+   * CDP.
+   *
+   * `pointerdown` used to overwrite the gesture unconditionally, so a pinch or
+   * a second thumb mid-drag orphaned the drag in flight: its moves were dropped
+   * by the id guard, `dragging` was already false when a release arrived, and
+   * the teardown that restores `touch-action: pan-y` never ran. The passage was
+   * left at `none` for ever — on the one screen made of a long scrolling
+   * passage — and not even Clear recovered it. This is C5a's "scrolling is not
+   * broken" criterion, broken permanently by a routine gesture, in the code
+   * `C5b` promotes.
+   */
+  test('a second pointer during a drag never leaves the passage unable to scroll', async ({
+    browser,
+  }) => {
+    const context = await browser.newContext({
+      hasTouch: true,
+      viewport: { width: 390, height: 844 },
+    });
+    const page = await context.newPage();
+    try {
+      await openHarness(page);
+      const passage = page.getByTestId('span-passage');
+      const a = await centreOf(page, 30);
+      const cdp = await context.newCDPSession(page);
+      const send = (type: 'touchStart' | 'touchMove' | 'touchEnd', points: { x: number; y: number }[]) =>
+        cdp.send('Input.dispatchTouchEvent', { type, touchPoints: points.map((p) => ({ ...p })) });
+
+      // A real horizontal drag…
+      await send('touchStart', [a]);
+      for (let step = 1; step <= 4; step += 1) await send('touchMove', [{ x: a.x + step * 12, y: a.y }]);
+      // …interrupted by a second finger. A new touch point arrives as a
+      // `touchStart` carrying BOTH points — which is what produces the second
+      // `pointerdown` the harness has to ignore.
+      await send('touchStart', [
+        { x: a.x + 48, y: a.y },
+        { x: a.x + 120, y: a.y + 60 },
+      ]);
+      await send('touchMove', [
+        { x: a.x + 52, y: a.y },
+        { x: a.x + 130, y: a.y + 70 },
+      ]);
+      await send('touchEnd', []);
+
+      // The declaration the whole gesture design rests on, restored.
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () =>
+              (document.querySelector('[data-testid="span-passage"]') as HTMLElement).style
+                .touchAction,
+          ),
+        )
+        .toBe('pan-y');
+      await expect(passage).toHaveCSS('touch-action', 'pan-y');
+
+      // …and the passage really does scroll again, which is what the learner
+      // would have lost. Asserting only the style would pass on a rule that had
+      // stopped meaning anything.
+      await page.evaluate(() => window.scrollTo(0, 0));
+      const b = await centreOf(page, 30);
+      await send('touchStart', [b]);
+      for (let step = 1; step <= 10; step += 1) await send('touchMove', [{ x: b.x, y: b.y - (200 * step) / 10 }]);
+      await send('touchEnd', []);
+      await expect.poll(() => page.evaluate(() => window.scrollY), { timeout: 3_000 }).toBeGreaterThan(20);
+    } finally {
+      await context.close();
+    }
+  });
+
+  /**
+   * **The pinyin band.** An `<rt>` renders above its `<ruby>`'s box, and
+   * `caretPositionFromPoint` answers with the `<rt>`'s own text node for a
+   * point in it — measured at 390px as a ~13px band per line, sitting directly
+   * over the pinyin, which is the most natural thing for a thumb to aim at.
+   * That node is in no piece of the char map, so the anchor came back
+   * `undefined` and, because the anchor was hit-tested exactly once, the whole
+   * gesture went silently dead: no highlight, no span, Copy disabled.
+   *
+   * The spec's own `centreOf` helper had *found* this band and aimed 75% down
+   * the glyph to dodge it. This case aims straight at it on purpose.
+   */
+  test('a press that lands on the pinyin above a character still selects', async ({ page }) => {
+    await openHarness(page);
+    /**
+     * Discovered from the DOM rather than hardcoded: only a run the dictionary
+     * has a reading for carries `<rt>`s, and only a tappable run carries
+     * per-character `data-span-index` elements at all — index 24 is inside a
+     * plain punctuation run and has no box. The test picks the first annotated
+     * character on the same line as a later annotated one, so the sweep is
+     * horizontal and both ends are nameable.
+     */
+    const pick = await page.evaluate(() => {
+      const stamped = [...document.querySelectorAll<HTMLElement>('[data-span-index]')];
+      for (const node of stamped) {
+        const rt = node.querySelector('rt');
+        if (!rt) continue;
+        const box = node.getBoundingClientRect();
+        const band = rt.getBoundingClientRect();
+        // A later character on the same visual line, far enough to be a sweep.
+        const end = stamped.find((other) => {
+          const rect = other.getBoundingClientRect();
+          return Math.abs(rect.top - box.top) < 2 && rect.x - box.x > 40;
+        });
+        if (!end) continue;
+        const endBox = end.getBoundingClientRect();
+        return {
+          from: Number(node.dataset.spanIndex),
+          to: Number(end.dataset.spanIndex),
+          press: { x: band.x + band.width / 2, y: band.y + band.height / 2 },
+          release: { x: endBox.x + endBox.width / 2, y: endBox.y + endBox.height * 0.75 },
+          // The band really is above the glyph box, which is what makes the
+          // press land outside every base character.
+          aboveGlyph: band.bottom <= box.top + 2,
+        };
+      }
+      return null;
+    });
+    expect(pick, 'the passage has an annotated character with a later one on its line').not.toBeNull();
+    expect(pick!.aboveGlyph, 'the <rt> renders above the glyph box').toBe(true);
+
+    await page.mouse.move(pick!.press.x, pick!.press.y);
+    await page.mouse.down();
+    for (let step = 1; step <= 8; step += 1) {
+      await page.mouse.move(
+        pick!.press.x + ((pick!.release.x - pick!.press.x) * step) / 8,
+        pick!.press.y + ((pick!.release.y - pick!.press.y) * step) / 8,
+      );
+    }
+    await page.mouse.up();
+
+    const span = (await report(page))?.span;
+    expect(span, 'a press on the pinyin selects rather than doing nothing').not.toBeNull();
+    // It anchors on the character the pinyin belongs to, not on a neighbour.
+    expect(span!.from).toBe(pick!.from);
+    expect(span!.to).toBe(pick!.to);
+  });
+
   test('RECORD: pointermove handler time and dropped frames over 500 characters', async ({
     page,
   }) => {
@@ -336,6 +536,80 @@ test.describe('the gesture, and the page it sits on', () => {
     // Recorded, not asserted — the budget is one frame and the review judges
     // the number. What is asserted is that the drag happened at all.
     expect(moves.length).toBeGreaterThan(10);
+  });
+});
+
+/**
+ * **The painting degrade, for an engine with no CSS Custom Highlight API.**
+ *
+ * core.md C5a specifies a fallback that "needs no `caretRangeFromPoint`, no
+ * Custom Highlight API and no `pointermove` at all, and paints with a class on
+ * the already-per-character DOM". The first draft degraded only on the caret
+ * APIs: `paint()` returned early when the highlight registry was missing and
+ * nothing else painted, so below Chrome 105 / Safari 17.2 the harness selected
+ * **invisibly** — span computed, Copy enabled, nothing on screen. `ios.md` I2
+ * is where that would have been discovered, on the one run that cannot be
+ * repeated cheaply.
+ */
+test.describe('with no CSS Custom Highlight API', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      // Feature detection is `'highlights' in CSS`, at runtime.
+      // @ts-expect-error — removing an optional member is the point.
+      delete CSS.highlights;
+    });
+  });
+
+  test('paints the span with a class instead, rather than selecting invisibly', async ({ page }) => {
+    await openHarness(page);
+    await expect(page.getByTestId('highlight-api')).toHaveText('highlight: no');
+
+    await drag(page, 3, 7);
+    expect((await report(page))?.span).toEqual({ from: 3, to: 7 });
+
+    // Something is painted, and it is the characters that were dragged across.
+    const painted = await page.evaluate(() =>
+      [...document.querySelectorAll('[data-testid="span-passage"] .span-selected')].map((node) =>
+        (node as HTMLElement).dataset.spanIndex ?? '',
+      ),
+    );
+    expect(painted.length).toBeGreaterThan(0);
+    expect(painted).toContain('3');
+    expect(painted).toContain('7');
+    // …and not a character outside the span.
+    expect(painted).not.toContain('1');
+    expect(painted).not.toContain('12');
+
+    // The class carries a real colour, not just a name (`globals.css` keeps the
+    // two paths on the same two tokens).
+    const background = await page.evaluate(() => {
+      const node = document.querySelector('.span-selected');
+      return node ? getComputedStyle(node).backgroundColor : '';
+    });
+    expect(background).not.toBe('');
+    expect(background).not.toBe('rgba(0, 0, 0, 0)');
+  });
+
+  test('never paints an <rt>, the same criterion the highlight path holds to', async ({ page }) => {
+    await openHarness(page);
+    await drag(page, 3, 12);
+    const rts = await page.evaluate(
+      () => document.querySelectorAll('[data-testid="span-passage"] rt.span-selected').length,
+    );
+    expect(rts).toBe(0);
+    // …nor anything inside one.
+    const inside = await page.evaluate(
+      () => document.querySelectorAll('[data-testid="span-passage"] rt .span-selected').length,
+    );
+    expect(inside).toBe(0);
+  });
+
+  test('Clear unpaints it', async ({ page }) => {
+    await openHarness(page);
+    await drag(page, 3, 7);
+    expect(await page.locator('.span-selected').count()).toBeGreaterThan(0);
+    await page.getByTestId('span-clear').click();
+    await expect(page.locator('.span-selected')).toHaveCount(0);
   });
 });
 

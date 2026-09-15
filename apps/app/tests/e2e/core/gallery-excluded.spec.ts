@@ -36,7 +36,10 @@ import { basename, extname, join, resolve } from 'node:path';
 import { expect, test } from '@playwright/test';
 
 import { GALLERY_MARKER } from '../../../components/gallery/gallery';
-import { HARNESS_PATH } from '../../../components/gallery/span-select-harness';
+import {
+  HARNESS_MARKER,
+  HARNESS_PATH,
+} from '../../../components/gallery/span-select-harness';
 
 const APP_DIR = resolve(import.meta.dirname, '..', '..', '..');
 const VITE = resolve(APP_DIR, 'node_modules', 'vite', 'bin', 'vite.js');
@@ -140,18 +143,40 @@ test.describe('a production build has no gallery', () => {
    * the gallery's guard by accident — it carries the same one, and it has to,
    * because `ios.md` I2 opens it on a device and nothing else may.
    */
+  /**
+   * **Both cases grep for `HARNESS_MARKER`, and that is the finding that made
+   * them.** They used to grep for `HARNESS_PATH`, which no application code
+   * reads — `src/routes.tsx` carries its own `'/span-select'` literal — so
+   * rolldown shook the unused export out and the marker tracked the route
+   * table rather than the harness module. Proven by adding
+   * `<SpanSelectHarness />` to a production route: the emitted bundle carried
+   * `span-select-harness`, `span-copy` and `Copy the span`, contained
+   * `/span-select` zero times, and this spec passed. `HARNESS_MARKER` is the
+   * root element's `data-testid`, so it cannot be shaken out while the harness
+   * ships — the property `GALLERY_MARKER` always had.
+   *
+   * The path is still checked, as a second assertion: it guards the route table.
+   */
   test('the control: an --mode e2e build DOES contain the span-select harness', () => {
-    const carriers = emittedText(E2E_DIR).filter((path) =>
-      readFileSync(path, 'utf8').includes(HARNESS_PATH),
-    );
+    const emitted = emittedText(E2E_DIR);
+    const carriers = emitted.filter((path) => readFileSync(path, 'utf8').includes(HARNESS_MARKER));
     expect(carriers.length).toBeGreaterThan(0);
+    // …and the route table that reaches it.
+    expect(
+      emitted.filter((path) => readFileSync(path, 'utf8').includes(HARNESS_PATH)).length,
+    ).toBeGreaterThan(0);
   });
 
   test('no span-select module reaches a production build', () => {
-    const offenders = emittedText(PROD_DIR).filter((path) =>
-      readFileSync(path, 'utf8').includes(HARNESS_PATH),
-    );
-    expect(offenders).toEqual([]);
+    const emitted = emittedText(PROD_DIR);
+    expect(emitted.length).toBeGreaterThan(0);
+    // The module itself — the assertion this test's name claims and the one it
+    // was not making.
+    expect(
+      emitted.filter((path) => readFileSync(path, 'utf8').includes(HARNESS_MARKER)),
+    ).toEqual([]);
+    // …and the route.
+    expect(emitted.filter((path) => readFileSync(path, 'utf8').includes(HARNESS_PATH))).toEqual([]);
   });
 
   test('requesting /span-select renders the not-found surface', async ({ page }) => {

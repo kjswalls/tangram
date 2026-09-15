@@ -157,6 +157,15 @@ function sources(root: string, extensions: RegExp): string[] {
 
 // ---------------------------------------------------------------------------
 
+/**
+ * Block and line comments removed, so a `var(--x)` written *about* a token in
+ * prose is not read as a use of it. `//` preceded by `:` is left alone so a URL
+ * does not swallow the rest of its line.
+ */
+function stripComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+}
+
 describe('the values are the point, so assert the values', () => {
   /** product-decisions §11's settled hexes, verbatim. */
   it.each([
@@ -289,7 +298,14 @@ describe('the token layer cannot shadow Tailwind, and cannot dangle', () => {
     const dangling: string[] = [];
     for (const path of sources(appRoot, /\.(css|tsx?|html)$/)) {
       if (path === TOKENS_PATH || path === SELF) continue;
-      const source = readFileSync(path, 'utf8');
+      // Comments are stripped first. `android.md` A2 writes
+      // `var(--safe-area-inset-bottom)` inside prose in `capacitor.config.ts` and
+      // in a test — in both cases to say that shared UI must NOT use it, because
+      // those variables exist on Android native and nowhere else. Scanning raw
+      // text made this guard fail on a comment warning against the exact thing
+      // the guard exists to catch. Found when `claude/build-core` and
+      // `claude/build-android` were merged; neither branch was wrong.
+      const source = stripComments(readFileSync(path, 'utf8'));
       for (const match of source.matchAll(/var\(\s*(--[a-z0-9-]+)/gi)) {
         const name = match[1];
         // `--viz-*` is the chart palette, declared by chart-tokens.tsx itself

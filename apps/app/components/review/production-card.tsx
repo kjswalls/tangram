@@ -175,6 +175,9 @@ export function ProductionCard({
                 {...(face.pinyinNum === undefined ? {} : { pinyinNum: face.pinyinNum })}
                 force
                 rtClassName="text-[0.28em]"
+                /* Rule 3's third clause (core.md C6). The answer face only:
+                   the question face of a write card shows no hanzi to tap. */
+                speakOnTap
               />
             </h2>
             {face.secondary ? (

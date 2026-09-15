@@ -138,6 +138,10 @@ export function ReviewCard({
                 ? { pinyinNum: face.pinyinNum, force: true }
                 : { display: 'never' as const })}
               rtClassName="text-[0.28em]"
+              /* Rule 3's third clause (core.md C6): a tap on a character reads
+                 that syllable alone. The card's block speaker is three lines
+                 down; before this, a tap on the headword did nothing at all. */
+              speakOnTap
             />
           </h2>
         )}

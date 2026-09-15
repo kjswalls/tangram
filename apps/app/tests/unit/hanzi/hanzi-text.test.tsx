@@ -262,9 +262,11 @@ describe('one delegated handler', () => {
     expect(bindings).toHaveLength(1);
     // …and it is on the wrapper, next to the delegation comment's own marker.
     // C5b adds `spanSelect` to the condition — the two-tap degrade's closing
-    // tap arrives at this handler and nowhere else — and nothing else changed.
+    // tap arrives at this handler and nowhere else — and C6 adds `speakOnTap`,
+    // rule 3's "tap a character → hear that syllable alone". Both are
+    // *conditions*; the handler is still the one on the container.
     expect(code).toContain(
-      'onClick={onWord || onCharacter || revealsOnTap || spanSelect ? onClick : undefined}',
+      'onWord || onCharacter || revealsOnTap || spanSelect || speakOnTap ? onClick : undefined',
     );
     // The per-character components must not take one at all.
     expect(code).not.toMatch(/function Ruby\([^)]*onClick/);

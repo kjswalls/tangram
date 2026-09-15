@@ -70,6 +70,34 @@ body {
 }
 
 /*
+ * The character being read aloud (docs/plans/core.md C6).
+ *
+ * `lib/tts/sequence.ts` enqueues one utterance per character and advances this
+ * on each utterance's `start`, so it changes about once a second — which is why
+ * it is a class on the character rather than a second Custom Highlight. See
+ * `components/hanzi/hanzi-text.tsx`'s `SPEAKING_CLASS` for the whole reasoning;
+ * the requirement C6 states is that the speaking mark and the selected-span
+ * mark **compose**, and a class and a `::highlight()` are different mechanisms
+ * that both apply.
+ *
+ * **Neutral, not one of the three accents.** §1 assigns vermillion to Practice
+ * and the single primary action, jade to Look up and "learning", gold to "new".
+ * A speaking mark in any of them would read as a word state the learner had
+ * earned. `--border` on `--paper` is the app's own "here, for a moment" tint,
+ * and it is a background rather than a colour change so the ruby above it stays
+ * exactly as legible as it was.
+ *
+ * **Unlayered, deliberately**, for the same reason `.span-selected` is: an
+ * unlayered rule beats a layered one whatever the specificity, so this wins
+ * over the Tailwind utilities a character carries — including the reader's
+ * known/learning/new colours.
+ */
+.char-speaking {
+  background-color: var(--border);
+  border-radius: var(--r-sm);
+}
+
+/*
  * The passage a span is dragged over (docs/plans/core.md C5b).
  *
  * **The declaration the whole design rests on, and it was missing from the

@@ -253,7 +253,10 @@ export function SpanSelectHarness({ minChars = 500 }: SpanSelectHarnessProps) {
         display="always"
         spanSelect={spanSelect}
         span={span ? { from: span.from, to: span.to } : null}
-        className="select-none text-2xl leading-loose"
+        // No `select-none` here: `<HanziText>` applies `.hanzi-span-host` to
+        // any container with a span handle, so the harness and the reader
+        // cannot drift apart on the one declaration the design rests on.
+        className="text-2xl leading-loose"
       />
     </div>
   );

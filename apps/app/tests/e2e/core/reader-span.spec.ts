@@ -232,6 +232,16 @@ test.describe('the clipboard, which the app owns here', () => {
     }
   });
 
+  /**
+   * **This case tries to make a native selection first, and the first draft did
+   * not — which is why it could not fail.**
+   *
+   * It used to click once at the corner of the passage, and a single click
+   * collapses any selection, so it passed identically whether or not the
+   * passage was selectable. The passage *was* selectable: `user-select: none`
+   * had never landed in production, only on the gallery harness. A triple-click
+   * is what exposes it.
+   */
   test('a copy with NO span active writes nothing — user-select: none is doing its job', async ({
     browser,
   }) => {
@@ -240,12 +250,62 @@ test.describe('the clipboard, which the app owns here', () => {
     const page = await context.newPage();
     try {
       await openReader(page);
+      // The declaration itself, so the failure names its own cause.
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () =>
+              getComputedStyle(document.querySelector('[data-testid="reader-text"]')!).userSelect,
+          ),
+        )
+        .toBe('none');
+
       // A sentinel, so "nothing" is distinguishable from "the empty string".
       await page.evaluate(() => navigator.clipboard.writeText('SENTINEL'));
-      await page.getByTestId('reader-text').click({ position: { x: 2, y: 2 }, force: true });
+      // On the **comma** at 9, not on a word: a click on a word is a lookup and
+      // would leave a span active, which is the other case. Punctuation is
+      // rendered and never tappable, so this is a bare attempt at a native
+      // selection and nothing else.
+      const at = await centreOf(page, 9);
+      await page.mouse.click(at.x, at.y, { clickCount: 3 });
+      expect(await page.evaluate(() => document.getSelection()?.toString() ?? '')).toBe('');
+      await expect(page.getByTestId('reader-panel')).toHaveCount(0);
       await page.keyboard.press('ControlOrMeta+c');
       await page.waitForTimeout(150);
       expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('SENTINEL');
+    } finally {
+      await context.close();
+    }
+  });
+
+  /**
+   * The other half of the same defect: with a span active, a native selection
+   * of the invisible `<rt>` made `useSpanClipboard` yield (it yields to a real
+   * selection by design), and the engine then copied nothing because `rt` is
+   * `user-select: none` — so a double-click on a character *wiped* the
+   * learner's clipboard instead of copying their span.
+   */
+  test('a double-click cannot steal the copy from an active span', async ({ browser }) => {
+    const context = await browser.newContext();
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    const page = await context.newPage();
+    try {
+      await openReader(page);
+      await drag(page, 3, 7);
+      await expect.poll(() => sheetQuery(page)).toBe(slice(3, 7));
+
+      // Again on the comma at 9 — untappable, so the span from the drag is
+      // still the active one and the only thing that could take the copy away
+      // is a native selection.
+      const at = await centreOf(page, 9);
+      await page.mouse.dblclick(at.x, at.y);
+      expect(await page.evaluate(() => document.getSelection()?.toString() ?? '')).toBe('');
+      await expect.poll(() => sheetQuery(page)).toBe(slice(3, 7));
+
+      await page.keyboard.press('ControlOrMeta+c');
+      await expect
+        .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+        .toBe(slice(3, 7));
     } finally {
       await context.close();
     }
@@ -375,5 +435,66 @@ test.describe('the fallback, with both caret APIs gone', () => {
     await page.locator('[data-span-index="3"]').click();
     await expect(page.getByTestId('reader-panel')).toBeVisible();
     await expect(page.getByTestId('span-to-here')).toHaveCount(0);
+  });
+});
+
+
+/**
+ * The keyboard path (docs/plans/core.md C5b, second pass).
+ *
+ * The `reader-text.tsx` this phase deleted rendered every word as a real
+ * `<button>` — "so Tab and Enter reach them for free", in its own header — and
+ * the first draft of the replacement rendered a `<span>` with a click handler.
+ * The passage then contained zero focusable elements: a keyboard or switch user
+ * could not look up a word, could not reach "Mark known", and could arm the
+ * two-tap degrade with no way to close it. Every colouring spec stayed green,
+ * because they read `data-state` and not roles.
+ */
+test.describe('the passage without a pointer', () => {
+  test('Tab reaches a word and Enter opens it', async ({ page }) => {
+    await openReader(page);
+
+    const focusable = await page.$$eval(
+      '[data-testid="reader-text"] button, [data-testid="reader-text"] [tabindex]',
+      (nodes) => nodes.length,
+    );
+    expect(focusable).toBeGreaterThan(50);
+
+    const word = page.locator('[data-testid="reader-token"][data-token="\u6BCF\u5929"]').first();
+    await word.focus();
+    await expect(word).toBeFocused();
+    await page.keyboard.press('Enter');
+
+    await expect(page.getByTestId('reader-panel')).toBeVisible();
+    await expect.poll(() => sheetQuery(page)).toBe('\u6BCF\u5929');
+  });
+
+  test('the two-tap degrade can be completed from the keyboard alone', async ({ page }) => {
+    await page.addInitScript(() => {
+      // @ts-expect-error — deleting an optional DOM member is the point.
+      delete Document.prototype.caretPositionFromPoint;
+      // @ts-expect-error — the WebKit-proprietary one goes too.
+      delete Document.prototype.caretRangeFromPoint;
+    });
+    await openReader(page);
+
+    // Open 早上 (characters 3–4) from the keyboard…
+    const first = page.locator('[data-testid="reader-token"][data-token="\u65E9\u4E0A"]').first();
+    await first.focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByTestId('reader-panel')).toBeVisible();
+
+    // …arm the degrade from its control…
+    await page.getByTestId('span-to-here').click();
+
+    // …and close it on a word reached by keyboard. The closing activation's
+    // target is the word's own button, not a character, which is why
+    // `spanIndexOfEvent` looks inward as well as up.
+    const second = page.locator('[data-testid="reader-token"][data-token="\u8D77\u5E8A"]').first();
+    await second.focus();
+    await page.keyboard.press('Enter');
+
+    // 早(3) … 床(8): the whole span, punctuation-free at both ends.
+    await expect.poll(() => sheetQuery(page)).toBe(slice(3, 8));
   });
 });

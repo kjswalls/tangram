@@ -271,6 +271,7 @@ const Runs = memo(function Runs({
   plainRunTestId,
   wordTestId,
   span,
+  interactive,
 }: {
   views: readonly RunView[];
   states: readonly (WordState | undefined)[] | undefined;
@@ -280,6 +281,24 @@ const Runs = memo(function Runs({
   plainRunTestId?: string;
   wordTestId: string;
   span: { from: number; to: number } | null | undefined;
+  /**
+   * The runs answer a tap, so each word grouping is a real control.
+   *
+   * **`<button>`, not a `<span>` with a click handler**, and that is a
+   * restoration rather than a choice: the `reader-text.tsx` C5b deleted said in
+   * its own header "Word tokens are real `<button>`s, so Tab and Enter reach
+   * them for free and the delegated handler sees the Enter as a click", and the
+   * first draft of the replacement dropped it — measured afterwards as zero
+   * focusable elements inside the passage, so a keyboard or switch user could
+   * not look up a single word, could not reach "Mark known", and could arm the
+   * two-tap degrade with no way to close it. It costs one tab stop per word,
+   * which is exactly what the reader had before.
+   *
+   * Off for the thirty non-interactive call sites — a card face, a search
+   * result, a list row — where a button per word would add tab stops to
+   * something nobody can do anything with.
+   */
+  interactive: boolean;
 }) {
   return (
     <>
@@ -301,9 +320,11 @@ const Runs = memo(function Runs({
         // word, and the ring is the coarse answer to "what did I select".
         const inSpan =
           span !== null && span !== undefined && view.start <= span.to && view.end > span.from;
+        const Word = interactive ? 'button' : 'span';
         return (
-          <span
+          <Word
             key={index}
+            {...(interactive ? ({ type: 'button' } as const) : {})}
             data-testid={wordTestId}
             data-token-index={index}
             data-token={view.run.text}
@@ -312,6 +333,9 @@ const Runs = memo(function Runs({
             {...(inSpan ? { 'data-in-span': 'true' } : {})}
             className={cn(
               'hanzi-token cursor-pointer align-baseline transition-colors',
+              // A `<button>` brings its own box; these are what `reader-text.tsx`
+              // used to keep a word sitting in the line like the text it is.
+              interactive && 'px-0 font-[inherit] leading-[inherit]',
               state ? STATE_CLASS[state] : undefined,
               // Vermillion, not jade: the reader already tints a word in
               // *learning* jade, and a ring in the same colour would read as a
@@ -362,7 +386,7 @@ const Runs = memo(function Runs({
                 />
               ))
             )}
-          </span>
+          </Word>
         );
       })}
     </>
@@ -458,7 +482,10 @@ export function HanziText({
        * the span, which is what `onCommit` delivers.
        */
       if (spanSelect && spanSelect.anchor !== null) {
-        const at = spanIndexOfEvent(target);
+        // `'last'`: a keyboard activation names the word, not a character, and
+        // "…to here" on a word means the whole word rather than its first
+        // character. A pointer tap names a character and this does not apply.
+        const at = spanIndexOfEvent(target, 'last');
         if (at !== undefined) {
           spanSelect.toHere(at);
           return;
@@ -538,7 +565,15 @@ export function HanziText({
        * arrives here and nowhere else.
        */
       onClick={onWord || onCharacter || revealsOnTap || spanSelect ? onClick : undefined}
-      className={cn('hanzi', bandReserved && 'hanzi-band', className)}
+      className={cn(
+        'hanzi',
+        bandReserved && 'hanzi-band',
+        // `user-select: none` + the iOS callout suppression, on the container
+        // the gesture runs over. See `app/globals.css`'s `.hanzi-span-host`: the
+        // reader went without it and the whole clipboard criterion was false.
+        spanSelect && 'hanzi-span-host',
+        className,
+      )}
     >
       <Runs
         views={views}
@@ -547,6 +582,7 @@ export function HanziText({
         showAll={showAll}
         wordTestId={wordTestId}
         span={span}
+        interactive={Boolean(onWord || onCharacter)}
         {...(rtClassName === undefined ? {} : { rtClassName })}
         {...(plainRunTestId === undefined ? {} : { plainRunTestId })}
       />

@@ -7797,3 +7797,187 @@ does everything that plugin does, better, on the platform where insets matter. A
 per `CLAUDE.md`'s rule about frozen surfaces, and the config above makes the common case agree. But
 the package is not merely redundant on Android: it is a second, self-starting owner of the window.
 If I5 has no iOS reason to keep it, dropping it is the smaller change.
+
+---
+
+## `core.md` C5b — drag to select a span, in the reader
+
+**Landed.** C5a's harness logic is production code; `components/reader/reader-text.tsx` is
+deleted; the reader's selection is a span of **characters**. The adversarial review that
+followed found four real defects and they are fixed in the same branch — §"The C5b review"
+below.
+
+### The gate is lifted, and this is the record of why
+
+`wave-zero.md` §10d, read from Apple's own forum thread: the WKWebView crash register #1
+rests on is fixed in **iOS 26 beta 7**, does not reproduce when the app is built with
+**Xcode 26** (which this project must use anyway), and its stack trace is in
+`UIEditMenuInteraction` — the native edit-menu callout, reached by double-tap-hold-drag.
+That is the gesture C5a's design replaces. **`ios.md` I2 survives as a pre-TestFlight
+check, not as a gate on code.** The C5a sections above still say "C5b is not built,
+deliberately" and that `use-span-select.ts` / `span-clipboard.ts` "do not exist"; both
+sentences were true when they were written and are false now. This section supersedes them.
+
+### What the phase actually builds
+
+- **`components/hanzi/use-span-select.ts`** — the whole interaction, promoted from the
+  harness: the char map (`<rt>`/`<rp>` excluded when it is *built*, which is what makes
+  "the highlight never covers an `<rt>`" true by construction), the caret feature
+  detection, the `pan-y` → capture → `none` gesture, the Custom Highlight API paint with
+  its class degrade, and the two-tap fallback. Every fix the C5a review landed came across
+  with it, each named in the comment where it bites.
+- **`components/hanzi/span-clipboard.ts`** — the `copy` handler. **It is on the
+  `document`, not on the passage**, and that is not a convenience: a `copy` event is
+  dispatched at the node the *selection* is in, and a `user-select: none` passage has no
+  selection, so the event arrives at the body. A listener on the passage would never fire,
+  and every unit test of one would still pass.
+- **`components/reader/reader-screen.tsx`** — rewritten around `<HanziText>`.
+- **`lib/stores/reader.ts`** — `selected`/`spanEnd` are character offsets into `body`;
+  `select(tokenIndex)` became `selectToken` / `selectSpan` / `clearSelection`, because a
+  single `select` whose argument silently changed index space is the defect this model
+  change is most likely to produce.
+
+### Two additions to C5b's Files list, and one entry in it that is wrong
+
+1. **`components/reader/use-reader-readings.ts` is new and is not in the plan's Files
+   list.** It has to exist. `<HanziText>` annotates from `HanziRun.pinyinNum` — CC-CEDICT's
+   *numbered* form, the only one `lib/hanzi/align.ts` can split per character — and a
+   `Token` carries `entryIds` and **no reading at all**. Without it the reader would be the
+   one surface in the app that shows Chinese with no pinyin over it, which is product rule
+   1 failing on the screen the rule was written for, and C8's pinyin-control criterion
+   ("switching between them changes what a rendered passage shows") would have nothing to
+   switch. It is one batched read per passage through `EntrySource`, which already chunks
+   at the 200-id limit `app/api/dict/entries/route.ts` enforces, and only the **ranked**
+   id of each word is asked for. It is skipped entirely when `pinyinDisplay` is `'never'`.
+   A dictionary outage degrades to no ruby, never to a broken reader.
+2. **`HanziRun.word` is new.** `<HanziText>` used to infer "is this a tap target?" from
+   "does it have a reading?". A `word` token with `via: 'fallback'` — a name, a rare
+   character, an unsegmented fragment — has no headword and therefore no reading, and
+   `lib/reader/states.ts` still colours it `new` because it is a word the learner has
+   demonstrably not met. Inferring would have made exactly those runs plain and untappable.
+3. **C5b's Files list says `components/reader/use-reader-index.ts` "indexes tokens today
+   and must index characters". That is wrong about what the file does.** It builds the
+   `ReaderIndex` — cards, `known_words`, HSK bands — which answers *about* tokens and has
+   no token index in it. It needed no change and got none. The plan's sentence describes a
+   file that does not exist.
+
+### Decisions the plan did not settle
+
+- **The reader's two-tap degrade arms from a control, the harness's arms from a tap.**
+  C5a's degrade is "tap the first character, then tap the last", which the harness can do
+  because a tap there means nothing else. In the reader a tap opens the word sheet, and
+  taking that away below Chrome 105 / Safari 17.2 would be a worse reader. So the hook has
+  an `armsOnTap` option: the harness sets it, the reader shows a **"Select to…"** button
+  in its toolbar (visible only when the engine reports no caret API) and the next
+  activation on a word closes the span. It is also the only version of the degrade a
+  keyboard can reach, which is now asserted end-to-end.
+- **Endpoints snap, interiors do not.** A drag that starts or ends on punctuation moves
+  inward to the nearest Chinese character; a drag *across* punctuation keeps it, because
+  `spanOf()` slices the body and a span missing its own comma is not a substring of what
+  the learner dragged over. A sweep with no Chinese character in it at all reports no span
+  rather than a widened one.
+- **The ring is the coarse half of the paint, and it is the half a spec can assert.**
+  `data-in-span` lands on every word grouping the span *overlaps*, so the tapped word stays
+  ringed while the sheet is open and the ring follows a whole dragged span — the detail the
+  owner confirmed. It is **vermillion**, not jade: the reader tints a word in *learning*
+  jade, and a jade ring would read as a word state the learner had earned.
+- **The axis threshold C5a measured is what shipped**: `AXIS_THRESHOLD_PX = 8`, with the
+  companion rule (more horizontal than vertical). Unchanged from the C5a section above.
+
+### The C5b review — four confirmed defects, all fixed in this branch
+
+Four lenses, one skeptic per finding. Ten findings survived refutation, five distinct.
+
+**1 (blocking) The reader passage was never `user-select: none`.** The harness carried
+`select-none` on its own container; the production passage did not, and
+`getComputedStyle('[data-testid="reader-text"]').userSelect` answered `auto`. Three
+consequences, all measured: a triple-click still made a native selection, so C5b's own
+criterion "with no span active, a copy over the passage yields nothing" was **false**; with
+a span active, a native selection of the invisible `<rt>` made `useSpanClipboard` yield by
+design and the engine then copied the empty string, **wiping** the learner's clipboard; and
+on WebKit it left native text interaction live on the reader — the `UIEditMenuInteraction`
+path `wave-zero.md` §10d rules out precisely because "the gesture that crashes is the one
+we do not implement". **And the spec that claimed to cover it could not fail**: it clicked
+once, and a single click collapses a selection, so it passed either way.
+Fixed by `.hanzi-span-host` in `app/globals.css`, applied by `<HanziText>` to any container
+with a span handle — so the harness and the reader cannot drift apart on it again — and it
+carries `-webkit-touch-callout: none`, which Tailwind's `select-none` does not emit and
+which is the half that suppresses the iOS callout. The e2e case now triple-clicks
+punctuation first, and a second case double-clicks with a span active.
+
+**2 (major) Every word in the passage stopped being keyboard-reachable.** The deleted
+`reader-text.tsx` rendered each word token as a real `<button>` — "so Tab and Enter reach
+them for free", in its own header — and the replacement rendered a `<span>` with a
+delegated click handler. Measured: zero focusable elements inside `[data-testid="reader-text"]`,
+so a keyboard or switch user could not look up a word, could not reach "Mark known", and
+could arm the two-tap degrade with no way to close it. Every colouring spec stayed green,
+because they read `data-state` and not roles.
+Fixed: `<HanziText>` renders each word grouping as a `<button type="button">` **when a tap
+means something** (`onWord`/`onCharacter` supplied) and as a `<span>` otherwise, so the
+thirty non-interactive call sites do not gain a tab stop per word. `spanIndexOfEvent` now
+also looks *inward* from a word grouping — a keyboard activation's target is the button,
+not a character — scoped to the grouping, because searching inward from anything would make
+a press on the page background resolve to character 0.
+
+**3 (major) `stampSpanIndexes` was O(n²) and ran twice per passage.** It iterated the
+character elements and `find`-ed a piece for each with `element.contains()`. Measured on
+the real reader DOM in desktop Chromium: 1,000 characters 23 ms, 2,000 characters 86 ms,
+4,000 characters 359 ms — and the map is rebuilt once on the plain DOM and again when the
+readings land and every run becomes per-character `<ruby>`. A 2,000-character article
+(`tokenAt`'s own stated design target) froze the main thread for ~170 ms on this container
+and several times that on a phone, with the drag dead throughout because `map.current` is
+empty until the effect returns. Fixed by walking the pieces outward instead — one
+`closest()` up a two-deep path each, O(n), same answer — with a 4,000-character unit test
+whose bound is generous enough not to police milliseconds and tight enough to fail if it
+goes quadratic again.
+
+**4 (major) A drag endpoint could land inside a surrogate pair.** CJK Extension B lives
+above the BMP, so an Ext-B character is two UTF-16 code units, and every index in this
+module is a code-unit offset. Three things conspired: `caretPositionFromPoint` returns the
+boundary *between* the halves; a `Range` over half a pair reports the **whole** glyph's box,
+so the boundary disambiguation accepted it; and `hasCjk` answers `true` for a lone
+surrogate, so the endpoint snapping did not pull it back. Reproduced end to end in the real
+reader with `我去𠮷林看书。`: the lookup panel's headword came back as **U+DFB7 followed by
+林** — an unpaired surrogate — which is a guaranteed dictionary miss, a mojibake clipboard,
+and a card whose stored `offset`/`length` re-slice the sentence mid-pair on every review.
+Fixed with `startOfCodePoint` / `endOfCodePoint` at the two places raw offsets are minted
+(`characterAt` and `snapSpan`, plus the harness's no-predicate path), and `snapSpan`'s
+predicate is now asked about the whole code point.
+
+Three findings were **refuted** and are recorded so they are not re-raised: the "Select to…"
+control scrolling out of view (the degrade path has no users on any shipping engine — Blink,
+Gecko and WebKit all ship a caret API); the drag hint being hidden below `md` (the span
+capability is reachable on a phone through the sheet's labelled "Extend to 东西" control);
+and the Copy affordance giving no confirmation (exactly what the phase specifies, and the
+span stays on screen).
+
+### A defect in a file this phase does not own — `lib/dict/rank.ts`
+
+**`CJK_PATTERN`'s third range is `U+8C48`–`U+FAFF`, and it should almost certainly be
+`U+F900`–`U+FAFF`.** The literal is written with the characters `豈`–`﫿`, and the `豈`
+used is the **unified** ideograph U+8C48 rather than the compatibility ideograph U+F900
+that `﫿` (U+FAFF) is the other end of. The two glyphs are indistinguishable in a source
+file, which is how it survived.
+
+Measured consequences of the range as written — `hasCjk()` returns `true` for:
+
+| Input | `hasCjk` | Should be |
+|---|---|---|
+| Hangul `가` (U+AC00) | `true` | false |
+| Yi syllables (U+A000–) | `true` | false |
+| the entire Private Use Area (U+E000–U+F8FF) | `true` | false |
+| a **lone surrogate** (U+D800–U+DFFF) | `true` | false |
+
+`hasCjk` decides script routing in `lib/dict/search.ts` and drives the segmenter's
+word/text split in `lib/dict/segment.ts`, so Korean pasted into the reader is currently
+segmented as if it were Chinese. **Not changed here**: `lib/dict/rank.ts` is `data.md`'s,
+its own header already says widening the range "is a behavioural change to segmentation and
+search routing and is nobody's yet", and narrowing it is the same kind of change in the
+other direction. C5b does not depend on the fix — the code-point alignment above means it
+never asks `hasCjk` about half a character — but the four rows above are a bug and someone
+should own them.
+
+### Gates after this round
+
+`pnpm data`, `pnpm lint`, `pnpm typecheck`, `pnpm test` (1,597 unit tests), `pnpm build`,
+`pnpm e2e` (204 specs) — all green.

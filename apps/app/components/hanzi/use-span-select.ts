@@ -192,12 +192,30 @@ export function buildCharMap(root: HTMLElement): CharMap {
  * what the two-tap degrade hit-tests against, so it is not test scaffolding.
  */
 export function stampSpanIndexes(root: HTMLElement, map: CharMap): void {
-  for (const element of root.querySelectorAll<HTMLElement>('[data-char-index]')) {
-    const first = element.firstChild;
-    const piece = map.pieces.find(
-      (candidate) => candidate.node === first || element.contains(candidate.node),
-    );
-    if (piece) element.dataset.spanIndex = String(piece.start);
+  /**
+   * **Pieces outward, not elements inward.**
+   *
+   * The first version iterated the `[data-char-index]` elements and `find`-ed
+   * the piece for each - `element.contains(candidate.node)` over the whole
+   * piece list, so ~n^2/2 DOM containment tests. Measured on the real reader
+   * DOM in desktop Chromium: 1,000 characters 23 ms, 2,000 characters 86 ms,
+   * 4,000 characters 359 ms - and it runs **twice** per passage (once on the
+   * plain DOM, again when the readings land and every run becomes per-character
+   * `<ruby>`). A phone is several times slower, so a pasted article froze the
+   * reader for most of a second with the drag dead throughout, because
+   * `map.current` is empty until this returns.
+   *
+   * Walking the pieces instead is O(n): a text node's own element is one
+   * `closest()` up a two-deep path, and the first piece to reach an element is
+   * the one with the lowest offset because pieces are in document order - which
+   * is exactly what the old `find` returned.
+   */
+  const seen = new Set<HTMLElement>();
+  for (const piece of map.pieces) {
+    const element = piece.node.parentElement?.closest<HTMLElement>('[data-char-index]');
+    if (!element || seen.has(element)) continue;
+    seen.add(element);
+    element.dataset.spanIndex = String(piece.start);
   }
 }
 
@@ -216,6 +234,59 @@ function indexOfNode(map: CharMap, node: Node, offset: number): number | undefin
 }
 
 /**
+ * The two halves of an astral character are not two characters.
+ *
+ * Every index in this module is a **UTF-16 code unit** offset, because that is
+ * what `Token.start`/`end`, `Range` offsets and `String.prototype.slice` all
+ * deal in - and CJK Extension B (U+20000 and up) lives above the BMP, so a
+ * passage with a rare name in it has characters two code units wide. Three
+ * things then conspire: `caretPositionFromPoint` returns the boundary *between*
+ * the halves, a `Range` over half a pair reports the **whole** glyph's box
+ * (measured in Chromium, so the box test below accepts it), and
+ * `lib/dict/rank.ts`'s `CJK_PATTERN` answers `true` for a lone surrogate - so
+ * the endpoint snapping would not pull it back either. The result was a span
+ * whose text began with an unpaired surrogate: a guaranteed dictionary miss, a
+ * mojibake clipboard, and a card whose stored `offset`/`length` re-sliced the
+ * sentence mid-pair on every review.
+ *
+ * So both ends are aligned to a code-point boundary at the one place raw
+ * offsets are minted, and `snapSpan`'s predicate is asked about the whole code
+ * point rather than about half of one. (`CJK_PATTERN`'s own range is wrong for
+ * a second reason - see HANDOFF.md under C5b - but it is `data.md`'s file and
+ * this fix does not depend on it being corrected.)
+ */
+function isLowSurrogate(code: number): boolean {
+  return code >= 0xdc00 && code <= 0xdfff;
+}
+
+function isHighSurrogate(code: number): boolean {
+  return code >= 0xd800 && code <= 0xdbff;
+}
+
+/** `index`, moved back onto the FIRST code unit of the code point it is inside. */
+export function startOfCodePoint(text: string, index: number): number {
+  if (index <= 0) return 0;
+  if (index >= text.length) return Math.max(0, text.length - 1);
+  return isLowSurrogate(text.charCodeAt(index)) && isHighSurrogate(text.charCodeAt(index - 1))
+    ? index - 1
+    : index;
+}
+
+/** `index`, moved forward onto the LAST code unit of the code point it is inside. */
+export function endOfCodePoint(text: string, index: number): number {
+  const at = startOfCodePoint(text, index);
+  return isHighSurrogate(text.charCodeAt(at)) && isLowSurrogate(text.charCodeAt(at + 1))
+    ? at + 1
+    : at;
+}
+
+/** The whole code point at `index`, for a predicate that must not see half of one. */
+function codePointAt(text: string, index: number): string {
+  const point = text.codePointAt(startOfCodePoint(text, index));
+  return point === undefined ? '' : String.fromCodePoint(point);
+}
+
+/**
  * The character a caret boundary names, given where the point actually is.
  *
  * `caretPositionFromPoint` returns a **boundary**, and it snaps to the nearer
@@ -227,12 +298,13 @@ function indexOfNode(map: CharMap, node: Node, offset: number): number | undefin
  * rather than hidden from it.
  */
 function characterAt(map: CharMap, boundary: number, x: number): number {
-  const left = boundary - 1;
-  if (left >= 0) {
-    const rect = rangesFor(map, left, left)[0]?.getBoundingClientRect();
+  if (map.text.length === 0) return 0;
+  if (boundary - 1 >= 0) {
+    const left = startOfCodePoint(map.text, boundary - 1);
+    const rect = rangesFor(map, left, endOfCodePoint(map.text, left))[0]?.getBoundingClientRect();
     if (rect && x >= rect.left && x <= rect.right) return left;
   }
-  return Math.max(0, Math.min(map.text.length - 1, boundary));
+  return startOfCodePoint(map.text, Math.max(0, Math.min(map.text.length - 1, boundary)));
 }
 
 /** The character under a point, as an index into the passage's base text. */
@@ -332,11 +404,17 @@ export function snapSpan(
   to: number,
   isEndpoint: (char: string) => boolean,
 ): SpanSelection | null {
-  let lo = Math.max(0, Math.min(from, to));
-  let hi = Math.min(text.length - 1, Math.max(from, to));
+  if (text.length === 0) return null;
+  let lo = startOfCodePoint(text, Math.max(0, Math.min(from, to)));
+  let hi = endOfCodePoint(text, Math.min(text.length - 1, Math.max(from, to)));
   if (hi < lo) return null;
-  while (lo <= hi && !isEndpoint(text[lo])) lo += 1;
-  while (hi >= lo && !isEndpoint(text[hi])) hi -= 1;
+  // Whole code points on both walks: see the note above `startOfCodePoint`.
+  while (lo <= hi && !isEndpoint(codePointAt(text, lo))) lo += codePointAt(text, lo).length || 1;
+  while (hi >= lo && !isEndpoint(codePointAt(text, hi))) {
+    const at = startOfCodePoint(text, hi) - 1;
+    if (at < lo) return null;
+    hi = endOfCodePoint(text, at);
+  }
   if (hi < lo) return null;
   return { from: lo, to: hi, text: text.slice(lo, hi + 1) };
 }
@@ -570,13 +648,19 @@ export function useSpanSelect(options: UseSpanSelectOptions = {}): SpanSelect {
   const commit = useCallback(
     (a: number, b: number, final: boolean) => {
       const ok = callbacks.current.isEndpoint;
-      const next = ok
-        ? snapSpan(map.current.text, a, b, ok)
-        : {
-            from: Math.min(a, b),
-            to: Math.max(a, b),
-            text: map.current.text.slice(Math.min(a, b), Math.max(a, b) + 1),
-          };
+      const text = map.current.text;
+      let next: SpanSelection | null;
+      if (ok) {
+        next = snapSpan(text, a, b, ok);
+      } else if (text.length === 0) {
+        next = null;
+      } else {
+        // No predicate - the harness. The code-point alignment still applies:
+        // half a surrogate pair is not a character on any path.
+        const lo = startOfCodePoint(text, Math.max(0, Math.min(a, b)));
+        const hi = endOfCodePoint(text, Math.min(text.length - 1, Math.max(a, b)));
+        next = { from: lo, to: hi, text: text.slice(lo, hi + 1) };
+      }
       /**
        * The ref, **then** the callback.
        *
@@ -773,8 +857,38 @@ export type SpanHandler = (span: SpanSelection | null) => void;
  * `data-span-index`, which `stampSpanIndexes` writes — so it needs neither
  * caret API nor the Custom Highlight API, which is what makes it the degrade.
  */
-export function spanIndexOfEvent(target: EventTarget | null): number | undefined {
-  const element = (target as HTMLElement | null)?.closest<HTMLElement>('[data-span-index]');
+export function spanIndexOfEvent(
+  target: EventTarget | null,
+  /**
+   * Which end of a **word grouping** to resolve to, when the event landed on
+   * the grouping itself rather than on one of its characters — which is what a
+   * keyboard activation does. `'first'` is the arming end; `'last'` is the
+   * closing end, so "…to here" on a word takes the whole word rather than
+   * stopping inside it. A pointer tap names a character and neither applies.
+   */
+  edge: 'first' | 'last' = 'first',
+): number | undefined {
+  const node = target as HTMLElement | null;
+  /**
+   * `closest` first, then **inward**.
+   *
+   * A pointer tap lands on the character itself, so `closest` answers. A
+   * keyboard activation does not: the event target is the word grouping's own
+   * `<button>` and the stamped characters are *inside* it - so without the
+   * second lookup a keyboard user could arm the two-tap degrade and never close
+   * it, which is the whole of the degrade a keyboard can reach.
+   *
+   * The inward lookup is deliberately scoped to a **word grouping**, not to any
+   * ancestor. Searching inward from whatever was clicked would make a press on
+   * the page background resolve to character 0 of the passage — a span the
+   * learner never asked for, from a tap that missed the text entirely.
+   */
+  const inside = node?.closest<HTMLElement>('[data-token-index]');
+  const stamped = inside ? [...inside.querySelectorAll<HTMLElement>('[data-span-index]')] : [];
+  const element =
+    node?.closest<HTMLElement>('[data-span-index]') ??
+    (edge === 'last' ? stamped.at(-1) : stamped[0]) ??
+    null;
   if (!element) return undefined;
   const index = Number(element.dataset.spanIndex);
   return Number.isNaN(index) ? undefined : index;

@@ -70,6 +70,36 @@ body {
 }
 
 /*
+ * The passage a span is dragged over (docs/plans/core.md C5b).
+ *
+ * **The declaration the whole design rests on, and it was missing from the
+ * reader until the C5b review measured it.** The harness carried `select-none`
+ * on its own container; the production passage did not, so `getComputedStyle`
+ * on `[data-testid="reader-text"]` answered `user-select: auto` and three
+ * things followed. A triple-click still made a native selection, so C5b's
+ * criterion "with no span active, a copy over the passage yields nothing"
+ * was false — and the spec that claimed to prove it clicked once, which
+ * collapses a selection, so it passed either way and could not fail. With a
+ * span active, a double-click on a character (the app's own second-tap gesture)
+ * selected the invisible `<rt>` text; `useSpanClipboard` yields to a real
+ * selection by design, so Ctrl+C then wrote the empty string and *wiped* the
+ * learner's clipboard. And on WebKit it left native text interaction live on
+ * the reader — the double-tap-hold-drag path whose `UIEditMenuInteraction`
+ * crash `wave-zero.md` §10d rules out precisely because "the gesture that
+ * crashes is the one we do not implement".
+ *
+ * It lives here, applied by `<HanziText>` whenever a span handle is attached,
+ * so the harness and the reader cannot drift apart again. `-webkit-touch-callout`
+ * has no Tailwind utility and is the half that suppresses the iOS callout, which
+ * is why this is a rule rather than a class list on one call site.
+ */
+.hanzi-span-host {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/*
  * The painted span (docs/plans/core.md C5a).
  *
  * The **CSS Custom Highlight API**: the harness registers ranges and the

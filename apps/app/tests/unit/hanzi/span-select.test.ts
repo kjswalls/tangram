@@ -13,10 +13,12 @@ import { describe, expect, it } from 'vitest';
 import {
   buildCharMap,
   detectCaretApi,
+  endOfCodePoint,
   rangesFor,
   snapSpan,
   spanIndexOfEvent,
   stampSpanIndexes,
+  startOfCodePoint,
 } from '@/components/hanzi/use-span-select';
 import { hasCjk } from '@/lib/dict/rank';
 
@@ -145,5 +147,97 @@ describe('detectCaretApi', () => {
     // The case the whole degrade exists for. It has to be reachable, which is
     // what a required-member type on `Document` would have made impossible.
     expect(detectCaretApi({} as unknown as Document)).toBe('none');
+  });
+});
+
+
+/**
+ * A passage with an astral character in it (docs/plans/core.md C5b, second pass).
+ *
+ * 𠮷 is U+20BB7 — CJK Extension B, **two UTF-16 code units** — so `body[1]` is a
+ * lone low surrogate. Three things used to conspire at that offset:
+ * `caretPositionFromPoint` returns the boundary between the halves, a `Range`
+ * over half a pair reports the whole glyph's box so the disambiguation accepted
+ * it, and `lib/dict/rank.ts`'s `CJK_PATTERN` answers `true` for a lone
+ * surrogate, so the endpoint snapping did not pull it back either. The span's
+ * text then began with an unpaired surrogate: a dictionary miss, a mojibake
+ * clipboard, and a card whose stored offset re-sliced the sentence mid-pair on
+ * every review.
+ */
+const ASTRAL = '\u{20BB7}林，书';
+
+describe('code-point alignment', () => {
+  it('knows the lone surrogate is not a character', () => {
+    expect([...ASTRAL]).toHaveLength(4);
+    expect(ASTRAL.length).toBe(5);
+    // The thing that made this reachable rather than theoretical.
+    expect(hasCjk(ASTRAL[1])).toBe(true);
+  });
+
+  it('pulls an index inside a pair back to the pair’s start', () => {
+    expect(startOfCodePoint(ASTRAL, 1)).toBe(0);
+    expect(startOfCodePoint(ASTRAL, 0)).toBe(0);
+    expect(startOfCodePoint(ASTRAL, 2)).toBe(2);
+  });
+
+  it('pushes an end index forward to the pair’s last unit', () => {
+    expect(endOfCodePoint(ASTRAL, 0)).toBe(1);
+    expect(endOfCodePoint(ASTRAL, 1)).toBe(1);
+    expect(endOfCodePoint(ASTRAL, 2)).toBe(2);
+  });
+
+  it('snapSpan never returns half a character', () => {
+    // A press on the right half of 𠮷, dragged to 林.
+    const span = snapSpan(ASTRAL, 1, 2, hasCjk);
+    expect(span).toMatchObject({ from: 0, to: 2, text: '\u{20BB7}林' });
+    // …and the string it hands on is whole code points, not surrogate halves.
+    expect([...(span?.text ?? '')]).toEqual(['\u{20BB7}', '林']);
+  });
+
+  it('…in either direction, and with the pair as the far end', () => {
+    expect(snapSpan(ASTRAL, 2, 1, hasCjk)).toMatchObject({ from: 0, to: 2 });
+    expect(snapSpan(ASTRAL, 2, 0, hasCjk)).toMatchObject({ from: 0, to: 2 });
+    expect(snapSpan(ASTRAL, 0, 0, hasCjk)).toMatchObject({ from: 0, to: 1, text: '\u{20BB7}' });
+  });
+
+  it('snapping past a comma still lands on whole characters', () => {
+    // Ends on the comma at 3 → pulls back onto 林, not onto half of 𠮷.
+    expect(snapSpan(ASTRAL, 0, 3, hasCjk)).toMatchObject({ from: 0, to: 2 });
+    // Starts on the comma at 3 → forward onto 书.
+    expect(snapSpan(ASTRAL, 3, 4, hasCjk)).toMatchObject({ from: 4, to: 4, text: '书' });
+  });
+});
+
+describe('stampSpanIndexes is linear', () => {
+  /**
+   * The first version `find`-ed a piece per element with `element.contains()`,
+   * which is ~n²/2 containment tests — measured at 86 ms for 2,000 characters
+   * and 359 ms for 4,000 in desktop Chromium, twice per passage, with the drag
+   * dead the whole time. jsdom is slower than a browser, so the bound is
+   * generous; it is there to fail loudly if the loop goes quadratic again, not
+   * to police milliseconds.
+   */
+  it('stamps a 4,000-character passage without going quadratic', () => {
+    const root = document.createElement('div');
+    root.innerHTML = Array.from(
+      { length: 4000 },
+      (_, index) => `<ruby data-char-index="${index % 4}">字</ruby>`,
+    ).join('');
+    document.body.append(root);
+    const map = buildCharMap(root);
+    expect(map.text).toHaveLength(4000);
+
+    const started = performance.now();
+    stampSpanIndexes(root, map);
+    const elapsed = performance.now() - started;
+
+    const stamped = [...root.querySelectorAll('[data-span-index]')].map(
+      (node) => (node as HTMLElement).dataset.spanIndex,
+    );
+    expect(stamped).toHaveLength(4000);
+    expect(stamped[0]).toBe('0');
+    expect(stamped[3999]).toBe('3999');
+    expect(elapsed).toBeLessThan(2000);
+    root.remove();
   });
 });

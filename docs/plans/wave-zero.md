@@ -269,6 +269,47 @@ dependency.
 This resolves the tension the design session left open: the palette earns its keep only where the
 hotkey exists, so it ships with the application and the web keeps the shell that suits a browser.
 
+## 10d. Register #1 — the WKWebView crash is RESOLVED from the source — SETTLED 2026-09-15
+
+`ios.md` I2's device check gates `core.md` C5b, and STACK register #1 records the whole iOS decision
+as resting on it. The iOS audit could not read the report (egress-blocked) and correctly filed it
+unverified. It has now been read directly:
+[Apple Developer Forums thread 797368](https://developer.apple.com/forums/thread/797368).
+
+**Three independent reasons the risk is low, not one.**
+
+1. **It is fixed.** The thread confirms the crash is resolved in **iOS 26 beta 7**. Shipping iOS 26
+   does not have it.
+2. **It does not reproduce when the app is built with Xcode 26** — which this project is *required*
+   to use anyway, since Xcode 26 has been mandatory for App Store submissions since 28 April 2026 and
+   Capacitor 8 requires it.
+3. **The crash is in a code path this design deliberately bypasses.** The stack trace names
+   `UIEditMenuInteraction` and `_UIEditMenuContentPresentation` — the native edit-menu callout. The
+   trigger is the native selection gesture: double tap, hold the second tap, then drag. Both mobile
+   audits already concluded that native selection is unusable here because it sweeps the `<rt>` pinyin
+   into the selection, so C5a's design replaces it with Pointer Events and `caretRangeFromPoint`. The
+   gesture that crashes is the one we do not implement.
+
+**Ruling: the gate is downgraded, not removed.**
+
+- **`core.md` C5b is UNBLOCKED.** It no longer waits on a physical device. Build it.
+- **`ios.md` I2 stays, and moves to a pre-TestFlight check** rather than a pre-C5b one. It is minutes
+  of work on a real handset and it is still the only way to be certain. Run it before anything reaches
+  a tester, not before code is written.
+- **Register #1 is downgraded from blocking to verify-before-ship** in STACK §4 and in the
+  known-unknowns register.
+- **What to actually test when a device exists**, now that the trigger is known: double tap the
+  passage, hold, and drag. Also confirm the app is built with Xcode 26. If it somehow crashes anyway,
+  the first thing to try is disabling native text interaction on the web view configuration
+  (`textInteractionEnabled = NO`), which costs nothing here because the design does not use native
+  text interaction.
+
+**Why this was worth resolving rather than assuming.** Assuming it fine and being wrong would not have
+cost C5b alone — the fallback in `core.md` R2 is a native reader screen and a Core Text ruby engine,
+which is the exact cost choosing Capacitor was meant to avoid. The prior was already that a beta crash
+in a property this widely used would have been fixed, but "probably fine" and "read the thread" are
+different things, and the thread was three minutes away.
+
 ## 11. `ios.md`'s contested-surfaces table — DELETE IT (issue 4)
 
 `android.md` is correct on all three rows and `ios.md` misquotes it on all three. Verified at HEAD:

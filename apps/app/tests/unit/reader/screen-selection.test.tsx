@@ -34,7 +34,7 @@ afterEach(async () => {
 describe('the reading view', () => {
   it('drops the selection and the context together when it unmounts', () => {
     useReaderStore.setState({ body: BODY, tokenizedBody: BODY, tokens: TOKENS, view: 'read' });
-    useReaderStore.getState().select(1);
+    useReaderStore.getState().selectToken(1);
     useLookupStore.getState().openLookup({
       query: '每天',
       entryIds: ['每天|每天[mei3 tian1]'],
@@ -42,6 +42,7 @@ describe('the reading view', () => {
     });
 
     const view = render(<ReaderScreen />);
+    // Character 1 — 每天 starts there. The span is characters now (C5b).
     expect(useReaderStore.getState().selected).toBe(1);
 
     view.unmount();

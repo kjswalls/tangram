@@ -5,6 +5,7 @@ import {
   defaultTitle,
   nextExtendable,
   spanOf,
+  tokenAt,
   useReaderStore,
   type ReaderState,
 } from '@/lib/stores/reader';
@@ -68,11 +69,26 @@ describe('the reader store', () => {
     expect(state.tokens).toEqual([]);
   });
 
+  it('the tokens tile the body exactly, which is what makes a DOM index a body offset', () => {
+    // C5b's whole index model rests on this: `<HanziText>` renders one run per
+    // token in order, so the concatenated base text of the rendered passage IS
+    // the body — and character 7 in the DOM is character 7 in `body`. Asserted
+    // rather than assumed, because every span offset downstream is wrong by the
+    // size of the first gap if it ever stops holding.
+    expect(TOKENS.map((token) => token.text).join('')).toBe(BODY);
+    let at = 0;
+    for (const token of TOKENS) {
+      expect(token.start).toBe(at);
+      at = token.end;
+    }
+    expect(at).toBe(BODY.length);
+  });
+
   it('editing the text drops the tokens: they index a string that no longer exists', () => {
     const store = useReaderStore.getState();
     store.setText(BODY);
     store.setTokens(TOKENS);
-    store.select(1);
+    store.selectToken(1);
     expect(useReaderStore.getState().tokens).toHaveLength(6);
 
     useReaderStore.getState().setText('别的句子。');
@@ -88,35 +104,78 @@ describe('the reader store', () => {
     expect(useReaderStore.getState().textId).toBeUndefined();
   });
 
-  it('only word tokens can be selected', () => {
+  it('a tap selects a word token as a CHARACTER span (C5b)', () => {
     const store = useReaderStore.getState();
     store.setText(BODY);
     store.setTokens(TOKENS);
 
-    store.select(1);
+    // 打算 is token 1 and characters 1–2. Both numbers are now the span.
+    store.selectToken(1);
     expect(useReaderStore.getState().selected).toBe(1);
-    expect(useReaderStore.getState().spanEnd).toBe(1);
+    expect(useReaderStore.getState().spanEnd).toBe(2);
 
     // The full stop is a `text` token — §3.5 renders it untappable.
-    store.select(5);
+    store.selectToken(5);
     expect(useReaderStore.getState().selected).toBeUndefined();
 
-    store.select(1);
-    store.select(undefined);
+    store.selectToken(1);
+    store.selectToken(undefined);
     expect(useReaderStore.getState().selected).toBeUndefined();
+  });
+
+  it('a dragged span is characters, and it may cross a token boundary', () => {
+    const store = useReaderStore.getState();
+    store.setText(BODY);
+    store.setTokens(TOKENS);
+
+    // 算明 — the second half of 打算 and the first of 明天. Token-granular
+    // selection could not express this at all, which is the point of C5b.
+    store.selectSpan(2, 3);
+    const span = spanOf(useReaderStore.getState());
+    expect(span).toMatchObject({ text: '算明', start: 2, end: 4 });
+    // Overlap, not containment: both words are part of what was selected.
+    expect(span?.tokens.map((token) => token.text)).toEqual(['打算', '明天']);
+  });
+
+  it('a span that crosses punctuation contains it', () => {
+    const store = useReaderStore.getState();
+    store.setText(BODY);
+    store.setTokens(TOKENS);
+    // 北京。 would be refused by Extend; a drag across it is legal and keeps
+    // the full stop, because `spanOf` slices the body.
+    store.selectSpan(6, 8);
+    expect(spanOf(useReaderStore.getState())?.text).toBe('北京。');
+  });
+
+  it('a backwards drag is the same span as a forwards one', () => {
+    const store = useReaderStore.getState();
+    store.setText(BODY);
+    store.setTokens(TOKENS);
+    store.selectSpan(5, 1);
+    expect(useReaderStore.getState().selected).toBe(1);
+    expect(useReaderStore.getState().spanEnd).toBe(5);
+  });
+
+  it('a span is clamped to the body, so a stale index cannot slice past the end', () => {
+    const store = useReaderStore.getState();
+    store.setText(BODY);
+    store.setTokens(TOKENS);
+    store.selectSpan(-4, 500);
+    expect(spanOf(useReaderStore.getState())?.text).toBe(BODY);
   });
 
   it('a span is the selected token until Extend grows it over the next one', () => {
     const store = useReaderStore.getState();
     store.setText(BODY);
     store.setTokens(TOKENS);
-    store.select(1);
+    store.selectToken(1);
 
     expect(spanOf(useReaderStore.getState())).toMatchObject({ text: '打算', start: 1, end: 3 });
 
     const extended = useReaderStore.getState().extend();
     expect(extended).toMatchObject({ text: '打算明天', start: 1, end: 5 });
-    expect(useReaderStore.getState().spanEnd).toBe(2);
+    // Character 4 is the last of 明天, not token 2.
+    expect(useReaderStore.getState().spanEnd).toBe(4);
     expect(extended?.tokens).toHaveLength(2);
 
     // And again: the span keeps growing while there is an adjacent word.
@@ -127,11 +186,11 @@ describe('the reader store', () => {
     const store = useReaderStore.getState();
     store.setText(BODY);
     store.setTokens(TOKENS);
-    store.select(4);
+    store.selectToken(4);
 
     expect(nextExtendable(useReaderStore.getState())).toBeUndefined();
     expect(useReaderStore.getState().extend()).toBeUndefined();
-    expect(useReaderStore.getState().spanEnd).toBe(4);
+    expect(useReaderStore.getState().spanEnd).toBe(7);
   });
 
   it('Extend refuses two words that are not adjacent in the body', () => {
@@ -139,13 +198,13 @@ describe('the reader store', () => {
     const store = useReaderStore.getState();
     store.setText('北京，上海');
     store.setTokens(gapped);
-    store.select(0);
+    store.selectToken(0);
     expect(nextExtendable(useReaderStore.getState())).toBeUndefined();
 
     // With the comma gone they are adjacent, and the span is legal.
     store.setText('北京上海');
     store.setTokens([word('北京', 0, ['a']), word('上海', 2, ['b'])]);
-    store.select(0);
+    store.selectToken(0);
     expect(nextExtendable(useReaderStore.getState())).toBe(1);
   });
 
@@ -153,11 +212,20 @@ describe('the reader store', () => {
     const store = useReaderStore.getState();
     store.setText(BODY);
     store.setTokens(TOKENS);
-    store.select(1);
+    store.selectToken(1);
     store.extend();
-    store.select(3);
-    expect(useReaderStore.getState().spanEnd).toBe(3);
+    store.selectToken(3);
+    expect(useReaderStore.getState().selected).toBe(5);
+    expect(useReaderStore.getState().spanEnd).toBe(5);
     expect(spanOf(useReaderStore.getState())?.text).toBe('去');
+  });
+
+  it('tokenAt answers for every character, punctuation included', () => {
+    // A span interior has to be locatable even where a tap is not allowed.
+    expect(tokenAt(TOKENS, 0)).toBe(0);
+    expect(tokenAt(TOKENS, 2)).toBe(1);
+    expect(tokenAt(TOKENS, 8)).toBe(5);
+    expect(tokenAt(TOKENS, 9)).toBeUndefined();
   });
 
   it('read() posts once and keeps the tokens for the same body', async () => {
@@ -259,7 +327,7 @@ describe('the reader store', () => {
     const store = useReaderStore.getState();
     store.setText(BODY);
     store.setTokens(TOKENS);
-    store.select(1);
+    store.selectToken(1);
     store.setView('read');
 
     useReaderStore.getState().clear();

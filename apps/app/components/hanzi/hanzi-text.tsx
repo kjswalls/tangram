@@ -59,6 +59,7 @@
 import { memo, useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react';
 
 import { usePinyinDisplay } from '@/components/hanzi/pinyin-display';
+import { spanIndexOfEvent, type SpanSelect } from '@/components/hanzi/use-span-select';
 import { alignReading, type Alignment } from '@/lib/hanzi/align';
 import { cn } from '@/lib/cn';
 import type { PinyinDisplay } from '@/lib/db/schema';
@@ -76,6 +77,19 @@ export interface HanziRun {
   pinyinNum?: string;
   /** Word-level marked reading, when the caller already has one. */
   pinyinMarked?: string;
+  /**
+   * Force this run to be a word: tappable, stateful, part of the token
+   * grouping, whatever the dictionary knows about its reading.
+   *
+   * **The reader needs it and nothing else does** (C5b). A `word` token whose
+   * `via` is `'fallback'` — a name, a rare character, an unsegmented fragment —
+   * has no headword and therefore no `pinyinNum`, and `lib/reader/states.ts`
+   * still answers `'new'` for it because it is a word the learner has
+   * demonstrably not met. Inferring tappability from "has a reading" would make
+   * exactly those runs plain and untappable, which is a capability the reader
+   * has today and must not lose to the rewrite.
+   */
+  word?: boolean;
 }
 
 export interface HanziTextProps {
@@ -130,6 +144,29 @@ export interface HanziTextProps {
    * measuring the panel as well as the passage.
    */
   wordTestId?: string;
+  /**
+   * The span to ring, in **base-character offsets over the concatenated run
+   * text** — the same index space `useSpanSelect` reports in, because the
+   * concatenated run text is exactly the text it maps.
+   *
+   * Inclusive at both ends. Every word grouping the span overlaps carries
+   * `data-in-span` and the ring, which is how "the tapped word stays ringed
+   * while the sheet is open" survives the rewrite **and** how the ring follows
+   * a whole dragged span rather than only its first word. The exact characters
+   * are painted by the Custom Highlight API; the ring is the coarse, always-
+   * available half of the same answer, and it is what a spec can assert.
+   */
+  span?: { from: number; to: number } | null;
+  /**
+   * The drag-to-select handle (C5b). Given one, this component becomes the
+   * span's container: it takes the hook's `ref` and pointer handlers, renders
+   * its root as a **block** (`touch-action` does not apply to a non-replaced
+   * inline element), and routes the two-tap degrade's closing tap.
+   *
+   * The **owner** holds the selection and passes it back as `span`; this
+   * component never decides what is selected.
+   */
+  spanSelect?: SpanSelect;
   'data-testid'?: string;
 }
 
@@ -144,9 +181,13 @@ interface RunView {
   run: HanziRun;
   alignment: Alignment;
   tappable: boolean;
+  /** Offset of this run's first character in the concatenated base text. */
+  start: number;
+  /** One past its last. See `HanziTextProps.span`. */
+  end: number;
 }
 
-function viewOf(run: HanziRun): RunView {
+function viewOf(run: HanziRun, start: number): RunView {
   const alignment = run.pinyinNum
     ? alignReading(run.text, run.pinyinNum)
     : {
@@ -162,7 +203,13 @@ function viewOf(run: HanziRun): RunView {
   // "Is this a word the dictionary knows?" — which is what makes it annotatable
   // AND tappable. A run with neither form of reading is punctuation, a Latin
   // run, or an unsegmented fragment: plain, and not a tap target.
-  return { run, alignment, tappable: Boolean(run.pinyinNum ?? run.pinyinMarked) };
+  return {
+    run,
+    alignment,
+    tappable: run.word ?? Boolean(run.pinyinNum ?? run.pinyinMarked),
+    start,
+    end: start + run.text.length,
+  };
 }
 
 function Ruby({
@@ -223,6 +270,7 @@ const Runs = memo(function Runs({
   rtClassName,
   plainRunTestId,
   wordTestId,
+  span,
 }: {
   views: readonly RunView[];
   states: readonly (WordState | undefined)[] | undefined;
@@ -231,6 +279,7 @@ const Runs = memo(function Runs({
   rtClassName?: string;
   plainRunTestId?: string;
   wordTestId: string;
+  span: { from: number; to: number } | null | undefined;
 }) {
   return (
     <>
@@ -248,6 +297,10 @@ const Runs = memo(function Runs({
           );
         }
         const wordLevel = view.alignment.mode === 'fallback';
+        // Overlap, not containment: a dragged span can start or end inside a
+        // word, and the ring is the coarse answer to "what did I select".
+        const inSpan =
+          span !== null && span !== undefined && view.start <= span.to && view.end > span.from;
         return (
           <span
             key={index}
@@ -256,9 +309,15 @@ const Runs = memo(function Runs({
             data-token={view.run.text}
             data-state={state ?? 'unknown'}
             data-align={view.alignment.mode}
+            {...(inSpan ? { 'data-in-span': 'true' } : {})}
             className={cn(
               'hanzi-token cursor-pointer align-baseline transition-colors',
               state ? STATE_CLASS[state] : undefined,
+              // Vermillion, not jade: the reader already tints a word in
+              // *learning* jade, and a ring in the same colour would read as a
+              // word state the learner has earned rather than a selection they
+              // just made. It matches `::highlight(span-select)` next door.
+              inSpan && 'rounded-[var(--r-sm)] ring-2 ring-practice ring-offset-1 ring-offset-surface',
             )}
           >
             {wordLevel ? (
@@ -321,9 +380,18 @@ export function HanziText({
   rtClassName,
   plainRunTestId,
   wordTestId = 'hanzi-word',
+  span = null,
+  spanSelect,
   'data-testid': testId = 'hanzi-text',
 }: HanziTextProps) {
-  const views = useMemo(() => runs.map(viewOf), [runs]);
+  const views = useMemo(() => {
+    let at = 0;
+    return runs.map((run) => {
+      const view = viewOf(run, at);
+      at = view.end;
+      return view;
+    });
+  }, [runs]);
   const [revealedRuns, setRevealedRuns] = useState<ReadonlySet<number>>(() => new Set<number>());
   const setting = usePinyinDisplay();
   const effective = display ?? setting;
@@ -380,6 +448,31 @@ export function HanziText({
   const onClick = useCallback(
     (event: MouseEvent<HTMLElement>) => {
       const target = event.target as HTMLElement | null;
+      /**
+       * **The degrade's closing tap comes first, and it is not a word tap.**
+       *
+       * With no caret API there is no `pointermove` path at all, so the span is
+       * made by two taps: the owner arms an anchor ("…to here"), and the next
+       * tap anywhere on the text closes it. Opening the word sheet on the same
+       * tap would answer a question the learner did not ask — they asked for
+       * the span, which is what `onCommit` delivers.
+       */
+      if (spanSelect && spanSelect.anchor !== null) {
+        const at = spanIndexOfEvent(target);
+        if (at !== undefined) {
+          spanSelect.toHere(at);
+          return;
+        }
+      }
+      // …and the *arming* tap, for the consumer that asked for one (the C5a
+      // harness). The reader does not: its first tap opens the word sheet.
+      if (spanSelect?.armsOnTap && spanSelect.api === 'none') {
+        const at = spanIndexOfEvent(target);
+        if (at !== undefined) {
+          spanSelect.armFromTap(at);
+          return;
+        }
+      }
       const ruby = target?.closest<HTMLElement>('[data-char-index]');
       const token = target?.closest<HTMLElement>('[data-token-index]');
       if (!token) return;
@@ -401,11 +494,23 @@ export function HanziText({
         if (!Number.isNaN(charIndex)) onCharacter(runIndex, charIndex);
       }
     },
-    [onCharacter, onWord, revealedRuns, revealsOnTap],
+    [onCharacter, onWord, revealedRuns, revealsOnTap, spanSelect],
   );
 
+  /**
+   * A **block** when a span handle is attached, an inline `<span>` otherwise.
+   *
+   * `touch-action` does not apply to a non-replaced inline element, so
+   * `touch-action: pan-y` on an inline root would be silently ignored — and the
+   * whole gesture design rests on that declaration being honoured. Every other
+   * call site is a headword or a card face sitting inside a sentence, where an
+   * inline root is what makes it lay out at all, so this switches rather than
+   * settling on one.
+   */
+  const Root = spanSelect ? 'div' : 'span';
+
   return (
-    <span
+    <Root
       data-testid={testId}
       data-display={force ? 'forced' : effective}
       /**
@@ -418,6 +523,7 @@ export function HanziText({
       data-hanzi={runs.map((run) => run.text).join('')}
       data-band={bandReserved ? 'reserved' : 'none'}
       lang="zh-Hans"
+      {...(spanSelect ? { ref: spanSelect.ref, ...spanSelect.handlers } : {})}
       /**
        * One delegated handler for the whole passage. See the header.
        *
@@ -427,8 +533,11 @@ export function HanziText({
        * passed `onWord`, and it passes `() => undefined` precisely so the state
        * can be demonstrated — so "only when I tap" behaved exactly like
        * "never" on every card, every search result and every list row.
+       *
+       * `spanSelect` joins them because the two-tap degrade's closing tap
+       * arrives here and nowhere else.
        */
-      onClick={onWord || onCharacter || revealsOnTap ? onClick : undefined}
+      onClick={onWord || onCharacter || revealsOnTap || spanSelect ? onClick : undefined}
       className={cn('hanzi', bandReserved && 'hanzi-band', className)}
     >
       <Runs
@@ -437,10 +546,11 @@ export function HanziText({
         revealedRuns={revealedRuns}
         showAll={showAll}
         wordTestId={wordTestId}
+        span={span}
         {...(rtClassName === undefined ? {} : { rtClassName })}
         {...(plainRunTestId === undefined ? {} : { plainRunTestId })}
       />
-    </span>
+    </Root>
   );
 }
 

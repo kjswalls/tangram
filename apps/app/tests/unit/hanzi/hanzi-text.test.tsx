@@ -261,7 +261,11 @@ describe('one delegated handler', () => {
     const bindings = code.match(/\bonClick=/g) ?? [];
     expect(bindings).toHaveLength(1);
     // …and it is on the wrapper, next to the delegation comment's own marker.
-    expect(code).toContain('onClick={onWord || onCharacter || revealsOnTap ? onClick : undefined}');
+    // C5b adds `spanSelect` to the condition — the two-tap degrade's closing
+    // tap arrives at this handler and nowhere else — and nothing else changed.
+    expect(code).toContain(
+      'onClick={onWord || onCharacter || revealsOnTap || spanSelect ? onClick : undefined}',
+    );
     // The per-character components must not take one at all.
     expect(code).not.toMatch(/function Ruby\([^)]*onClick/);
   });

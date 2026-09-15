@@ -1,0 +1,58 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "buildCommand": "pnpm -w run data:ensure && pnpm run build",
+  "outputDirectory": "dist",
+  "rewrites": [
+    {
+      "source": "/:artifact(dict-.+\\.sqlite)",
+      "has": [{ "type": "header", "key": "accept-encoding", "value": ".*br.*" }],
+      "destination": "/:artifact.br"
+    },
+    {
+      "source": "/((?!api/|assets/|.*\\.[A-Za-z0-9]+$).*)",
+      "destination": "/index.html"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/manifest.webmanifest",
+      "headers": [{ "key": "content-type", "value": "application/manifest+json; charset=utf-8" }]
+    },
+    {
+      "source": "/sw.js",
+      "headers": [
+        { "key": "content-type", "value": "text/javascript; charset=utf-8" },
+        { "key": "cache-control", "value": "no-cache, no-store, must-revalidate" },
+        { "key": "service-worker-allowed", "value": "/" }
+      ]
+    },
+    {
+      "source": "/:artifact(dict-.+\\.sqlite)",
+      "headers": [
+        { "key": "content-type", "value": "application/vnd.sqlite3" },
+        { "key": "cache-control", "value": "public, max-age=31536000, immutable" },
+        { "key": "vary", "value": "accept-encoding" }
+      ]
+    },
+    {
+      "source": "/:artifact(dict-.+\\.sqlite)",
+      "has": [{ "type": "header", "key": "accept-encoding", "value": ".*br.*" }],
+      "headers": [{ "key": "content-encoding", "value": "br" }]
+    },
+    {
+      "source": "/dict-manifest.json",
+      "headers": [
+        { "key": "content-type", "value": "application/json; charset=utf-8" },
+        { "key": "cache-control", "value": "no-cache" }
+      ]
+    },
+    {
+      "source": "/decomp.json",
+      "headers": [
+        { "key": "content-type", "value": "application/json; charset=utf-8" },
+        { "key": "cache-control", "value": "no-cache" }
+      ]
+    }
+  ]
+}

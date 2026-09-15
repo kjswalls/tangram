@@ -18,9 +18,12 @@ import { Card } from '@/components/ui/card';
  */
 import attribution from '@data/ATTRIBUTION.md?raw';
 
+import { RouteMarker } from './route-marker';
+
 export function SettingsRoute() {
   return (
     <>
+      <RouteMarker path="/settings" />
       <PageHeader title="Settings">
         New cards per day, the spine band, what counts as known.
       </PageHeader>

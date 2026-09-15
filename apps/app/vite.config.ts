@@ -65,6 +65,15 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    /**
+     * `.vite/manifest.json` — on, and three things read it (docs/plans/web.md
+     * W2 and W3). `scripts/smoke.ts` walks it to assert every hashed asset is
+     * 200, which is the only falsifiable check left once the SPA fallback
+     * answers every page path with `index.html`; W3 hashes it into the service
+     * worker's cache name; and `sw.template.js`'s precache list is the entry
+     * chunk and stylesheet read out of it rather than a hand-kept list.
+     */
+    manifest: true,
     // Off, as Next's was: `productionBrowserSourceMaps` defaults to false and
     // the deleted next.config.ts did not set it. `dist/` is uploaded verbatim to
     // the static host (W2), so `true` would publish 2.8 MB of full application

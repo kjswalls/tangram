@@ -7,9 +7,9 @@
     "node": ">=22.22"
   },
   "scripts": {
-    "dev": "vite",
-    "build": "pnpm -w run sw && vite build",
-    "build:e2e": "pnpm -w run sw && vite build --mode e2e",
+    "dev": "pnpm -w run dict:copy:optional && vite",
+    "build": "pnpm -w run dict:copy && pnpm -w run sw && vite build",
+    "build:e2e": "pnpm -w run dict:copy && pnpm -w run sw && vite build --mode e2e",
     "preview": "pnpm -w run preview",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",

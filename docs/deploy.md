@@ -1,298 +1,224 @@
-# Deploying Tangram to Vercel
-
-> **⚠️ OUT OF DATE AS OF `web.md` W0 AND W1, AND KNOWN TO BE.** This document describes a
-> single-package Next.js repository. Since then the app has moved to `apps/app/` in a pnpm
-> workspace and the build is Vite, not Next. At least these are now wrong: the Vercel *Root
-> directory* and framework preset, the build command, the Node floor (`engines` is `>=22.22`),
-> `TANGRAM_DATA_DIR`'s default (it is the workspace root, found by marker, not `<cwd>/data`), and
-> **the whole `?key=` authorisation flow in §4, which `middleware.ts` performed and which does not
-> exist between W1 and W4** — following it now parks the secret in the URL and authorises nothing.
->
-> It is deliberately not rewritten yet: `web.md` **W2** writes `apps/app/vercel.json` and owns the
-> host rules, and **W4** rebuilds the access gate, so one correct version now would be wrong twice
-> more before v1. **W2 owns rewriting this file.** Until then, read `HANDOFF.md` for the current
-> layout and `docs/plans/web.md` for where it is going.
-
+# Deploying Tangram
 
 One page, in the order you will need it. Everything here was measured on the
-build container (4 shared vCPU, Node 22) unless it says otherwise; the two
-things that could only be checked against a real deployment are called out as
-such rather than asserted.
+build container (4 shared vCPU, Node 22.22) unless it says otherwise; the things
+that can only be checked against a real deployment are called out as such rather
+than asserted.
+
+**What this describes.** `apps/app` is a **static site** — `pnpm build` emits a
+directory of files and nothing else. There is no framework runtime, no function,
+no server-rendered page. `apps/server` is a separate deployable (`backend.md`)
+and is not deployed by any of this; until it exists, **a deployed build has no
+`/api/*` at all** — see §5.
+
+> Rewritten for `web.md` W2. The previous version described a single-package
+> Next.js repository with per-route serverless functions and a `middleware.ts`
+> access gate; none of that exists. `HANDOFF.md` records the two phases that
+> removed it.
 
 ---
 
-## 1. Import the repo
+## 1. The Vercel project
 
-Vercel's Next.js preset is right out of the box. Confirm rather than change:
+`apps/app/vercel.json` is checked in and carries the build command, the output
+directory and every routing and header rule. Set these four things in the
+dashboard once; everything else comes from the file, which is the point — a rule
+in a file is reviewable and a rule in a text box is not.
 
 | Setting | Value | Why |
 |---|---|---|
-| Framework | Next.js | detected |
-| Install command | `pnpm install` | detected from `pnpm-lock.yaml` |
-| Build command | `pnpm build` | **do not** replace with `next build` — see §2 |
-| Output directory | *(default)* | Next owns it |
-| Node.js version | 22.x | `.nvmrc` says 22; `engines` allows ≥ 20.9 |
-| Root directory | *(repo root)* | |
+| Root directory | `apps/app` | `vercel.json` lives there, and Vercel reads it from the root directory |
+| Include files outside the root directory | **on** | `data/`, `scripts/` and `packages/` are at the workspace root and the build reads all three |
+| Framework preset | **Other** / none | `vercel.json` sets `"framework": null`. There is no framework |
+| Node.js version | 22.x | `engines` is `>=22.22`; `.nvmrc` says 22.22 |
 
-There is no database and no Supabase project. Every card, review and setting
-lives in the browser's IndexedDB, so a deployment holds **no user data at all**
-and a redeploy cannot lose any.
+Install is the detected `pnpm install` at the workspace root. The build command
+and the output directory come from `vercel.json`:
 
-## 2. `pnpm build` generates the dictionary, and that is not optional
-
-```
-pnpm build = pnpm data:ensure && next build && pnpm sw
+```json
+"buildCommand": "pnpm -w run data:ensure && pnpm run build",
+"outputDirectory": "dist"
 ```
 
-`data/dict.json` (33.5 MB) and `data/decomp.json` (0.9 MB) are **gitignored and
-generated**, so they do not exist in a fresh checkout. `pnpm data:ensure` builds
-them when `data/dict.json` is missing, which on Vercel is every build: it
-downloads CC-CEDICT (from npm), the HSK 3.0 list and jieba's frequency table
-(`raw.githubusercontent.com`) and Make Me a Hanzi's `dictionary.txt`, and writes
-the two files. Replacing the build command with a bare `next build` produces a
-deployment where every dictionary route answers
-`503 {"error":"dict-data-missing"}` and the app shows one banner.
+`pnpm -w run data:ensure` is the workspace-root script, so the dictionary is
+generated into the workspace-root `data/` where `TANGRAM_DATA_DIR` points and
+where three deployables read it. `pnpm run build` is then the **app's** build,
+which copies the artifacts into `public/` and runs Vite.
 
-**How long.** Measured on a clean tree with an empty download cache:
+There is no database and no Supabase project in this deployable. Every card,
+review and setting lives in the browser's IndexedDB, so a deployment holds **no
+user data at all** and a redeploy cannot lose any.
+
+## 2. What the build does, and what it uploads
+
+```
+pnpm -w run data:ensure   →  data/dict-<schema>-<cedict>.sqlite, data/dict-manifest.json,
+                             data/decomp.json, data/dict.json     (gitignored, generated)
+pnpm run build            =  pnpm -w run dict:copy && pnpm -w run sw && vite build
+```
+
+`pnpm dict:copy` (`scripts/copy-dict.ts`) cleans any previous artifacts out of
+`apps/app/public/`, verifies the source against `dict-manifest.json` — byte
+length **and** SHA-256 — copies the three files in, and writes the brotli
+sibling. It **fails the build** on a missing or mismatched artifact rather than
+producing a `dist/` whose manifest points at nothing.
+
+Measured, on a clean tree with an empty download cache:
 
 | Step | Time |
 |---|---|
-| `pnpm data --force` (cold, including all four downloads) | **5.5 s** |
-| `next build` + `pnpm sw` | **28 s** |
-| `pnpm build` total, cold | **~34 s** |
+| `pnpm data --force` (cold, including all four downloads) | **~5 s** |
+| `pnpm dict:copy` — the brotli sibling at the default quality 9 | **~16 s** |
+| `vite build` | **~0.5 s** |
+| `pnpm build` at the workspace root, cold (typecheck + data + copy + sw + vite + server) | **~26 s** |
 
 Vercel does not preserve `.cache/` between builds, so every build pays the cold
-5.5 s. It is small enough not to be worth caching.
+data build and the cold compression. `TANGRAM_DICT_BROTLI_QUALITY=11` trades 95
+more seconds for 2.2 MB; see `scripts/copy-dict.ts` for the measured table.
 
-The build must reach `registry.npmjs.org` and `raw.githubusercontent.com`. If a
-future source is added, `scripts/build-data.ts` exits non-zero when a fetch
-fails — the build breaks rather than deploying a half-built dictionary.
+**What lands in `dist/`,** beyond the app itself:
 
-`pnpm sw` writes `public/sw.js` from `scripts/sw.template.js`, stamped with the
-build id Next just generated. That stamp is what makes the service worker drop
-the previous deploy's hashed chunks on activate, so it has to run *after*
-`next build`, in the same command.
+| File | Size | Served as |
+|---|---|---|
+| `dict-<schema>-<cedict>.sqlite` | 43.2 MB | content-addressed, immutable for a year |
+| `dict-<…>.sqlite.br` | 16.9 MB | the same bytes, brotli, under `accept-encoding` |
+| `dict-manifest.json` | 198 B | `no-cache` — it is the pointer at the filename above |
+| `decomp.json` | 0.92 MB | `no-cache`; fetched lazily on the first character sheet |
+| `assets/*` | ~730 KB | content-hashed by Vite |
+| `sw.js`, `offline.html`, `manifest.webmanifest`, `icons/*` | small | see §3 |
 
-## 3. Environment variables
+The dictionary is **not** parsed on a server any more. It is fetched once by the
+browser and imported into OPFS (`data.md` D4), so the per-route cold start and
+the 1 GB function memory the previous version of this document specified are
+gone with the functions.
+
+## 3. The host rules, and the one test that catches their disappearance
+
+All five live in `apps/app/vercel.json` and **nowhere else**. There is no server
+in `dist/` to apply them and no framework config left to hold them, so deleting
+one deletes the rule. `tests/unit/server/routes.test.ts` parses the file and
+fails on any of them going missing, and `vite-plugins/headers.ts` applies the
+same file to `pnpm dev` and `pnpm preview` so a wrong rule is wrong locally too.
+
+1. **SPA fallback** — every navigation that is not a real file returns
+   `index.html`. It deliberately excludes `/api/`, `/assets/` and any path with
+   a file extension: a missing asset must **404**, not answer the document that
+   references it, or a broken build looks healthy from the outside.
+2. `/manifest.webmanifest` as `application/manifest+json; charset=utf-8`. Some
+   installability checks refuse anything else.
+3. `/sw.js` as `text/javascript; charset=utf-8`, `Cache-Control: no-cache,
+   no-store, must-revalidate`, `Service-Worker-Allowed: /`. A worker at the root
+   must be revalidated or a bad one is permanent.
+4. The dictionary artifact: `Cache-Control: public, max-age=31536000,
+   immutable`, `Content-Type: application/vnd.sqlite3`,
+   `Vary: accept-encoding` — plus a rewrite to the `.br` sibling, with
+   `Content-Encoding: br`, for a client that asks for it.
+5. `dict-manifest.json`: **`no-cache`**. Rules 4 and 5 are two halves of one
+   decision — an immutable pointer is a dictionary that can never be updated.
+
+**Rule 4's negotiation is the one thing nothing local can prove.** Whether
+Vercel honours a rewrite to a pre-compressed sibling for a 43 MB binary is not
+established by any audit, and this repository does not assume it. `pnpm smoke`
+against the deployment reads `content-encoding` and the transferred length off
+the real response; §7 says what to record. If the host will not negotiate, the
+`.br` is already uploaded under its own name and the fallback is for the
+client's fetch to ask for it explicitly — that is a `data.md` change, recorded
+as a question in `HANDOFF.md`.
+
+## 4. Environment variables
+
+The static build reads **one** variable, at build time:
 
 | Variable | Required | Effect when absent |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | no | `FakeProvider` answers; the app works offline-style, and the ask panel says so |
-| `TANGRAM_LLM_PROVIDER` | no | `fake`. The live provider needs **both** this set to `anthropic` and a key |
-| `TANGRAM_MODEL` | no | `claude-opus-5` (`lib/ai/anthropic.ts`) |
-| `TANGRAM_ACCESS_SECRET` | **yes, once a key is set** | no gate: the paid routes are open to anyone with the URL (§4) |
-| `TANGRAM_DATA_DIR` | no | `<cwd>/data`, which is what the build writes |
-| `TANGRAM_ASK_ANSWER_TIMEOUT_MS` | no | 30 000 (§6 — check this against your plan's function timeout) |
-| `TANGRAM_ASK_PROPOSE_TIMEOUT_MS` | no | 8 000 |
-| `TANGRAM_EXAMPLES_TIMEOUT_MS` | no | 20 000 |
-| `TANGRAM_RECALL_TIMEOUT_MS` | no | 15 000 |
+| `VITE_API_BASE` | not yet | empty, i.e. same-origin. `web.md` W4 introduces it; until `backend.md` deploys a server there is nothing to point it at |
+| `TANGRAM_DATA_DIR` | no | the workspace root's `data/`, found by walking up for `pnpm-workspace.yaml` |
+| `TANGRAM_DICT_BROTLI_QUALITY` | no | 9 (§2) |
 
-Set them for **Production and Preview**. A preview deployment with the key and
-without the access secret is the same open wallet as production, on a URL that
-is just as guessable.
+Everything else — `ANTHROPIC_API_KEY`, `TANGRAM_ACCESS_SECRET`, the four ask
+timeouts, `TANGRAM_LLM_PROVIDER`, `TANGRAM_MODEL` — belongs to **`apps/server`**
+and must never be set on this project. A model key in a static site's build
+environment is a key in a bundle. `.env.example` lists them with the server.
 
-## 4. The access gate
+## 5. The access gate — DOWN between `web.md` W1 and W4
 
-**The problem.** `/api/ask`, `/api/examples` and `/api/recall` reach the model.
-With `ANTHROPIC_API_KEY` set and nothing in front of them, anybody who finds the
-URL can spend your money by POSTing to them in a loop. Nothing else in the app
-costs anything: the dictionary routes are CPU, and every card lives in the
-visitor's own browser.
+`middleware.ts` performed the `?key=` → cookie exchange and Next invoked it.
+There is no middleware in a static SPA and both are gone.
 
-**The gate.** Set `TANGRAM_ACCESS_SECRET` to a URL-safe random string:
+**Consequence, stated plainly:** on any deployment made in this window with
+`TANGRAM_ACCESS_SECRET` set, the three routes that reach a paid model refuse
+everyone and cannot be authorised from a phone. With the secret unset there is
+no gate at all. **Do not deploy the model-backed routes before W4 lands.**
 
-```bash
-openssl rand -base64 24 | tr '+/' '-_' | tr -d '='
-```
+W4 rebuilds the client half as an `X-Tangram-Access` header that page script
+attaches; `backend.md` B1 owns the enforcing half, on the server, matching the
+gated paths **by prefix** (`wave-zero.md` §10a — `/api/ask/propose` and
+`/api/ask/answer` sit under `/api/ask`, and an exact-string gate leaves the two
+routes that actually spend money wide open). This section is rewritten by W4.
 
-Use only `A-Z a-z 0-9 . _ ~ -`. The cookie carries the value verbatim, and
-anything that would need encoding is refused rather than encoded (a credential
-with two spellings is a credential with a hole in it).
+**The gate never protected the page HTML and now visibly does not.** A static
+host serves the shell to anyone who asks. If the app's HTML itself must be
+private, that is host-level protection (Vercel's Deployment Protection), not
+application code.
 
-**Authorising a phone**, which is the whole reason it is a cookie and not a
-header — a phone browser cannot set a header:
+## 6. Storage, not function memory
 
-1. Visit `https://<your-app>.vercel.app/?key=<the secret>` once.
-2. You land on the same page with `?access=granted` in the URL. A one-year
-   `HttpOnly; SameSite=Lax; Secure` cookie is now stored. The key is gone from
-   the address bar, so it is not in your history, not in a bookmark, and not in
-   the `Referer` of the next link you tap.
-3. `?access=denied` means the key was wrong — and it also **clears** any cookie
-   that device had, because a wrong key is an attempt to change the key.
+The previous version of this document budgeted per-route function memory for a
+33.5 MB JSON dictionary parsed on every cold instance. There are no functions.
+What replaces it is **the learner's device**:
 
-**What is gated and what is not.** The three paid routes, `GET` handshakes
-included. The pages, the dictionary routes, the manifest, the service worker and
-`/offline.html` stay open: the PWA has to install, and the offline review
-session has to work, without anyone typing a key.
+- ~43 MB in OPFS for the imported dictionary, plus ~17 MB transferred on the
+  first load if rule 4's negotiation works and ~43 MB if it does not.
+- IndexedDB for every card, review, list and setting.
 
-**Rotating.** Change the variable and redeploy. Every cookie ever issued stops
-working at the same instant — there is no session store to fall out of sync
-with — and every device visits `?key=` once more.
-
-**What a refusal looks like.** `401 {"error":"unauthorized"}`, `Cache-Control:
-no-store`, and nothing else: no hint, no stack, no echo of what was sent. The
-secret is never logged and never appears in a response body.
-
-**Two layers, on purpose.** `middleware.ts` refuses the request before it
-reaches a handler, and `lib/server/access.ts`'s `requireAccess` refuses it again
-inside each handler. A `matcher` is one careless edit away from not matching,
-and the failure mode of a gate that quietly stopped running is an invoice.
-
-> **Note for whoever upgrades Next.** Next 16 prints
-> `The "middleware" file convention is deprecated. Please use "proxy" instead.`
-> The gate works today; the migration is a file rename plus renaming the export
-> (`npx @next/codemod@canary middleware-to-proxy .`). When you do it, re-run
-> `tests/e2e/d/access-gate.spec.ts` — it starts a second server with the secret
-> actually set and drives the whole `?key=` → cookie → 200 flow, so it is what
-> tells you the gate still runs.
-
-**With no secret set, none of this exists.** `pnpm dev`, `pnpm test` and
-`pnpm e2e` run in exactly that state, which is deliberate: a gate that changed
-local behaviour would be switched off within a week.
-
-## 5. Cold start, function memory, and why tracing is per-function
-
-### The dictionary is 33.5 MB of JSON, read at request time
-
-Each function instance parses `data/dict.json` once and builds its indexes once,
-memoised on `globalThis` for the life of that instance. On Vercel **every route
-is its own function with its own process**, so each pays its own cold start —
-and before Phase 8 each one built *all seven* indexes, including the ones it
-never reads.
-
-They are now built one at a time, on first use. Measured (median of three runs,
-one fresh Node process each — the closest honest stand-in for a cold lambda,
-since `pnpm start` serves every route from one warm process):
-
-| First request on a cold instance | before | after |
-|---|---|---|
-| `/api/dict/decomp` | 17 ms | 16 ms |
-| `/api/dict/entries` | 4064 ms | **972 ms** |
-| `/api/dict/hsk` — the Today page's first call | 4141 ms | **1026 ms** |
-| `/api/dict/segment` — the reader | 4373 ms | **1346 ms** |
-| `/api/dict/search`, hanzi query | 4610 ms | **1443 ms** |
-| `/api/dict/search`, English query | 4147 ms | **1698 ms** |
-| `/api/dict/search`, pinyin query | 3909 ms | **2429 ms** |
-| everything (`/api/ask` after a few queries) | 4052 ms | **2348 ms** |
-
-Resident memory after that first request fell with it: 280–292 MB before, and
-now 171–177 MB for `entries`/`hsk`, ~205 MB for `segment` and hanzi search,
-~235 MB for English search, ~265 MB once the pinyin indexes are up.
-
-Three changes, in order of what they bought:
-
-1. **Lazy indexes** (`lib/dict/index.ts`). `/api/dict/hsk` was building the
-   47,000-key English inverted index it will never read.
-2. **`readingKeys`** (`lib/dict/pinyin.ts`). The dictionary's own pinyin is
-   already syllable-split, so the query parser's dynamic-programming split does
-   not need to run over it: 1310 ms → ~250 ms for the two pinyin indexes. The
-   fast path declines anything that is not plain numbered pinyin (742 readings
-   like `A quan1 r5`) and falls back; a test proves the two agree on all
-   124,154 readings in the build.
-3. **A one-pass `glossTokens`.** ~210 ms over 195,550 glosses. Same output on
-   every gloss in the dictionary, proved against the old implementation kept in
-   the test as an oracle.
-
-**A pinyin query is the expensive one** and that is inherent: PLAN.md §3.2 has
-it search the pinyin index *and* the gloss index, so it ends up building
-everything.
-
-### What was measured and *not* done
-
-- **A leaner runtime file.** Per-field byte shares of `dict.json`: `glosses`
-  20.1%, `id` 10.0%, `pinyinNum` 9.6%, `pinyinMarked` 9.2%, the three booleans
-  (`properNoun`/`isVariant`/`surname`) 18.8% together, `classifiers` 6.0%,
-  `simp`+`trad` 9.0%, `freqRank`+`freq` 7.0%, everything else under 1%. There is
-  no dead weight to drop: every one of those is read either by search ranking or
-  by a response the UI renders. Packing the three booleans into one flags field
-  would cut ~19% of a 650 ms parse — ~120 ms — in exchange for changing `Entry`
-  (a frozen type) and the `pnpm data` output contract. Not worth it; not done.
-- **A precomputed index format.** Emitting the pinyin and gloss keys from
-  `scripts/build-data.ts` would remove most of the remaining derivation, but it
-  adds a second multi-megabyte artifact to parse and a second thing that can go
-  stale against `dict.json`. After (2) and (3) the derivation is no longer the
-  dominant cost — the 650 ms `JSON.parse` and the map building are — so it would
-  buy much less than it looks. Left alone deliberately.
-- **The real floor** is the parse: read + `JSON.parse` of 33.5 MB is ~650 ms and
-  no amount of index laziness touches it. Getting under that needs a different
-  storage format (a binary index, or a real database) — an architectural change,
-  not a tweak, and it is not in this phase.
-
-### Function memory
-
-Give the functions **at least 1 GB**. Peak RSS is ~180–290 MB depending on the
-route, plus the Next runtime, so 1 GB is comfortable; on Vercel memory and CPU
-are allocated together, so a larger size also shortens the parse directly. If a
-route ever 502s with no log line, out-of-memory during the dictionary load is
-the first thing to check.
-
-### Tracing is per function — every new dictionary-reading route needs an entry
-
-`next.config.ts`:
-
-```ts
-outputFileTracingIncludes: {
-  '/api/dict/**': ['./data/**'],
-  '/api/ask/**': ['./data/**'],
-  '/api/examples/**': ['./data/**'],
-  '/api/recall/**': ['./data/**'],
-}
-```
-
-A route that calls `getDict()` and is **not** listed here works perfectly under
-`next dev` and under `pnpm start` — the file is simply on disk in both — and
-500s in the deployment, on that route alone. `/api/examples` and `/api/recall`
-shipped exactly that way; nothing caught it but a person opening the page.
-
-So it is no longer left to memory:
-
-- `tests/unit/server/routes.test.ts` walks each route's import graph and fails
-  if one reaches `lib/dict/load.ts` without a key covering it, and
-- `pnpm smoke` refuses to run at all if a handler in `app/api/**` has no case.
-
-Each of the eight routes therefore carries its own ~34.4 MB copy of `data/`
-(verified in the build's `.nft.json` files). That is well inside the 250 MB
-unzipped per-function limit, but it is why the deployment upload is large.
-
-## 6. Function timeout vs the ask deadline
-
-`/api/ask` waits up to **30 s** for the model (`ANSWER_TIMEOUT_MS`), `/api/examples`
-20 s, `/api/recall` 15 s. If your Vercel plan's function timeout is *lower* than
-that, the platform kills the function first and the panel shows a generic
-failure instead of the route's own 502.
-
-Either raise the function's max duration to comfortably above 30 s, or lower the
-deadlines with `TANGRAM_ASK_ANSWER_TIMEOUT_MS` and friends — they exist for
-exactly this, and take effect without a rebuild.
+`web.md` W5 owns `navigator.storage.persist()` and the export that makes an
+evicted origin recoverable; W6 owns the first-load budget as one number. Neither
+has run.
 
 ## 7. After a deploy: what to check
 
-Run the smoke script against the deployment. It hits every API route, every nav
-page, and the three files the PWA needs, and fails on any non-2xx:
+Run the smoke script against the deployment. It needs no browser, which is why
+it is still a `tsx` CLI:
 
 ```bash
-pnpm smoke --base-url https://<your-app>.vercel.app --key "$TANGRAM_ACCESS_SECRET"
+pnpm build                      # so there is a build manifest to check assets against
+pnpm smoke --base-url https://<your-app>.vercel.app
 ```
 
-It also runs inside `pnpm e2e` (`tests/e2e/d/smoke.spec.ts`) against the local
-built server, so a route that forgets its tracing entry fails there rather than
-in production.
+It walks every hashed asset in `dist/.vite/manifest.json`, the three files the
+PWA needs, the dictionary's three, every page route in `src/routes.tsx`, and —
+against whatever `--api-base` names — every API route. It asserts the headers
+`vercel.json` promises, so a host that is not applying the file fails here
+rather than in a learner's browser. It also runs inside `pnpm e2e`
+(`tests/e2e/d/smoke.spec.ts`) against the local built server.
 
-Then, by hand, the three things a script cannot tell you:
+Then, by hand, the things a script cannot tell you:
 
-1. **The dictionary is in the bundle.** `GET /api/dict/hsk?band=1` returns 200
-   with entries, not `503 {"error":"dict-data-missing"}`. This is the one thing
-   that can only be confirmed against a real deployment: file tracing is a build
-   artefact and `pnpm start` reads `data/` off the disk either way. A 503 here
-   means `pnpm build` was not the build command, or a route is missing its
-   `outputFileTracingIncludes` entry.
-2. **The gate is on.** `curl -i https://<app>/api/ask` → `401
-   {"error":"unauthorized"}`. If it answers 200, `TANGRAM_ACCESS_SECRET` did not
-   reach that environment.
-3. **The PWA updated.** Open the deployment on the phone, pull to refresh once,
-   and check `/settings` renders. Navigations are network-first, so a new deploy
-   is picked up on the first online load; `sw.js` is served `no-cache` so the
-   worker itself is never pinned to an old build.
+1. **The artifact's real transfer**, which is a **measurement to record in
+   `HANDOFF.md` and to feed into `web.md` W6's budget**:
+
+   ```bash
+   curl -sI -H 'accept-encoding: br, gzip' https://<app>/dict-<schema>-<cedict>.sqlite
+   ```
+
+   Record `content-encoding`, `content-length` against the 43,208,704-byte
+   on-disk length, and `cache-control`. If `content-encoding` is not `br`, the
+   pre-compression question goes into `HANDOFF.md` as a `data.md` question and
+   the uncompressed number goes into W6's budget.
+
+2. **The manifest is not being cached immutably.**
+   `curl -sI https://<app>/dict-manifest.json` → `cache-control: no-cache`. If
+   this one is wrong the dictionary can never be updated and nothing will look
+   broken until it needs to be.
+
+3. **A deep route renders.** Open `https://<app>/settings` directly — not by
+   navigating to it — and check the attribution renders. That is the SPA
+   fallback and the licence obligation in one.
+
+4. **The PWA updated.** Open the deployment on the phone, pull to refresh once.
+   Navigations are network-first, so a new deploy is picked up on the first
+   online load; `sw.js` is served `no-cache` so the worker itself is never
+   pinned to an old build.
 
 And once, on the first deploy: install to the home screen, turn on airplane
 mode, and do one review. That is the promise the whole service worker exists

@@ -1136,7 +1136,7 @@ before work starts** — these are a starting point for a `pnpm add`, not a lock
 
 | Package / tool | Version | Date | Notes |
 |---|---|---|---|
-| `@capacitor/core` | 8.5.2 | 2026-09-11 | Xcode 26+, iOS 15+ *(search)*, minSdk 24, compile/target 36. 8.5 adopted UIScene. Stay on 8.5.x; 9 is at alpha.6. |
+| `@capacitor/core` | 8.5.2 | 2026-09-11 | **iOS 15+ and the UIScene adoption are now verified** against the shipped artifacts, not a search snippet — podspec, both Xcode templates, the SPM `Package.swift` and the CLI's own `minVersion`, plus `UIApplicationSceneManifest` + `SceneDelegate.swift` in the generated project (`ios.md` I0, HANDOFF.md). **Xcode 26+ is still *(search)*** and `capacitorjs.com` is still egress-blocked. minSdk 24, compile/target 36. Stay on 8.5.x; 9 is at alpha.6. |
 | `@capacitor-community/sqlite` | 8.1.1 | Aug 2026 | `copyFromAssets`, read-only connections; bundles SQLCipher (`sqlcipher-android` 4.17.0, `SQLCipher` pod) — reproduce its BSD notice. Original author retired at 6.x; community-maintained. |
 | `@capacitor-community/text-to-speech` | 8.0.2 | June 2026 | MIT. `onRangeStart` over `AVSpeechSynthesizer` / `UtteranceProgressListener`. |
 | `@capacitor-community/safe-area` | — | — | Version not recorded by the audit. Needed for API 36 edge-to-edge; keyboard bottom inset fixed in Chromium 144 (Capacitor #8432). |

@@ -23,6 +23,14 @@ const config = [
       // copy too would report the same findings twice and go stale between
       // builds.
       'public/sw.js',
+      // The native project trees (docs/plans/ios.md I1, docs/plans/android.md A1).
+      // They hold no source of ours — but `cap sync` copies the whole Vite build
+      // into `ios/App/App/public/`, and eslint then reports ~2,000 errors in a
+      // minified bundle and a stamped service worker. Both are already linted at
+      // their real paths. `android/**` is listed now rather than when A1 lands,
+      // because the copy is `cap sync`'s behaviour, not a per-platform one.
+      'ios/**',
+      'android/**',
     ],
   },
   js.configs.recommended,

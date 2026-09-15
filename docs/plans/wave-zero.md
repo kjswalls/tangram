@@ -32,7 +32,18 @@ tangram/
 ```
 
 `data/` and `scripts/` stay at the root because three deployables consume `pnpm data`'s output.
-`web.md` W0 already documents the trap this creates — `build-data.ts` resolves its own directory and
+
+> **Correction, from the session that executed W0.** An earlier version of this section claimed "no
+> change needed to W0 for this ruling; it is confirmation." That was wrong, and the build session
+> caught it. W0's Files list put `scripts/` *inside* the `git mv`, and its prose and path-arithmetic
+> table both depended on having done so. The two documents described different trees. The ruling
+> stands — `scripts/` stays at the workspace root, with this document and `STACK.md` §5 against W0's
+> list — and the session paid the cost rather than dropping it: the four root scripts left the app's
+> TypeScript and eslint projects, so the workspace root gained its own configs and the root build
+> typechecks everything it typechecked before. `TANGRAM_DATA_DIR` is the authoritative mechanism;
+> `lib/dict/load.ts`'s default is no longer working-directory-relative. See `HANDOFF.md` under W0.
+
+`web.md` W0 also documents the trap this creates — `build-data.ts` resolves its own directory and
 `load.ts` resolves the working directory, so a naive move relocates the artifact while every test
 still passes — and its remedy (both honour `TANGRAM_DATA_DIR`; the root scripts set it to the
 absolute workspace-root path) stands. No change needed to W0 for this ruling; it is confirmation.
@@ -174,6 +185,89 @@ still introduces new words on a different screen from the one that reviews them.
 | 16c | **`core.md`'s two citations of "`data.md` §5.7" become D3.** No §5.7 exists. | `core.md` C4a |
 | 16d | **`ios.md`'s reading of the C2 gate governs:** I0–I3 consume nothing from `TTSProvider` and can run without it. `core.md` C2's "must land before any mobile plan starts" is wrong. | `core.md` C2; `android.md` A4 |
 | 16e | **The design canvas is illustrative; the plans govern.** `core.md` extracts the layout facts its phases depend on into its own text so no phase depends on a source a build session cannot open. | `core.md` §1 |
+
+## 10a. The access gate matches by PREFIX — SETTLED (raised by the server build session)
+
+The session building `backend.md` B0–B2 stopped and asked which plan owns how the access gate matches,
+and it was right to. The answer has a security consequence.
+
+The gate's path list is `['/api/ask', '/api/examples', '/api/recall']`, and the only code that ever
+matched a request against it was the middleware `web.md` W1 deleted:
+
+```ts
+GATED_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`))
+```
+
+A **prefix** match. `web.md` W4's disposition table lists the path list as "unchanged, moved" and says
+nothing about matching; `backend.md` B1 inherits the same silence. B2 then adds `/api/ask/propose` and
+`/api/ask/answer` — **the two routes that actually spend money**. An exact-string gate leaves both of
+them open while `TANGRAM_ACCESS_SECRET` is set and every existing test passes.
+
+**Rulings.**
+
+1. **The match is by prefix**, exactly as the deleted middleware did it. This is not a preference; an
+   exact match is a silent authentication bypass on the only two routes with a bill attached.
+2. **The enforcing gate is server-side and belongs to `backend.md` B1**, because that is where the
+   three routes now live. `web.md` W4 owns only the client half — sending the header — and its
+   disposition table should say so rather than implying it owns the check.
+3. **The rule lives in the frozen ask contract and is asserted by the contract test**, which is what
+   the build session did on its own initiative and is the right call: the contract is the one artifact
+   both halves share, and neither W4's owner nor B1's owns the other's test file.
+4. **The assertion must name `/api/ask/propose` and `/api/ask/answer` explicitly**, not just the three
+   parent paths. A test that only proves the parents are gated is the test that would have passed
+   while both children were open.
+
+This is the second time in this build that a config-shaped change matched fewer things than it looked
+like it matched, with every local gate green — the first was the dictionary tracing globs in W0. Both
+were caught by an adversarial reviewer rather than by a test, and in both cases the fix included a new
+test that can catch the next one.
+
+## 10b. V1 — the phone shell is NOT behind an iPhone — SETTLED
+
+The verification register's V1 asked whether `core.md` C7 may land before C5b, because the answer
+decides whether the whole Android track waits on Apple hardware. **It may. C7 is not gated on C5b.**
+
+**Why the gate exists, and why it is right.** `ios.md` I2 answers register #1 on a physical iOS 26
+device: the reported WKWebView crash against `-webkit-user-select: none` during touch. That property
+is how drag-select stops the ruby annotations being swept into the selection, so it is load-bearing.
+C5a builds the prototype in a harness touching no production file, I2 runs against that harness, and
+C5b — the production rewrite — waits for the answer. That ordering stands and is not reopened.
+
+**What was wrong was the inheritance, not the gate.** `android.md` A2, A4 and A6 gated on *ranges* of
+core phases (C7; C6; C3–C6), and those ranges contain C5b. So Android's second phase — which needs a
+tab bar and a CSS variable — transitively waited on an iPhone. That was nobody's intent and
+contradicts both `android.md`'s own premise and STACK §4.
+
+**And the two documents disagreed.** `core.md` §4 already says register #1 gates *"Before C5b, and
+before nothing else here."* `README.md`'s wave 5 put C7 after C5b anyway, and §8's disposition table
+implied it. Read against what C7 actually builds — the three-tab shell, the wide breakpoint, the
+Practice queue merge, `components/shell/**` — none of it consumes C5b. The only real coupling is that
+C7 assembles the Look up tab around a reader C5b later rewrites: rework to sequence sensibly, not a
+dependency.
+
+**Rulings.**
+
+1. **`core.md` §4 governs.** C7 may land before C5b. `README.md`'s wave table is corrected, not §4.
+2. **`android.md` A2, A4 and A6 stop gating on phase ranges** and name the artifacts they need: the
+   `TabBar` primitive and the shell's inset CSS variable (A2), `lib/tts/sequence.ts` (A4), the engine
+   feature list C5a measured (A6). None of those is C5b.
+3. **Prefer C7 after C5b when both are free**, to avoid assembling the Look up tab twice — a
+   preference for the scheduler, never a gate another plan may inherit.
+4. **V4 falls out with it.** Wave 0b stops claiming `core.md` C0 runs in parallel with `web.md` W0.
+   C0 edits the manifest W0 is splitting. C0 follows W0.
+
+## 10c. The two shells — SETTLED by the owner (2026-09-14)
+
+- **Wide-screen web gets the PAGE shell**, not the command palette.
+- **The desktop application gets the PALETTE, with the global hotkey** — which was always the
+  palette's only real justification, since a browser tab cannot summon itself.
+- **The desktop application is deferred.** `core.md` C9 (the palette) and `web.md`'s Tauri work go
+  with it. The installed PWA remains the desktop story until someone asks for the hotkey.
+- **The default theme is Inkstone** — the warm paper ground, ink text and vermillion accent already
+  specified as the visual language. The dark variant is optional and not the default.
+
+This resolves the tension the design session left open: the palette earns its keep only where the
+hotkey exists, so it ships with the application and the web keeps the shell that suits a browser.
 
 ## 11. `ios.md`'s contested-surfaces table — DELETE IT (issue 4)
 

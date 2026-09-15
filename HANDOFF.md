@@ -6107,3 +6107,103 @@ Three, all recorded rather than landed, per CLAUDE.md:
 - **The three settled-palette contrast failures** recorded in the C0 and C1 sections are still
   failures: `--muted`/`--paper` 4.23:1, `--lookup`/`--lookup-soft` 4.45:1, `--new`/`--new-soft`
   4.48:1, each with a proposed hex. The gallery prints them as FAIL rather than hiding them.
+
+---
+
+## C4a, second pass — what the adversarial review found after the phase was closed
+
+The C4 review treated C4a's code as out of scope, so the cutover and the four dictionary states
+shipped without a review of their own. This round was two independent lenses over C4a's files (the
+acceptance criteria; what breaks that no test covers) with every finding sent to a refuter. **22
+findings, 18 refuted, four confirmed.** All four are fixed below. The 18 refutations are worth the
+same note the earlier rounds got: most were real readings of the code that turned out not to be
+defects, and a couple were the reviewer mis-reading a guard that was already there.
+
+### 1. The `import` failure told the learner the opposite of what the app does
+
+`components/dict/dict-status.tsx` said, for `failed{reason:'import'}`:
+
+> …if it fails twice, **the reader and lookup keep working** without it.
+
+`DictGate` hides lookup and the reader when the store is not `ready` — they are precisely the two
+that do *not* keep working — and practice, lists, Today and stats are what carry on. The same file
+states the rule correctly three other times (its header, the `storage` body, the `absent` body).
+One string inverted it.
+
+**It also described an event that had not happened.** Two producers land on `reason:'import'`:
+`data.md` D4's genuine import failure (the bytes arrived, OPFS refused them) and `HttpDictStore`'s
+mapping of a `503 dict-data-missing` — which means the artifact was never built or served, so
+nothing downloaded and nothing arrived. That second case is the one CLAUDE.md treats as *expected*
+on a deploy, and it was being told "the file arrived and this browser would not store it", under a
+button offering to retry a download that never started.
+
+The body now asserts nothing about a transfer and states the rule the right way round; the truthful
+diagnosis stays on the `dict-failure-detail` line, which carries `run pnpm data` for one producer
+and the OPFS error for the other.
+
+**Why no test saw it.** The only copy assertion anywhere was `new Set(copy).size === 4` — four
+*distinguishable* screens. A screen that is distinguishable and wrong satisfies it. Two guards in
+`tests/unit/dict/dict-status.test.tsx` now cover the class: no failure body may claim the reader or
+lookup keep working, and the `import` body may name no transfer. Both were mutation-verified against
+the old string.
+
+### 2. `/lists/:id` still died with the dictionary — the other call
+
+C4a wrapped `source.entries(page)` so a list would render its words by id when the glosses were out
+of reach. `readDetail` makes **two** calls that can reject, and the unwrapped one is the one a fresh
+install hits first: `ensureMembers` materialises an HSK band from `source.band()` on that band's
+first visit. The rejection escaped the component, `data` stayed `undefined`, and the page sat on
+"Loading words…" for ever — under a raw `run pnpm data` — with no retry. The custom-list e2e passed
+throughout, because its members were already in IndexedDB and `materialise` returns before it can
+throw. On a fresh install this is all eight system lists.
+
+An unfilled band has no learner-owned ids to degrade to: its membership *is* derived from the
+dictionary. So the fix is not an empty list — an empty list is a claim the learner emptied it — but
+an explicit state. `DetailData` gained `unfilled`, and the empty paragraph carries
+`data-unfilled` and says the words are the dictionary's. Covered at both levels
+(`tests/unit/lists/list-detail-offline.test.tsx`, and a case in `tests/e2e/core/dict-states.spec.ts`),
+and mutation-verified at both.
+
+### 3. The cutover test searched three directories; the criterion says the whole app
+
+C4a's first acceptance criterion is `grep -rn "lib/dict/client" --include=*.ts --include=*.tsx .`
+and `tests/unit/dict/client-callers.test.ts` exists to *be* that grep, because there is no CI. It
+searched `components/`, `lib/` and `src/`. **`apps/app/app/` is a real directory of client
+components** — `app/(today)/today-view.tsx`, `app/settings/settings-form.tsx` — and was not
+searched, nor was `vite-plugins/`. An import of `lib/dict/client` added to any of them left the
+suite green while the criterion's own grep reported two importers.
+
+`data.md` D6 is gated verbatim on this evidence, so the blind spot was a false "unblocked" rather
+than a missed nit. The file now carries two root lists, because the plan states two different greps:
+`wholeApp` (criterion one's `.`, everything under `apps/app` except `node_modules`, `dist`,
+`test-results`, `playwright-report` and `tests/`) for the importer and constructor tests, and
+`routeScope` (criterion two's `components/ lib/`, plus `src/`) for the `/api/dict` test. Mutation
+-verified by adding both an import and a `new HttpDictStore(` to `app/(today)/today-view.tsx`.
+
+`tests/` is excluded deliberately: a spec that routes `**/api/dict/**` is not a caller.
+
+### 4. `HttpDictStore.open()`'s failure mapping was asserted nowhere
+
+`dict-states.spec.ts` drives the four reasons off literals set on the gallery's fake store, which
+proves the four screens and nothing about which one a real failure produces; `smoke.spec.ts` only
+asserts that *a* `dict-status` is visible. The mapping from an HTTP failure onto a `DictStatus`
+reason — the thing that chooses the screen — had no test at all.
+
+`tests/unit/dict/http-store.test.ts` pins it: `503 dict-data-missing` → `failed{import}` with the
+hint as the message, any other refusal → `failed{download}`, a dead connection → `failed{download}`
+rather than a throw at the caller, `ready` stamped with the version the route answered with, plus
+`open()`'s idempotence and its `preparing → ready` transition. `data.md` D4 swaps the store under
+this bridge; with no CI this file is the only thing that will notice if the mapping changes with it.
+
+### A frozen surface this phase works around, recorded rather than changed
+
+**The frozen `DictStatus` union has no reason meaning "the artifact was never built or served."**
+`data.md` D1 froze `failed{reason: 'download'|'import'|'storage'|'corrupt'}` around a browser that
+downloads a file and imports it into OPFS. `HttpDictStore` has no such transfer: its failure is a
+503 from a server with no `data/` build. It folds that onto `import` — the closest of the four — and
+carries the real diagnosis in `message`, which is why the `import` copy may no longer describe a
+transfer. A fifth reason (`unavailable`, say) would let that screen say what actually happened.
+Per CLAUDE.md the builder records the need and continues without it: **this is not a change to the
+frozen surface, it is a note for whoever owns it.** `data.md` D4 may find it moot, since the store
+that replaces this bridge does download and import.
+

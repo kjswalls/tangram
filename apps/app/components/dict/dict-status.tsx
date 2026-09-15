@@ -66,9 +66,19 @@ const FAILURE: Record<
     body: 'The connection dropped part way. Nothing is lost — it picks up from the start of the same file.',
     retry: 'Try again',
   },
+  /**
+   * **Two producers land here, and the copy may assert nothing about either.**
+   * `data.md` D4's is a genuine import failure — the bytes arrived and OPFS
+   * refused them. `HttpDictStore`'s is a 503 `dict-data-missing`, which means
+   * the artifact was never built or served, so nothing downloaded and nothing
+   * arrived. The frozen `DictStatus` union has no reason for the second (see
+   * HANDOFF.md, "What `HttpDictStore` cannot do"), so this body says only what
+   * is true of both and leaves the diagnosis to `dict-failure-detail`, which
+   * carries `run pnpm data` for one and the OPFS error for the other.
+   */
   import: {
-    title: 'The dictionary downloaded but could not be opened',
-    body: 'The file arrived and this browser would not store it. Trying again is worth one attempt; if it fails twice, the reader and lookup keep working without it.',
+    title: 'The dictionary could not be opened',
+    body: 'It is not available for use on this device. One retry is worth trying; if it fails again, carry on without it — lookup and the reader are what wait on the dictionary, not practice, your lists or your progress.',
     retry: 'Try again',
   },
   storage: {

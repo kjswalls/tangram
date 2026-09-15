@@ -175,6 +175,36 @@ test.describe('with the dictionary down', () => {
     await expect(page.getByTestId('list-member')).toContainText('打算');
   });
 
+  /**
+   * **The HSK band nobody has opened yet** — the one list shape whose membership
+   * the dictionary derives rather than the learner owning it.
+   *
+   * `ensureMembers` fills an HSK list from `source.band()` on its first visit,
+   * so on a fresh install all eight system lists take that path. The rejection
+   * used to escape `readDetail` entirely: the page sat on "Loading words…"
+   * under a raw `run pnpm data`, for ever, with no retry — while the custom-list
+   * case above passed, because its members were already in IndexedDB and
+   * `materialise` returns early before it can throw. One catch covered one of
+   * the two calls that can reject.
+   */
+  test('an HSK band never opened before says so, instead of loading for ever', async ({ page }) => {
+    await page.goto('/lists');
+    const hsk = page.getByTestId('list-card').filter({ hasText: 'HSK 3' }).first();
+    await expect(hsk).toBeVisible();
+    await hsk.getByRole('link', { name: /HSK 3/ }).click();
+
+    // The page renders. The empty state is the dictionary's, not the learner's,
+    // and it says which — a band that reads "This list has no words yet" is
+    // telling the learner they emptied a list they have never opened.
+    const empty = page.getByTestId('list-empty');
+    await expect(empty).toBeVisible();
+    await expect(empty).toHaveAttribute('data-unfilled', 'true');
+    await expect(empty).toContainText('dictionary');
+    // …and no developer-facing hint is the page's headline.
+    await expect(page.getByText('run pnpm data')).toHaveCount(0);
+    await expect(page.getByText('Loading words…')).toHaveCount(0);
+  });
+
   test('…and /lookup and /read are the two that DO gate', async ({ page }) => {
     for (const route of ['/lookup', '/read']) {
       await page.goto(route);

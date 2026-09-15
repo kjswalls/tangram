@@ -93,6 +93,38 @@ describe('DictStatusView', () => {
     expect(seen.size).toBe(REASONS.length);
   });
 
+  /**
+   * **The rule, inverted, in the one place a learner reads it.** `DictGate`
+   * hides lookup and the reader when the store is not `ready`; practice, lists,
+   * Today and stats are what keep working. The `import` body used to say the
+   * opposite — "the reader and lookup keep working without it" — and every
+   * other assertion in this file passed, because "four distinguishable screens"
+   * is satisfied by four screens one of which is wrong.
+   */
+  it.each(REASONS)('failure reason %s never claims the reader or lookup keep working', (reason) => {
+    render(<DictStatusView status={{ state: 'failed', reason, message: '' }} />);
+    const text = screen.getByTestId('dict-status').textContent ?? '';
+    expect(text).not.toMatch(/(reader|lookup)[^.]*\bkeeps? working\b/i);
+    expect(text).not.toMatch(/\bkeeps? working\b[^.]*(reader|lookup)/i);
+  });
+
+  /**
+   * **`import` has two producers and may assert nothing about either.** D4's is
+   * a real import failure; `HttpDictStore` maps a 503 `dict-data-missing` — the
+   * artifact was never built or served — onto the same reason, because the
+   * frozen `DictStatus` union has no other. Copy that says the file downloaded
+   * and arrived describes an event that did not happen on a deploy that skipped
+   * `pnpm data`, which is the case CLAUDE.md treats as expected.
+   */
+  it('the import failure describes no transfer, because on one producer none happened', () => {
+    render(<DictStatusView status={{ state: 'failed', reason: 'import', message: 'run pnpm data' }} />);
+    const text = screen.getByTestId('dict-status').textContent ?? '';
+    expect(text).not.toMatch(/download|arrived|the file/i);
+    // …and the truthful diagnosis is on screen, which is what makes the silence
+    // above affordable.
+    expect(screen.getByTestId('dict-failure-detail').textContent).toBe('run pnpm data');
+  });
+
   it('the storage failure is the one that tells the learner the rest still works', () => {
     render(<DictStatusView status={{ state: 'failed', reason: 'storage', message: '' }} />);
     expect(screen.getByTestId('dict-status').textContent).toMatch(/practice|lists|progress/i);

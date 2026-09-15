@@ -6035,3 +6035,75 @@ over the passage and asserts the page scrolled and no selection started.
   loads**, which is what a browser without them looks like; the detection is at runtime, so it
   engages by itself. Tap-then-tap gives the same span as the drag, and a drag in that mode correctly
   does nothing.
+
+## `core.md` C0–C5a — what the next session needs, in one place
+
+**Landed: C0, C1, C2, C3, C4, C4a, C5a.** The sections above carry each phase in full; this one is
+the short list a later session actually needs, plus the loose ends that belong to nobody else.
+
+### Where the build stopped, and why
+
+**C5b is not built, deliberately.** It is gated on a physical iOS 26 device answering the WKWebView
+crash check against `-webkit-user-select: none` during touch (STACK register #1; `ios.md` I2), and
+that device does not exist in a container. C5a — the harness I2 runs against, touching no production
+reader file — is exactly the right place to stop. **C6, C7 and C8 are not built either**, and
+**C9 (the command palette) is deferred indefinitely** per `wave-zero.md` §10c.
+
+`ios.md` I2 opens **`/span-select`**, in a build made with `pnpm -w run build:e2e` (the mode guard;
+a production build does not serve it). The numbers it should compare against are in the C5a section:
+`caretPositionFromPoint`, p50 1.0 ms / p95 1.2 ms per `pointermove` over 568 characters, zero dropped
+frames, and an 8px axis threshold **plus** a more-horizontal-than-vertical rule.
+
+### Two small changes to files other plans call theirs
+
+- **`lib/dict/pinyin.ts` exports `isNumberedSyllable`** (C3). `data.md` §5 D2 calls that module
+  "unchanged"; this is a one-word `export` in front of an existing private function, additive, and
+  it touches nothing D2 cares about. `lib/hanzi/align.ts` has to ask "is this token one character's
+  worth of reading, or is it punctuation?", and re-deriving that regex in a second file is how the
+  two come to disagree about `lu:4` or `r5`.
+- **`components/reader/reader-text.tsx` lost its scroll-into-view** (C4), which moved to
+  `reader-screen.tsx`. That file is C5b's, and C5b replaces it wholesale — the behaviour is what C4
+  was told to carry, and it could not work where it was. See the C4 section.
+
+### Frozen surfaces: what was needed and not taken
+
+Three, all recorded rather than landed, per CLAUDE.md:
+
+1. **`RenderedToken` (`lib/ai/ground.ts`, under `packages/ai`) has no `pinyinNum`.** It carries
+   `pinyin` as the **marked** word-level form and `alignReading` needs the **numbered** one, so
+   example sentences and the ask panel's phrase tokens annotate at token granularity — one correct
+   word-level reading rather than a guessed per-character one. Adding `pinyinNum` there is the change
+   C3 would have needed.
+2. **`DictStore.entries(ids)` takes no `AbortSignal`**, where the fetch client it replaced did.
+   `search` has one (`SearchOptions.signal`, already frozen). Callers drop stale answers with a
+   `cancelled` flag, so nothing on screen depends on it — but a needless in-flight request is one
+   the Capacitor bridge will feel.
+3. **`DictStore.entries(ids)` does not promise to preserve request order.** `entryIds` is
+   frequency-ordered and the whole "Mark known takes the ranked reading" rule rests on it, so the
+   word sheet re-orders defensively. Saying so in the interface would be better than every caller
+   re-deriving it.
+
+### Documents this plan set depends on that are not in the repository
+
+- **`docs/product-decisions.md` does not exist here.** `core.md`, `ios.md`, `web.md`, `data.md` and
+  `README.md` all cite it by section, and four C3 decisions rest on its §4 alone. Worth committing,
+  or worth the plans quoting the rules they depend on.
+- **`wave-zero.md` has no §10b and no §10c.** The brief for this session quotes both as binding
+  rulings — §10b (C7 is not gated on C5b; register #1 gates C5b and nothing else) and §10c (the
+  default theme is Inkstone; C9 is deferred). They are applied throughout; the document itself stops
+  before them. This was already noted in the C0 section and is repeated here because the next
+  session will look for them too.
+
+### What is still owed on the surfaces this plan built
+
+- **`pinyinDisplay` has no control.** The setting exists, defaults to `'always'`, and all three
+  values work — but C8 owns `/settings`, so today it can only be changed through the repository.
+  `'tap'` in particular is worth a look on a device before it is offered.
+- **The dictionary is still fetched over HTTP.** `lib/dict/http-store.ts` is the bridge; `data.md`
+  D4 replaces it and D6 then deletes the routes. `tests/unit/dict/client-callers.test.ts` fails the
+  day that changes, in either direction.
+- **`ask_cache` has one writer and two readers.** The in-context gloss line reads the route and not
+  the cache, deliberately — C7 owns the ask module's state and that hook is what it replaces.
+- **The three settled-palette contrast failures** recorded in the C0 and C1 sections are still
+  failures: `--muted`/`--paper` 4.23:1, `--lookup`/`--lookup-soft` 4.45:1, `--new`/`--new-soft`
+  4.48:1, each with a proposed hex. The gallery prints them as FAIL rather than hiding them.

@@ -16,7 +16,7 @@ import { Sheet } from '@/components/ui/sheet';
 
 import { render, screen } from '../render';
 
-function Harness({ onClose }: { onClose?: () => void } = {}) {
+function Harness({ onClose, modal }: { onClose?: () => void; modal?: boolean } = {}) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -30,6 +30,7 @@ function Harness({ onClose }: { onClose?: () => void } = {}) {
           setOpen(false);
           onClose?.();
         }}
+        {...(modal === undefined ? {} : { modal })}
         title="A word"
       >
         <button type="button">first</button>
@@ -188,5 +189,84 @@ describe('Sheet', () => {
 
     await user.click(screen.getByRole('button', { name: 'Close' }));
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  /**
+   * **`modal={false}`** — the mode C4 added for the reader, whose loop is
+   * tap-a-word, read, tap the next word. A backdrop over the passage makes
+   * every word after the first cost two gestures.
+   *
+   * Five properties, each one a line of the component's header, and each one
+   * asserted because there is no CI and a header is not enforcement (CLAUDE.md).
+   */
+  describe('non-modal', () => {
+    it('renders no backdrop and does not claim to be modal', async () => {
+      const user = userEvent.setup();
+      render(<Harness modal={false} />);
+      await user.click(screen.getByRole('button', { name: 'opener' }));
+
+      expect(screen.queryByTestId('sheet-backdrop')).toBeNull();
+      expect(screen.getByRole('dialog').getAttribute('aria-modal')).toBeNull();
+      expect(screen.getByTestId('sheet-layer').getAttribute('data-modal')).toBe('false');
+      // …and it is still a labelled dialog.
+      expect(screen.getByRole('dialog', { name: 'A word' })).toBeTruthy();
+    });
+
+    it('leaves the page scrollable, and restores what it found', async () => {
+      const user = userEvent.setup();
+      document.body.style.overflow = 'visible';
+      render(<Harness modal={false} />);
+      await user.click(screen.getByRole('button', { name: 'opener' }));
+      expect(document.body.style.overflow).toBe('visible');
+      await user.keyboard('{Escape}');
+      expect(document.body.style.overflow).toBe('visible');
+    });
+
+    it('locks the page when modal, for contrast', async () => {
+      const user = userEvent.setup();
+      document.body.style.overflow = 'visible';
+      render(<Harness />);
+      await user.click(screen.getByRole('button', { name: 'opener' }));
+      expect(document.body.style.overflow).toBe('hidden');
+      await user.keyboard('{Escape}');
+      expect(document.body.style.overflow).toBe('visible');
+    });
+
+    it('does NOT trap Tab — the page behind it is reachable by design', async () => {
+      const user = userEvent.setup();
+      render(<Harness modal={false} />);
+      await user.click(screen.getByRole('button', { name: 'opener' }));
+
+      // From the last control in the panel, Tab leaves rather than wrapping.
+      screen.getByRole('button', { name: 'second' }).focus();
+      await user.tab();
+      expect(screen.getByRole('dialog').contains(document.activeElement)).toBe(false);
+    });
+
+    it('still closes on Escape once focus has moved OUT of it', async () => {
+      // The reader's own loop causes this: tapping the next word moves focus
+      // onto that token, and a handler bound to the panel never hears the key.
+      const user = userEvent.setup();
+      const onClose = vi.fn();
+      render(<Harness modal={false} onClose={onClose} />);
+      await user.click(screen.getByRole('button', { name: 'opener' }));
+
+      await user.click(screen.getByRole('button', { name: 'outside' }));
+      expect(screen.getByRole('dialog')).toBeTruthy();
+      await user.keyboard('{Escape}');
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not yank focus back to the opener when the learner has moved on', async () => {
+      const user = userEvent.setup();
+      render(<Harness modal={false} />);
+      await user.click(screen.getByRole('button', { name: 'opener' }));
+
+      const outside = screen.getByRole('button', { name: 'outside' });
+      await user.click(outside);
+      await user.keyboard('{Escape}');
+      // Focus stays where the learner put it, not on a several-taps-old opener.
+      expect(document.activeElement).toBe(outside);
+    });
   });
 });

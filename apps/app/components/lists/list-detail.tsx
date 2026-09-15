@@ -50,7 +50,18 @@ async function readDetail(listId: string, limit: number): Promise<DetailData> {
   const entryIds = (await ensureMembers(repo, row, source)).map((member) => member.entryId);
   const page = entryIds.slice(0, limit);
   const [entries, cards, known] = await Promise.all([
-    source.entries(page),
+    /**
+     * **A dictionary that cannot answer must not take the list with it**
+     * (core.md C4a; `data.md` D4: "the app runs without a dictionary").
+     *
+     * A list is the learner's own data — ids in IndexedDB — and the dictionary
+     * only supplies the gloss and the reading beside each one. Letting this
+     * rejection propagate turned the whole page into an error message, so a
+     * learner with no `data/` build could not see the words they had chosen.
+     * The row below already renders a member whose entry is missing, by id; it
+     * just never got the chance.
+     */
+    source.entries(page).catch(() => []),
     repo.allCards(),
     repo.knownEntryIds(),
   ]);

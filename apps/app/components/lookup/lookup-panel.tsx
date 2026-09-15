@@ -42,6 +42,19 @@ export interface LookupPanelProps {
   /** Where the query came from: the sentence, the question, the reader offset. */
   context?: CardContext;
   slots?: { ask?: ReactNode };
+  /**
+   * Render no ask region at all — neither the injected slot nor the default
+   * panel.
+   *
+   * The word sheet (core.md C4) sets it. Without it, one tap in a passage sent
+   * **two** independent `/api/ask` requests for the same question: the sheet's
+   * own in-context line, and the full ask panel this file mounts by default a
+   * few lines below it. They are not the same call — the panel debounces, reads
+   * `ask_cache` and writes it back under a trustworthiness gate — so the two
+   * could also name different senses for the same word in the same sentence.
+   * The sheet wants the one line, not the panel.
+   */
+  noAsk?: boolean;
   /** The dictionary result body. The placeholder shows when there is none. */
   children?: ReactNode;
   className?: string;
@@ -50,6 +63,7 @@ export interface LookupPanelProps {
 export function LookupPanel({
   query,
   askQuery,
+  noAsk,
   context,
   slots,
   children,
@@ -92,7 +106,7 @@ export function LookupPanel({
         )}
       </div>
 
-      {slots?.ask ? (
+      {noAsk ? null : slots?.ask ? (
         <div data-testid="lookup-ask-slot" className="border-t border-border px-4 py-4">
           {slots.ask}
         </div>

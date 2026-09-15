@@ -20,7 +20,7 @@
 import { create } from 'zustand';
 
 import type { TextRow } from '@/lib/db/schema';
-import { fetchSegment } from '@/lib/dict/client';
+import { getDictStore } from '@/lib/dict/browser-store';
 import type { Token } from '@/lib/types';
 
 /** `compose` is the paste box; `read` is the reading view. */
@@ -163,7 +163,11 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
     }
     set({ loading: true, error: undefined });
     try {
-      const result = await fetchSegment(body);
+      // Through `DictStore`, not a route (core.md C4a). The store is read at
+      // call time rather than captured at module load so a swapped
+      // implementation — D4's OPFS store, a phone's plugin — takes effect
+      // without this file knowing.
+      const result = await getDictStore().segment(body);
       // The body can have changed while the request was out; a token list that
       // indexes a different string would highlight the wrong characters.
       if (get().body !== body) {

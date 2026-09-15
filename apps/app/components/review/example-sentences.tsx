@@ -44,8 +44,25 @@ import {
 import { entryLookup, renderPhrase, type PhraseScript } from '@/lib/ai/ground';
 import { cn } from '@/lib/cn';
 import { getRepository } from '@/lib/db/get-db';
-import { fetchEntriesResponse } from '@/lib/dict/client';
+import { getDictStore } from '@/lib/dict/browser-store';
 import { buildLearnerProfile } from '@/lib/srs/profile';
+
+/**
+ * Entries by id, through `DictStore` (core.md C4a), in the
+ * `{ meta: { version }, entries }` shape the cache path already reads.
+ *
+ * `DictStore.entries` returns rows and no version — the version is the store's
+ * own `status`, not a property of a query — so it is read from there. The
+ * `AbortSignal` the old fetch took has no equivalent on the frozen interface;
+ * the caller's `cancelled` flag already drops a stale answer, so nothing that
+ * reaches the screen depends on it. Recorded in HANDOFF.md.
+ */
+async function resolveEntries(ids: readonly string[]) {
+  const store = getDictStore();
+  const entries = await store.entries(ids);
+  const version = store.status.state === 'ready' ? store.status.version : '';
+  return { meta: { version }, entries };
+}
 import type { Entry } from '@/lib/types';
 
 /**
@@ -185,7 +202,7 @@ export function ExampleSentences({
           const ids = citedEntryIds(cached.data.sentences);
           const resolved =
             ids.length > 0
-              ? await fetchEntriesResponse(ids, { signal: controller.signal })
+              ? await resolveEntries(ids)
               : { meta: { version: '' }, entries: [] };
           if (cancelled) return;
           // The row is a statement about a known set the key does not hold, so

@@ -58,7 +58,17 @@ test.describe('app shell', () => {
     await expect(page.getByTestId('lookup-ask')).toHaveCount(0);
   });
 
-  test('a 503 from the dictionary raises the "run pnpm data" banner', async ({ page }) => {
+  /**
+   * `components/shell/data-banner.tsx` is **deleted** (core.md C4a, `data.md`
+   * D4): a banner on every route, driven by a `HEAD` probe on every mount, is
+   * replaced one-for-one by `<DictGate>` on the two routes that actually need
+   * the dictionary. The two cases move with it.
+   *
+   * Today, lists and stats are the learner's own data and are **not** gated —
+   * asserted below, because "the app keeps working without a dictionary" is
+   * `data.md` D4's requirement of this phase and the easiest thing to lose.
+   */
+  test('a dictionary that cannot answer gates /lookup, and says what to do', async ({ page }) => {
     // Deterministic stand-in for a missing data/ directory (PLAN.md §3.2).
     await page.route('**/api/dict/hsk*', (route) =>
       route.fulfill({
@@ -67,14 +77,22 @@ test.describe('app shell', () => {
         body: JSON.stringify({ error: 'dict-data-missing', hint: 'run pnpm data' }),
       }),
     );
-    await page.goto('/');
-    await expect(page.getByTestId('data-banner')).toContainText('pnpm data');
-  });
+    await page.goto('/lookup');
+    await expect(page.getByTestId('dict-gate')).toBeVisible();
+    await expect(page.getByTestId('dict-status')).toBeVisible();
+    // …and the search box is not offered, rather than offered and broken.
+    await expect(page.getByTestId('lookup-input')).toHaveCount(0);
 
-  test('no banner when the dictionary answers', async ({ page }) => {
+    // The learner's own data is untouched.
     await page.goto('/');
     await expect(page.getByRole('heading', { level: 1, name: 'Today' })).toBeVisible();
-    await expect(page.getByTestId('data-banner')).toHaveCount(0);
+    await expect(page.getByTestId('dict-gate')).toHaveCount(0);
+  });
+
+  test('no gate when the dictionary answers', async ({ page }) => {
+    await page.goto('/lookup');
+    await expect(page.getByTestId('lookup-input')).toBeVisible();
+    await expect(page.getByTestId('dict-gate')).toHaveCount(0);
   });
 
   test('/settings carries the licences section, rendered as prose', async ({ page }) => {

@@ -38,10 +38,27 @@ import {
 import { cn } from '@/lib/cn';
 import type { PhraseToken } from '@/lib/db/schema';
 import { getRepository } from '@/lib/db/get-db';
-import { fetchEntriesResponse } from '@/lib/dict/client';
+import { getDictStore } from '@/lib/dict/browser-store';
 import { addCardChecked, addPhraseCardChecked, phraseCardFor } from '@/lib/lists/looked-up';
 import { getLearnerProfile } from '@/lib/srs/profile';
 import { orderGlosses } from '@/lib/srs/presentation';
+
+/**
+ * Entries by id, through `DictStore` (core.md C4a), in the
+ * `{ meta: { version }, entries }` shape the cache path already reads.
+ *
+ * `DictStore.entries` returns rows and no version — the version is the store's
+ * own `status`, not a property of a query — so it is read from there. The
+ * `AbortSignal` the old fetch took has no equivalent on the frozen interface;
+ * the caller's `cancelled` flag already drops a stale answer, so nothing that
+ * reaches the screen depends on it. Recorded in HANDOFF.md.
+ */
+async function resolveEntries(ids: readonly string[]) {
+  const store = getDictStore();
+  const entries = await store.entries(ids);
+  const version = store.status.state === 'ready' ? store.status.version : '';
+  return { meta: { version }, entries };
+}
 import { hskBandLabel, type CardContext, type Entry } from '@/lib/types';
 
 /** Long enough that typing a sentence is one ask, short enough to feel answered. */
@@ -540,7 +557,7 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
           const ids = citedIds(cached.data);
           const resolved =
             ids.length > 0
-              ? await fetchEntriesResponse(ids, { signal: controller.signal })
+              ? await resolveEntries(ids)
               : { meta: { version: '' }, entries: [] };
           if (cancelled) return;
           setState({

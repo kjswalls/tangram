@@ -5647,3 +5647,262 @@ Also fixed: `<HanziText>` stamped `data-testid="reader-token"` on **every** word
 which is the reader's hook — `tests/e2e/p5/helpers.ts` counts those elements on `/read` to assert
 how a passage segmented, and since C3 the reader panel contains groupings too. The default is
 `hanzi-word`; `wordTestId` is the override C5b passes when it switches `reader-text.tsx`.
+
+## `core.md` C4 — the word sheet, the character sheet, and the in-context line
+
+**Landed.** New `components/hanzi/word-sheet.tsx`, `char-sheet.tsx` and `context-gloss.tsx`.
+`components/reader/reader-lookup.tsx` is **deleted**, folded into the word sheet with its
+`markKnown()`; `components/reader/reader-screen.tsx` mounts the two sheets;
+`components/lookup/entry-detail.tsx` is re-homed inside them and gains two props
+(`onSelectedChange`, `belowHeadword`) plus an `entry-gloss` test id per sense.
+
+### The three §7 capabilities that were falling between plans
+
+- **"Mark known"** moved with the file rather than being left behind in it. Both properties the
+  plan names survive, and both are now unit-tested where they were only e2e-tested before: it marks
+  **the reading the sheet is showing** (the ranked entry by default, reading B when the learner has
+  picked reading B out of a polyphone), and **a rejected write is visible** rather than leaving a
+  button that looks pressed.
+- **The reader's known / learning / new colouring** is untouched and still comes from
+  `lib/reader/states.ts` through `reader-screen.tsx`. Nothing in this phase deletes or re-homes it;
+  `tests/e2e/p5/reader.spec.ts`'s colouring cases pass unchanged.
+- **The in-context gloss line** is `components/hanzi/context-gloss.tsx`, and it obeys the grounding
+  contract like everything else: the model returns an entry id and a sense index, the *words* come
+  from the entry, a match citing a different entry is dropped, an index outside the entry's own
+  senses is dropped, and the prose goes through `scrubProse` again — no hanzi, no readings — because
+  this line sits directly under a headword and that is the worst place in the product for a
+  fabricated character. **Absent, not empty**, when there is no answer: the senses and the Add never
+  wait on it and do not move when it arrives.
+
+### What the plan did not settle
+
+- **`Sheet` gained a non-modal mode, and the reader uses it.** C4 says to build the tap behaviour
+  "on the `Sheet` primitive", and C1's `Sheet` is modal — backdrop, `aria-modal`, scroll lock, Tab
+  trap. A reading session is tap-a-word, read, **tap the next word**, and with a backdrop over the
+  passage every word after the first costs two gestures: one to dismiss, one to open. That is not a
+  detail of the harness — it is the reader's core loop, and the existing p5 spec caught it by
+  timing out on the second tap. `modal={false}` means precisely: no backdrop element, no
+  `aria-modal`, no scroll lock, and **no Tab trap** (a dialog you can tab out of is what
+  `role="dialog"` without `aria-modal` describes; trapping Tab without a backdrop would be the worst
+  of both). Everything else is unchanged — the label, focus in on open and back to the opener on
+  close, Escape. Every other caller gets the modal default.
+- **The word sheet keeps `LookupPanel` inside it.** Dropping it in the fold would have thrown away
+  the query as the learner met it, the provenance sentence and the `from reader` badge — the
+  provenance the whole mining loop is built on — and the p5 suite says so in three places. The
+  sheet's own heading is `hideTitle`d so there is one `<h2>`, not two.
+- **`data-testid="reader-panel"` survives on the sheet.** The surface is the same one, re-homed;
+  renaming the reader's contract is not this phase's to do.
+- **The scroll-that-clears-the-tapped-word moved from `reader-text.tsx` to `reader-screen.tsx`**,
+  which is what "carry the behaviour, not the code" had to mean. In the click handler it could not
+  work: it measured the token *before* the sheet existed and before the column grew the bottom
+  padding that makes the document tall enough to lift it, so the tapped word stayed behind the sheet
+  exactly when it mattered. It runs two frames after the sheet opens now.
+- **…and its breakpoint was wrong.** It read `max-width: 767px` — Tailwind's `md` — while C1 puts
+  the sheet's switch to a side panel at **720px** (`--breakpoint-wide: 45rem`) and says nothing may
+  hard-code 768 for that boundary. In the 48px band between the two, the sheet was already a side
+  panel and the reader still scrolled as if it were covering the lower two thirds. It is the
+  complement of the `wide:` variant now, so the two cannot drift.
+- **The in-context line is asked for by the reader, not by the sheet.** A sheet opened from the
+  search box has no sentence, so it makes no request at all. `useContextGloss` posts the same
+  `/api/ask` body the panel posts and deliberately **does not write `ask_cache`**: the panel owns
+  that key and its trustworthiness rules (`cacheable`, the handshake, the provider), and a second
+  writer with a simpler idea of when an answer is worth keeping is how a cache starts lying. **C7
+  owns the ask module's state; when it lands, this hook is what it replaces.**
+- **The character sheet's "other words with this character" is a prop and is not wired.** C4 says
+  the whole-dictionary question is STACK §5.6's optional `chars` table and `data.md`'s call, not
+  this plan's. `DictStore.wordsContaining` exists in the frozen interface but no HTTP route answers
+  it — see the C4a section — so the panel renders the learner's own deck, filtered from
+  `allCards()` in the client exactly as C4 instructs, and the other list is absent until someone
+  passes it.
+
+### A defect in `core.md` C4's own text
+
+**`继续` does not have "both senses".** C4's first acceptance criterion is "tap a two-character word
+→ word sheet with both senses and an Add". In the built dictionary CC-CEDICT gives 继续 a **single**
+semicolon-joined gloss (`to continue; to proceed with; to go on with`), so the sheet renders one
+`<li>` and an assertion of two senses fails against correct behaviour. The spec uses **打扫** for
+that case (`to clean`, `to sweep`) and **看** for the polyphone case (kān / kàn), and says why in the
+test. Worth knowing generally: **a CC-CEDICT "sense" is a `/`-delimited field, and several of them
+carry internal semicolons** — a UI that counts senses is counting fields, not meanings.
+
+### What the review found in C4
+
+Three lenses — the plan's acceptance criteria, what breaks that no test covers, and tests that
+cannot fail — then an adversarial refutation pass. **The blocking one was "Mark known" marking the
+wrong word.**
+
+1. **The sheet showed one word and marked another.** `EntryDetail` reports the reading it is
+   showing, and the sheet remembered it in state that nothing cleared — but the sheet is *one
+   long-lived instance* in the reader, a tap swaps the word rather than remounting. So between the
+   tap and the entries resolving, and **permanently** for a word CC-CEDICT has no headword for (the
+   `via: 'fallback'` case), the sheet's heading read the new word while "Mark known" was enabled and
+   wrote the **previous** word's id — and the passage recoloured a word the learner never looked at.
+   The deleted `reader-lookup.tsx` could not do this: its entry came straight off the resolved
+   group. `marking` is derived that way again — `showing` is honoured only while it is still one of
+   the current group's entries — which is render-order-proof in a way an effect is not.
+   Mutation-verified in unit and in e2e.
+2. **One tap sent two `/api/ask` requests.** The sheet renders `LookupPanel`, and `LookupPanel`
+   mounts the full ask panel by default with the same query and context — so the in-context line and
+   the panel asked the same question independently. Not equivalent, either: the panel debounces,
+   reads `ask_cache` and writes it back under a trustworthiness gate; the line does none of that. So
+   the two could name **different senses of the same word on the same sheet**. `LookupPanel` gained
+   `noAsk`, which the sheet sets: the sheet wants the one line, not the panel. `integration.spec.ts`
+   asserted the panel was there and now asserts the line names one of the entry's own senses — the
+   same seam, one request.
+3. **Non-modal Escape died as soon as focus left the sheet**, which in the reader is the *normal*
+   case: tapping the next word moves focus onto that token, and a handler bound to the panel never
+   hears the key. A capture-phase document listener is the non-modal equivalent of the Tab trap.
+   Focus return had the mirror bug — `opener` is captured when the sheet opens and the reader keeps
+   one sheet open across taps — so focus is given back only when the sheet was actually holding it.
+4. **The character sheet showed the previous character's decomposition** under the new character,
+   for the length of a round trip. `looked` was keyed by character and `parts` was not.
+5. **A card added from the character sheet inherited the whole word's highlight span.** `offset` and
+   `length` decide what a card back highlights (PLAN.md §1, commitment 2), so a one-character card
+   highlighted 继续 for the life of the card. The character's index travels with the tap now.
+6. **The lists page died when the dictionary did.** Not C4's code, but C4a's rule: `readDetail`
+   awaited `source.entries()` and let the rejection take the whole page, so a learner with no
+   `data/` build could not see the words they had chosen. The row already renders a member with no
+   entry, by id; it never got the chance.
+
+**Four tests that could not fail**, each rewritten and each mutation-verified:
+
+- **The character sheet's licence test was a source-text grep.** It asserted the file *mentioned*
+  `decompose(` and did not mention `addCard` — a test of the file's spelling. Adding a
+  `fetch('/api/ask')` carrying the decomposition, the exact violation the header names, left it
+  green; renaming a local variable broke it. It renders the sheet now, records every request, and
+  searches each body for the IDS string and the radical.
+- **The licence test's "structural half" claimed something untrue.** "Nothing under `lib/db/**`
+  imports the decomposition modules" — but `DecompEntry` is declared in `lib/types.ts`, which every
+  file under `lib/db` already imports, and the regex only looked at `lib/dict/decomp*` and only at
+  single quotes. The check is by **name** now: nothing under `lib/db` says `DecompEntry`,
+  `decomposition` or `radical` at all.
+- **The Add-from-the-character-sheet spec collected `senseIndex` and `entryId` and asserted
+  neither.** Both are asserted now — `senseIndex` is `undefined`, which is the correct answer and
+  worth stating: `EntryDetail`'s Add chooses a *reading*, not a sense, and only the ask panel's
+  per-match Add fills that field.
+- **The `modal={false}` mode had no unit test at all**, while its header stated five precise
+  properties. All five are asserted now and each fails under its own mutation: no backdrop, no
+  `aria-modal`, no scroll lock, no Tab trap, and Escape from outside the panel.
+
+Also corrected: the `<Sheet>` open/close effect depended on `onClose`, which every caller passes as
+an inline arrow — so it tore down and re-ran on **every render**, re-capturing the opener as
+whatever inside the panel had focus, and Escape "returned" focus to the sheet that had just closed.
+`onClose` lives in a ref. And the badge headword, the character chips and the character sheet's word
+lists now render through `<HanziText>` like every other Chinese run — C3's table assigned that row
+to C4 and it was the last one open.
+
+## `core.md` C4a — the `DictStore` cutover, and the four states
+
+**Landed.** Every consumer above the dictionary layer codes against `DictStore` / `DecompStore`.
+`components/shell/data-banner.tsx` is **deleted** and `components/dict/dict-gate.tsx` replaces it
+one-for-one, driven by `store.status` and `store.subscribe()`. `lib/lists/entry-source.ts` pages.
+
+### The two greps `data.md` D6 is waiting for — and why D6 is not yet unblocked
+
+```
+$ grep -rn "lib/dict/client" --include=*.ts --include=*.tsx .          # apps/app
+./lib/dict/http-store.ts:10:  * have stayed on `lib/dict/client.ts` for a phase whose whole point …
+./vite-plugins/api.ts:129:    // shape `lib/dict/client.ts` then fails to parse, reporting a JSON …
+```
+
+Both hits are **prose in a comment**. No module imports it except one.
+
+```
+$ grep -rn "api/dict" components/ lib/                                  # code only, comments cut
+lib/dict/client.ts:65,81,105,113,124,136    — the fetchers themselves
+```
+
+Every other hit in that grep is a comment. So the honest statement of this phase is: **one file
+behind the interface still fetches**, and it is `lib/dict/http-store.ts`.
+
+**Why it exists.** Until `data.md` **D4** gives the browser a `SqlRunner` over sqlite-wasm on OPFS
+there is **no `DictStore` a browser can construct**: `lib/dict/runners/` contains a Node runner and
+nothing else. Without a bridge, C4's sheets would have had nothing to inject and C4a's cutover would
+have had nowhere to go, and every consumer would have stayed on `lib/dict/client.ts` for a phase
+whose entire point is that they do not. With it, the seam is real and **swapping in the OPFS store
+is a change to one file** — `lib/dict/browser-store.ts`, the single construction site.
+
+`tests/unit/dict/client-callers.test.ts` locks that state in: exactly one importer of the client,
+exactly one file naming an `/api/dict` route in code, exactly one construction site. It fails the
+day any of those changes, in either direction — which is how D6 finds out it has been unblocked.
+
+**What `HttpDictStore` cannot do**, stated rather than faked:
+
+- **`wordsContaining` throws.** It needs the `chars` table (STACK §5.6), which no route exposes.
+  Returning `[]` would be a lie a caller cannot tell from "no such words". Nothing calls it: C4's
+  character sheet takes that list as a prop for exactly this reason.
+- **`readingCount` is a search and a count.** Correct, one extra round trip, invisible to the caller.
+- **`hskBand`'s `limit`/`offset` slice after fetching.** The signature is honest so
+  `lib/lists/entry-source.ts` can be written against the interface today; the *cost* moves when the
+  real store lands. That is the opposite of what the paging is for, and it is written here so nobody
+  reads a green suite as a finished bridge.
+- **`entries(ids)` has no `AbortSignal`** on the frozen interface, where `fetchEntriesResponse` took
+  one. `search` does (`SearchOptions.signal`, already frozen). Callers drop stale answers with a
+  `cancelled` flag instead, so nothing that reaches the screen depends on it — but a needless
+  in-flight request is one the mobile bridge will feel. **A change to a frozen surface: recorded,
+  not made** (CLAUDE.md).
+
+### The page size, and the reasoning C4a asks to be written down
+
+**`BAND_PAGE = 250`** (`lib/lists/entry-source.ts`).
+
+`DictStore.hskBand` gained `limit`/`offset` because the call crosses a Capacitor JSON bridge now
+rather than a socket, and band 7 is 5,638 entries. The spine builder is the caller that pages, and
+250 is chosen against what it actually needs: it takes at most `settings.newPerDay` entries (10 by
+default) and discards those that fail `spineEligible` or sit at or below `knownBand`, which in the
+worst case is most of a window. 250 is ~25× the headroom the first window needs and an order of
+magnitude below a whole band; when it is not enough, `draw.ts` asks for the next one rather than
+guessing bigger. **This is the first number a low-end device will feel**: too small and the draw
+makes five bridge trips before it has a queue, too large and the first one blocks.
+
+**The paging loop hung `pnpm test` before it worked.** `EntrySource.band`'s options are optional, so
+a fake — or any implementation that has not caught up — may hand back the whole band however it is
+asked; then `offset` grows, the page is never short, and the loop never ends. It presented as a
+hang, which reads as an infrastructure problem rather than as the bug it is. Three guards now, two
+of them mutation-verified: a short page ends it, a page whose first entry repeats the last page's
+ends it (and that one is worth ~60 saved bridge round trips per band against a source that ignores
+the window), and a hard cap of 64 windows bounds it whatever happens.
+
+### The four states
+
+`DictStatusView` (C1) already drew all four against literals. C4a makes them **real screens driven
+by a store**: `components/dict/dict-gate.tsx` subscribes to `store.status`, renders its children
+only on `ready`, and offers `open()` as the retry. `useDictStatus` subscribes *before* it reads, so
+a store that warms between the two is not missed.
+
+`tests/e2e/core/dict-states.spec.ts` asserts the things a literal cannot show — that the gate
+re-renders from `subscribe()`, that the determinate bar's `aria-valuenow` **moves** across three
+advances, that an indeterminate one omits the value rather than inventing one, that each of the four
+failure reasons has its **own** copy (four states sharing one sentence would satisfy every other
+assertion in the file), and that a retry reaches `open()`. It drives
+`components/gallery/fake-dict-store.ts` — the hand-written fake `core.md` §4 allows until D2/D3's
+in-Node store can run in a browser. The fake lives under `components/gallery/` so it leaves the
+production bundle with the gallery.
+
+**Only `/lookup` and `/read` are gated.** Practice, lists, Today and stats are the learner's own data
+and are untouched by a missing dictionary — `data.md` D4 requires it and it is the easiest thing to
+lose, so a spec runs a whole review to completion and opens a list with every dictionary route
+answering 503.
+
+### A defect that rule found
+
+**`/lists/:id` died when the dictionary did.** `readDetail` awaited `source.entries(page)` and let
+the rejection take the whole page, so a learner with no `data/` build got an error message instead
+of the words they had chosen — even though the member row already renders an entry-less member by
+id. It catches now: the list is the learner's, the gloss beside it is the dictionary's, and losing
+the second must not lose the first.
+
+### Not done, and why
+
+- **`components/lookup/lookup-view.tsx` no longer has a "dictionary data is missing" message.** It
+  is `store.status` and `<DictGate>` draws it — a message inside a search box the learner is still
+  typing into told them something was wrong and left them typing.
+- **`tests/unit/reader/store.test.ts` still spies on `globalThis.fetch`.** It exercises
+  `lib/stores/reader.ts` through `DictStore` now, and passes because the bridge behind it is HTTP —
+  so it asserts one layer lower than it reads. When D4 lands it needs a store fake. Harmless today,
+  and worth knowing before someone is surprised by it.
+- **`open()` is called by the gate, not by the stores' constructors.** A surface that reads
+  `store.status` before any gate has mounted would have seen `absent` for the session, and that
+  value is what a card is stamped with — so every answer that carries a version moves the store to
+  `ready` as well. `?seed=demo` caught this: it writes cards without ever mounting a gate, and every
+  one of them was stamped `dictVersion: 'unknown'`.

@@ -24,8 +24,10 @@
  */
 import { useEffect, useState } from 'react';
 
+import { DictGate } from '@/components/dict/dict-gate';
 import { DictStatusView } from '@/components/dict/dict-status';
 import { Section, Row } from '@/components/gallery/section';
+import { FakeDictStore, TOTAL } from '@/components/gallery/fake-dict-store';
 import { passageRuns } from '@/components/gallery/passage';
 import { HanziText } from '@/components/hanzi/hanzi-text';
 import {
@@ -337,6 +339,13 @@ export function Gallery() {
   const [fieldValue, setFieldValue] = useState('');
   const [activeTab, setActiveTab] = useState('look-up');
   const [longShown, setLongShown] = useState(false);
+  /**
+   * One fake store, built once: `DictGate` subscribes to it, so a new instance
+   * per render would drop the subscription on every keystroke elsewhere on the
+   * page.
+   */
+  const [dictStore] = useState(() => new FakeDictStore());
+  const [received, setReceived] = useState(0);
 
   return (
     <div data-testid="gallery" className="flex flex-col gap-8 pb-24">
@@ -638,6 +647,86 @@ export function Gallery() {
             <HanziText runs={PASSAGE_500} display="always" data-testid="passage-text-long" />
           </p>
         ) : null}
+      </Section>
+
+      <Section
+        id="dict-gate"
+        title="The dictionary gate, driven by a real store"
+        note={
+          <>
+            The row above is <code>DictStatusView</code> handed a literal. This one is
+            <code> &lt;DictGate&gt; </code> subscribed to a <code>DictStore</code> whose status these
+            buttons move — which is the claim C4a actually makes: that the gate re-renders from{' '}
+            <code>subscribe()</code>, that a determinate bar&rsquo;s value moves, and that a retry
+            reaches <code>open()</code>. A literal cannot fail any of those.
+          </>
+        }
+      >
+        <div className="flex flex-wrap gap-2" data-testid="dict-drive">
+          <Button
+            variant="secondary"
+            size="sm"
+            data-testid="drive-absent"
+            onClick={() => {
+              setReceived(0);
+              dictStore.set({ state: 'absent' });
+            }}
+          >
+            absent
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            data-testid="drive-preparing"
+            onClick={() => {
+              setReceived(0);
+              dictStore.set({ state: 'preparing', received: 0, total: TOTAL });
+            }}
+          >
+            preparing
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            data-testid="drive-advance"
+            onClick={() => {
+              const next = Math.min(TOTAL, received + TOTAL / 4);
+              setReceived(next);
+              dictStore.set({ state: 'preparing', received: next, total: TOTAL });
+            }}
+          >
+            advance
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            data-testid="drive-ready"
+            onClick={() => dictStore.set({ state: 'ready', version: '1.3.20251213' })}
+          >
+            ready
+          </Button>
+          {(['download', 'import', 'storage', 'corrupt'] as const).map((reason) => (
+            <Button
+              key={reason}
+              variant="secondary"
+              size="sm"
+              data-testid={`drive-failed-${reason}`}
+              onClick={() =>
+                dictStore.set({ state: 'failed', reason, message: `a ${reason} failure` })
+              }
+            >
+              failed: {reason}
+            </Button>
+          ))}
+        </div>
+
+        <div className="rounded-[var(--r-md)] border border-border p-3">
+          <DictGate store={dictStore}>
+            <p data-testid="dict-gate-children" className="text-sm text-muted">
+              Ready is the state with no screen — this is what a lookup surface renders through.
+            </p>
+          </DictGate>
+        </div>
       </Section>
 
       <Section

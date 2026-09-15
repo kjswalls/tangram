@@ -14,7 +14,7 @@
  * its own licence (CLAUDE.md); it is displayed and never written onto the card.
  */
 import { Link } from 'react-router';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 
 import { SpeakButton } from '@/components/tts/speak-button';
 import { HanziWord } from '@/components/hanzi/hanzi-text';
@@ -23,9 +23,9 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/cn';
 import { getRepository } from '@/lib/db/get-db';
-import { fetchDecomp } from '@/lib/dict/client';
+import { getDecompStore } from '@/lib/dict/browser-store';
 import type { SearchGroup } from '@/lib/dict/search';
-import type { DecompResponse } from '@/lib/dict/decomp';
+import type { DecompCharacter } from '@/lib/dict/decomp-store';
 import { addCardChecked } from '@/lib/lists/looked-up';
 import { hskBandLabel, type CardContext, type Entry } from '@/lib/types';
 
@@ -84,7 +84,11 @@ function Reading({
       </label>
       <ol className="mt-1 list-inside list-decimal text-sm">
         {entry.glosses.map((gloss, i) => (
-          <li key={`${i}-${gloss}`}>{gloss}</li>
+          // `entry-gloss` is the hook C4's in-context line is checked against:
+          // the line may only name a sense that appears in this list.
+          <li key={`${i}-${gloss}`} data-testid="entry-gloss" data-sense-index={i}>
+            {gloss}
+          </li>
         ))}
       </ol>
       {entry.classifiers.length > 0 ? (
@@ -101,11 +105,29 @@ export function EntryDetail({
   query,
   context,
   dictVersion,
+  onSelectedChange,
+  belowHeadword,
 }: {
   group: SearchGroup;
   query: string;
   context?: CardContext;
   dictVersion?: string;
+  /**
+   * The reading the sheet is **showing**, reported as it changes.
+   *
+   * C4's word sheet needs it for "Mark known": the criterion is that a
+   * polyphone whose sheet is showing reading B marks reading B's entry, not the
+   * frequency-first one. The selection stays owned here — lifting it would mean
+   * every other caller had to hold state it does not use — and this is the one
+   * way out.
+   */
+  onSelectedChange?: (entry: Entry) => void;
+  /**
+   * A slot directly under the headword, for the in-context gloss line (C4).
+   * It is a slot rather than a prop shape because C7 owns the ask module's
+   * state and this component must not learn about it.
+   */
+  belowHeadword?: ReactNode;
 }) {
   const [selectedId, setSelectedId] = useState(group.entries[0].id);
   // Both of these belong to one reading, so they carry the id they were made
@@ -114,12 +136,16 @@ export function EntryDetail({
   // how that reset happens during render rather than in an effect.
   const [outcome, setOutcome] = useState<{ id: string; state: AddState }>();
   const [probe, setProbe] = useState<{ id: string; carded: boolean }>();
-  const [decomp, setDecomp] = useState<DecompResponse['characters']>([]);
+  const [decomp, setDecomp] = useState<DecompCharacter[]>([]);
 
   useEffect(() => {
     let cancelled = false;
-    const controller = new AbortController();
-    fetchDecomp(group.simp, { signal: controller.signal })
+    // Through `DecompStore` (core.md C4a). The `AbortSignal` the route client
+    // took has no equivalent on the frozen interface; `cancelled` already drops
+    // a late answer, and a decomposition that arrives for the previous headword
+    // is dropped rather than rendered.
+    getDecompStore()
+      .decompose(group.simp)
       .then((characters) => {
         if (!cancelled) setDecomp(characters);
       })
@@ -129,11 +155,16 @@ export function EntryDetail({
       });
     return () => {
       cancelled = true;
-      controller.abort();
     };
   }, [group.simp]);
 
   const entry = group.entries.find((candidate) => candidate.id === selectedId) ?? group.entries[0];
+  // Reported after render, not inside the setter: `selectedId` also resets when
+  // the group changes (the component is keyed on `group.key`), and a caller
+  // that only heard about button presses would keep marking the previous word.
+  useEffect(() => {
+    onSelectedChange?.(entry);
+  }, [entry, onSelectedChange]);
   /**
    * The syllable each character of the headword takes, under the reading the
    * learner has selected — for the "Characters" strip below, which is the one
@@ -225,6 +256,14 @@ export function EntryDetail({
         </p>
         <Badge>{group.source} match</Badge>
       </div>
+
+      {/*
+        The in-context line, when the caller has one. Directly under the
+        headword and **above** the readings, because it is the answer to "which
+        of these", and below the readings it would be an afterthought to a
+        question the learner has already had to guess at.
+      */}
+      {belowHeadword}
 
       {/*
         The speaker belongs to the word, so it sits at the head of the reading

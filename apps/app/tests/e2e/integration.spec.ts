@@ -257,13 +257,24 @@ test('the whole product: demo → ask → phrase card → read → mine → revi
 
   const panel = page.getByTestId('reader-panel');
   await expect(panel).toContainText(MINED_SENTENCE);
-  // The reader's panel is the lookup panel, so P4's ask region is in it too,
-  // asking about the tapped word *with the sentence as its context* — the
-  // cross-phase seam this merge wired.
-  await expect(panel.getByTestId('lookup-ask')).toBeVisible();
-  await expect(panel.getByTestId('ask-panel')).toHaveAttribute('data-status', 'ready', {
-    timeout: 30_000,
-  });
+  /**
+   * The cross-phase seam this merge wired — the module asked about the tapped
+   * word *with the sentence as its context* — is now **one line**, not the
+   * whole ask panel (core.md C4).
+   *
+   * The sheet used to render `LookupPanel` with its default ask region, so a
+   * single tap fired two independent `/api/ask` requests: the panel's and the
+   * sheet's own in-context line. They were not equivalent — the panel debounces
+   * and caches, the line does not — so they could also name different senses of
+   * the same word on the same sheet. The sheet asks once now, and what proves
+   * the seam is that the answer names one of the entry's own senses.
+   */
+  await expect(panel.getByTestId('lookup-ask')).toHaveCount(0);
+  const gloss = panel.getByTestId('context-gloss');
+  await expect(gloss).toBeVisible({ timeout: 30_000 });
+  const named = (await panel.getByTestId('context-gloss-sense').textContent())?.trim();
+  const senses = (await panel.getByTestId('entry-gloss').allTextContents()).map((s) => s.trim());
+  expect(senses).toContain(named);
 
   await panel.getByTestId('add-card').click();
   await expect(page.getByTestId('add-state')).toContainText('Added');

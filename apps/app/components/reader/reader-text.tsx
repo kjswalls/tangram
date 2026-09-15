@@ -32,9 +32,6 @@ const STATE_CLASS: Record<WordState, string> = {
   new: 'token-new rounded underline decoration-warning decoration-dotted decoration-2 underline-offset-4',
 };
 
-/** Clear of the sticky header, and clear of the sheet. */
-const SHEET_SAFE_TOP = 96;
-
 export interface ReaderTextProps {
   tokens: readonly Token[];
   /** One entry per token; `undefined` for `text` tokens and before the first read. */
@@ -111,13 +108,16 @@ export function ReaderText({ tokens, states, span, onSelect, className }: Reader
         const index = target?.getAttribute('data-token-index');
         if (index === null || index === undefined) return;
         onSelect(Number(index));
-        // On a phone the panel is a bottom sheet over the lower two thirds of
-        // the screen, so a word tapped near the bottom would answer from behind
-        // it. Lift it to just under the header instead.
-        if (target && window.matchMedia('(max-width: 767px)').matches) {
-          const top = target.getBoundingClientRect().top;
-          if (top > SHEET_SAFE_TOP) window.scrollBy({ top: top - SHEET_SAFE_TOP, behavior: 'smooth' });
-        }
+        /**
+         * The scroll that used to live here is `reader-screen.tsx`'s now
+         * (core.md C4: "carry the behaviour, not the code").
+         *
+         * It measured the token's position *before* the sheet existed, and the
+         * document is not yet tall enough to lift it: the reader adds its
+         * bottom padding when the sheet opens, one render later. So the tapped
+         * word stayed behind the sheet exactly when it mattered. The screen
+         * owns it now, after the sheet has painted.
+         */
       }}
     >
       <Tokens tokens={tokens} states={states} span={span} />

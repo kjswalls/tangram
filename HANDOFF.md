@@ -10841,3 +10841,253 @@ it" could double-fetch (both collapse onto one `#opening`); that the `storedOnly
 across an interleaving (it is read synchronously inside `connect()`, which `open()` calls
 synchronously); that the new bookkeeping could leak an unhandled rejection (every slot has a handler
 attached before it can settle). All four were checked rather than assumed.
+
+## `web.md` W5 — install, persist, and the backup that makes eviction survivable
+
+One commit on `claude/build-web-5`, cut from `claude/integration` (126990f).
+
+**What landed.** The two wave-0 members `web.md` W5 owns are written: `Repository.exportAll()` and
+`Repository.importAll()` in `lib/db/dexie.ts`, with `lib/db/export.ts` (the serializer) and
+`lib/db/import.ts` (the reader) beside them. `src/pwa/install.ts` captures `beforeinstallprompt` and
+branches per engine; `src/pwa/persist.ts` reads `persisted()` on load and asks for persistence on the
+first real interaction. `components/pwa/data-safety.tsx` is the one surface all three appear on, on
+**Library**. Both are started from `src/main.tsx`, before the first render.
+
+**`CLAUDE.md`'s "backup, restore and sync are declared, not implemented" bullet is now half true, and
+this session did not edit `CLAUDE.md`.** Five of the seven wave-0 members still throw —
+`changedSince`, `applyRemote`, `syncState`, `setSyncState`, `resetAccount`, all `backend.md` B5's.
+`exportAll` and `importAll` do not. Whoever next edits `CLAUDE.md` should say so.
+
+### Register #13 — NOT RUN, and the copy assumes the worst
+
+`docs/STACK.md` §4 entry **#13** — whether `navigator.storage.persist()` is honoured in Safari for a
+non-installed site, and current Firefox group limits — **was not run.** It needs a Mac and a real
+Safari, and this container has neither. `web.md` W5 says that until someone runs it the warning copy
+must be written from the pessimistic assumption, and it is: a non-installed WebKit tab holding cards
+is told, in so many words, that Safari has **not** promised to keep anything and can clear a site
+unopened for seven days. `storageRisk()` in `src/pwa/persist.ts` returns `'at-risk'` for that case at
+**every** persistence state, `'unknown'` included, and
+`tests/unit/pwa/persist.test.ts` pins it so a later session cannot soften it by accident.
+
+**What `persisted()` actually returned here.** Chromium (the container's `/opt/pw-browsers/chromium`),
+headless, against `http://localhost:3000`, after the app had been used:
+
+```
+persist() → persisted()=false; state=transient; re-read=false
+```
+
+`false`, and the same `false` when the test asks the browser again independently. That is expected
+and is not a failure: Chromium grants persistence on a heuristic — installed, bookmarked,
+notification-permitted, engaged — and a headless first visit to localhost satisfies none of them.
+W5's criterion is explicit that the spec must **assert the code path ran and record the value**
+rather than assert a browser policy this container does not control, and
+`tests/e2e/p6/pwa.spec.ts` does exactly that: it asserts `data-persist-asked` flips from `false` to
+`true` on the first interaction and attaches the returned value as a test annotation. The value is
+above so a later run on a real machine has something to compare against.
+
+### What W5 decided that the plan did not settle
+
+- **The snapshot serializer is canonical, and that is a requirement rather than a nicety.**
+  `backend.md` B5 says `exportAccount()` pulls the same rows from PostgREST and hands them to this
+  phase's serializer, "producing a byte-identical file to the local export". PostgREST's row order is
+  not Dexie's, and structured clone preserves whatever key order a row was written in — so two honest
+  reads of the same database would serialise to two different files unless something normalises them.
+  `serializeSnapshot` sorts rows by `id` and sorts object keys recursively (arrays keep their order:
+  `glosses` and `tokens` are sequences). That is what lets the round-trip test compare **bytes**
+  rather than shapes, which is what W5's criterion asks for.
+- **An older `dbVersion` is upgraded; a newer one is refused.** Three schema versions have existed
+  and exactly one of them changed a row's shape: v3 added `CardRow.direction`. A v1 or v2 snapshot
+  therefore holds cards with no `direction`, and restoring them as-is puts rows in the database that
+  the `[entryId+direction]` index cannot see — a card that exists, is due, and can never be found by
+  `cardForEntry`. `upgradeSnapshot()` stamps `DEFAULT_CARD_DIRECTION`, which is exactly what
+  `TangramDb`'s own v3 upgrade does, and a unit test proves the card is findable afterwards. A
+  **newer** `dbVersion` (or envelope `format`) is refused outright: the rows were cut against a
+  schema this build has never seen, and guessing would restore a partial database and report success.
+- **`importAll` validates its argument even though the type says `Snapshot`.** The type is true of a
+  value built in memory and says nothing about a file on a learner's disk, and the gap between those
+  two is where a truncated download and a hand-edited backup live. Validation runs **before** the
+  transaction opens, so a refused file never reaches the clear.
+- **`importAll` is one transaction, clear included.** The clear and all nine `bulkPut`s run inside a
+  single `rw` transaction over every table, so a failure part-way — a damaged row, a quota the device
+  cannot meet — aborts the lot and leaves the database exactly as it was. Clearing first and writing
+  second turns "the restore failed" into "the restore deleted everything", which for this feature is
+  the worst outcome there is.
+- **A successful restore reloads the page.** `importAll` replaces the database every open screen is
+  reading from, and there is no invalidation channel across the seam. A review session mid-card is
+  the sharp case. `grade()` already throws on a card that no longer exists (`grade: no card <id>`),
+  so a stale tab cannot write an orphan review — but it can show a card that is gone, so the tab that
+  did the restore reloads rather than carrying on. **Another tab is not reloaded**; see "what the
+  next session should know".
+- **The card lives on Library, not in the shell.** A banner over every screen would be shouting about
+  a risk most learners are not in, and Library is where the other occasional things already are. The
+  cost is that a learner who never opens Library never sees the warning; that is a product call and
+  it is recorded here rather than made silently.
+- **`web.md` W5's Files list has no component in it**, and says the affordance's copy "belongs to
+  `core.md`'s component set". `core.md` ships no install component — `components/**` had
+  `pwa/register-sw.tsx` and nothing else PWA-shaped — so this phase wrote the smallest one that can
+  satisfy W5's two e2e criteria, out of C1's primitives, naming no colour of its own. Whoever owns
+  the copy can take it; the logic it renders is in `src/pwa/**` and is not in the component.
+
+### Things found wrong in the plan set, and in this container
+
+- **`web.md` W5 says the two install cases are "both observable in Chromium". The standalone half is
+  not, headless, and the alternatives were measured rather than assumed.**
+  `Emulation.setEmulatedMedia` over a CDP session with
+  `features: [{name: 'display-mode', value: 'standalone'}]` is accepted and changes nothing —
+  `matchMedia('(display-mode: standalone)')` still reports false — with or without a `media` field.
+  Launching with `--app=<url>` and with `--start-fullscreen` reports `browser` too. Every
+  configuration tried reports `browser`. So `tests/e2e/p6/pwa.spec.ts` stubs the media query in an
+  `addInitScript` before any app code runs. What that leaves asserted is this phase's branch —
+  `isStandalone()`, the store, and the card's decision not to offer an install — and what it stops
+  asserting is Chromium's own reporting, which is not this phase's code. It is the same trade the
+  `beforeinstallprompt` case already makes: headless Chromium never fires one either, so that event
+  is synthesised, and the test asserts `defaultPrevented` because losing `preventDefault()` is how the
+  mini-infobar comes back.
+- **`wave-zero.md` §5's `Snapshot` type is right and its one surprise is worth restating.**
+  `Snapshot['rows']` includes `ask_cache`, which does not sync. The reason is in the ruling — export
+  is a backup of the database, and omitting the cache from a restore is a silent cache flush — and
+  `SNAPSHOT_STORES` is derived from `STORES` so that a store added later is a compile error in
+  `SyncedRow` rather than a store silently missing from every backup.
+- **`tests/unit/ui/tokens.test.ts` caught a rule this session had not read.** The first version of
+  the manifest-colour assertion read `--t1-paper` out of `tokens.css`; C0's tiering guard refuses a
+  tier-1 name anywhere in the workspace outside the tokens block, and it went red immediately. The
+  assertion now resolves the **semantic** `--paper` and follows its one `var()` hop, which is a
+  better test as well as a legal one — the manifest has no business knowing which swatch `--paper`
+  currently points at.
+- **`expect(undefined).not.toBeNull()` passes.** The obvious spelling of "the tombstone survived" —
+  `expect(rows.find(…)?.deletedAt).not.toBeNull()` — is true of a round trip that dropped the row
+  entirely, which is the exact bug the criterion exists to catch. Found by deliberately sabotaging
+  `exportAll` to filter `alive` and watching the round-trip case stay green. It is
+  `toBeDefined()` then `typeof … === 'number'` now, and the same sabotage turns it red.
+- **An atomicity test whose fixture fails validation proves the validator, not atomicity.** The first
+  version of "leaves the database untouched when the import fails part-way" used a row with
+  `id: null`, which `validateSnapshot` rejects **before** the transaction opens — so the case passed
+  against a deliberately non-atomic `importAll`. The fixture is now a row whose `body` is a function,
+  which is valid to the parser and fails structured clone inside the write; moving the clear outside
+  the transaction now turns it red.
+
+### What the two adversarial reviews found
+
+Both lenses ran cold against the diff, in parallel: one on W5's acceptance criteria one at a time,
+one on "what breaks that no test covers". Every finding was checked against the code before it was
+acted on, and two were wrong.
+
+**The best find, and it is a second instance of the bug the phase already knew about.**
+`upgradeSnapshot` stamped `cards.direction` for a pre-v3 snapshot and stopped, and its comment
+asserted as fact that the other two bumps "were index declarations, which a snapshot does not
+carry". **v2 is not.** `TangramDb`'s v2 `.upgrade()` declares `&systemKey` on `lists` *and stamps the
+key onto the system lists the old database already has*, because `systemKey` is a column. So a
+restored v1 `lists` row would have been invisible to the unique index, `ensureSystemLists` would have
+made all eight system lists again, and the restored members would hang off the orphans — the same
+failure as the missing `direction`, one store over. Fixed, with the v2 upgrade's own tombstone and
+oldest-wins rules mirrored, and two tests; the reviewer also found the test gap that hid it, since
+the existing case forged a **v2** dump and never exercised the v1 path.
+
+**Fixed, in severity order:**
+
+- The v1 → v2 `systemKey` stamp, above.
+- **`validateSnapshot` checked `id` and nothing else, and IndexedDB hides a row whose indexed value
+  is not a valid key.** A restored card whose `due` is a string, `null` or absent is listed by
+  `allCards()`, counted by `cardCountsByState()` and **never** returned by the due queue: the restore
+  reports success, the card count looks right, and Practice is empty forever, with no error anywhere.
+  The validator now requires a finite number in `cards.due` and `reviews.reviewedAt` — narrowly, and
+  the comment says why it is narrow: several indexed fields are nullable **on purpose**
+  (`cards.entryId`/`wordId` on a phrase card), so "every indexed field must be a valid key" would
+  refuse backups the app restores perfectly. `backend.md` B5 is why this is not hypothetical: its
+  `exportAccount()` feeds the same door from PostgREST, which returns numerics as strings by default.
+- **Duplicate ids inside one store** were collapsed last-wins by `bulkPut` and reported as success.
+  Refused now.
+- **No cross-tab invalidation.** The restoring tab reloaded; every other tab kept reading a database
+  that no longer existed, and nothing told it — a restore does not bump the Dexie version, so there
+  is no `versionchange`, and the screens that matter hold no `liveQuery`. `src/pwa/restore.ts` posts
+  one `BroadcastChannel` message after the commit and listening tabs reload. It carries no rows: it
+  is a signal, not sync.
+- **The number the learner approves the irreversible action on counted deleted cards.**
+  `snapshotSummary` read `rows.cards.length`, which carries tombstones by contract, while the same
+  card's own count came from `cardCountsByState()`, which filters them — two rules on one screen with
+  "it cannot be undone" between them. Live rows only now, and `exportAll` is untouched.
+- **Dismissing the install prompt blanked the affordance for the rest of the session.** The captured
+  event is spent whatever the learner answers, and Chromium re-fires only on a page **load**, which a
+  router-mode SPA never does. The card now says where the install lives instead of going silent.
+- **A second restore could be started over one in flight**, and reading the chosen file had no state
+  at all. Both controls disable while busy, and there is a "Reading…" step.
+- **A failing `exportAll` went quiet** — a button that does nothing reads as "saved". It says so now.
+- **`__proto__` in a hand-edited backup.** `JSON.parse` gives it an *own* property, and copying it
+  onto a `{}` literal invokes the prototype setter — silently losing the key from the canonical form
+  (and `backend.md` B5's byte-identical criterion with it). `canonical()` builds on
+  `Object.create(null)`.
+- **A row nested past any real row shape** imported fine and then made every *later* export throw
+  `RangeError` inside the recursive canonical form — a permanently broken backup button with no way
+  out through the UI. Depth-bounded in the validator.
+- **The replacement guard case in `repository.test.ts` was titled for a check it did not perform**
+  ("still has exactly seven members"), and closed on `resolves.toBeDefined()` — the exact vacuous
+  shape that file's own doc comment lectures against. Renamed to what it does, and it now asserts the
+  snapshot carries every store the schema declares.
+- **"1 words and 0 answers"**, in the confirmation, directly above "it cannot be undone".
+- **A flaky test of my own**: `restore.test.ts` waited on `setTimeout(0)` for a `BroadcastChannel`
+  message, which in Node crosses worker threads. It passed alone and failed once in a full run.
+  `vi.waitFor` for the positive cases, a generous settle for the negative ones, three clean full runs
+  after.
+
+**Raised and wrong, checked rather than assumed:**
+
+- That a stale tab's `grade()` would write its pre-restore card row back over the restored one.
+  It would not: `grade()` takes a `cardId` and re-reads the card **inside** its own transaction, so a
+  graded card is always the restored one and a card the restore removed makes it throw
+  `grade: no card <id>`. The real cost is a stale *view*, which is what the `BroadcastChannel` fix is
+  for — the finding was right about the gap and wrong about the damage.
+- That the manifest needed changing. It did not: `theme_color` and `background_color` were already
+  C0's paper. What this phase added is the assertion holding the three copies together.
+
+**Recorded, not fixed:** the Library-only placement of the warning; no depth or size guard on
+reading the chosen file before `JSON.parse` (the database is untouched either way, so it is a frozen
+tab rather than data loss); and that restoring a backup roughly the size of the current database
+wants about 2× headroom, because `clear()` inside a transaction does not return quota until commit.
+On a tight device that restore aborts every time — correctly, with nothing changed — and the copy
+now names "the device may be out of space" as one of the two causes.
+
+### What the next session should know
+
+- **`backend.md` B5 reads this door.** `exportAccount()` hands PostgREST rows to `serializeSnapshot`
+  and its criterion is a byte-identical file. That works **only** because the serializer is canonical
+  (rows by id, keys sorted); do not "simplify" it to `JSON.stringify`. And B5's rows go through
+  `validateSnapshot` too, which now refuses a `due` that arrived as a string — which is what you want,
+  because the alternative is a restore that hides every card.
+- **Five of the seven wave-0 members still throw**, and `tests/unit/db/repository.test.ts` still
+  guards them. B5 deletes its five rows as it writes them, exactly as W5 deleted its two.
+- **A restore reloads the page, and now the other tabs too.** If a future phase adds a screen that
+  must survive a restore without a reload, the signal to hang it off is
+  `src/pwa/restore.ts`'s channel.
+- **The install affordance and the warning live on Library only.** A learner who never opens Library
+  never sees either. If W8's wide shell or a later phase wants the at-risk warning somewhere a
+  first-time Safari visitor will actually meet it, `storageRisk()` is the one function to ask.
+- **Nothing here is a migration.** `upgradeSnapshot` exists for a hand-forged file and for B5, not
+  for data: there are no users and no data, and `exportAll` has always stamped the current
+  `DB_VERSION`.
+
+### Gates
+
+| | after W5 | after the review fixes |
+|---|---|---|
+| `pnpm lint` | clean | clean |
+| `pnpm typecheck` | clean | clean |
+| `pnpm build` | clean | clean |
+| `pnpm test` | 1,891 app + 102 server | **1,904 app + 102 server** |
+| `PORT=3000 pnpm e2e` | 281 passed + 1 red (the display-mode case) | **282 passed**, 7.3 min |
+| `pnpm smoke --no-api` | 16 ok | **16 ok** |
+
+The unit suite was run three times end to end after the `BroadcastChannel` flake, all clean.
+`pnpm build` before `pnpm test`, as `CLAUDE.md` says: several guards read the bytes in
+`apps/app/public/` and `apps/app/dist/`.
+
+**Traps this session hit, for whoever is next:**
+
+- **`pnpm smoke` needs a preview server already running.** It is an HTTP client, not a harness.
+- **`tests/unit/ui/tokens.test.ts` polices the whole workspace**, not just `components/**`: no
+  tier-1 palette name anywhere outside the tokens block. A test that reads a colour out of
+  `tokens.css` has to resolve the semantic token and follow its `var()` hop.
+- **Sabotage is the only way to know a test works.** Four assertions in this phase were green against
+  a deliberately broken implementation before they were rewritten: the tombstone round trip
+  (`expect(undefined).not.toBeNull()` passes), the atomicity case (its fixture was caught by the
+  validator, so it never reached the transaction), the guard replacement, and the prototype case.
+  Every claim in this section was checked by breaking the code and watching the test go red.

@@ -13,6 +13,9 @@ import { createBrowserRouter, RouterProvider } from 'react-router';
 
 import '@/app/globals.css';
 import { initAccess } from './access/client';
+import { startInstallCapture } from './pwa/install';
+import { startPersistence } from './pwa/persist';
+import { startRestoreListener } from './pwa/restore';
 import { routes } from './routes';
 
 const container = document.getElementById('root');
@@ -34,6 +37,32 @@ if (!container) throw new Error('index.html is missing #root');
  * every learner who has a key, to answer a question none of them asked.
  */
 void initAccess();
+
+/**
+ * Install and storage persistence (docs/plans/web.md W5), also before the first
+ * render, and for two different reasons.
+ *
+ * `startInstallCapture` has to beat the event: Chromium fires
+ * `beforeinstallprompt` during page load, it is not replayed, and a listener
+ * mounted by a component that the learner has not navigated to yet would never
+ * see it. Missing it means the install affordance never appears at all.
+ *
+ * `startPersistence` is the opposite shape — it deliberately does **not** ask
+ * for anything here. It reads `persisted()` and then waits for the first real
+ * interaction before calling `persist()`, because Chromium answers that request
+ * silently and does not reconsider for the page load. Asking during the first
+ * paint of a first visit turns a grant into a refusal. See `src/pwa/persist.ts`.
+ */
+startInstallCapture();
+startPersistence();
+
+/**
+ * And the third: a restore in *another* tab replaced the database this one is
+ * reading from, so this one reloads too. One line here rather than a hook in
+ * every screen, because there is one of it and it has to be listening whatever
+ * the learner is looking at.
+ */
+startRestoreListener();
 
 /**
  * `basename` comes from the build's own base, not from a literal.

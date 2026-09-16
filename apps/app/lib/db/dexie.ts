@@ -43,6 +43,8 @@ import type {
   StabilityBucket,
 } from '@/lib/db/repository';
 import { STABILITY_BUCKETS } from '@/lib/db/repository';
+import { SNAPSHOT_FORMAT } from '@/lib/db/export';
+import { upgradeSnapshot, validateSnapshot } from '@/lib/db/import';
 import { gradeCard, newCard } from '@/lib/srs/card';
 import { KNOWN_STABILITY_DAYS, knownCardState } from '@/lib/srs/states';
 import type { CardContext, Entry } from '@/lib/types';
@@ -755,22 +757,70 @@ export function createDexieRepository(db: TangramDb): Repository {
     },
 
     // -------------------------------------------------------------------------
-    // The wave-0 interface diff (`docs/plans/wave-zero.md` §5), declared and not
-    // yet implemented. `web.md` W5 replaces the first two, `backend.md` B5 the
-    // other five.
+    // The wave-0 interface diff (`docs/plans/wave-zero.md` §5). `web.md` W5 has
+    // written the first two; `backend.md` B5 owns the five below them.
     //
-    // They **throw**. A stub that returns a plausible empty value — `[]`, or a
-    // zeroed `SyncState` — is how a phase ships a sync engine that silently
-    // syncs nothing and a backup that silently restores an empty database. The
-    // failure has to be loud until someone writes the body.
+    // The five still **throw**. A stub that returns a plausible empty value —
+    // `[]`, or a zeroed `SyncState` — is how a phase ships a sync engine that
+    // silently syncs nothing. The failure has to be loud until someone writes
+    // the body.
     // -------------------------------------------------------------------------
 
+    /**
+     * Every store, every row, tombstones included (`web.md` W5).
+     *
+     * Note what is **not** here: `alive`. This and `importAll` are the only two
+     * members allowed past it, and that is the whole point — a round trip that
+     * drops `deletedAt !== null` rows resurrects deleted cards the next time
+     * sync runs.
+     *
+     * One read transaction over every table, so the snapshot is a single point
+     * in time rather than nine reads a concurrent `grade()` can interleave with.
+     */
     async exportAll() {
-      throw new Error('exportAll: not implemented — web.md W5');
+      const rows = await db.transaction('r', db.tables, async () => ({
+        words: await db.words.toArray(),
+        cards: await db.cards.toArray(),
+        reviews: await db.reviews.toArray(),
+        lists: await db.lists.toArray(),
+        list_members: await db.list_members.toArray(),
+        known_words: await db.known_words.toArray(),
+        texts: await db.texts.toArray(),
+        settings: await db.settings.toArray(),
+        ask_cache: await db.ask_cache.toArray(),
+      }));
+      return { format: SNAPSHOT_FORMAT, dbVersion: DB_VERSION, createdAt: Date.now(), rows };
     },
 
-    async importAll() {
-      throw new Error('importAll: not implemented — web.md W5');
+    /**
+     * Destructive by contract: restore, not merge (`web.md` W5).
+     *
+     * Two properties this body is responsible for and the signature is not:
+     *
+     * 1. **It validates first.** The type says `Snapshot`; a file on disk says
+     *    nothing, and `lib/db/import.ts` is where the gap is closed. Validation
+     *    happens *before* the transaction opens, so a bad file never reaches the
+     *    clear.
+     * 2. **It is atomic.** The clear and every `bulkPut` run in one `rw`
+     *    transaction over every table, so a failure part-way — a damaged row, a
+     *    quota the device cannot meet — aborts the whole thing and leaves the
+     *    database exactly as it was. The alternative, clearing and then writing,
+     *    turns "the restore failed" into "the restore deleted everything".
+     */
+    async importAll(snapshot) {
+      const ready = upgradeSnapshot(validateSnapshot(snapshot));
+      await db.transaction('rw', db.tables, async () => {
+        await Promise.all(db.tables.map((table) => table.clear()));
+        await db.words.bulkPut(ready.rows.words);
+        await db.cards.bulkPut(ready.rows.cards);
+        await db.reviews.bulkPut(ready.rows.reviews);
+        await db.lists.bulkPut(ready.rows.lists);
+        await db.list_members.bulkPut(ready.rows.list_members);
+        await db.known_words.bulkPut(ready.rows.known_words);
+        await db.texts.bulkPut(ready.rows.texts);
+        await db.settings.bulkPut(ready.rows.settings);
+        await db.ask_cache.bulkPut(ready.rows.ask_cache);
+      });
     },
 
     async changedSince() {

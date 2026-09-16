@@ -23,6 +23,7 @@ import { useEffect, useState } from 'react';
 import { Attribution } from '@/app/settings/attribution';
 import { SettingsForm } from '@/app/settings/settings-form';
 import { ListsView } from '@/components/lists/lists-view';
+import { DataSafetyCard } from '@/components/pwa/data-safety';
 import { LearnerLevel } from '@/components/settings/learner-level';
 import { StatsView } from '@/components/stats/stats-view';
 import { PageHeader } from '@/components/ui/page-header';
@@ -92,6 +93,14 @@ export function LibraryScreen({ attribution }: { attribution: string }) {
           />
         </Card>
       ) : null}
+
+      {/*
+        Install, persistence and the local backup (docs/plans/web.md W5). On
+        Library rather than in the shell: it is a shelf concern, it sits beside
+        the other things a learner visits occasionally, and a banner over every
+        screen would be shouting about a risk most learners are not in.
+      */}
+      <DataSafetyCard />
 
       {/*
         Rendering `data/ATTRIBUTION.md` is a licence obligation, not a nicety

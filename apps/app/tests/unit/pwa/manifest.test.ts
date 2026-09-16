@@ -29,6 +29,9 @@ const manifest = JSON.parse(readFileSync(resolve(root, 'public/manifest.webmanif
 const sw = readFileSync(resolve(workspaceRoot(import.meta.dirname), 'scripts/sw.template.js'), 'utf8');
 // The entry document carries what Next's `metadata`/`viewport` exports emitted.
 const html = readFileSync(resolve(root, 'index.html'), 'utf8');
+// The tier-1 palette (docs/plans/core.md C0) — the manifest's colours are
+// copies of one of its values and W5 pins them to it.
+const tokens = readFileSync(resolve(root, 'app/tokens.css'), 'utf8');
 
 /**
  * Where the build puts its hashed output. Vite's default is `assets/` under
@@ -67,6 +70,37 @@ describe('manifest.webmanifest', () => {
     // components — just the tagline the home screen quotes back.
     expect(manifest.description).not.toMatch(/\breviews?\b/i);
     expect(manifest.description).toMatch(/practise/i);
+  });
+
+  /**
+   * `web.md` W5 lists `public/manifest.webmanifest` in its Files with
+   * "`theme_color` / `background_color` from `core.md` C0's tokens". The two
+   * colours were already right, so **the edit this phase makes is the
+   * assertion, not the file** — the manifest is the third place the paper
+   * ground is written down (the token layer, `index.html`'s
+   * `<meta name="theme-color">`, and here), none of them imports the others,
+   * and the description case above exists because exactly that kind of
+   * hand-copied pair drifted once already.
+   *
+   * The splash screen and the browser chrome are what go wrong when it drifts:
+   * the installed app opens on a colour the app does not use.
+   *
+   * It resolves the **semantic** `--paper` and follows its one `var()` hop,
+   * rather than naming the palette variable behind it: `tests/unit/ui/tokens.test.ts`
+   * refuses a tier-1 name anywhere in the workspace outside the tokens block,
+   * and that rule is right — this file has no business knowing which swatch
+   * `--paper` currently points at.
+   */
+  it('paints its chrome in the token layer’s paper, in all three places', () => {
+    const semantic = /^\s*--paper:\s*var\((--[a-z0-9-]+)\);/m.exec(tokens)?.[1];
+    expect(semantic, 'tokens.css must define --paper as one var() hop').toBeDefined();
+    const paper = new RegExp(`^\\s*${semantic}:\\s*(#[0-9a-f]{6});`, 'im').exec(tokens)?.[1];
+    expect(paper, `${semantic} must resolve to a hex`).toBeDefined();
+
+    expect(manifest.theme_color.toLowerCase()).toBe(paper!.toLowerCase());
+    expect(manifest.background_color.toLowerCase()).toBe(paper!.toLowerCase());
+    const meta = /<meta name="theme-color" content="([^"]+)"/.exec(html)?.[1];
+    expect(meta?.toLowerCase()).toBe(paper!.toLowerCase());
   });
 
   it('leaves orientation to the device', () => {

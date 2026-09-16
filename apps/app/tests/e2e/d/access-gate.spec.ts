@@ -144,12 +144,20 @@ test.describe('the ?key= exchange, in a browser', () => {
     // The app is on screen, not a redirect target.
     await expect(page.locator('[data-route="/"]')).toHaveCount(1);
 
-    // And the gated route now answers from inside the page.
-    const status = await page.evaluate(async () => {
-      const response = await fetch('/api/ask', { headers: { accept: 'application/json' } });
-      return response.status;
+    // The credential is stored, and it opens the gate. Sent explicitly rather
+    // than with a bare `fetch`: the app attaches it through `apiFetch`, and a
+    // raw page-script fetch carries nothing — which is a fact about the test,
+    // not about the app, and asserting 200 on one would be asserting the gate
+    // is off.
+    const result = await page.evaluate(async () => {
+      const stored = localStorage.getItem('tangram.access.secret');
+      const response = await fetch('/api/ask', {
+        headers: { accept: 'application/json', 'x-tangram-access': stored ?? '' },
+      });
+      return { stored, status: response.status };
     });
-    expect(status).toBe(200);
+    expect(result.stored).toBe(SECRET);
+    expect(result.status).toBe(200);
   });
 
   test('revokes on a wrong key, rather than leaving the old one in place', async ({ page }) => {
@@ -159,20 +167,28 @@ test.describe('the ?key= exchange, in a browser', () => {
     await page.goto('/?key=obviously-the-wrong-key');
     await expect(page).toHaveURL(/access=denied/);
 
-    const status = await page.evaluate(async () => {
-      const response = await fetch('/api/ask', { headers: { accept: 'application/json' } });
-      return response.status;
+    // Revoked, not merely not-replaced: the good secret is gone from storage…
+    const result = await page.evaluate(async () => {
+      const stored = localStorage.getItem('tangram.access.secret');
+      const response = await fetch('/api/ask', {
+        headers: { accept: 'application/json', 'x-tangram-access': stored ?? '' },
+      });
+      return { stored, status: response.status };
     });
-    expect(status).toBe(401);
+    expect(result.stored).toBeNull();
+    // …and the route refuses whatever is left.
+    expect(result.status).toBe(401);
   });
 
   test('a device that never ran the exchange is refused', async ({ page }) => {
     await page.goto('/');
-    const status = await page.evaluate(async () => {
+    const result = await page.evaluate(async () => {
+      const stored = localStorage.getItem('tangram.access.secret');
       const response = await fetch('/api/ask', { headers: { accept: 'application/json' } });
-      return response.status;
+      return { stored, status: response.status };
     });
-    expect(status).toBe(401);
+    expect(result.stored).toBeNull();
+    expect(result.status).toBe(401);
   });
 });
 

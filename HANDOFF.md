@@ -7797,3 +7797,281 @@ does everything that plugin does, better, on the platform where insets matter. A
 per `CLAUDE.md`'s rule about frozen surfaces, and the config above makes the common case agree. But
 the package is not merely redundant on Android: it is a second, self-starting owner of the window.
 If I5 has no iOS reason to keep it, dropping it is the smaller change.
+
+---
+
+# `web.md` W2–W4 — the three debts `CLAUDE.md` named
+
+Four commits on `claude/build-web-2`, cut from `claude/integration`:
+
+- `build(W2): the host config, the dictionary's web delivery, and a smoke that can fail`
+- `feat(W3): the service worker's cache name is a hash of Vite's own output`
+- `feat(W4): the access gate, re-homed as a header the client attaches`
+- `fix(W2): the review's survivors — the brotli negotiation could never have worked`
+- …plus the W3 review's survivors, in the commit this section lands with.
+
+**The three debts are discharged.** `CLAUDE.md`'s migration-state block says the access gate does
+not exist, the worker's cache name is `dev` on every build, and `pnpm smoke`'s page cases prove
+nothing. All three are false now, and that block should be updated by whoever next edits
+`CLAUDE.md` — this session did not, because it is auto-loaded project instruction and rewriting it
+mid-build is how a fresh session ends up reading a state nobody is in yet. **W5 onward were not
+started**, per the brief.
+
+## The single best find, and it was not mine
+
+W2's first `vercel.json` negotiated the dictionary's brotli sibling: a `rewrites` entry sending
+`/dict-<…>.sqlite` to `/dict-<…>.sqlite.br` when the request carried `accept-encoding: br`, and a
+`headers` entry putting `content-encoding: br` on the same path under the same condition. Read
+together they look like one rule. They are not, and on Vercel they live in different phases:
+
+- **`rewrites` are consulted only after the filesystem.** Vercel's own documentation says the
+  `source` "should NOT be a file because precedence is given to the filesystem prior to rewrites
+  being applied". `dict-<…>.sqlite` is a real file in `dist/`, so the rewrite could never fire.
+- **`headers` decorate whatever the filesystem serves.** So the header would have fired.
+
+Net effect on the real host: every browser asking for the dictionary would have received **43 MB of
+raw SQLite labelled `content-encoding: br`**, failed to decode it, and never imported the
+dictionary. Worse than the failure the pre-compression requirement exists to prevent.
+
+**Every gate in this container was green**, and the reason is the part worth remembering:
+`vite-plugins/headers.ts` applied the rewrite *before* Vite's static middleware — the opposite of
+the host's order — so the preview server was quietly making the local build behave in a way the
+deployment would not. A local server that emulates a host is a local server that can lie about it.
+
+This is the third config-shaped change in this build that matched differently than it looked
+(`wave-zero.md` §10a names the other two), and the first where the emulation was the thing hiding
+it. The class, not the instance, is now a standing unit test: **no rewrite whose `source` matches a
+file in `dist/`, and no `content-encoding` header on a path the filesystem serves verbatim.**
+Proved by restoring the old config and watching it go red.
+
+**What shipped instead** is the fallback `web.md` W2 already named: no negotiation. The sibling is
+served under its own name with `content-encoding: br`, verified end to end — a `fetch` of
+`/dict-<…>.sqlite.br` yields 43,208,704 bytes whose sha256 is the manifest's. The canonical path
+serves the raw file and claims no encoding. The preview plugin applies headers only.
+
+**This leaves a question for `data.md`, which is the whole point of writing it here:** D4's fetch has
+to ask for `dict-<…>.sqlite.br` **by name** to get ~17 MB instead of 43. Nothing negotiates it for
+the client any more. Until D4 does, a first web load transfers the full 43,208,704 bytes.
+
+## The numbers, for `web.md` W6's budget
+
+Measured here, with `node:zlib` over the 43,208,704-byte artifact (`scripts/copy-dict.ts` carries
+the table):
+
+| quality | window | size | time |
+|---|---|---|---|
+| 9 | 2^24 | **16,897,939** (16.9 MB) | 15.5 s |
+| 10 | 2^24 | 15.3 MB | 68.6 s |
+| 11 | 2^24 | **14.7 MB** | 110.9 s |
+
+Quality 9 is the default because it sits in front of every `vite build`;
+`TANGRAM_DICT_BROTLI_QUALITY=11` is the release setting and is now honoured on a tree that has
+already built (it used to silently no-op — see the review section below).
+
+**`data.md` D1's 13.9 MB is not reproducible here at any quality**, and 14.7 MB is the floor
+`node:zlib` reaches. `wave-zero.md` ruling 16a and `HANDOFF.md`'s D1 section both carry 13.9; W6
+should budget from a measured number, and the honest ones are **43.2 MB uncompressed** (what a
+client gets today) or **16.9 MB** (what the sibling costs, once D4 asks for it).
+
+The **deployed** transfer is still unmeasured — no deployment exists. `docs/deploy.md` §7 names the
+two `curl -sI` commands and what to record.
+
+## What W2 decided that the plan did not settle
+
+- **The host config is config, not clicks.** `apps/app/vercel.json` carries `buildCommand`,
+  `outputDirectory` and `framework: null` alongside the routing and header rules, so the four things
+  left in the dashboard are the root directory, "include files outside the root directory", the
+  framework preset and the Node version. A rule in a file is reviewable; a rule in a text box is not.
+- **The SPA fallback excludes `/api/`, `/assets/` and any path with a file extension.** W1's review
+  left the first as an open finding. The second and third are this session's: without them a missing
+  entry chunk answers 200 `index.html`, and the one failure the smoke exists to catch is invisible.
+- **`vite preview` now applies the host's 404** for paths the fallback excludes. Without it the
+  container cannot prove W2's "delete the entry chunk and watch it fail" criterion at all — the
+  first attempt passed everything, because Vite's history fallback is unconditional.
+- **The route table is read out of `src/routes.tsx` by source, not imported.** It is TSX holding JSX
+  and `import.meta.env` constants Vite substitutes at build time; importing it from Node would mean
+  answering the build-mode guard for the *test* environment rather than for the build.
+- **`pnpm smoke` grew `--no-api`.** `docs/deploy.md`'s own after-deploy command failed by
+  construction against a healthy deployment, because this deployable has no `/api/**` until
+  `backend.md` ships. The checklist uses `--no-api` today and `--api-base <server>` after.
+
+## What W3 decided that the plan did not settle
+
+- **The stamp walks `dist/`, not `public/`.** The plan's list of unhashed inputs is all `public/`
+  files; the review found the hole that creates — `index.html` is *emitted*, not copied, and Vite's
+  manifest records only the entry's asset names, never the document's bytes. `/` is precached AND is
+  what `shell()` serves for every never-visited route offline, so a changed `<title>`,
+  `theme-color`, `viewport-fit=cover` or `lang="zh-Hans"` left the stamp, `sw.js` and therefore the
+  browser's view of the worker byte-identical. Walking the output directory is the rule that cannot
+  miss a file for being emitted rather than copied.
+- **One rule is reversed on purpose.** `shell()` falls back to the cached `/` document before
+  `/offline.html`. Under Next each route had its own HTML and serving one under another's URL would
+  have been a lie — the old comment said exactly that, and was right then. Under the SPA fallback
+  there is one document for every path, and handing it to a never-visited route offline is precisely
+  what the host does.
+- **`vite-plugin-pwa` is the recorded fallback**, as W3 asks. If the hand-written worker becomes a
+  maintenance drag, `vite-plugin-pwa` (1.3.0, Vite 8 support per STACK §6) with an explicit
+  `globIgnores` for `dict-*.sqlite*` is the replacement. Two things it must be told rather than
+  discover: `/api/**` is network-only because the real cache is `ask_cache` in IndexedDB storing ids
+  rather than gloss text, and the dictionary must be excluded from the HTTP cache entirely because
+  it lives in OPFS. A generated precache manifest that hoovers up every emitted asset does the wrong
+  thing with a 43 MB file by default.
+- **`VITE_MANIFEST` is a literal and says so.** W3 asks for the manifest's filename to be "read off
+  the installed Vite"; there is no export to read it from. `build.manifest` also accepts a string,
+  which moves the file and would silently drop the stamp to `dev`, so the coupling is asserted
+  instead: a unit test reads `vite.config.ts` and fails if `manifest` is anything but `true`.
+
+## What W4 decided that the plan did not settle
+
+- **`packages/access` also ships `isGatedPath`.** `wave-zero.md` §10a is explicit that the enforcing
+  gate is `backend.md` B1's and that W4 owns only the client half, and the disposition table says so
+  now. But the *rule* — prefix, never exact string — is shared, and leaving B1 to re-derive it from
+  a path list is how the bypass §10a describes comes back. It ships here as tested code. Two test
+  files name `/api/ask/propose` and `/api/ask/answer` explicitly, per ruling 4.
+- **The `?key=` exchange verifies against the server.** The plan's criterion is that a wrong key
+  leaves `?access=denied` and revokes the stored secret, and a client cannot know a key is wrong —
+  only the server holds the secret. `middleware.ts` got that for free by running on the server. So
+  `initAccess` strips the key out of the URL **synchronously**, stores it, starts attaching it, and
+  then presents it to the free `GET /api/ask` handshake; a 401 revokes.
+- **A third outcome, `unverified`.** A network failure during the probe keeps the key rather than
+  revoking it. Treating an unreachable server as a refusal would throw away a correct credential
+  because the phone had no signal at the moment of setup — the one failure the owner cannot
+  diagnose, on the one device the whole exchange exists for.
+- **`packages/access` carries the same type-stripping debt `packages/ai` records**, for the same
+  reason and with the same fix: its `exports` map points at TypeScript source, which resolves only
+  because pnpm symlinks a workspace package. Whoever fixes it for `packages/ai` fixes it here in the
+  same commit.
+
+## What the two adversarial reviews found
+
+Five lenses on W2 and four on W3, each finding then put to an independent agent instructed to refute
+it and to default to refuted when uncertain. **59 findings raised, 34 survived**, reducing to about
+a dozen distinct defects. All are fixed. The ones worth carrying forward:
+
+1. **The brotli negotiation** — above. Four reviewers reached it independently.
+2. **`index.html` was not a stamp input** — above. Three reviewers reached it independently.
+3. **The brotli sibling could be reused when it was the wrong bytes.** The reuse check validated the
+   `.sqlite` and carried the `.br` across unexamined, and the write was one non-atomic 16.9 MB
+   `writeFileSync` — so a killed build left a truncated sibling that every later build kept, under a
+   content-addressed URL with `immutable` on it for a year. It is written atomically now, recorded
+   with a sidecar naming its quality and its source's digest, and **decompressed and hashed** before
+   it can be reused.
+4. **A route added with double quotes or a backtick was invisible to everything.** The marker test,
+   the Playwright spec and the smoke's page cases all derive from `src/routes.tsx`, and all three
+   read single quotes only. `discoverPageRoutes` reads every quote style and **throws** on a `path:`
+   it cannot read. `core.md` C7 is about to rewrite that table.
+5. **The smoke's page cases only proved the deployment was self-consistent** — each served document
+   was compared against the served `/`, which the SPA fallback guarantees. They are anchored to the
+   local build manifest now.
+6. **Three worker assertions could not fail.** The purge half of W3's criterion was asserted nowhere
+   (every Playwright context starts with empty CacheStorage, so "keeps no other cache" is true
+   whatever `activate` does); the dictionary-deny and cross-origin cases both probed paths that no
+   cache rule matches either way. The purge case is real now and was proved by deleting the purge
+   loop from the template, rebuilding and watching it go red.
+
+**And two that stay unfalsifiable, recorded rather than papered over.** The dictionary deny and the
+cross-origin bail are **defence in depth**, and no browser-level test can fail on either alone:
+`storable()` refuses anything that is not a basic ok response, no cache rule matches the artifact's
+path, and a navigation to it is a *download* in Chromium, which bypasses the worker. Both were
+checked by deleting them and rebuilding: still green. What guards them is the source-anchored unit
+test in `tests/unit/pwa/manifest.test.ts`, now keyed on each rule's own text — the previous version
+compared the position of a **header comment** against the position of a rule, and was true wherever
+the real rule sat. They matter the day somebody widens a cache rule, which is exactly the day nobody
+is looking at them.
+
+## What other plans now owe, or should know
+
+- **`data.md` D4 — the brotli sibling must be fetched by name.** See above. This is the open
+  question W2 was told to record rather than decide.
+- **`data.md` / `ios.md` I3 / `android.md` A5 — `apps/app/public/` now adds ~61 MB to every native
+  bundle.** `capacitor.config.ts` has `webDir: 'dist'`, and `cap sync` copies the whole of it into
+  `android/app/src/main/assets/public/` and `ios/App/App/public/`. From W2 that includes
+  `dict-<…>.sqlite` (43.2 MB), its `.br` sibling (16.9 MB) and `decomp.json` (0.92 MB). `data.md`
+  D5a budgets **one** packaged copy of the `.sqlite`, delivered as an app asset for
+  `copyFromAssets()`, which reads the plugin's own assets directory rather than the webDir — so the
+  brotli sibling is pure waste on both phones and the `.sqlite` may be a second copy. Neither
+  `capacitor.config.ts` nor the native projects were touched here (they are `ios.md`'s and
+  `android.md`'s), and Capacitor has no per-file exclude for `webDir`, so this needs a decision from
+  whoever owns D5a/I3/A5: either the copy step learns a platform flag, or the native build prunes
+  after `cap sync`.
+- **`backend.md` owes the API half of the route-coverage guard.** W2 says to write this down or it
+  will be lost, and it is the guard that already failed once: today `checkRouteCoverage()` refuses to
+  let a handler in `apps/app/app/api/**` exist without a case in `SMOKE_CASES`. When `backend.md`
+  B1 moves the three model-backed routes onto `apps/server`, that rule has to move with them —
+  three routes on a different deployable, exercised over HTTP against a built server, with the same
+  "no handler without a case" refusal. `apps/server/src/smoke.ts` already exists (B0 built it) and
+  `apps/server/tests/routes.test.ts` already asserts both directions of its table; what is missing is
+  the coverage rule itself.
+- **`backend.md` B1 — the CORS allowlist must name `X-Tangram-Access`.** A custom request header
+  makes every cross-origin POST preflighted. `tests/e2e/d/access-gate.spec.ts` drives exactly that
+  against a second local origin and asserts the browser asks for the header by name; the server half
+  is B1's.
+- **`core.md` C7 — three files to re-run, and three route components already carry a marker.** W2's
+  smoke cases and W3's precache list are both derived, so the collapse to three tabs costs them
+  nothing; but `tests/e2e/p0/routes.spec.ts` and `tests/unit/server/routes.test.ts` both enumerate
+  today's eight patterns, and the eight `src/routes/*.tsx` components each carry a
+  `<RouteMarker path="…" />` that has to move with the screen. Nothing in this plan pins a route
+  *count* any more — that was a review finding and it is fixed.
+- **`core.md` — three files under `components/**` were touched, one line each.** W4's Files list
+  names `components/lookup/ask-panel.tsx` and `components/review/example-sentences.tsx`; this
+  session was asked to stay out of `components/**`, so the change is the smallest that exists:
+  `fetch('/api/…')` becomes `apiFetch('/api/…')`, plus an import.
+  `components/hanzi/context-gloss.tsx` needed the same and is not in the plan's list because C4
+  added it afterwards. Without these three the client half of the gate does not exist.
+
+## Things found wrong in the plan set
+
+- **`web.md` W2's `vary: accept-encoding` on the artifact** was written for a negotiation that
+  cannot work on the chosen host. Dropped with it.
+- **`web.md` W3's stamp input list is incomplete** — it names `public/offline.html`,
+  `public/manifest.webmanifest`, the icons and `decomp.json`, and misses `index.html`, which is the
+  document the same phase makes the worker precache and serve offline. The rule ("every unhashed
+  file the worker precaches or serves") is right; the list under it is not.
+- **`web.md` W3 asks for the manifest filename to be read off the installed Vite.** There is no
+  export to read it from.
+- **`web.md` W4's disposition table implied it owned the gate's check.** `wave-zero.md` §10a already
+  corrects this and the session was briefed with it; recorded because the plan's own text still
+  reads the old way.
+- **`wave-zero.md` ruling 16a's 13.9 MB brotli figure is not reproducible** with `node:zlib` — see
+  the numbers above.
+- **`data.md` D4's integrity check is a byte-count against `manifest.bytes`.** That still works with
+  the sibling served under `content-encoding: br`: the browser decodes transparently and the summed
+  chunk lengths are the decoded bytes. Verified here — a `fetch` of the sibling returns exactly
+  43,208,704 bytes whose sha256 is the manifest's.
+- **Two corrections the brief asked for were already applied on this branch**, by whoever landed the
+  wave-zero rulings, and are correct as written: `web.md` W7 and R12 both say plainly that **there is
+  no `data/hsk.json`** and that HSK bands live on `Entry.hskBand` and in `entries.hsk_band`; and all
+  three of `web.md`'s CI references now say there is no CI and name a phase gate or a unit test
+  instead. The numbers resting on the first were re-checked against the built artifact and are exact:
+  **124,188 entries, 11,028 banded, 5,622 in band 7, so 5,406 for HSK 1–6.**
+
+## Traps for the next session
+
+- **`playwright.config.ts` has `reuseExistingServer: true`.** A preview server left running from a
+  plain `pnpm build` serves a `dist/` with no `/gallery` or `/span-select`, and 46 core specs fail
+  for a reason that has nothing to do with the change under test. Kill it first.
+- **`vite preview` caches `dist/` in memory at startup.** Editing a built file to prove a test can
+  fail proves nothing unless the server is restarted — or, better, the *source* is sabotaged and the
+  tree rebuilt, which is how the worker rules were checked here.
+- **Adversarial review agents were told to kill stray preview servers, and killed the e2e suite's.**
+  One full run died mid-suite with `ERR_CONNECTION_REFUSED` for that reason alone. Do not run gates
+  while a review fleet is live.
+- **`core/sheets.spec.ts:92` flaked once** in a full run (the word sheet's geometry at 390px) and
+  passed alone and in three later full runs. It is `core.md` C4's; recorded in case it recurs.
+- **Egress to `vercel.com` is blocked from this container** (`curl` returns 000), so the routing-order
+  documentation quoted above could not be re-read first-hand. It was quoted independently by several
+  review agents. The fix does not depend on who is right: serving the sibling under its own name is
+  correct under either ordering, and is what `web.md` W2 named as the fallback.
+
+## Gates
+
+| | W2 | W3 | W4 | after both reviews |
+|---|---|---|---|---|
+| `pnpm lint` | clean | clean | clean | clean |
+| `pnpm typecheck` | clean | clean | clean | clean |
+| `pnpm test` | 122 files / 1585 + 6 / 75 | 1602 | 1616 | **1625 + 75** |
+| `pnpm build` | clean | clean | clean | clean |
+| `PORT=3000 pnpm e2e` | 198 passed | 203 passed | not run clean | **208 passed** |
+| `pnpm smoke` | 29 ok | 29 ok | 29 ok | **30 ok; 19 with `--no-api`** |
+
+`git status` after a full build is clean — no artifact, sibling, sidecar or worker is offered.

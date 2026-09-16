@@ -21,7 +21,7 @@
  *
  * **The stamp has two halves and the second one is the one a builder will
  * skip.** Vite's build manifest covers only what goes through the module
- * graph. Files in `publicDir` are copied to the dist root verbatim, keep their
+ * graph. Files in `public/` are copied to the dist root verbatim, keep their
  * authored names and gain no content hash, so they appear in no manifest. Hash
  * the manifest alone and editing `offline.html` leaves the stamp unchanged,
  * `activate` purges nothing, and the stale precached offline page is served
@@ -71,7 +71,18 @@ export const PUBLIC_DIR = resolve(appDir, 'public');
 export const DIST_DIR = resolve(appDir, 'dist');
 export const OUTPUT_PATH = resolve(PUBLIC_DIR, 'sw.js');
 
-/** Vite's build manifest, relative to `dist/`. Read off the installed Vite, not assumed. */
+/**
+ * Vite's build manifest, relative to `dist/`.
+ *
+ * A literal, and the honest statement is that this is Vite's **default** path
+ * for `build.manifest: true` rather than something read back off the installed
+ * Vite — there is no export to read it from. `build.manifest` also accepts a
+ * string, which moves the file, and this would then silently fall back to the
+ * `dev` stamp with only a warning. So the coupling is asserted instead:
+ * `tests/unit/pwa/build-sw.test.ts` reads `vite.config.ts` and fails if
+ * `manifest` is anything but `true`. (An earlier version of this comment
+ * claimed the path *was* read off Vite, which is worse than silence.)
+ */
 export const VITE_MANIFEST = '.vite/manifest.json';
 
 /** What the template carries where the build's stamp belongs. */
@@ -83,11 +94,22 @@ export const PRECACHE_PLACEHOLDER = '__TANGRAM_PRECACHE__';
 /** The stamp used when there is no build to read (a bare `pnpm sw`, `pnpm dev`). */
 export const DEV_BUILD_ID = 'dev';
 
-/** Public files the stamp must ignore. See the header for why each one. */
+/**
+ * Where Vite puts its content-hashed output, relative to `dist/`.
+ *
+ * Read off the build config rather than written down twice: the worker's
+ * cache-first rule keys on this exact prefix, and the two silently diverging is
+ * what W1 shipped.
+ */
+export const ASSETS_DIR = 'assets';
+
+/** Output files the stamp must ignore. See the header for why each one. */
 export function isStampExcluded(relativePath: string): boolean {
   return (
     relativePath === 'sw.js' ||
-    /^dict-.+\.sqlite(\.br)?$/.test(relativePath) ||
+    relativePath.startsWith(`${ASSETS_DIR}/`) ||
+    relativePath.startsWith('.vite/') ||
+    /^dict-.+\.sqlite(\.br(\.json)?)?$/.test(relativePath) ||
     relativePath === 'dict-manifest.json'
   );
 }
@@ -116,24 +138,21 @@ function walk(dir: string, base: string, out: string[] = []): string[] {
  * statement about this list, and checking it through the resulting hash would
  * only prove that two hashes differ.
  */
-export function stampInputs(
-  publicDir: string = PUBLIC_DIR,
-  distDir: string = DIST_DIR,
-): StampInput[] {
+export function stampInputs(distDir: string = DIST_DIR): StampInput[] {
   const inputs: StampInput[] = [];
   const manifestPath = resolve(distDir, VITE_MANIFEST);
-  if (existsSync(manifestPath)) {
-    inputs.push({
-      label: VITE_MANIFEST,
-      sha256: createHash('sha256').update(readFileSync(manifestPath)).digest('hex'),
-    });
-  }
-  for (const relativePath of walk(publicDir, publicDir)) {
+  if (!existsSync(manifestPath)) return inputs;
+
+  inputs.push({
+    label: VITE_MANIFEST,
+    sha256: createHash('sha256').update(readFileSync(manifestPath)).digest('hex'),
+  });
+  for (const relativePath of walk(distDir, distDir)) {
     if (isStampExcluded(relativePath)) continue;
     inputs.push({
-      label: `public/${relativePath}`,
+      label: relativePath,
       sha256: createHash('sha256')
-        .update(readFileSync(resolve(publicDir, relativePath)))
+        .update(readFileSync(resolve(distDir, relativePath)))
         .digest('hex'),
     });
   }
@@ -198,13 +217,11 @@ export function normalizeBuildId(raw: string): string {
   return id;
 }
 
-/** The stamp for a tree, or the dev fallback when Vite has not built one. */
-export function readBuildId(
-  publicDir: string = PUBLIC_DIR,
-  distDir: string = DIST_DIR,
-): string {
-  if (!existsSync(resolve(distDir, VITE_MANIFEST))) return DEV_BUILD_ID;
-  return normalizeBuildId(computeStamp(stampInputs(publicDir, distDir)));
+/** The stamp for a build, or the dev fallback when Vite has not produced one. */
+export function readBuildId(distDir: string = DIST_DIR): string {
+  const inputs = stampInputs(distDir);
+  if (inputs.length === 0) return DEV_BUILD_ID;
+  return normalizeBuildId(computeStamp(inputs));
 }
 
 /**
@@ -248,7 +265,7 @@ export function buildServiceWorker(
   const distDir = options.distDir ?? DIST_DIR;
   const template = readFileSync(options.templatePath ?? TEMPLATE_PATH, 'utf8');
 
-  const buildId = readBuildId(publicDir, distDir);
+  const buildId = readBuildId(distDir);
   const precache = precacheList(distDir);
   const worker = renderServiceWorker(template, buildId, precache);
 

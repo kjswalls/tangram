@@ -21,6 +21,7 @@ import { resolve } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { appRoot } from '@/lib/server/roots';
 import {
   BUILD_ID_PLACEHOLDER,
   buildServiceWorker,
@@ -38,24 +39,35 @@ import {
 } from '../../../../../scripts/build-sw';
 
 const template = readFileSync(TEMPLATE_PATH, 'utf8');
+const APP_ROOT = appRoot(import.meta.dirname);
 const temporary: string[] = [];
 
 afterEach(() => {
   while (temporary.length > 0) rmSync(temporary.pop() as string, { recursive: true, force: true });
 });
 
-/** A tree shaped like the real one: a `public/` and a built `dist/`. */
+/**
+ * A tree shaped like a real build: a `public/` for the worker to be written
+ * into, and a `dist/` that looks like what Vite emits — the entry document at
+ * the root, the copied public files beside it, and hashed output under
+ * `assets/`.
+ */
 function tree(): { publicDir: string; distDir: string } {
   const root = mkdtempSync(resolve(tmpdir(), 'tangram-sw-'));
   temporary.push(root);
   const publicDir = resolve(root, 'public');
   const distDir = resolve(root, 'dist');
-  mkdirSync(resolve(publicDir, 'icons'), { recursive: true });
+  mkdirSync(publicDir, { recursive: true });
+  mkdirSync(resolve(distDir, 'icons'), { recursive: true });
+  mkdirSync(resolve(distDir, 'assets'), { recursive: true });
   mkdirSync(resolve(distDir, '.vite'), { recursive: true });
-  writeFileSync(resolve(publicDir, 'offline.html'), '<!doctype html><p>offline');
-  writeFileSync(resolve(publicDir, 'manifest.webmanifest'), '{"name":"Tangram"}');
-  writeFileSync(resolve(publicDir, 'icons/tangram.svg'), '<svg/>');
-  writeFileSync(resolve(publicDir, 'decomp.json'), '{"你":{}}');
+  writeFileSync(resolve(distDir, 'index.html'), '<!doctype html><html lang="zh-Hans"><body>');
+  writeFileSync(resolve(distDir, 'offline.html'), '<!doctype html><p>offline');
+  writeFileSync(resolve(distDir, 'manifest.webmanifest'), '{"name":"Tangram"}');
+  writeFileSync(resolve(distDir, 'icons/tangram.svg'), '<svg/>');
+  writeFileSync(resolve(distDir, 'decomp.json'), '{"你":{}}');
+  writeFileSync(resolve(distDir, 'assets/index-AAAA.js'), 'console.log(1)');
+  writeFileSync(resolve(distDir, 'assets/index-BBBB.css'), 'body{}');
   writeFileSync(
     resolve(distDir, VITE_MANIFEST),
     JSON.stringify({
@@ -70,72 +82,105 @@ describe('the stamp', () => {
   it('is stable: the same tree twice gives the same name', () => {
     // Half the argument for a content hash. `.next/BUILD_ID` changed on every
     // build, so a rebuild with identical output purged a cache for nothing.
-    const { publicDir, distDir } = tree();
-    expect(readBuildId(publicDir, distDir)).toBe(readBuildId(publicDir, distDir));
+    const { distDir } = tree();
+    expect(readBuildId(distDir)).toBe(readBuildId(distDir));
+  });
+
+  it('moves when index.html alone is touched — the document the worker IS', () => {
+    // W3's review found this missing, and it is the worst version of the hole
+    // the header describes: `/` is precached AND is what `shell()` serves for
+    // every never-visited route offline, but Vite's manifest records only the
+    // entry's emitted asset names, never the document's bytes. A changed title,
+    // theme-color, `viewport-fit=cover` or `lang="zh-Hans"` left the stamp,
+    // `sw.js` and therefore the browser's view of the worker byte-identical.
+    const { distDir } = tree();
+    const before = readBuildId(distDir);
+    writeFileSync(
+      resolve(distDir, 'index.html'),
+      '<!doctype html><html lang="zh-Hans"><meta name="theme-color" content="#000"><body>',
+    );
+    expect(readBuildId(distDir)).not.toBe(before);
+  });
+
+  it('reads the manifest from the path vite.config.ts actually produces', () => {
+    // `build.manifest` also accepts a string, which moves the file — and this
+    // script would then silently stamp `dev` with only a warning. There is no
+    // export to read the path off, so the coupling is asserted instead.
+    const config = readFileSync(resolve(APP_ROOT, 'vite.config.ts'), 'utf8');
+    expect(config, 'build.manifest must stay `true`, or VITE_MANIFEST is wrong').toMatch(
+      /manifest:\s*true/,
+    );
+    expect(VITE_MANIFEST).toBe('.vite/manifest.json');
   });
 
   it('moves when Vite’s output moves', () => {
-    const { publicDir, distDir } = tree();
-    const before = readBuildId(publicDir, distDir);
+    const { distDir } = tree();
+    const before = readBuildId(distDir);
     writeFileSync(
       resolve(distDir, VITE_MANIFEST),
       JSON.stringify({
         'src/main.tsx': { file: 'assets/index-ZZZZ.js', css: ['assets/index-BBBB.css'], isEntry: true },
       }),
     );
-    expect(readBuildId(publicDir, distDir)).not.toBe(before);
+    expect(readBuildId(distDir)).not.toBe(before);
   });
 
-  it('moves when public/offline.html alone is touched — the whole point', () => {
+  it('moves when offline.html alone is touched — the whole point', () => {
     // A stamp over the build manifest only leaves this unchanged, `activate`
     // purges nothing, and the stale precached offline page is served forever.
-    const { publicDir, distDir } = tree();
-    const before = readBuildId(publicDir, distDir);
-    writeFileSync(resolve(publicDir, 'offline.html'), '<!doctype html><p>offline, reworded');
-    expect(readBuildId(publicDir, distDir)).not.toBe(before);
+    const { distDir } = tree();
+    const before = readBuildId(distDir);
+    writeFileSync(resolve(distDir, 'offline.html'), '<!doctype html><p>offline, reworded');
+    expect(readBuildId(distDir)).not.toBe(before);
   });
 
-  it('moves for every other unhashed public file too, one at a time', () => {
-    const { publicDir, distDir } = tree();
+  it('moves for every other unhashed served file too, one at a time', () => {
+    const { distDir } = tree();
     for (const [file, content] of [
       ['manifest.webmanifest', '{"name":"Tangram!"}'],
       ['icons/tangram.svg', '<svg><title>x</title></svg>'],
       ['decomp.json', '{"好":{}}'],
     ]) {
-      const before = readBuildId(publicDir, distDir);
-      writeFileSync(resolve(publicDir, file), content);
-      expect(readBuildId(publicDir, distDir), file).not.toBe(before);
+      const before = readBuildId(distDir);
+      writeFileSync(resolve(distDir, file), content);
+      expect(readBuildId(distDir), file).not.toBe(before);
     }
   });
 
-  it('moves when a public file is renamed, though its bytes did not change', () => {
+  it('moves when a served file is renamed, though its bytes did not change', () => {
     // A rename changes which URLs the worker can serve, which is what the cache
     // name is about.
-    const { publicDir, distDir } = tree();
-    const before = readBuildId(publicDir, distDir);
-    cpSync(resolve(publicDir, 'icons/tangram.svg'), resolve(publicDir, 'icons/logo.svg'));
-    rmSync(resolve(publicDir, 'icons/tangram.svg'));
-    expect(readBuildId(publicDir, distDir)).not.toBe(before);
+    const { distDir } = tree();
+    const before = readBuildId(distDir);
+    cpSync(resolve(distDir, 'icons/tangram.svg'), resolve(distDir, 'icons/logo.svg'));
+    rmSync(resolve(distDir, 'icons/tangram.svg'));
+    expect(readBuildId(distDir)).not.toBe(before);
   });
 
-  it('does NOT hash the dictionary, its brotli sibling, its manifest, or sw.js', () => {
-    const { publicDir, distDir } = tree();
-    const before = readBuildId(publicDir, distDir);
-    writeFileSync(resolve(publicDir, 'dict-1-9.9.99999999.sqlite'), 'forty-three megabytes');
-    writeFileSync(resolve(publicDir, 'dict-1-9.9.99999999.sqlite.br'), 'seventeen megabytes');
-    writeFileSync(resolve(publicDir, 'dict-manifest.json'), '{"file":"dict-1-9.9.99999999.sqlite"}');
-    writeFileSync(resolve(publicDir, 'sw.js'), '// the previous build’s worker');
-    expect(readBuildId(publicDir, distDir)).toBe(before);
+  it('does NOT hash the dictionary, its sidecars, the hashed assets, or sw.js', () => {
+    const { distDir } = tree();
+    const before = readBuildId(distDir);
+    writeFileSync(resolve(distDir, 'dict-1-9.9.99999999.sqlite'), 'forty-three megabytes');
+    writeFileSync(resolve(distDir, 'dict-1-9.9.99999999.sqlite.br'), 'seventeen megabytes');
+    writeFileSync(resolve(distDir, 'dict-1-9.9.99999999.sqlite.br.json'), '{"quality":9}');
+    writeFileSync(resolve(distDir, 'dict-manifest.json'), '{"file":"dict-1-9.9.99999999.sqlite"}');
+    writeFileSync(resolve(distDir, 'sw.js'), '// the previous build’s worker');
+    expect(readBuildId(distDir)).toBe(before);
 
     // Stated on the input list rather than only through the hash: two equal
     // hashes prove nothing about WHY they are equal.
-    const labels = stampInputs(publicDir, distDir).map((input) => input.label);
-    expect(labels).not.toContain('public/dict-1-9.9.99999999.sqlite');
-    expect(labels).not.toContain('public/dict-1-9.9.99999999.sqlite.br');
-    expect(labels).not.toContain('public/dict-manifest.json');
-    expect(labels).not.toContain('public/sw.js');
-    expect(labels).toContain('public/decomp.json');
-    expect(labels).toContain('public/offline.html');
+    const labels = stampInputs(distDir).map((input) => input.label);
+    expect(labels).not.toContain('dict-1-9.9.99999999.sqlite');
+    expect(labels).not.toContain('dict-1-9.9.99999999.sqlite.br');
+    expect(labels).not.toContain('dict-1-9.9.99999999.sqlite.br.json');
+    expect(labels).not.toContain('dict-manifest.json');
+    expect(labels).not.toContain('sw.js');
+    // The hashed assets are named by the manifest, which IS an input; hashing
+    // their bytes again would be megabytes for nothing.
+    expect(labels).not.toContain('assets/index-AAAA.js');
+    expect(labels).toContain('decomp.json');
+    expect(labels).toContain('offline.html');
+    expect(labels).toContain('index.html');
     expect(labels).toContain(VITE_MANIFEST);
   });
 
@@ -144,20 +189,22 @@ describe('the stamp', () => {
     expect(isStampExcluded('dict-1-1.3.20251213.sqlite')).toBe(true);
     expect(isStampExcluded('dict-1-1.3.20251213.sqlite.br')).toBe(true);
     expect(isStampExcluded('dict-manifest.json')).toBe(true);
+    expect(isStampExcluded('dict-1-1.3.20251213.sqlite.br.json')).toBe(true);
+    expect(isStampExcluded('assets/index-abc123.js')).toBe(true);
     expect(isStampExcluded('decomp.json')).toBe(false);
     expect(isStampExcluded('offline.html')).toBe(false);
+    expect(isStampExcluded('index.html')).toBe(false);
     expect(isStampExcluded('icons/tangram-192.png')).toBe(false);
   });
 
   it('is a name a cache can carry', () => {
-    const { publicDir, distDir } = tree();
-    expect(readBuildId(publicDir, distDir)).toMatch(/^[a-f0-9]{16}$/);
+    const { distDir } = tree();
+    expect(readBuildId(distDir)).toMatch(/^[a-f0-9]{16}$/);
   });
 
   it('falls back to the dev stamp when Vite has not built', () => {
     // `pnpm dev` never registers a worker, so a missing dist is not an error.
-    const { publicDir } = tree();
-    expect(readBuildId(publicDir, '/nonexistent/dist')).toBe(DEV_BUILD_ID);
+    expect(readBuildId('/nonexistent/dist')).toBe(DEV_BUILD_ID);
   });
 
   it('hashes the label beside the bytes, so two files cannot swap unnoticed', () => {

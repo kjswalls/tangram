@@ -119,6 +119,16 @@ describe('sw.js', () => {
     expect(sw).toMatch(/names\.filter\(\(name\) => name !== CACHE\)/);
   });
 
+  it('returns before `respondWith` for anything cross-origin', () => {
+    // From `web.md` W4 the API base is another origin, so this line — not the
+    // `/api/` one below — is what keeps a paid, profile-dependent answer out of
+    // an HTTP cache. `tests/e2e/c/sw-version.spec.ts` exercises it against a
+    // real second origin on the one path the worker would otherwise cache.
+    expect(sw).toContain('if (url.origin !== self.location.origin) return;');
+    const bail = sw.indexOf('if (url.origin !== self.location.origin) return;');
+    expect(bail).toBeLessThan(sw.indexOf(`startsWith('${ASSET_DIR}')`));
+  });
+
   it('bails out of every /api request before it can respond', () => {
     // The guard has to `return` — an /api path that reaches respondWith is a
     // second, dumber cache in front of a grounded, profile-dependent answer.
@@ -159,8 +169,13 @@ describe('sw.js', () => {
   it('denies the dictionary artifact outright, brotli sibling included', () => {
     // It is imported into OPFS (`data.md` D4); an HTTP-cache copy is the same
     // 43 MB again on an origin the browser is willing to evict wholesale.
-    expect(sw).toContain('/^\\/dict-.+\\.sqlite(\\.br)?$/');
-    const deny = sw.indexOf('.sqlite');
+    const rule = "if (/^\\/dict-.+\\.sqlite(\\.br)?$/.test(url.pathname)) return;";
+    expect(sw).toContain(rule);
+    // Anchored on the RULE, not on the first `.sqlite` in the file — which is
+    // in the header comment on line 20, so the old version of this assertion
+    // compared a prose position against a code position and was true wherever
+    // the real rule sat.
+    const deny = sw.indexOf(rule);
     const assets = sw.indexOf(`startsWith('${ASSET_DIR}')`);
     expect(deny).toBeGreaterThan(-1);
     // Before the cache-first rules, so nothing can reach `respondWith` first.

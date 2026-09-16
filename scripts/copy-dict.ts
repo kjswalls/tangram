@@ -45,8 +45,9 @@
  * release setting and buys 2.2 MB for 95 s — and it is honoured on a tree that
  * has already built, because the quality is part of the sibling's recorded
  * identity. Note that **no setting reproduces the 13.9 MB `data.md` D1
- * records**; 14.7 MB at q11 is the floor `node:zlib` reaches here. Recorded in
- * `HANDOFF.md` as a question for `data.md`.
+ * records**; 14.7 MB at q11 is the floor `node:zlib` reaches here. The measured
+ * table and what it means for `web.md` W6's budget are in `HANDOFF.md` under
+ * `web.md` W2–W4.
  */
 import { createHash } from 'node:crypto';
 import {

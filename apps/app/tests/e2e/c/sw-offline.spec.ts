@@ -92,18 +92,40 @@ test.describe('the service worker offline', () => {
     }
   });
 
-  test('falls back to the offline page only when even the document is gone', async ({
+  test('falls back to /offline.html when even the document is not cached', async ({
     page,
     context,
   }) => {
-    // The third rung of the ladder, and the one a cold start hits: a browser
-    // that has never loaded the app has nothing cached at all.
+    // The third rung of `shell()`'s ladder. W3 put `cache.match('/')` ahead of
+    // it, so `/offline.html` is now reachable only when the document itself is
+    // missing — which made the previous version of this case worthless: it ran
+    // in a context with no worker at all and asserted that Chromium fails an
+    // offline navigation, a statement about the browser rather than about the
+    // worker. So: install the worker, then take the document out of the cache,
+    // and watch the rung that is left.
+    await page.goto('/');
+    await page.evaluate(() => navigator.serviceWorker.ready);
+    await page.reload();
+    await page.evaluate(() => navigator.serviceWorker.ready);
+
+    const deleted = await page.evaluate(async () => {
+      let removed = false;
+      for (const name of await caches.keys()) {
+        if (!name.startsWith('tangram-')) continue;
+        const cache = await caches.open(name);
+        for (const request of await cache.keys()) {
+          if (new URL(request.url).pathname === '/') removed = (await cache.delete(request)) || removed;
+        }
+      }
+      return removed;
+    });
+    expect(deleted, 'the document was never precached — the ladder starts elsewhere').toBe(true);
+
     await context.setOffline(true);
     try {
-      const response = await page.goto('/lookup').catch(() => null);
-      // With no worker installed there is nothing to serve it — a browser error
-      // is the honest outcome, and what must NOT happen is a hang.
-      expect(response === null || !response.ok()).toBe(true);
+      await page.goto('/stats');
+      // The offline page, not a browser error and not a blank document.
+      await expect(page.getByTestId('offline-page')).toBeVisible();
     } finally {
       await context.setOffline(false);
     }

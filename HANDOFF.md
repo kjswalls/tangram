@@ -8103,3 +8103,106 @@ than smuggled in.
 
 `pnpm data`, `pnpm lint`, `pnpm typecheck`, `pnpm test` (1,625 unit tests), `pnpm build`,
 `pnpm e2e` (210 specs) — all green.
+
+## `core.md` C7 — three tabs, the portability seam, and the Practice queue merge
+
+**What landed.** Seven routes became three tabs; screens moved to `components/screens/**` behind a
+rule a machine checks; the Look up tab grew its two missing answer states; and the Practice tab
+became one session rather than two screens behind one label.
+
+- **The tab model.** `components/shell/nav.ts` is now `TABS` (Look up / Practice / Library, in that
+  order, with §1's accents), `TAB_PATHS` (`/`, `/read`, `/practice`, `/library`,
+  `/library/lists/:id`), `listPath()` and `tabForPath()`. Everything that used to read `NAV_ITEMS`
+  reads one of those: `src/routes.tsx`, `scripts/smoke.ts`, `scripts/sw.template.js`'s `SHELL`,
+  `tests/unit/server/routes.test.ts` and `tests/unit/pwa/manifest.test.ts`.
+- **Two shells, one screen.** `components/shell/app-shell.tsx` picks `PhoneShell` or `WideShell`
+  from a live media query on C1's `--breakpoint-wide`, so a resize switches without a reload and
+  exactly one shell is ever in the DOM. The screen is rendered once, by whichever is chosen.
+- **The portability seam.** `components/screens/navigate.ts` declares `ScreenDestination` and the
+  context; `app-shell.tsx` is the only module that turns a destination into a path. An eslint
+  `no-restricted-imports` block over `components/screens/**` forbids `react-router` and
+  `components/shell/*`, and `tests/unit/shell/screens-are-portable.test.ts` walks the import graph
+  as well — C7 asks for one of the two; both are here because the eslint rule is the fast signal
+  and the graph walk is the one that cannot be switched off by an `eslint-disable`.
+- **The three answer states.** `components/lookup/ask-panel.tsx` now derives the five names
+  `ask-state.ts` declares and publishes them as `data-ask-state`: a quiet `ask-offline-chip` when
+  nothing was reachable, an `EmptyState` (`ask-ungrounded`) when nothing survived grounding, and an
+  "AI" chip over the answer while it is still coming. The dictionary card stays addable throughout.
+- **The queue merge.** `interleaveNew` in `lib/srs/session.ts` spreads the day's new words evenly
+  through the due ones (due first at equal position); `lib/stores/review.ts` is the only caller that
+  introduces; `lib/lists/today.ts` gained `introduce: false` and `newAvailable` so Today can report
+  what the session will offer without creating it.
+- **The suite.** All 44 files under `tests/e2e/**` (37 specs) run against the three-tab IA; the 35
+  that navigate by path go to a tab or below one. New: `core/shells.spec.ts`, `core/ask-states.spec.ts`,
+  `core/one-session.spec.ts`. New unit: `shell/tab-routes`, `shell/screens-are-portable`,
+  `srs/merged-session`, `lookup/ask-state`.
+
+### What the plan did not settle
+
+- **`components/shell/app-shell.tsx` is an addition to C7's Files list.** The plan names
+  `phone-shell.tsx` and `wide-shell.tsx` and leaves the *choosing* unstated. One module owns it,
+  because the alternative — each shell deciding whether it should be the one rendered — is how two
+  of them end up in the DOM at once.
+- **`PageHeader` moved from `components/shell/` to `components/ui/`.** The screens use it, and the
+  import rule forbids `components/shell/*`. The first attempt kept it where it was and added a
+  second `files: ['components/screens/**']` block to exempt it — which *cancelled* the rule
+  entirely, because a later block's `no-restricted-imports` replaces an earlier one rather than
+  adding to it. That is exactly the failure `wave-zero.md` §10a warns about, hit and fixed; the
+  probe that catches it is committed as part of `screens-are-portable`.
+- **`TabAccent` moved to `components/ui/tab-accent.ts`.** The workspace-root `tsconfig` typechecks
+  `scripts/smoke.ts`, which imports `nav.ts`, which imported `tab-bar.tsx` for the type — and the
+  root config has no `--jsx`. A type in its own `.ts` file is the fix; do not put it back.
+- **There are no redirects from the five removed paths, deliberately.** There are no users and no
+  bookmarks, and a redirect makes "no spec references a removed route" untestable — a stale
+  `page.goto('/review')` would keep passing forever. `tests/unit/shell/tab-routes.test.ts` greps the
+  suite and the app instead.
+- **`resetApp` wipes from `/read`.** It used to run on `/settings`, which is now part of Library —
+  and Library both draws and materialises, so a reset there races the thing it is resetting. `/read`
+  is the one page that does neither.
+- **`components/lists/**` still renders real `<Link>`s.** The rule is about the screen boundary: a
+  list is a page a learner may want to open in a new tab, and the components below the screen are
+  not screens. If a later phase renders a list card inside a palette row, this is the line it will
+  have to move.
+- **`data-ask-state` is a second attribute beside `data-status`, not a rename.** `data-status` says
+  what the fetch is doing and several P4 specs assert it; `data-ask-state` says what the learner is
+  being told. Collapsing them would have made the P4 specs assert the wrong thing silently.
+- **`components/lookup/ask-state.ts` stayed types-only.** C1 landed it as the types-only first
+  commit CLAUDE.md's shared-surface rule asks for, so the derivation (`askUiState`,
+  `unavailableReason`, `statusReason`) lives in `ask-panel.tsx` and is exported from there for the
+  unit test.
+- **The tab blurb is a tooltip in both shells.** It was the wide shell's subtitle for one draft,
+  which made the wide shell say a sentence the phone did not — and say it twice, since each
+  screen's own `PageHeader` carries the same line. That is precisely the drift C7's
+  identical-screens criterion exists to catch, found by reading the failure snapshot of another
+  test rather than by the criterion itself.
+- **The one-session e2e's new word is an explicit add, not a spine draw.** See the defects below.
+
+### What was found wrong
+
+- **C7's suite-migration number is stale.** The criterion says "all 29 files under `tests/e2e/**`
+  … and the **22** that navigate by path". C1–C6 added their own specs: it is now 44 files, 37 of
+  them specs, 35 of which navigate by path. `tab-routes.test.ts` asserts the current numbers, so the
+  next phase that adds a spec is told to update them rather than quietly widening the scope.
+- **`app/api/ask/route.ts` makes the `ungrounded` state nearly unreachable from the live route.**
+  When grounding kills every proposal the route substitutes `retrievalEcho(retrieved)` and re-grounds
+  that (§3.4's "no query ever renders an empty panel"), so the panel sees an *answer*, not an empty
+  one. The panel must still render `ungrounded` — the echo itself grounds to nothing when nothing was
+  retrieved — but C7's fixture (3) has to force the body at the network boundary to reach it. Worth a
+  decision in a later phase: either the route stops substituting and lets the panel say "nothing
+  could be checked", or C7's third state is documented as the rare case it is. It is currently both.
+- **`isExplicitAdd` reads `context.source` and nothing else.** A card created by
+  `addCardFromEntry` with no context is treated as a spine draw and capped by `newPerDay` — so
+  seeding "a new word" in a test without a context, with `newPerDay: 0`, produces a card that is
+  never offered and no error anywhere. That cost this session two runs. The behaviour is right; the
+  sharp edge is that the only signal is a field a caller can forget.
+- **"Is this card new?" cannot be read from `fsrs.state` while a session is running.** A session
+  serves learning steps, so a never-graded card can already be `Learning` by the time a walk reaches
+  it. `one-session.spec.ts` takes every card's state once, before the first grade, and asks that
+  snapshot instead.
+- **The spine draw's yield on the *first* load of a fresh database is a race**, because the band
+  lists materialise in the background. Any spec that wants "N new words" on first load has to wait
+  for materialisation or add them explicitly; `core/shells.spec.ts` hit the same thing from the other
+  side and now compares only text that has stopped moving.
+
+**Gates.** `pnpm data`, `pnpm lint`, `pnpm typecheck`, `pnpm test` (1,655 unit tests), `pnpm build`,
+`pnpm e2e` (220 specs) — all green on `bf78e50`.

@@ -38,9 +38,9 @@ vi.mock('@tangram/ai/provider', async (importOriginal) => {
   };
 });
 
-const { GET, POST, SUPPORT_CAP, supportEntries } = await import('@/app/api/examples/route');
-type ExamplesRouteResponse = import('@/app/api/examples/route').ExamplesRouteResponse;
-type ExamplesRouteInfo = import('@/app/api/examples/route').ExamplesRouteInfo;
+const { GET, POST, SUPPORT_CAP, supportEntries } = await import('@server/routes/examples.ts');
+type ExamplesRouteResponse = import('@/lib/api/contract').ExamplesRouteResponse;
+type ExamplesRouteInfo = import('@/lib/api/contract').ExamplesRouteInfo;
 
 beforeAll(requireDictData);
 afterEach(() => {

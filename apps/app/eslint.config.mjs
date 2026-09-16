@@ -13,6 +13,11 @@ const config = [
   {
     ignores: [
       'dist/**',
+      // The second build `tests/e2e/d/access-gate.spec.ts` makes so the `?key=`
+      // exchange can probe a gated API (docs/plans/backend.md B1). It removes
+      // it again; a crashed run leaves it, and 700 kB of emitted bundle is not
+      // something to lint.
+      'dist-gated/**',
       '.next/**',
       'node_modules/**',
       'playwright-report/**',

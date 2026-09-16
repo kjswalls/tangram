@@ -21,9 +21,8 @@
  */
 
 import { withDeadline } from '@tangram/ai/deadline';
-import type { GroundedAskResponse } from '@tangram/ai/ground';
 import { ASK_PROMPT_VERSION } from '@tangram/ai/cache-key';
-import { selectProvider, askResponseSchema, ProviderError, type AskContext, type ProviderName } from '@tangram/ai/provider';
+import { selectProvider, askResponseSchema, ProviderError, type AskContext } from '@tangram/ai/provider';
 import { retrievalEcho } from '@tangram/ai/fake';
 import {
   RETRIEVED_CAP,
@@ -36,39 +35,37 @@ import {
 import { hasCjk } from '@/lib/dict/rank';
 import { dictErrorResponse, serverDictStore } from '@/lib/server/dict';
 import type { DictStore } from '@/lib/dict/store';
+import type { AskRouteInfo, AskRouteResponse } from '@/lib/api/contract';
 import type { Entry, EntryId, HskBand, LearnerProfile } from '@/lib/types';
 import { DEFAULT_MODEL } from '@tangram/ai/anthropic';
 import { requireAccess } from '@tangram/access';
-
-// The dictionary is opened from disk per process; never prerender at build time.
-export const dynamic = 'force-dynamic';
+import { deadlineMs, isDevelopment, modelName } from '../config.ts';
 
 /**
- * The retrieval constants live in `lib/ai/retrieve.ts` now (docs/plans/data.md
- * D6) and are re-exported rather than redeclared: two copies of a cap is how a
- * cap drifts, and `tests/unit/ai/route.test.ts` reads them from here.
+ * The retrieval constants live in `packages/ai/retrieve.ts` (docs/plans/data.md
+ * D3 and D6) and are re-exported rather than redeclared: two copies of a cap is
+ * how a cap drifts, and `tests/unit/ai/route.test.ts` reads them from here.
  */
 export { RETRIEVED_CAP, SEARCH_HEAD };
 
 /**
- * How long a provider may take. A cron is not waiting on this — a person is,
- * with "Thinking about …" on screen and no way out but retyping, so a hung
- * upstream has to become an answer rather than a spinner. The proposal step
- * gets the short one: it is retrieval help (§3.4), and the dictionary search
- * already stands without it.
+ * **How long a provider may take is `src/config.ts`'s now** —
+ * `DEADLINE_DEFAULTS.askPropose` (8 s) and `.askAnswer` (30 s), the same two
+ * numbers and the same two environment variables this file used to hold.
+ *
+ * A cron is not waiting on these; a person is, with "Thinking about …" on
+ * screen and no way out but retyping, so a hung upstream has to become an
+ * answer rather than a spinner. The proposal step gets the short one: it is
+ * retrieval help (§3.4), and the dictionary search already stands without it.
+ *
+ * They moved because this server's rule is that a handler takes values rather
+ * than reaching for `process`, and `tests/config.test.ts` names `backend.md` B1
+ * — this move — as the phase the rule was written for. `deadlineMs` still reads
+ * the environment on every call, so a test that sets
+ * `TANGRAM_ASK_ANSWER_TIMEOUT_MS` between cases still works.
  */
-export const PROPOSE_TIMEOUT_MS = 8_000;
-export const ANSWER_TIMEOUT_MS = 30_000;
 
-/**
- * Both are overridable by env, which is what lets a test prove the deadline
- * exists without waiting 30 s for it — and what lets a deployment behind a
- * slower upstream move them without a rebuild.
- */
-function timeoutMs(name: string, fallback: number): number {
-  const raw = Number(process.env[name]);
-  return Number.isFinite(raw) && raw > 0 ? raw : fallback;
-}
+/** Everything below is a limit on what a *caller* may send. */
 const MAX_QUERY_CHARS = 400;
 const MAX_SENTENCE_CHARS = 400;
 const MAX_KNOWN_SAMPLE = 200;
@@ -77,32 +74,6 @@ interface AskRequestBody {
   query: string;
   context?: AskContext;
   profile: LearnerProfile;
-}
-
-export interface AskRouteInfo {
-  provider: ProviderName;
-  promptVersion: string;
-  /** Present only for the live provider; the fake has no model. */
-  model?: string;
-}
-
-export interface AskRouteResponse extends AskRouteInfo {
-  query: string;
-  /** The CC-CEDICT snapshot the entries came from; stamped onto any card added. */
-  dictVersion: string;
-  /** Validated: ids and indexes only. This is what the client caches. */
-  response: GroundedAskResponse;
-  /** Every entry the answer cites, so the client can render it without a round trip. */
-  entries: Entry[];
-  /** How many entries were retrieved for the model. Diagnostic only. */
-  retrieved: number;
-  /**
-   * False when the answer is a stand-in the route built because the provider's
-   * own answer did not survive grounding. The client must not cache it: the
-   * next ask should reach the provider again rather than repeat the fallback
-   * for as long as the row lives.
-   */
-  cacheable: boolean;
 }
 
 function badRequest(hint: string): Response {
@@ -190,9 +161,7 @@ export function GET(request: Request): Response {
   const info: AskRouteInfo = {
     provider: provider.name,
     promptVersion: ASK_PROMPT_VERSION,
-    ...(provider.name === 'anthropic'
-      ? { model: process.env.TANGRAM_MODEL?.trim() || DEFAULT_MODEL }
-      : {}),
+    ...(provider.name === 'anthropic' ? { model: modelName(DEFAULT_MODEL) } : {}),
   };
   return Response.json(info);
 }
@@ -227,14 +196,14 @@ export async function POST(request: Request): Promise<Response> {
         candidates = (
           await withDeadline(
             provider.proposePhrases(query, context),
-            timeoutMs('TANGRAM_ASK_PROPOSE_TIMEOUT_MS', PROPOSE_TIMEOUT_MS),
+            deadlineMs('askPropose'),
             'proposePhrases',
           )
         ).candidates;
       } catch (error) {
         // Retrieval help is optional; the dictionary search still stands.
         candidates = [];
-        if (process.env.NODE_ENV !== 'production') console.warn('proposePhrases failed', error);
+        if (isDevelopment()) console.warn('proposePhrases failed', error);
       }
     }
     retrieved = mergeRetrieved(fromSearch, await candidateEntries(store, candidates));
@@ -248,7 +217,7 @@ export async function POST(request: Request): Promise<Response> {
   try {
     raw = await withDeadline(
       provider.answer(retrieved, profile, query, context),
-      timeoutMs('TANGRAM_ASK_ANSWER_TIMEOUT_MS', ANSWER_TIMEOUT_MS),
+      deadlineMs('askAnswer'),
       'the answer',
     );
   } catch (error) {
@@ -311,9 +280,7 @@ export async function POST(request: Request): Promise<Response> {
   const body: AskRouteResponse = {
     provider: provider.name,
     promptVersion: ASK_PROMPT_VERSION,
-    ...(provider.name === 'anthropic'
-      ? { model: process.env.TANGRAM_MODEL?.trim() || DEFAULT_MODEL }
-      : {}),
+    ...(provider.name === 'anthropic' ? { model: modelName(DEFAULT_MODEL) } : {}),
     query,
     dictVersion: store.status.state === 'ready' ? store.status.version : '',
     response: grounded,

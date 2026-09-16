@@ -1,31 +1,40 @@
 /**
- * What routes this app has — API and page — what they import, and whether the
- * build is configured to ship them the files they read.
+ * What page routes this app has, and what a URL for one looks like.
  *
- * This exists because of one production-only failure mode. The dictionary is
- * read from disk at request time, and on Vercel every route is traced and
- * bundled **separately**: a route that reaches the loader but is missing from
- * `outputFileTracingIncludes` (`tracing.config.ts`) works perfectly in dev and
- * in preview — the file is simply on disk in both — and 500s in the deployment,
- * on that route only. `/api/examples` and `/api/recall` were exactly that, and
- * it took someone opening the page to notice.
+ * **It used to answer a second question and no longer has to.** Until
+ * `backend.md` B1 this module also walked `app/api/**\/route.ts` and its import
+ * graph, because of one production-only failure mode: the dictionary was read
+ * from disk at request time, and on Vercel every route was traced and bundled
+ * separately, so a route that reached the loader and was missing from
+ * `outputFileTracingIncludes` worked in dev and 500'd in the deployment.
+ * `/api/examples` and `/api/recall` were exactly that, and it took someone
+ * opening the page to notice.
  *
- * `data.md` D6 deleted the five dictionary routes and moved the surviving three
- * off the 35 MB JSON parse onto `lib/server/dict.ts`, which opens the SQLite
- * artifact out of the same `data/` directory. So the failure mode is unchanged
- * and only the module at the bottom of the graph moved — see `DICT_LOADER`.
+ * `data.md` D6 deleted the five dictionary routes. B1 moved the surviving three
+ * to `apps/server`, so **`apps/app` has no `app/api/` at all** — there is no
+ * route to trace, `tracing.config.ts` is gone with its test, and `apps/server`
+ * carries the guard's purpose forward in its own shape:
+ * `apps/server/src/routes/table.ts` is the single source of truth there, and
+ * `apps/server/tests/routes.test.ts` fails in both directions if a handler and
+ * the table disagree. `tracing.config.ts`'s own header asked to be deleted "in
+ * the same commit as the thing they guarded"; this is that commit.
  *
- * So the question "which routes read the dictionary" is answered here by
- * walking the import graph, rather than by remembering. `tests/unit/server/`
- * turns the answer into a failing test, and `scripts/smoke.ts` reads the same
- * inventory to make sure every route is actually exercised over HTTP.
+ * What is left here is the page half, which `web.md` W2 built and owns
+ * (`wave-zero.md` §3): `scripts/smoke.ts` reads it so every page route of a
+ * built server is exercised over HTTP, and `tests/unit/server/routes.test.ts`
+ * turns "a route with no DOM marker" into a failing test.
  *
  * Node-only (it reads source files). Nothing in the app imports it.
  */
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
-/** The HTTP methods Next treats as route handlers. */
+/**
+ * The HTTP methods a smoke case may name.
+ *
+ * It outlived the route walker: `scripts/smoke.ts` types every case with it,
+ * and the page and static cases are `GET`.
+ */
 export const HTTP_METHODS = [
   'GET',
   'POST',
@@ -36,52 +45,6 @@ export const HTTP_METHODS = [
   'OPTIONS',
 ] as const;
 export type HttpMethod = (typeof HTTP_METHODS)[number];
-
-export interface ApiRoute {
-  /** The URL path, e.g. `/api/examples`. */
-  path: string;
-  /** Absolute path of the `route.ts` file. */
-  file: string;
-  /** Repo-relative, for a readable failure message. */
-  relativeFile: string;
-  /** The handlers it exports, in `HTTP_METHODS` order. */
-  methods: HttpMethod[];
-}
-
-function walk(dir: string, out: string[] = []): string[] {
-  if (!existsSync(dir)) return out;
-  for (const name of readdirSync(dir).sort()) {
-    const full = join(dir, name);
-    if (statSync(full).isDirectory()) walk(full, out);
-    else if (name === 'route.ts' || name === 'route.tsx') out.push(full);
-  }
-  return out;
-}
-
-/**
- * Every `app/api/**\/route.ts`, with the methods it exports.
- *
- * The methods are read out of the source rather than by importing the module:
- * importing a route handler pulls in the provider, the dictionary loader and
- * everything else it touches, and this has to be cheap enough to run in a unit
- * test.
- */
-export function discoverApiRoutes(repoRoot: string): ApiRoute[] {
-  const appDir = resolve(repoRoot, 'app');
-  return walk(resolve(appDir, 'api')).map((file) => {
-    const source = readFileSync(file, 'utf8');
-    const methods = HTTP_METHODS.filter((method) =>
-      new RegExp(`^export\\s+(?:async\\s+)?(?:function|const)\\s+${method}\\b`, 'm').test(source),
-    );
-    const path = `/${relative(appDir, dirname(file)).split(/[\\/]/).join('/')}`;
-    return { path, file, relativeFile: relative(repoRoot, file), methods };
-  });
-}
-
-
-// ---------------------------------------------------------------------------
-// Page routes (docs/plans/web.md W2)
-// ---------------------------------------------------------------------------
 
 /** The route table React Router is built from. `web.md`'s file; `core.md` C7 edits it. */
 export const PAGE_ROUTE_TABLE = 'src/routes.tsx';
@@ -219,153 +182,4 @@ export const PAGE_ROUTE_SAMPLE_PARAM = 'smoke-no-such-id';
 
 export function pageRouteUrl(route: PageRoute): string {
   return route.pattern.replace(/:[A-Za-z0-9_]+/g, PAGE_ROUTE_SAMPLE_PARAM);
-}
-
-/** Every specifier a module imports or re-exports, static and dynamic. */
-function specifiers(source: string): string[] {
-  const out: string[] = [];
-  const patterns = [
-    /\bfrom\s+['"]([^'"]+)['"]/g,
-    /\bimport\s+['"]([^'"]+)['"]/g,
-    /\bimport\(\s*['"]([^'"]+)['"]\s*\)/g,
-  ];
-  for (const pattern of patterns) {
-    for (const match of source.matchAll(pattern)) out.push(match[1]);
-  }
-  return out;
-}
-
-const EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx'];
-
-/** Resolve one specifier to a file in this repo, or null if it leaves it. */
-function resolveSpecifier(specifier: string, fromFile: string, repoRoot: string): string | null {
-  let base: string;
-  if (specifier.startsWith('@/')) base = resolve(repoRoot, specifier.slice(2));
-  else if (specifier.startsWith('.')) base = resolve(dirname(fromFile), specifier);
-  else return null; // a package, or `node:` — not ours to walk
-
-  for (const candidate of [
-    base,
-    ...EXTENSIONS.map((ext) => base + ext),
-    ...EXTENSIONS.map((ext) => join(base, `index${ext}`)),
-  ]) {
-    if (existsSync(candidate) && statSync(candidate).isFile()) return candidate;
-  }
-  return null;
-}
-
-/**
- * Every first-party module reachable from `entry`, including `entry` itself.
- *
- * A regex over the source rather than a real parser: it over-approximates (a
- * specifier inside a comment or a string counts) and that is the safe direction
- * — the answer drives "does this route need the dictionary traced into it", and
- * tracing a file a route does not read costs a few megabytes, while missing one
- * it does read is a 500.
- */
-export function moduleGraph(entry: string, repoRoot: string): Set<string> {
-  const seen = new Set<string>();
-  const queue = [resolve(entry)];
-  while (queue.length > 0) {
-    const file = queue.pop() as string;
-    if (seen.has(file)) continue;
-    seen.add(file);
-    let source: string;
-    try {
-      source = readFileSync(file, 'utf8');
-    } catch {
-      continue;
-    }
-    for (const specifier of specifiers(source)) {
-      const resolved = resolveSpecifier(specifier, file, repoRoot);
-      if (resolved && !seen.has(resolved)) queue.push(resolved);
-    }
-  }
-  return seen;
-}
-
-/**
- * The module that opens the dictionary off the disk.
- *
- * It was `lib/dict/load.ts` until `data.md` D6 deleted it. The three surviving
- * model-backed routes now reach `lib/server/dict.ts`, which opens
- * `data/dict-<schema>-<cedict>.sqlite` through `lib/dict/runners/node.ts` — so
- * they still need `data/**` traced into their bundle, and this is still the
- * bottom of the graph that says which ones.
- */
-export const DICT_LOADER = 'lib/server/dict.ts';
-
-/** Does this route reach the dictionary loader, and so need its data traced in? */
-export function readsDictionary(route: ApiRoute, repoRoot: string): boolean {
-  const loader = resolve(repoRoot, DICT_LOADER);
-  return moduleGraph(route.file, repoRoot).has(loader);
-}
-
-/**
- * Does an `outputFileTracingIncludes` key cover this route path?
- *
- * Next matches those keys against the page path with glob semantics, where
- * `**` also matches nothing — `/api/ask/**` covers `/api/ask` itself. Only the
- * two wildcards are supported here, which is all the config uses.
- */
-export function tracingKeyMatches(key: string, routePath: string): boolean {
-  const pattern = key
-    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-    .replace(/\/\*\*/g, '(?:/.*)?')
-    .replace(/(?<!\.)\*(?!\*)/g, '[^/]*')
-    .replace(/\*\*/g, '.*');
-  return new RegExp(`^${pattern}$`).test(routePath);
-}
-
-/**
- * Include globs that match no file on disk.
- *
- * `untracedDictRoutes` below answers "is there a KEY for this route", which was
- * the whole question while the Next project directory and the workspace root
- * were the same directory. They are not any more: `data/` is at the workspace
- * root and the globs are resolved with cwd set to the project directory, so
- * `./data/**` went on being a perfectly well-formed entry that matched nothing,
- * and every gate stayed green because `next dev`, `next start`, `pnpm smoke`
- * and the e2e suite all read `data/` off local disk. Only a deployment would
- * have noticed, which is the same way `/api/examples` and `/api/recall` got out.
- *
- * So the VALUE is checked too, against the filesystem, from the directory Next
- * resolves it from. Only the `**` suffix form the config uses is understood;
- * anything else is treated as a literal path, which is the safe reading — a
- * pattern this cannot verify should fail rather than pass.
- */
-export function unmatchedTracingIncludes(
-  tracingIncludes: Readonly<Record<string, readonly string[]>>,
-  projectDir: string,
-): { key: string; glob: string }[] {
-  const empty: { key: string; glob: string }[] = [];
-  for (const [key, globs] of Object.entries(tracingIncludes)) {
-    for (const glob of globs) {
-      const suffix = '/**';
-      const isDirGlob = glob.endsWith(suffix);
-      const target = resolve(projectDir, isDirGlob ? glob.slice(0, -suffix.length) : glob);
-      const matches = isDirGlob
-        ? existsSync(target) && statSync(target).isDirectory() && readdirSync(target).length > 0
-        : existsSync(target);
-      if (!matches) empty.push({ key, glob });
-    }
-  }
-  return empty;
-}
-
-/**
- * The routes that read the dictionary but are not covered by any
- * `outputFileTracingIncludes` key — i.e. the ones that would 500 in production.
- */
-export function untracedDictRoutes(
-  routes: readonly ApiRoute[],
-  tracingIncludes: Readonly<Record<string, readonly string[]>>,
-  repoRoot: string,
-): ApiRoute[] {
-  const keys = Object.keys(tracingIncludes);
-  return routes.filter(
-    (route) =>
-      readsDictionary(route, repoRoot) &&
-      !keys.some((key) => tracingKeyMatches(key, route.path)),
-  );
 }

@@ -130,3 +130,56 @@ export function secretValues(env: Env = process.env): string[] {
   // leaves the remainder of the longer one in the log: `[redacted]EXTRA`.
   return out.sort((a, b) => b.length - a.length);
 }
+
+// ---------------------------------------------------------------------------
+// What the three model routes read out of the environment
+// ---------------------------------------------------------------------------
+
+/**
+ * The model name a live provider answers under, or `undefined` for the fake.
+ *
+ * It is read here rather than in the handlers because of the rule this file's
+ * header states and `tests/config.test.ts` enforces: **a handler takes values;
+ * it does not reach for `process`.** That rule was written in B0 with exactly
+ * this phase named — "when B1 moves the three model routes here, this is the
+ * rule that stops one of them reading the key directly instead of being handed
+ * it" — and the three handlers each read `TANGRAM_MODEL` before the move.
+ *
+ * `DEFAULT_MODEL` is not duplicated: `packages/ai/anthropic.ts` owns it and the
+ * caller passes it in, so a model changed in one place does not become two
+ * answers depending on which module you read.
+ */
+export function modelName(fallback: string, env: Env = process.env): string {
+  return env.TANGRAM_MODEL?.trim() || fallback;
+}
+
+/**
+ * The four provider deadlines, by name.
+ *
+ * `docs/deploy.md` §3 and `.env.example` already define all four and
+ * `backend.md` §3 lists them with their defaults; the values below are the ones
+ * the handlers carried before the move, unchanged. They exist as environment
+ * overrides for two reasons that both still hold: a test can prove a deadline
+ * fires without waiting 30 s for it, and a deployment behind a slower upstream
+ * — or behind a host whose function limit is under 30 s (`backend.md` §6, row
+ * 2) — can move them with no rebuild.
+ *
+ * An unparseable or non-positive value falls back rather than throwing, which
+ * is what the handlers did: a bad deadline must not take the route out, and the
+ * failure it would cause (an ask that never returns) is worse than the value
+ * being ignored.
+ */
+export const DEADLINE_DEFAULTS = {
+  askPropose: { env: 'TANGRAM_ASK_PROPOSE_TIMEOUT_MS', ms: 8_000 },
+  askAnswer: { env: 'TANGRAM_ASK_ANSWER_TIMEOUT_MS', ms: 30_000 },
+  examples: { env: 'TANGRAM_EXAMPLES_TIMEOUT_MS', ms: 20_000 },
+  recall: { env: 'TANGRAM_RECALL_TIMEOUT_MS', ms: 15_000 },
+} as const satisfies Record<string, { env: string; ms: number }>;
+
+export type DeadlineName = keyof typeof DEADLINE_DEFAULTS;
+
+export function deadlineMs(name: DeadlineName, env: Env = process.env): number {
+  const { env: variable, ms } = DEADLINE_DEFAULTS[name];
+  const raw = Number(env[variable]);
+  return Number.isFinite(raw) && raw > 0 ? raw : ms;
+}

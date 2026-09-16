@@ -149,14 +149,34 @@ The static build reads **one** variable, at build time:
 
 | Variable | Required | Effect when absent |
 |---|---|---|
-| `VITE_API_BASE` | once `apps/server` is deployed | empty, i.e. same-origin — which on this static host means **no API at all**. Build-time, so changing it needs a redeploy |
+| `VITE_API_BASE` | **yes**, from `backend.md` B1 | empty, i.e. same-origin — which on this static host means **no API at all**, so ask, i+1 sentences and free recall are simply dead. Build-time, so changing it needs a redeploy. Set it to `https://api.<domain>` |
 | `TANGRAM_DATA_DIR` | no | the workspace root's `data/`, found by walking up for `pnpm-workspace.yaml` |
 | `TANGRAM_DICT_BROTLI_QUALITY` | no | 9 (§2) |
 
-Everything else — `ANTHROPIC_API_KEY`, `TANGRAM_ACCESS_SECRET`, the four ask
-timeouts, `TANGRAM_LLM_PROVIDER`, `TANGRAM_MODEL` — belongs to **`apps/server`**
-and must never be set on this project. A model key in a static site's build
-environment is a key in a bundle. `.env.example` lists them with the server.
+**`VITE_API_BASE` is required now, not "once the server is deployed".**
+`backend.md` B1 moved `/api/ask`, `/api/examples` and `/api/recall` into
+`apps/server` and deleted the dev/preview adapter that used to mount them on the
+app's own origin. A build with this unset produces an app whose three
+model-backed features fail silently — the ask panel reports a network error, the
+card back shows no sentences, and free recall simply gives no suggestion,
+because it was written to treat every failure as "no suggestion". `pnpm e2e`
+bakes it in through `apps/app/.env.e2e`, which is also the working example.
+
+Everything else — `ANTHROPIC_API_KEY`, `TANGRAM_ACCESS_SECRET`,
+`TANGRAM_ALLOWED_ORIGINS`, the four ask timeouts, `TANGRAM_LLM_PROVIDER`,
+`TANGRAM_MODEL` — belongs to **`apps/server`** and must never be set on this
+project. A model key in a static site's build environment is a key in a bundle.
+`.env.example` lists them with the server.
+
+**One of the server's variables is this project's problem anyway, and it is the
+one that will bite first.** `TANGRAM_ALLOWED_ORIGINS` on the server has to name
+*this* deployment's origin, exactly — scheme, host and port, no trailing path.
+A custom request header makes every cross-origin `POST` a preflighted one, so an
+origin missing from that list fails every gated call before the handler is
+reached, and the browser reports it as a CORS error rather than as anything
+about the API. Deploying the app to a new origin means editing a variable on the
+*server*. `capacitor://localhost` and `http://localhost` — the two Capacitor
+WebView origins — are built in and need no configuration.
 
 ## 5. The access gate
 
@@ -261,14 +281,34 @@ it is still a `tsx` CLI:
 
 ```bash
 pnpm build                      # so there is a build manifest to check assets against
-pnpm smoke --base-url https://<your-app>.vercel.app --no-api
+pnpm smoke --base-url https://<your-app>.vercel.app --api-base https://api.<domain>
 ```
 
-**`--no-api` is required until `backend.md` ships a server**, and leaving it off
-is not a near miss: this deployable emits no functions, `vercel.json`'s fallback
-deliberately excludes `/api/` so those paths 404, and every API case would fail
-against a perfectly healthy deployment. Once the server exists, replace it with
-`--api-base https://<the server>` and the same run covers both halves.
+**`--api-base` is what covers both halves**, and it is not optional dressing:
+this deployable emits no functions, `vercel.json`'s fallback deliberately
+excludes `/api/` so those paths 404 on the app's origin, and every API case
+would fail against a perfectly healthy deployment without it. Use `--no-api`
+only when there is no server to point at yet; a run with neither flag fails by
+construction.
+
+The API has a smoke of its own, and it is the one that proves the gate:
+
+```bash
+TANGRAM_ACCESS_SECRET=<the secret> \
+  pnpm -F server smoke --base-url https://api.<domain> --gate on
+```
+
+`--gate on` runs every gated case **twice** — once with no credential expecting
+401, once with it expecting the route's own status — which is `backend.md` B1's
+first acceptance criterion exactly. `--gate off` asserts the open behaviour of a
+deployment with no secret set. Whether a gate exists is a property of the
+server's environment rather than of the route, so it is stated rather than
+guessed: a smoke that accepted either would not notice a gate that had stopped
+existing. Its POST cases send an empty body and expect the route's own 400,
+deliberately: these three routes cost money on every successful call, and a
+deploy check that billed the owner would stop being run. Pass the secret in the
+environment rather than with `--key`; `--key` works, and warns, because pnpm
+echoes the resolved command line twice per run.
 
 It walks every hashed asset in `dist/.vite/manifest.json`, the three files the
 PWA needs, the dictionary's four, and every page route in `src/routes.tsx` —

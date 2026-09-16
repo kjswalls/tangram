@@ -11,7 +11,6 @@ import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 
-import { apiRoutes } from './vite-plugins/api.ts';
 import { dictAssets } from './vite-plugins/dict-assets.ts';
 import { staticHeaders } from './vite-plugins/headers.ts';
 
@@ -46,7 +45,12 @@ export default defineConfig({
     // postcss.config.mjs. STACK §7 named this as unchecked; see HANDOFF.md for
     // which path was taken and why.
     tailwindcss(),
-    apiRoutes(),
+    // `vite-plugins/api.ts` was here until `backend.md` B1. It mounted
+    // `app/api/**/route.ts` in the dev and preview servers so the three model
+    // routes kept answering after `web.md` W1 deleted Next; its own header said
+    // it was "a bridge, not a product" and that "the phase that removes the
+    // last handler removes it too". B1 is that phase: the handlers are in
+    // `apps/server` and the app reaches them at `VITE_API_BASE`.
     // The two header rules next.config.ts's headers() block carried, per path.
     staticHeaders(),
     // The dictionary artifacts, out of the workspace-root `data/`, until

@@ -21,8 +21,8 @@ vi.mock('@tangram/ai/provider', async (importOriginal) => {
   return { ...actual, selectProvider: () => stub ?? actual.selectProvider() };
 });
 
-const { POST } = await import('@/app/api/ask/route');
-type AskRouteResponse = import('@/app/api/ask/route').AskRouteResponse;
+const { POST } = await import('@server/routes/ask.ts');
+type AskRouteResponse = import('@/lib/api/contract').AskRouteResponse;
 
 beforeAll(requireDictData);
 

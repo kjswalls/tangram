@@ -101,6 +101,14 @@ function middleware(config: HostConfig): Connect.NextHandleFunction {
  * Preview only. Under `pnpm dev` the hashed assets do not exist on disk at all
  * — Vite serves them out of the module graph — so asking the filesystem about
  * them would 404 the entire dev server.
+ *
+ * `distDir` is **the directory the preview server is actually serving**, not
+ * `vercel.json`'s `outputDirectory`. The two are the same in every ordinary run
+ * and differ in exactly one: `tests/e2e/d/access-gate.spec.ts` builds a second
+ * time into `dist-gated` and serves that (`TANGRAM_PREVIEW_OUT_DIR`), and a
+ * check against the wrong directory turns every hashed asset of that build into
+ * a hard 404 before Vite's static middleware sees it — a served `index.html`
+ * whose own script is missing, which is a blank page with no error anywhere.
  */
 function notFound(config: HostConfig, distDir: string): Connect.NextHandleFunction {
   const fallback = config.rewrites.find((rule) => rule.destination === SPA_FALLBACK);
@@ -116,11 +124,14 @@ function notFound(config: HostConfig, distDir: string): Connect.NextHandleFuncti
       next();
       return;
     }
-    // `/api/**` is the adapter's, and it answers its own 404s (web.md W1).
-    if (request.pathname.startsWith('/api/')) {
-      next();
-      return;
-    }
+    // `/api/**` used to be the dev/preview adapter's and was passed through so
+    // it could answer its own 404s (web.md W1). `backend.md` B1 deleted that
+    // adapter and moved the three handlers to `apps/server`, so this origin has
+    // no API at all — and passing through would hand `/api/ask` to Vite's SPA
+    // fallback, which answers 200 `index.html`. That is the exact failure this
+    // middleware exists to reproduce: a probe reads healthy while every call
+    // fails to parse. `vercel.json`'s fallback excludes `/api/`, so the rule
+    // below reaches it and 404s, which is what the host does.
     // Covered by the fallback: the host would answer index.html, and so does
     // Vite. Nothing to do.
     if (matchRule(fallback, request) !== null) {
@@ -147,8 +158,9 @@ export function staticHeaders(): Plugin {
     configurePreviewServer: (server) => {
       const config = readHostConfig(APP_ROOT);
       server.middlewares.use(middleware(config));
+      // Vite's own resolved `build.outDir` — see `notFound`'s header.
       server.middlewares.use(
-        notFound(config, resolve(APP_ROOT, config.outputDirectory ?? 'dist')),
+        notFound(config, resolve(server.config.root, server.config.build.outDir)),
       );
     },
   };

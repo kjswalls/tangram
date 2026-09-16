@@ -2,34 +2,34 @@
  * Three things that only fail once the build is somewhere else
  * (docs/plans/web.md W2).
  *
- *  1. **`outputFileTracingIncludes`.** This one is **no longer a live
- *     deployment failure mode and the honest thing is to say so.** It was: when
- *     the app deployed as per-route serverless functions, a route that read the
- *     dictionary and was not listed worked under `next dev` and 500'd in the
- *     deployment, and `/api/examples` and `/api/recall` shipped exactly that
- *     way. From W2 the app deploys as **static files with no functions at all**
- *     (`docs/deploy.md`), so nothing reads `tracing.config.ts` and no route can
- *     500 in a deployment — because no route is in the deployment. What the
- *     three cases below still guard is the config's internal consistency for
- *     as long as the file exists, which `tracing.config.ts`'s own header ties
- *     to `data.md` D6 and `backend.md` taking the routes over. They are kept
- *     rather than deleted for that reason and for one more: the *value* check
- *     ("the key is not the whole answer") is the test that caught W0's
- *     silently-empty globs, and it is the pattern, not the config, that is
- *     worth keeping alive until the file goes.
- *  2. **A route or a page nobody exercises.** `pnpm smoke` is only as good as
- *     its case list, so a new API route with no case, or a page route with no
- *     DOM marker, has to fail *here*, cheaply.
- *  3. **The host config.** `apps/app/vercel.json` is the only place the five
+ *  1. **A route or a page nobody exercises.** `pnpm smoke` is only as good as
+ *     its case list, so an API route with no case, or a page route with no DOM
+ *     marker, has to fail *here*, cheaply. The API half of that question is
+ *     answered from `apps/server/src/routes/table.ts` now: `backend.md` B1
+ *     moved the three model routes out of this app and there is no `app/api/`
+ *     left to walk.
+ *  2. **The host config.** `apps/app/vercel.json` is the only place the five
  *     rules W1 deleted from `next.config.ts` now live, and `dist/` contains no
  *     server to notice their absence. Deleting any one of them fails this file.
  *
- * All three are answered from the import graph, the route table and the config,
- * not from memory.
+ * **`outputFileTracingIncludes` is gone, and that is a deletion rather than a
+ * lapse.** It guarded a real production-only failure — a route that read the
+ * dictionary and was missing from the map worked in dev and 500'd in the
+ * deployment, which `/api/examples` and `/api/recall` both shipped — and W2
+ * kept its three cases alive after the app went static, on the grounds that the
+ * *pattern* was worth keeping until the file went. `tracing.config.ts`'s own
+ * header named the commit that should take it: "when `data.md` D6 deletes the
+ * dictionary routes and `backend.md` owns the remaining three", and it warned
+ * that silently dropping the test is the failure the paragraph existed to
+ * prevent. B1 is that commit, the file is deleted, and this is the notice.
+ * `apps/server/tests/routes.test.ts` carries the guard's purpose forward in the
+ * shape that deployable needs.
+ *
+ * Both are answered from the route tables and the config, not from memory.
  */
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { relative, resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
@@ -43,17 +43,10 @@ import {
 } from '@/lib/server/host-config';
 import { appRoot, workspaceRoot } from '@/lib/server/roots';
 import { TABS } from '@/components/shell/nav';
-import { OUTPUT_FILE_TRACING_INCLUDES } from '@/tracing.config';
+import { discoverPageRoutes, pageRouteUrl } from '@/lib/server/route-inventory';
+import { ROUTES as SERVER_ROUTES } from '../../../../server/src/routes/table.ts';
 import {
-  discoverApiRoutes,
-  discoverPageRoutes,
-  pageRouteUrl,
-  readsDictionary,
-  tracingKeyMatches,
-  unmatchedTracingIncludes,
-  untracedDictRoutes,
-} from '@/lib/server/route-inventory';
-import {
+  APP_CALLED_ROUTES,
   checkRouteCoverage,
   pageCases,
   SMOKE_CASES,
@@ -88,32 +81,88 @@ function dictManifest(): DictManifest | null {
   return existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as DictManifest) : null;
 }
 
-describe('the route inventory', () => {
-  const routes = discoverApiRoutes(ROOT);
-
-  it('finds every API route, and each one exports a handler', () => {
-    // Exact, not `arrayContaining`: `data.md` D6 deleted the five dictionary
-    // routes and the three that are left are `backend.md` B1's to move, so a
-    // fourth appearing here is something nobody decided. It was a floor and a
-    // containment check while the set was shrinking; it is a set now.
-    expect(routes.map((route) => route.path).sort()).toEqual([
-      '/api/ask',
-      '/api/examples',
-      '/api/recall',
-    ]);
-    for (const route of routes) {
-      expect(route.methods, route.relativeFile).not.toHaveLength(0);
-    }
+describe('the API this app calls', () => {
+  it('has no app/api directory left — the three model routes are the server\u2019s', () => {
+    // B1's move, asserted from the app's side. A `route.ts` reappearing here
+    // would be a route nothing mounts, nothing smokes and nothing traces:
+    // `vite-plugins/api.ts` was deleted in the same commit, so a handler under
+    // `app/api/` would not even answer in dev.
+    expect(existsSync(resolve(ROOT, 'app/api'))).toBe(false);
   });
 
-  it('knows which routes reach the dictionary loader', () => {
-    const reading = routes.filter((route) => readsDictionary(route, ROOT)).map((r) => r.path);
-    // Every route in this app reads it except none — stated as a set rather
-    // than a count so that adding a route that does *not* read it is also a
-    // deliberate edit here.
-    expect(reading.sort()).toEqual(['/api/ask', '/api/examples', '/api/recall']);
+  it('is declared by apps/server, and the app calls exactly those three paths', () => {
+    // Exact, not `arrayContaining`: `data.md` D6 deleted the five dictionary
+    // routes and B1 moved these three, so a fourth appearing is something
+    // nobody decided. `GATED_PATHS` in `@tangram/access` is the same list from
+    // the gate's side and `apps/server/tests/routes.test.ts` holds the two
+    // together.
+    expect([...APP_CALLED_ROUTES].sort()).toEqual(['/api/ask', '/api/examples', '/api/recall']);
+    const declared = SERVER_ROUTES.map((route) => route.path);
+    for (const path of APP_CALLED_ROUTES) expect(declared, path).toContain(path);
+  });
+
+  it('routes every call through apiFetch, so the API base and the header are applied', () => {
+    // The dead-path check for B1's removal of the dev adapter. Until B1 an
+    // app-side `fetch('/api/…')` worked by accident — the preview server
+    // mounted the handlers on the app's own origin — so a call that skipped
+    // `apiFetch` was invisible. It is now a call to a path the static host
+    // answers with `index.html`, or 404s, and the feature is simply dead.
+    // `packages/ai/recall.ts` was exactly that and B1 fixed it; this is what
+    // stops the next one.
+    const offenders: string[] = [];
+    for (const file of sourceFiles(ROOT)) {
+      const source = withoutComments(readFileSync(file, 'utf8'));
+      for (const match of source.matchAll(/\bfetch(?:Impl)?\(\s*['"`](\/api\/[^'"`]*)['"`]/g)) {
+        offenders.push(`${relative(ROOT, file)}: ${match[0]}`);
+      }
+    }
+    expect(offenders, 'these fetch an API path directly; go through apiFetch').toEqual([]);
+  });
+
+  it('keeps @server/* out of everything but the tests', () => {
+    // The alias exists in `vitest.config.ts` and NOT in `vite.config.ts`, so a
+    // production import of it fails the build rather than shipping server code
+    // to a browser — but it is also in `tsconfig.json`, which covers the whole
+    // app, so `tsc` would not complain and the failure would land in the
+    // bundler. `backend.md` B1's route tests are the only legitimate users:
+    // they stay in this app's suite because they need the real 124k-entry
+    // dictionary in `data/`, which the server package will not ship after B2.
+    const offenders = sourceFiles(ROOT)
+      .map((file) => relative(ROOT, file))
+      // `vitest.config.ts` is where the alias is DECLARED, which is the one
+      // place the string legitimately appears outside a test.
+      .filter((file) => file !== 'vitest.config.ts')
+      .filter((file) => withoutComments(readFileSync(resolve(ROOT, file), 'utf8')).includes('@server/'));
+    expect(offenders, 'only tests/ may import @server/*').toEqual([]);
   });
 });
+
+/**
+ * The source with its comments blanked out.
+ *
+ * Crude — it does not know about a `//` inside a string — and deliberately so:
+ * over-blanking can only *miss* an offender, and the alternative is a parser in
+ * a test. What it is for is the opposite direction: half the files that
+ * describe this rule quote the very call the rule forbids, so a scan that read
+ * comments would report its own documentation.
+ */
+function withoutComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+}
+
+/** Every first-party `.ts`/`.tsx` under the app, excluding tests and the build output. */
+function sourceFiles(dir: string, out: string[] = []): string[] {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    // `dist-gated` is `tests/e2e/d/access-gate.spec.ts`'s second build.
+    if (['node_modules', 'dist', 'dist-gated', 'tests', 'ios', 'android', '.vite'].includes(entry.name)) {
+      continue;
+    }
+    const full = resolve(dir, entry.name);
+    if (entry.isDirectory()) sourceFiles(full, out);
+    else if (/\.tsx?$/.test(entry.name)) out.push(full);
+  }
+  return out;
+}
 
 describe('the page route table', () => {
   const pages = discoverPageRoutes(ROOT);
@@ -176,53 +225,9 @@ describe('the page route table', () => {
   });
 });
 
-describe('tracing coverage', () => {
-  it('ships data/ to every route that reads it', () => {
-    const untraced = untracedDictRoutes(
-      discoverApiRoutes(ROOT),
-      OUTPUT_FILE_TRACING_INCLUDES,
-      ROOT,
-    );
-    expect(
-      untraced.map((route) => route.path),
-      'add an OUTPUT_FILE_TRACING_INCLUDES entry in tracing.config.ts for these',
-    ).toEqual([]);
-  });
-
-  it('points those entries at files that exist — the key is not the whole answer', () => {
-    // The regression this exists for: after the workspace move the globs still
-    // read `./data/**`, which Next resolves from the PROJECT directory, and
-    // `apps/app/data/` does not exist. Every key still matched its route, the
-    // test above still passed, and the dictionary was in no bundle.
-    expect(
-      unmatchedTracingIncludes(OUTPUT_FILE_TRACING_INCLUDES, ROOT),
-      'an OUTPUT_FILE_TRACING_INCLUDES glob in tracing.config.ts matches nothing on disk',
-    ).toEqual([]);
-  });
-
-  it('traces the workspace marker, not only the data', () => {
-    // `dataDir()` finds the workspace root by walking up for pnpm-workspace.yaml.
-    // A bundle carrying data/ but not the marker resolves to the wrong directory.
-    for (const [key, globs] of Object.entries(OUTPUT_FILE_TRACING_INCLUDES)) {
-      expect(globs, `${key} must trace pnpm-workspace.yaml alongside data/`).toContain(
-        '../../pnpm-workspace.yaml',
-      );
-    }
-  });
-
-  it('matches keys the way Next does, `**` included', () => {
-    expect(tracingKeyMatches('/api/examples/**', '/api/examples/anything')).toBe(true);
-    // `**` also matches nothing, which is why `/api/ask/**` covers `/api/ask`.
-    expect(tracingKeyMatches('/api/ask/**', '/api/ask')).toBe(true);
-    expect(tracingKeyMatches('/api/ask/**', '/api/asking')).toBe(false);
-    expect(tracingKeyMatches('/api/examples/**', '/api/ask')).toBe(false);
-    expect(tracingKeyMatches('/api/recall', '/api/recall')).toBe(true);
-  });
-});
-
 describe('smoke coverage', () => {
-  it('has a case for every handler in app/api', () => {
-    expect(checkRouteCoverage(ROOT), 'add a case to SMOKE_CASES in scripts/smoke.ts').toEqual([]);
+  it('has a case for every method of every route the app calls', () => {
+    expect(checkRouteCoverage(), 'add a case to SMOKE_CASES in scripts/smoke.ts').toEqual([]);
   });
 
   it('walks every page route, derived from the table rather than copied', () => {
@@ -244,7 +249,7 @@ describe('smoke coverage', () => {
   });
 
   it('names a real route for every API case, so coverage cannot be faked', () => {
-    const known = new Set(discoverApiRoutes(ROOT).map((route) => route.path));
+    const known = new Set(SERVER_ROUTES.map((route) => route.path));
     for (const smokeCase of SMOKE_CASES) {
       expect(smokeCase.route, smokeCase.name).not.toBeNull();
       expect(known.has(smokeCase.route as string), `${smokeCase.name} → ${smokeCase.route}`).toBe(

@@ -43,14 +43,19 @@ import {
   type HostConfig,
 } from '../apps/app/lib/server/host-config';
 import {
-  discoverApiRoutes,
   discoverPageRoutes,
   pageRouteUrl,
   type HttpMethod,
 } from '../apps/app/lib/server/route-inventory';
+// The API routes are `apps/server`'s now (docs/plans/backend.md B1), and its
+// route table is the single source of truth for them — `app.ts` mounts from it
+// and `apps/server/src/smoke.ts` walks it. Reading the same table here is what
+// keeps the coverage check below true after the move: until B1 it walked
+// `app/api/**`, which no longer exists.
+import { ROUTES as SERVER_ROUTES } from '../apps/server/src/routes/table.ts';
 import { dirOf, workspaceRoot } from '../apps/app/lib/server/roots';
 
-// `discoverApiRoutes` and the route table are the APP's; this script lives at
+// The page-route table and the host config are the APP's; this script lives at
 // the workspace root (docs/plans/wave-zero.md §1).
 const REPO_ROOT = resolve(workspaceRoot(dirOf(import.meta.url)), 'apps/app');
 
@@ -102,8 +107,9 @@ export interface SmokeCase {
   name: string;
   method: HttpMethod;
   /**
-   * The route this case covers, exactly as `discoverApiRoutes` names it. Null
-   * for a page or a static asset, which have no handler to cover.
+   * The route this case covers, exactly as `apps/server/src/routes/table.ts`
+   * names it. Null for a page or a static asset, which have no handler to
+   * cover.
    */
   route: string | null;
   /** Path plus query. `context` carries anything an earlier case captured. */
@@ -206,28 +212,45 @@ export const SMOKE_CASES: SmokeCase[] = [
 ];
 
 /**
- * Every route handler in `app/api/**` has at least one case here.
+ * Every route `apps/server` declares has at least one case here.
  *
  * This is the half that survives the next person: a new route with no case
  * fails `pnpm smoke` and the e2e suite the day it is written, instead of
  * failing in production the day it is deployed. `data.md` D6 removed the five
- * dictionary entries when it retired those routes; `backend.md` inherits the
- * same rule for the three that move to the server.
+ * dictionary entries when it retired those routes; `backend.md` B1 moved the
+ * three that are left to `apps/server`, so the question "what routes are
+ * there" is answered by that package's table rather than by walking
+ * `app/api/**`, which this app no longer has.
+ *
+ * **`/health` is deliberately not covered here and its absence is not a hole.**
+ * `pnpm -F server smoke` walks the same table and probes every route on it,
+ * including `/health`; this script's API cases exist to prove the *app's* three
+ * calls work against the deployed API, which is `docs/deploy.md` §7's "the same
+ * run covers both halves". So the rule is one-directional: a case must name a
+ * route the server really has, and every route the app CALLS must have a case.
  */
-export function checkRouteCoverage(repoRoot: string = REPO_ROOT): string[] {
+export const APP_CALLED_ROUTES = ['/api/ask', '/api/examples', '/api/recall'] as const;
+
+export function checkRouteCoverage(): string[] {
   const covered = new Set(
     SMOKE_CASES.filter((c) => c.route !== null).map((c) => `${c.method} ${c.route}`),
   );
   const missing: string[] = [];
-  for (const route of discoverApiRoutes(repoRoot)) {
+  for (const route of SERVER_ROUTES) {
+    if (!(APP_CALLED_ROUTES as readonly string[]).includes(route.path)) continue;
     if (route.methods.length === 0) {
-      missing.push(`${route.relativeFile} exports no HTTP handler`);
+      missing.push(`${route.path} declares no method`);
       continue;
     }
     for (const method of route.methods) {
       if (!covered.has(`${method} ${route.path}`)) {
-        missing.push(`${method} ${route.path} (${route.relativeFile}) has no case in SMOKE_CASES`);
+        missing.push(`${method} ${route.path} has no case in SMOKE_CASES`);
       }
+    }
+  }
+  for (const path of APP_CALLED_ROUTES) {
+    if (!SERVER_ROUTES.some((route) => route.path === path)) {
+      missing.push(`${path} is called by the app but apps/server does not declare it`);
     }
   }
   return missing;
@@ -706,6 +729,23 @@ function parseArgs(argv: readonly string[]): {
 
 async function main(): Promise<void> {
   const { baseURL, apiBaseURL, secret, skipApi } = parseArgs(process.argv.slice(2));
+
+  // **Neither flag is not a default; it is a mistake with a confusing failure.**
+  // Until `backend.md` B1 the app's own origin answered `/api/**` — the preview
+  // adapter mounted the handlers there — so `apiBaseURL` falling back to
+  // `baseURL` was right. It is now an origin that serves no API at all
+  // (`vercel.json`'s fallback deliberately excludes `/api/`), so the fallback
+  // would report five 404s that look like a broken deployment and are really a
+  // missing argument. Say which one.
+  if (!skipApi && apiBaseURL === undefined) {
+    console.error(
+      'smoke: pass --api-base <url> (the apps/server origin), or --no-api if there is no server\n' +
+        '  to point at yet. The three model routes left this app in backend.md B1, so its own\n' +
+        '  origin answers 404 for every /api/** path — see docs/deploy.md §7.',
+    );
+    process.exitCode = 2;
+    return;
+  }
 
   const uncovered = skipApi ? [] : checkRouteCoverage();
   if (uncovered.length > 0) {

@@ -32,15 +32,16 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import { HanziWord } from '@/components/hanzi/hanzi-text';
-import type { ExamplesRouteInfo, ExamplesRouteResponse } from '@/app/api/examples/route';
+import type { ExamplesRouteInfo, ExamplesRouteResponse } from '@/lib/api/contract';
 import { examplesCacheKey } from '@tangram/ai/cache-key';
 import {
   citedEntryIds,
-  filterCachedSentences,
   groundedExamplesSchema,
-  knownSet,
   type ExampleSentence,
 } from '@tangram/ai/examples';
+// The learner's known set is browser-side and left `packages/ai` in
+// `backend.md` B1 — see `lib/srs/known-set.ts`.
+import { filterCachedSentences, knownSet } from '@/lib/srs/known-set';
 import { entryLookup, renderPhrase, type PhraseScript } from '@tangram/ai/ground';
 import { cn } from '@/lib/cn';
 import { getRepository } from '@/lib/db/get-db';

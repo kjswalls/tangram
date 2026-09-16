@@ -8,10 +8,12 @@
  * a handler.
  */
 import { serve } from '@hono/node-server';
+import { accessGateEnabled } from '@tangram/access';
 
 import { buildApp } from './app.ts';
 import { readBuildInfo } from './build-info.ts';
 import { readConfig } from './config.ts';
+import { readCorsPolicy } from './cors.ts';
 import { createLogger } from './log.ts';
 
 /**
@@ -27,17 +29,34 @@ const DRAIN_MS = Number(process.env.TANGRAM_DRAIN_MS) > 0 ? Number(process.env.T
 const startedAt = Date.now();
 const config = readConfig();
 const logger = createLogger();
-const app = buildApp({ startedAt, logger, exposeErrors: !config.production });
+// The one place `process.env` is read for the allowlist and the gate: `cors.ts`
+// takes an `Env` and `@tangram/access` takes one too, so neither module has to
+// reach for `process` (`tests/config.test.ts` walks src/ for exactly that).
+const app = buildApp({
+  startedAt,
+  logger,
+  exposeErrors: !config.production,
+  cors: readCorsPolicy(process.env, config.production),
+  env: process.env,
+});
 
 const server = serve({ fetch: app.fetch, hostname: config.host, port: config.port }, (info) => {
   // The sha goes in the boot line for the same reason it is on /health: so a
   // log and a deployment can be matched to a commit. `readBuildInfo` reads no
   // secret, and nothing else about the environment is printed.
+  // The allowlist is printed because a missing origin is the commonest reason
+  // a deployed app cannot reach its API, and an origin is not a secret. The
+  // gate's secret is not printed and is not in this object; whether one exists
+  // is (`accessGateEnabled`), which is diagnostically useful and gives nothing
+  // away — `packages/access` rule 3: the only thing an attacker learns is that
+  // the gate is on.
   logger.info('listening', {
     host: config.host,
     port: info.port,
     sha: readBuildInfo().sha,
     production: config.production,
+    gated: accessGateEnabled(process.env),
+    allowedOrigins: [...readCorsPolicy(process.env, config.production).origins],
   });
 });
 

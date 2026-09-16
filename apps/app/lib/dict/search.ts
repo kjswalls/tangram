@@ -1,5 +1,5 @@
 /**
- * Search routing and ranking (PLAN.md §3.2).
+ * The search contract — routing and ranking (PLAN.md §3.2).
  *
  * One box, no mode picker, so the router has to decide what the learner meant:
  *
@@ -14,27 +14,23 @@
  * carrying `le` and `liǎo`, which is also what makes "choose a reading" possible
  * on the way to a card.
  *
- * Everything here reads the indexes built in `lib/dict/index.ts`; nothing re-reads
- * `data/dict.json`.
+ * **What is left here after `data.md` D6, and why the file stays.** The routing
+ * and ranking above used to be implemented here, over the seven in-memory
+ * indexes `lib/dict/index.ts` built from `data/dict.json`. D6 deleted that
+ * implementation: `lib/dict/sqlite-store.ts` does all of it over the artifact
+ * on every platform, and the parts the two always shared — the grouping, the
+ * five-key sort, the section allocation, the cursor — were already
+ * `lib/dict/rank.ts`'s.
+ *
+ * So this module is now **the search layer's vocabulary**: `SearchResult` and
+ * its parts, `SearchOptions`, and the re-exports that let a component import
+ * `hasCjk` or `glossTier` from the module whose shapes it is already using.
+ * `lib/dict/store.ts` — a frozen surface (`data.md` D1's first commit) — types
+ * `DictStore.search` against `SearchResult` and `SearchOptions` from here, which
+ * is the other reason the file cannot simply move: the freeze is on the shape,
+ * and the shape lives at this path.
  */
-import { exactIds, getDictIndex, prefixIds, type DictIndex, type SortedIndex } from './index';
-import { normalizePinyin, type NormalizedPinyin } from './pinyin';
-import { MAX_HANZI_PREFIX_IDS } from './query/hanzi';
-import { MAX_PINYIN_PREFIX_IDS } from './query/pinyin';
-import {
-  CandidateSet,
-  SECTION_LABELS,
-  dedupeSections,
-  glossTier,
-  hasCjk,
-  lemma,
-  lemmas,
-  materialise,
-  pageWindow,
-  stemToken,
-  type GroupCandidate,
-  type MatchSource,
-} from './rank';
+import type { MatchSource } from './rank';
 import type { DictEntry, EntryId, HskBand } from './types';
 
 /**
@@ -126,279 +122,4 @@ export interface SearchOptions {
    * and `SearchOptions` is this layer's own.
    */
   signal?: AbortSignal;
-}
-
-/** Guard on one gloss token's posting list; the lists are frequency-ordered. */
-const MAX_GLOSS_CANDIDATES = 5000;
-
-// ---------------------------------------------------------------------------
-// Headword prefix index
-// ---------------------------------------------------------------------------
-
-interface HeadwordIndexes {
-  simp: SortedIndex;
-  trad: SortedIndex;
-}
-
-/**
- * `bySimp`/`byTrad` are Maps, which cannot answer "starts with 打" without walking
- * 120k keys. Sorting them once per process buys a binary search instead; the
- * WeakMap keys off the index object, so a `resetDictCache()` drops this too.
- */
-const HEADWORDS = new WeakMap<DictIndex, HeadwordIndexes>();
-
-function toSorted(groups: Map<string, EntryId[]>): SortedIndex {
-  const keys = [...groups.keys()].sort();
-  return { keys, ids: keys.map((key) => groups.get(key) as EntryId[]) };
-}
-
-function headwords(index: DictIndex): HeadwordIndexes {
-  let cached = HEADWORDS.get(index);
-  if (!cached) {
-    cached = { simp: toSorted(index.bySimp), trad: toSorted(index.byTrad) };
-    HEADWORDS.set(index, cached);
-  }
-  return cached;
-}
-
-/**
- * True when the raw query is itself an English **word** — the `sun`/`can`/`women`
- * rule.
- *
- * "Appears somewhere in a gloss" is not that test. `shi` appears as a token in
- * 39 glosses ("jiang shi" for 殭屍, "lüshi form" for 排律) because CC-CEDICT
- * romanises inside its English, and taking that as an English word buried 是,
- * 事, 十 — every HSK 1–2 reading of the syllable — under the reserved 16 rows of
- * a section that had nothing a learner typing `shi` wanted. So the query has to
- * be a whole *sense* of some entry (tier 0 or 1 of `glossTier`), which is what
- * "the English word" means: 太阳 is "sun", 女人 is "woman", and no entry is "shi".
- */
-function isGlossToken(index: DictIndex, query: string): boolean {
-  const token = query.trim().toLowerCase();
-  if (!/^[a-z']{3,}$/.test(token)) return false;
-  const queryWords = lemmas(token);
-  if (queryWords.length === 0) return false;
-  const forms = new Set([stemToken(token), lemma(token)]);
-  for (const form of forms) {
-    for (const id of (index.byGloss.get(form) ?? []).slice(0, MAX_GLOSS_CANDIDATES)) {
-      const entry = index.entries.get(id);
-      if (entry && glossTier(entry, queryWords) <= 1) return true;
-    }
-  }
-  return false;
-}
-
-// ---------------------------------------------------------------------------
-// Candidate collection
-// ---------------------------------------------------------------------------
-
-/**
- * Grouping, the five-key sort and materialisation are `lib/dict/rank.ts`'s,
- * shared with the store. This side only has to turn ids into the eight facts
- * ranking needs, and to say which readings a headword has — both of which the
- * index answers directly.
- */
-function collect(index: DictIndex, ids: readonly EntryId[], tier: number, into: CandidateSet): void {
-  for (const id of ids) {
-    const entry = index.entries.get(id);
-    if (!entry) continue;
-    into.add(
-      {
-        id: entry.id,
-        simp: entry.simp,
-        trad: entry.trad,
-        isVariant: entry.isVariant,
-        properNoun: entry.properNoun,
-        ...(entry.hskBand === undefined ? {} : { hskBand: entry.hskBand }),
-        ...(entry.freqRank === undefined ? {} : { freqRank: entry.freqRank }),
-      },
-      tier,
-    );
-  }
-}
-
-/** Every reading of one headword, in the index's frequency order. */
-function readingsOf(index: DictIndex, candidate: GroupCandidate): DictEntry[] {
-  return (index.bySimp.get(candidate.simp) ?? [])
-    .map((id) => index.entries.get(id) as DictEntry)
-    .filter((entry) => entry.trad === candidate.trad);
-}
-
-function toGroup(index: DictIndex, candidate: GroupCandidate, source: MatchSource): SearchGroup {
-  return materialise(candidate, readingsOf(index, candidate), source);
-}
-
-// ---------------------------------------------------------------------------
-// The three sources
-// ---------------------------------------------------------------------------
-
-function hanziCandidates(index: DictIndex, query: string): GroupCandidate[] {
-  const candidates = new CandidateSet();
-  collect(index, index.bySimp.get(query) ?? [], 0, candidates);
-  collect(index, index.byTrad.get(query) ?? [], 0, candidates);
-  const { simp, trad } = headwords(index);
-  collect(index, prefixIds(simp, query, MAX_HANZI_PREFIX_IDS), 1, candidates);
-  collect(index, prefixIds(trad, query, MAX_HANZI_PREFIX_IDS), 1, candidates);
-  return candidates.ordered();
-}
-
-function pinyinCandidates(index: DictIndex, pinyin: NormalizedPinyin): GroupCandidate[] {
-  const candidates = new CandidateSet();
-  const toned = pinyin.syllables.some((syllable) => syllable.tone !== null);
-  // Tone-exact beats toneless beats prefix (PLAN.md §3.2).
-  if (toned) collect(index, exactIds(index.byPinyinToned, pinyin.toned), 0, candidates);
-  collect(index, exactIds(index.byPinyinToneless, pinyin.toneless), 1, candidates);
-  const prefixIndex = toned ? index.byPinyinToned : index.byPinyinToneless;
-  const prefixKey = toned ? pinyin.toned : pinyin.toneless;
-  collect(index, prefixIds(prefixIndex, prefixKey, MAX_PINYIN_PREFIX_IDS), 2, candidates);
-  return candidates.ordered();
-}
-
-function englishCandidates(index: DictIndex, query: string): GroupCandidate[] {
-  const queryWords = lemmas(query);
-  if (queryWords.length === 0) return [];
-
-  // Candidates = entries whose glosses carry every word of the query. The posting
-  // lists are frequency-ordered, so the guard keeps the words a learner is likeliest
-  // to want rather than an arbitrary slice.
-  let pool: EntryId[] | null = null;
-  for (const word of queryWords) {
-    const forms = new Set([stemToken(word), lemma(word)]);
-    const ids = new Set<EntryId>();
-    for (const form of forms) {
-      for (const id of (index.byGloss.get(form) ?? []).slice(0, MAX_GLOSS_CANDIDATES)) ids.add(id);
-    }
-    pool = pool === null ? [...ids] : pool.filter((id) => ids.has(id));
-    if (pool.length === 0) return [];
-  }
-
-  const candidates = new CandidateSet();
-  for (const id of pool ?? []) {
-    const entry = index.entries.get(id);
-    if (!entry) continue;
-    const tier = glossTier(entry, queryWords);
-    if (!Number.isFinite(tier)) continue;
-    collect(index, [id], tier, candidates);
-  }
-  return candidates.ordered();
-}
-
-// ---------------------------------------------------------------------------
-// Routing
-// ---------------------------------------------------------------------------
-
-/**
- * Which section leads when a query is both pinyin and English (PLAN.md §3.2).
- *
- * Typed tones are the one unambiguous signal, so they win outright. Failing that,
- * a query that is itself an English gloss token of three letters or more is far
- * likelier to be the English word than the syllable that spells the same
- * (`sun`, `can`, `women`); shorter ones (`he`, `ta`) are not, and two syllables or
- * an apostrophe mean the learner was writing pinyin.
- */
-function pinyinFirst(index: DictIndex, query: string, pinyin: NormalizedPinyin): boolean {
-  if (pinyin.syllables.some((syllable) => syllable.tone !== null)) return true;
-  if (isGlossToken(index, query)) return false;
-  // An apostrophe or a second syllable says "pinyin", and so does the fallback for
-  // a one-syllable query that is not an English word at all (`ta`, `ni`), so the
-  // two clauses PLAN.md §3.2 lists here agree: only the gloss-token rule flips it.
-  return true;
-}
-
-interface CandidateSection {
-  source: MatchSource;
-  candidates: GroupCandidate[];
-}
-
-/**
- * Rank, dedupe, page, and only then attach entries.
- *
- * The order matters and is shared with the store: deduping before paging is what
- * stops page 2 repeating page 1, and materialising after paging is what lets the
- * store fetch full rows for ≤50 groups instead of up to 5,000. Here every entry
- * is already in memory, so materialising late costs nothing and keeps the two
- * implementations the same shape.
- */
-function paginate(
-  query: string,
-  route: SearchRoute,
-  ordered: readonly CandidateSection[],
-  options: SearchOptions,
-  dictVersion: string,
-  index: DictIndex,
-): SearchResult {
-  const deduped = dedupeSections(ordered.map((part) => part.candidates));
-  const window = pageWindow(
-    deduped.map((groups) => groups.length),
-    options,
-  );
-  const sections: SearchSection[] = [];
-  deduped.forEach((groups, i) => {
-    const { start, end } = window.slices[i];
-    const page = groups.slice(start, end);
-    if (page.length === 0) return;
-    sections.push({
-      source: ordered[i].source,
-      label: SECTION_LABELS[ordered[i].source],
-      groups: page.map((candidate) => toGroup(index, candidate, ordered[i].source)),
-    });
-  });
-
-  return {
-    query,
-    route,
-    groups: sections.flatMap((part) => part.groups),
-    sections,
-    total: window.total,
-    dictVersion,
-    offset: window.offset,
-    ...(window.nextCursor === undefined ? {} : { nextCursor: window.nextCursor }),
-  };
-}
-
-/**
- * The one entry point. Throws `DictDataMissingError` if `data/` was never built,
- * which the route turns into a 503.
- */
-export function search(rawQuery: string, options: SearchOptions = {}): SearchResult {
-  const query = rawQuery.trim();
-  const index = getDictIndex();
-  const version = index.meta.version;
-  if (!query) return paginate(query, 'english', [], options, version, index);
-
-  if (hasCjk(query)) {
-    return paginate(
-      query,
-      'hanzi',
-      [{ source: 'hanzi', candidates: hanziCandidates(index, query) }],
-      options,
-      version,
-      index,
-    );
-  }
-
-  const pinyin = normalizePinyin(query);
-  if (pinyin.fullyParsed) {
-    // Both sections always run; only their order is in question, and the loser
-    // still shows — that is what makes `he` answer with 和 *and* 他.
-    const asPinyin: CandidateSection = {
-      source: 'pinyin',
-      candidates: pinyinCandidates(index, pinyin),
-    };
-    const asEnglish: CandidateSection = {
-      source: 'english',
-      candidates: englishCandidates(index, query),
-    };
-    const ordered = pinyinFirst(index, query, pinyin) ? [asPinyin, asEnglish] : [asEnglish, asPinyin];
-    return paginate(query, 'pinyin+english', ordered, options, version, index);
-  }
-
-  return paginate(
-    query,
-    'english',
-    [{ source: 'english', candidates: englishCandidates(index, query) }],
-    options,
-    version,
-    index,
-  );
 }

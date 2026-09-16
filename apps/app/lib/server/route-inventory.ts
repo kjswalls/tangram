@@ -2,13 +2,18 @@
  * What routes this app has — API and page — what they import, and whether the
  * build is configured to ship them the files they read.
  *
- * This exists because of one production-only failure mode. `data/dict.json` is
+ * This exists because of one production-only failure mode. The dictionary is
  * read from disk at request time, and on Vercel every route is traced and
- * bundled **separately**: a route that reaches `lib/dict/load.ts` but is missing
- * from `outputFileTracingIncludes` in `next.config.ts` works perfectly under
- * `next dev` and under `pnpm start` — the file is simply on disk in both — and
- * 500s in the deployment, on that route only. `/api/examples` and `/api/recall`
- * were exactly that, and it took someone opening the page to notice.
+ * bundled **separately**: a route that reaches the loader but is missing from
+ * `outputFileTracingIncludes` (`tracing.config.ts`) works perfectly in dev and
+ * in preview — the file is simply on disk in both — and 500s in the deployment,
+ * on that route only. `/api/examples` and `/api/recall` were exactly that, and
+ * it took someone opening the page to notice.
+ *
+ * `data.md` D6 deleted the five dictionary routes and moved the surviving three
+ * off the 35 MB JSON parse onto `lib/server/dict.ts`, which opens the SQLite
+ * artifact out of the same `data/` directory. So the failure mode is unchanged
+ * and only the module at the bottom of the graph moved — see `DICT_LOADER`.
  *
  * So the question "which routes read the dictionary" is answered here by
  * walking the import graph, rather than by remembering. `tests/unit/server/`
@@ -33,7 +38,7 @@ export const HTTP_METHODS = [
 export type HttpMethod = (typeof HTTP_METHODS)[number];
 
 export interface ApiRoute {
-  /** The URL path, e.g. `/api/dict/search`. */
+  /** The URL path, e.g. `/api/examples`. */
   path: string;
   /** Absolute path of the `route.ts` file. */
   file: string;
@@ -279,8 +284,16 @@ export function moduleGraph(entry: string, repoRoot: string): Set<string> {
   return seen;
 }
 
-/** The module that reads `data/*.json` off the disk. */
-export const DICT_LOADER = 'lib/dict/load.ts';
+/**
+ * The module that opens the dictionary off the disk.
+ *
+ * It was `lib/dict/load.ts` until `data.md` D6 deleted it. The three surviving
+ * model-backed routes now reach `lib/server/dict.ts`, which opens
+ * `data/dict-<schema>-<cedict>.sqlite` through `lib/dict/runners/node.ts` — so
+ * they still need `data/**` traced into their bundle, and this is still the
+ * bottom of the graph that says which ones.
+ */
+export const DICT_LOADER = 'lib/server/dict.ts';
 
 /** Does this route reach the dictionary loader, and so need its data traced in? */
 export function readsDictionary(route: ApiRoute, repoRoot: string): boolean {

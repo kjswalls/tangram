@@ -15,7 +15,7 @@
  * leaves them typing into it.
  *
  * It replaces `components/shell/data-banner.tsx` one-for-one (`data.md` D4 says
- * so), including that file's `HEAD /api/dict/hsk?band=1` probe: the store's
+ * so), including that file's `HEAD` probe of the HSK route: the store's
  * `open()` is that probe now, asked once for the whole app instead of once per
  * route mount.
  */
@@ -40,7 +40,14 @@ export function useDictStatus(store: DictStore = getDictStore()): DictStatus {
     setStatus(store.status);
     // Idempotent and safe on every mount — the interface promises it, and the
     // implementation shares one in-flight probe across every caller.
-    void store.open();
+    //
+    // The rejection is swallowed **here and nowhere else**: `open()` rejects on
+    // failure (`SqliteDictStore` does; the HTTP bridge `data.md` D6 replaced did
+    // not), and a `void` on a rejecting promise is an unhandled rejection that
+    // fails a Playwright run on a page error. There is nothing lost — the
+    // failure is already on `status`, with its reason, which is what this
+    // component renders.
+    void store.open().catch(() => undefined);
     return unsubscribe;
   }, [store]);
 
@@ -68,7 +75,7 @@ export function DictGate({ children, source, store, className }: DictGateProps) 
         status={status}
         {...(source === undefined ? {} : { source })}
         onStart={() => {
-          void resolved.open();
+          void resolved.open().catch(() => undefined);
         }}
       />
     </div>

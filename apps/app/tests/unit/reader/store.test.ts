@@ -9,6 +9,8 @@ import {
   useReaderStore,
   type ReaderState,
 } from '@/lib/stores/reader';
+import { resetDictStores, setDictStore } from '@/lib/dict/browser-store';
+import type { DictStore } from '@/lib/dict/store';
 import type { Token } from '@/lib/types';
 
 /** The repository the store reaches for through `@/lib/db/get-db`. */
@@ -16,6 +18,34 @@ const saveText = vi.fn();
 vi.mock('@/lib/db/get-db', () => ({
   getRepository: () => ({ saveText, texts: async () => [] }),
 }));
+
+/**
+ * The dictionary `read()` segments through.
+ *
+ * It used to be a `fetch` stub, because the store behind `getDictStore()` was
+ * `lib/dict/http-store.ts` and segmentation was a `POST`. `data.md` D6 deleted
+ * that route: the browser's store is `sqlite-wasm` on OPFS, and a `fetch` stub
+ * would have gone on passing while asserting nothing. Same cases, same expected
+ * values; what is counted is the store call rather than the request.
+ */
+const segment = vi.fn<DictStore['segment']>();
+
+function installStore(): void {
+  const refuse = () => {
+    throw new Error('the reader store should not reach this method');
+  };
+  setDictStore({
+    status: { state: 'ready', version: 'test' },
+    subscribe: () => () => {},
+    open: async () => {},
+    segment,
+    entries: refuse,
+    search: refuse,
+    hskBand: refuse,
+    readingCount: refuse,
+    wordsContaining: refuse,
+  });
+}
 
 /**
  * PLAN.md §3.5. The store is what makes the pasted text survive a navigation, so
@@ -55,10 +85,13 @@ const INITIAL: ReaderState = useReaderStore.getState();
 
 beforeEach(() => {
   useReaderStore.setState(INITIAL, true);
+  segment.mockReset();
+  installStore();
 });
 
-afterEach(() => {
+afterEach(async () => {
   vi.restoreAllMocks();
+  await resetDictStores();
 });
 
 describe('the reader store', () => {
@@ -228,13 +261,8 @@ describe('the reader store', () => {
     expect(tokenAt(TOKENS, 9)).toBeUndefined();
   });
 
-  it('read() posts once and keeps the tokens for the same body', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify({ text: BODY, script: 'simp', tokens: TOKENS }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      }),
-    );
+  it('read() segments once and keeps the tokens for the same body', async () => {
+    segment.mockResolvedValue({ text: BODY, script: 'simp', tokens: TOKENS });
 
     useReaderStore.getState().setText(BODY);
     await useReaderStore.getState().read();
@@ -243,23 +271,20 @@ describe('the reader store', () => {
     expect(state.view).toBe('read');
     expect(state.tokens).toHaveLength(6);
     expect(state.tokenizedBody).toBe(BODY);
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(segment).toHaveBeenCalledTimes(1);
 
     // Coming back from another route must not re-post the paragraph.
     useReaderStore.getState().setView('compose');
     await useReaderStore.getState().read();
     expect(useReaderStore.getState().view).toBe('read');
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(segment).toHaveBeenCalledTimes(1);
   });
 
   it('a segmentation that lands after the body changed is dropped', async () => {
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
-      // The learner keeps typing while the request is out.
+    segment.mockImplementation(async () => {
+      // The learner keeps typing while the segmentation is out.
       useReaderStore.getState().setText('完全不同的句子。');
-      return new Response(JSON.stringify({ text: BODY, script: 'simp', tokens: TOKENS }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      });
+      return { text: BODY, script: 'simp', tokens: TOKENS };
     });
 
     useReaderStore.getState().setText(BODY);
@@ -272,12 +297,10 @@ describe('the reader store', () => {
   });
 
   it('a failed segmentation leaves the text alone and reports why', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify({ error: 'dict-data-missing', hint: 'run pnpm data' }), {
-        status: 503,
-        headers: { 'content-type': 'application/json' },
-      }),
-    );
+    // What "the dictionary cannot answer" is since D6: a rejected promise from a
+    // store that is absent, still importing, or evicted mid-session. The message
+    // the learner reads is the store's, and it still has to reach the screen.
+    segment.mockRejectedValue(new Error('the dictionary is not ready — run pnpm data'));
 
     useReaderStore.getState().setText(BODY);
     await useReaderStore.getState().read();
@@ -290,10 +313,9 @@ describe('the reader store', () => {
   });
 
   it('read() does nothing for an empty body', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch');
     useReaderStore.getState().setText('   ');
     await useReaderStore.getState().read();
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(segment).not.toHaveBeenCalled();
     expect(useReaderStore.getState().view).toBe('compose');
   });
 
@@ -306,12 +328,7 @@ describe('the reader store', () => {
       updatedAt: 1,
       deletedAt: null,
     };
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify({ text: BODY, script: 'simp', tokens: TOKENS }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      }),
-    );
+    segment.mockResolvedValue({ text: BODY, script: 'simp', tokens: TOKENS });
 
     await useReaderStore.getState().open(row);
 

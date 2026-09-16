@@ -96,7 +96,7 @@ export function holes(count: number): string {
  * ≤16-character substring of every hanzi run, so a 2,100-hanzi passage produces
  * ~32,800 of them and `store.segment()` threw a raw `too many SQL variables`
  * where the JSON segmenter it replaces handled 20,000 characters — the limit
- * `app/api/dict/segment/route.ts` documents for the route D6 re-points at the
+ * the deleted segment route documented, for the reader D6 re-points at the
  * store.
  */
 export const MAX_BOUND_PARAMS = 900;

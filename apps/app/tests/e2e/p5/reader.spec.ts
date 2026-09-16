@@ -128,10 +128,22 @@ test.describe('/read', () => {
     await resetApp(page, { knownBand: 2, newPerDay: 0 });
     await readText(page, DEMO_PARAGRAPH);
 
-    // Count the segment requests from here on: the recolour must not cause one.
-    let segmentCalls = 0;
-    page.on('request', (request) => {
-      if (request.url().includes('/api/dict/segment')) segmentCalls += 1;
+    // Count the segmentations from here on: the recolour must not cause one.
+    // It used to be a request count; since `data.md` D6 segmentation is a call
+    // on the on-device store, so the store's own method is counted instead —
+    // which is strictly closer to the claim, because the old count would also
+    // have missed a re-segmentation served from the store's result cache.
+    await page.evaluate(() => {
+      const store = window.__tangram.dict as unknown as {
+        segment: (text: string, options?: unknown) => Promise<unknown>;
+      };
+      const original = store.segment.bind(store);
+      const counter = window as unknown as { __segmentCalls: number };
+      counter.__segmentCalls = 0;
+      store.segment = (text, options) => {
+        counter.__segmentCalls += 1;
+        return original(text, options);
+      };
     });
 
     const target = token(page, NEW_WORD);
@@ -142,7 +154,9 @@ test.describe('/read', () => {
     await expect(target).toHaveAttribute('data-state', 'known');
     await expect(target).toHaveClass(/token-known/);
     await expect(page.getByTestId('mark-known')).toHaveText('Marked known');
-    expect(segmentCalls).toBe(0);
+    expect(
+      await page.evaluate(() => (window as unknown as { __segmentCalls: number }).__segmentCalls),
+    ).toBe(0);
 
     const known = await page.evaluate(() => window.__tangram.repo.knownEntryIds());
     expect(known.some((id) => id.startsWith(`${NEW_WORD}|`) || id.includes(`|${NEW_WORD}[`))).toBe(
@@ -232,7 +246,7 @@ test.describe('/read', () => {
     await extend.click();
 
     // The panel is now looking at the concatenated span, resolved through
-    // `/api/dict/search` as an exact headword.
+    // `DictStore.search` as an exact headword.
     await expect(panel.getByTestId('entry-detail')).toBeVisible();
     await expect(panel.getByTestId('reading-pinyin').first()).toHaveText('mǎidōngxi');
     await expectExactBaseText(panel.getByTestId('lookup-panel').locator('h2'), '买东西');

@@ -165,7 +165,7 @@ export type PhraseScript = 'simp' | 'trad';
 
 /**
  * Render one validated phrase. Pure, and safe in the browser: the client calls
- * it with entries fetched from `/api/dict/entries`, which is what "cached
+ * it with entries from the dictionary store, which is what "cached
  * responses are re-resolved against the dictionary at render" means (§3.4).
  */
 export function renderPhrase(

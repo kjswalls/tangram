@@ -21,31 +21,35 @@
  */
 
 import { withDeadline } from '@/lib/ai/deadline';
-import { ground, type GroundedAskResponse } from '@/lib/ai/ground';
+import type { GroundedAskResponse } from '@/lib/ai/ground';
 import { ASK_PROMPT_VERSION } from '@/lib/ai/cache-key';
 import { selectProvider, askResponseSchema, ProviderError, type AskContext, type ProviderName } from '@/lib/ai/provider';
 import { retrievalEcho } from '@/lib/ai/fake';
-import { getDictIndex, getEntry, readingCount } from '@/lib/dict/index';
-import { dictErrorResponse } from '@/lib/dict/load';
-import { search, hasCjk } from '@/lib/dict/search';
-import { segment } from '@/lib/dict/segment';
+import {
+  RETRIEVED_CAP,
+  SEARCH_HEAD,
+  candidateEntries,
+  groundWithStore,
+  mergeRetrieved,
+  mergedSearch,
+} from '@/lib/ai/retrieve';
+import { hasCjk } from '@/lib/dict/rank';
+import { dictErrorResponse, serverDictStore } from '@/lib/server/dict';
+import type { DictStore } from '@/lib/dict/store';
 import type { Entry, EntryId, HskBand, LearnerProfile } from '@/lib/types';
 import { DEFAULT_MODEL } from '@/lib/ai/anthropic';
 import { requireAccess } from '@tangram/access';
 
-// The dictionary is read from disk per process; never prerender this at build time.
+// The dictionary is opened from disk per process; never prerender at build time.
 export const dynamic = 'force-dynamic';
 
-/** §3.4 caps the retrieved set at 40 entries. */
-export const RETRIEVED_CAP = 40;
 /**
- * How much of the cap the dictionary search may take before the proposed
- * phrases have had their turn. A flat "search first, then proposals" order lets
- * a broad query eat all 40 rows, and then the words the answer is actually
- * built from are missing — the demo sentence retrieves 50 groups of nothing in
- * particular and none of them are the three words it wants to say.
+ * The retrieval constants live in `lib/ai/retrieve.ts` now (docs/plans/data.md
+ * D6) and are re-exported rather than redeclared: two copies of a cap is how a
+ * cap drifts, and `tests/unit/ai/route.test.ts` reads them from here.
  */
-export const SEARCH_HEAD = 16;
+export { RETRIEVED_CAP, SEARCH_HEAD };
+
 /**
  * How long a provider may take. A cron is not waiting on this — a person is,
  * with "Thinking about …" on screen and no way out but retyping, so a hung
@@ -148,98 +152,23 @@ function parseBody(payload: unknown): AskRequestBody | string {
  * the dictionary already answered it. An English question or a whole sentence
  * does: nothing in the gloss index matches "how do I say I'm just browsing".
  */
-export function needsProposals(query: string): boolean {
+export async function needsProposals(store: DictStore, query: string): Promise<boolean> {
   if (!hasCjk(query)) return true;
-  return segment(query).tokens.filter((token) => token.kind === 'word').length >= 3;
-}
-
-/** Entries for a query, in search order, deduped by id. */
-function searchEntries(query: string, limit: number): Entry[] {
-  const out: Entry[] = [];
-  const seen = new Set<EntryId>();
-  for (const group of search(query, { limit }).groups) {
-    for (const entry of group.entries) {
-      if (seen.has(entry.id)) continue;
-      seen.add(entry.id);
-      out.push(entry);
-    }
-  }
-  return out;
+  const segmented = await store.segment(query);
+  return segmented.tokens.filter((token) => token.kind === 'word').length >= 3;
 }
 
 /**
- * The merged dictionary search. An English question of several words matches no
- * gloss as a whole (the index is an AND over tokens), so its words are also
- * searched one at a time — otherwise the retrieval echo has nothing to echo and
- * §3.4's "no query ever renders an empty panel" fails on the first real
- * sentence somebody types.
+ * `mergedSearch`, `candidateEntries` and `mergeRetrieved` used to live here, in
+ * a JSON-index-backed copy that `data.md` D3 ported to `lib/ai/retrieve.ts` over
+ * a `DictStore` and `tests/unit/ai/retrieve.test.ts` proved equal entry for
+ * entry. **D6 deletes the copy** — this route imports the port, and the equality
+ * test now reads the port against `tests/unit/ai/golden/retrieve.json`, frozen
+ * from these three functions on the commit before they went.
  *
- * Exported only so `tests/unit/ai/retrieve.test.ts` can compare it against
- * `lib/ai/retrieve.ts`'s store-backed port entry for entry (docs/plans/data.md
- * D3, criterion 9). `data.md` D6 deletes this copy along with the route.
+ * `RETRIEVED_CAP` and `SEARCH_HEAD` are re-exported above rather than redeclared:
+ * they are the port's constants now, and two copies of a cap is how a cap drifts.
  */
-export function mergedSearch(query: string): Entry[] {
-  const found = searchEntries(query, 20);
-  if (found.length > 0 || hasCjk(query)) return found;
-
-  const words = query
-    .toLowerCase()
-    .split(/[^a-z0-9'’-]+/i)
-    .filter((word) => word.length >= 3);
-  const out: Entry[] = [];
-  const seen = new Set<EntryId>();
-  for (const word of words.slice(0, 6)) {
-    for (const entry of searchEntries(word, 3)) {
-      if (seen.has(entry.id)) continue;
-      seen.add(entry.id);
-      out.push(entry);
-    }
-  }
-  return out;
-}
-
-/**
- * Every entry behind every token of a proposed phrase, in phrase order.
- *
- * Exported for the same reason as `mergedSearch` above, and deleted with it.
- */
-export function candidateEntries(candidates: readonly string[]): Entry[] {
-  const out: Entry[] = [];
-  const seen = new Set<EntryId>();
-  for (const candidate of candidates.slice(0, 8)) {
-    const text = candidate.trim().slice(0, 40);
-    if (!text) continue;
-    for (const token of segment(text).tokens) {
-      if (token.kind !== 'word') continue;
-      for (const id of token.entryIds) {
-        if (seen.has(id)) continue;
-        const entry = getEntry(id);
-        if (!entry) continue;
-        seen.add(id);
-        out.push(entry);
-      }
-    }
-  }
-  return out;
-}
-
-/** Search head, then the proposals, then the rest of the search, up to the cap. */
-export function mergeRetrieved(fromSearch: readonly Entry[], fromCandidates: readonly Entry[]): Entry[] {
-  const out: Entry[] = [];
-  const seen = new Set<EntryId>();
-  const take = (entries: readonly Entry[], limit: number): void => {
-    for (const entry of entries) {
-      if (out.length >= limit) return;
-      if (seen.has(entry.id)) continue;
-      seen.add(entry.id);
-      out.push(entry);
-    }
-  };
-  take(fromSearch, Math.min(SEARCH_HEAD, RETRIEVED_CAP));
-  take(fromCandidates, RETRIEVED_CAP);
-  take(fromSearch, RETRIEVED_CAP);
-  return out;
-}
 
 /**
  * The access gate (`@tangram/access`). A no-op unless `TANGRAM_ACCESS_SECRET`
@@ -287,13 +216,13 @@ export async function POST(request: Request): Promise<Response> {
 
   // Everything that touches the dictionary sits inside this try: a missing
   // data/ build is a 503 with the same body the other routes answer with.
-  let index: ReturnType<typeof getDictIndex>;
+  let store: DictStore;
   let retrieved: Entry[];
   try {
-    index = getDictIndex();
-    const fromSearch = mergedSearch(query);
+    store = await serverDictStore();
+    const fromSearch = await mergedSearch(store, query);
     let candidates: string[] = [];
-    if (needsProposals(query)) {
+    if (await needsProposals(store, query)) {
       try {
         candidates = (
           await withDeadline(
@@ -308,7 +237,7 @@ export async function POST(request: Request): Promise<Response> {
         if (process.env.NODE_ENV !== 'production') console.warn('proposePhrases failed', error);
       }
     }
-    retrieved = mergeRetrieved(fromSearch, candidateEntries(candidates));
+    retrieved = mergeRetrieved(fromSearch, await candidateEntries(store, candidates));
   } catch (error) {
     const missing = dictErrorResponse(error);
     if (missing) return missing;
@@ -347,13 +276,10 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
-  const groundContext = {
-    retrieved,
-    segment: (text: string) => segment(text).tokens,
-    entry: (id: EntryId) => getEntry(id),
-    readings: readingCount,
-  };
-  let grounded = ground(parsed.data, groundContext);
+  // `groundWithStore` is the synchronous/asynchronous seam D3 built: `ground()`
+  // itself is untouched and still takes a synchronous `GroundContext`, and the
+  // store answers what each round asked for and could not be told.
+  let grounded = await groundWithStore(parsed.data, store, retrieved);
   let cacheable = true;
 
   // A schema-valid answer can ground to nothing at all: writing the Chinese
@@ -367,7 +293,7 @@ export async function POST(request: Request): Promise<Response> {
     grounded.matches.length === 0 &&
     grounded.sayIt.length === 0
   ) {
-    grounded = ground(retrievalEcho(retrieved), groundContext);
+    grounded = await groundWithStore(retrievalEcho(retrieved), store, retrieved);
     cacheable = false;
   }
 
@@ -380,6 +306,8 @@ export async function POST(request: Request): Promise<Response> {
     for (const token of phrase.tokens) if (token.entryId) cited.add(token.entryId);
   }
 
+  const citedEntries = await store.entries([...cited]);
+
   const body: AskRouteResponse = {
     provider: provider.name,
     promptVersion: ASK_PROMPT_VERSION,
@@ -387,9 +315,9 @@ export async function POST(request: Request): Promise<Response> {
       ? { model: process.env.TANGRAM_MODEL?.trim() || DEFAULT_MODEL }
       : {}),
     query,
-    dictVersion: index.meta.version,
+    dictVersion: store.status.state === 'ready' ? store.status.version : '',
     response: grounded,
-    entries: [...cited].map((id) => getEntry(id)).filter((entry): entry is Entry => entry !== undefined),
+    entries: citedEntries,
     retrieved: retrieved.length,
     cacheable,
   };

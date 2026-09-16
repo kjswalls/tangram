@@ -3,8 +3,7 @@
  * dictionary. The grounding rules are claims about Chinese words, so they are
  * tested against the words, not against a fixture that could agree with a bug.
  */
-import { getDictIndex, getEntry, readingCount } from '@/lib/dict/index';
-import { segment } from '@/lib/dict/segment';
+import { getDictIndex, getEntry, readingCount, segment } from '../dict/json-oracle';
 import type { GroundContext } from '@/lib/ai/ground';
 import type { Entry } from '@/lib/types';
 

@@ -15,7 +15,7 @@
  * addition to the phase's Files list rather than smuggled in.
  *
  * **One batched read per passage**, through `EntrySource`, which chunks at the
- * 200-id limit `app/api/dict/entries/route.ts` enforces and memoises the
+ * 200-id batch the deleted entries route enforced, and memoises the
  * dictionary version. Only the **ranked** id of each word is asked for: ids are
  * frequency-ordered (§3.2) and the first one is the reading a learner sees on
  * the passage, which is the same rule the word sheet's "Mark known" already

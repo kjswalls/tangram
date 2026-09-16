@@ -1,13 +1,13 @@
 /**
  * Where the lists layer gets dictionary rows (PLAN.md §3.2, §4 P3).
  *
- * The dictionary lives on the server behind `/api/dict/*`; the lists, the queue
- * and the demo seed live in the browser next to IndexedDB. This interface is the
- * one seam between them, so every one of those can be unit-tested against a
- * handful of entries instead of a 35 MB file.
+ * The dictionary is a `DictStore` over the on-device SQLite artifact; the
+ * lists, the queue and the demo seed live beside it in IndexedDB. This interface
+ * is the one seam between them, so every one of those can be unit-tested against
+ * a handful of entries instead of the whole dictionary.
  */
 
-import { getDictStore } from '@/lib/dict/browser-store';
+import { openDictStore } from '@/lib/dict/browser-store';
 import { normalizePinyin } from '@/lib/dict/pinyin';
 import type { DictStore } from '@/lib/dict/store';
 import type { Entry, EntryId, HskBand } from '@/lib/types';
@@ -56,7 +56,14 @@ export interface EntrySource {
   dictVersion?(): string | undefined;
 }
 
-/** `/api/dict/entries` refuses more than 200 ids in one request. */
+/**
+ * How many ids go in one `DictStore.entries` call.
+ *
+ * It was the 200-id ceiling the deleted entries route enforced on a query
+ * string. `lib/dict/sqlite-store.ts` chunks its own `IN (…)` lists and rides
+ * them in one batch, so this is no longer a hard limit — it is kept because it
+ * bounds the array a Capacitor bridge has to serialise in one message, which is
+ * the cost that replaced the URL length. */
 const ID_CHUNK = 200;
 
 export const SEARCH_LIMIT = 20;
@@ -120,35 +127,50 @@ export function createHttpEntrySource(options: HttpEntrySourceOptions = {}): Ent
   // last answer is the current one.
   let version: string | undefined;
 
-  const store = () => options.store ?? getDictStore();
+  /**
+   * The store, open.
+   *
+   * `openDictStore()` rather than `getDictStore()` (docs/plans/data.md D6): the
+   * queue draw, the lists page and the demo seed are **not** behind
+   * `<DictGate>` — PLAN.md's rule is that the learner's own data keeps working
+   * without a dictionary — so nothing else here would ever have opened one, and
+   * `SqliteDictStore` refuses a query until it is open. An injected store is
+   * used as given and still opened, because `open()` is idempotent and a test
+   * fake implements it as a no-op.
+   */
+  const store = async (): Promise<DictStore> => {
+    const injected = options.store;
+    if (!injected) return openDictStore();
+    await injected.open();
+    return injected;
+  };
+
+  let latest: DictStore | undefined;
 
   const noteVersion = () => {
-    const status = store().status;
-    if (status.state === 'ready') version = status.version || version;
+    const status = latest?.status;
+    if (status?.state === 'ready') version = status.version || version;
+  };
+
+  const withStore = async <T,>(work: (store: DictStore) => Promise<T>): Promise<T> => {
+    const opened = await store();
+    latest = opened;
+    const result = await work(opened);
+    noteVersion();
+    return result;
   };
 
   const band: EntrySource['band'] = (value, page) => {
     if (page?.limit !== undefined || page?.offset !== undefined) {
-      return store()
-        .hskBand(value, page)
-        .then((entries) => {
-          noteVersion();
-          return entries;
-        });
+      return withStore((opened) => opened.hskBand(value, page));
     }
     const cached = bands.get(value);
     if (cached) return cached;
-    const pending = store()
-      .hskBand(value)
-      .then((entries) => {
-        noteVersion();
-        return entries;
-      })
-      .catch((error: unknown) => {
-        // A failed read must not poison the cache: the next visit should retry.
-        bands.delete(value);
-        throw error;
-      });
+    const pending = withStore((opened) => opened.hskBand(value)).catch((error: unknown) => {
+      // A failed read must not poison the cache: the next visit should retry.
+      bands.delete(value);
+      throw error;
+    });
     bands.set(value, pending);
     return pending;
   };
@@ -159,23 +181,24 @@ export function createHttpEntrySource(options: HttpEntrySourceOptions = {}): Ent
     dictVersion: () => version,
 
     async entries(ids) {
-      const out: Entry[] = [];
-      for (let i = 0; i < ids.length; i += ID_CHUNK) {
-        out.push(...(await store().entries(ids.slice(i, i + ID_CHUNK))));
-      }
-      noteVersion();
-      return out;
+      return withStore(async (opened) => {
+        const out: Entry[] = [];
+        for (let i = 0; i < ids.length; i += ID_CHUNK) {
+          out.push(...(await opened.entries(ids.slice(i, i + ID_CHUNK))));
+        }
+        return out;
+      });
     },
 
     /**
-     * `/api/dict/search` is P1's router and ranker — the same one `/lookup` uses —
+     * `DictStore.search` is P1's router and ranker — the same one `/lookup` uses —
      * so "add a word to this list" and the lookup box agree on what a query means.
-     * The HSK-band scan below stays as the fallback for the case the route cannot
-     * answer (no `data/` build, a 503): 11k words is every word a list is
+     * The HSK-band scan below stays as the fallback for the case the store cannot
+     * answer (no dictionary on device): 11k words is every word a list is
      * plausibly built from, and it is better than an empty box.
      */
     async search(query, limit = SEARCH_LIMIT) {
-      const viaRoute = await searchRoute(query, limit, store(), (seen) => {
+      const viaRoute = await searchRoute(query, limit, store, (seen) => {
         version = seen || version;
       });
       if (viaRoute) return viaRoute;
@@ -211,11 +234,13 @@ export function createHttpEntrySource(options: HttpEntrySourceOptions = {}): Ent
 async function searchRoute(
   query: string,
   limit: number,
-  store: DictStore,
+  store: () => Promise<DictStore>,
   noteVersion: (version: string) => void,
 ): Promise<Entry[] | null> {
   try {
-    const result = await store.search(query, { limit });
+    // A store that cannot be opened lands here too, which is the point: the
+    // caller falls back to scanning the bands rather than showing an empty box.
+    const result = await (await store()).search(query, { limit });
     if (result.dictVersion) noteVersion(result.dictVersion);
     // An empty answer is still an answer: the router looked and there is nothing
     // there, so do not pull 11k rows over the wire to confirm a typo.

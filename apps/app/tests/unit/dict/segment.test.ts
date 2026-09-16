@@ -31,8 +31,8 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { getDictIndex } from '@/lib/dict/index';
-import { planSegments, segment as jsonSegment } from '@/lib/dict/segment';
+import { getDictIndex, segment as jsonSegment } from './json-oracle';
+import { planSegments } from '@/lib/dict/segment';
 import { nodeRunner } from '@/lib/dict/runners/node';
 import { SqliteDictStore, detectScriptFrom } from '@/lib/dict/sqlite-store';
 import { dictArtifactPath, requireDictData } from './data-required';

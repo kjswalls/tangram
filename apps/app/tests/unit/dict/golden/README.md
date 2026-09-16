@@ -48,7 +48,9 @@ JSON implementation returned may be missing from the store's answer) and a diges
 
 ## Staleness is a loud failure, on purpose
 
-`provenance.dictJsonSha256` is the sha256 of the `data/dict.json` these were cut from. `pnpm data`
+`provenance.dictEntriesSha256` is a sha256 over `data/dict.json`'s **entries** — not over the
+file, which carries a `meta.builtAt` timestamp and would therefore report every rebuild as a data
+change. `pnpm data`
 downloads the HSK list, the jieba frequencies and Make Me a Hanzi from `master` branches, so the data
 *can* move under a fixture (CC-CEDICT itself is pinned, at `cedict-json@1.3.20251213`). When it does,
 the suites say so by name and stop — they do not skip. Re-blessing is a human judgement now that the
@@ -289,7 +291,7 @@ function provenance(): Record<string, unknown> {
   return {
     dictVersion: dict.meta.version,
     entryCount: dict.entries.length,
-    dictJsonSha256: sha256(readFileSync(file, 'utf8')),
+    dictEntriesSha256: sha256(JSON.stringify(dict.entries)),
     frozenBy: 'scripts/freeze-golden.ts (data.md D6; see README.md)',
   };
 }

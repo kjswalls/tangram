@@ -2,7 +2,7 @@
   "provenance": {
     "dictVersion": "1.3.20251213",
     "entryCount": 124188,
-    "dictJsonSha256": "fa83dd3b12acf823ec2773ca6b4a6413d3e6b5ea0a2de2ea5940bbbd026eb5fe",
+    "dictEntriesSha256": "3c05a36b660af756fa8cbd68da342374310805f7b7b489e71f3046e58e8c3989",
     "frozenBy": "scripts/freeze-golden.ts (data.md D6; see README.md)"
   },
   "mergedSearch": {

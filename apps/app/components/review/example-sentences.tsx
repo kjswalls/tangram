@@ -13,7 +13,7 @@
  *    the whole time.
  *  - **It renders nothing the dictionary did not supply.** Hanzi and pinyin
  *    come from entries the route returned (or, on a cache hit, from
- *    `/api/dict/entries`) through `renderPhrase` — the ask panel's renderer,
+ *    the dictionary store) through `renderPhrase` — the ask panel's renderer,
  *    not a second copy of it.
  *  - **The filtering already happened — and a cached row is checked again.**
  *    Every sentence was filtered server-side against the learner's known set
@@ -44,7 +44,7 @@ import {
 import { entryLookup, renderPhrase, type PhraseScript } from '@/lib/ai/ground';
 import { cn } from '@/lib/cn';
 import { getRepository } from '@/lib/db/get-db';
-import { getDictStore } from '@/lib/dict/browser-store';
+import { openDictStore } from '@/lib/dict/browser-store';
 import { buildLearnerProfile } from '@/lib/srs/profile';
 
 /**
@@ -58,7 +58,11 @@ import { buildLearnerProfile } from '@/lib/srs/profile';
  * reaches the screen depends on it. Recorded in HANDOFF.md.
  */
 async function resolveEntries(ids: readonly string[]) {
-  const store = getDictStore();
+  // `openDictStore`, not `getDictStore` (docs/plans/data.md D6): the card back
+  // is not behind `<DictGate>` — Practice is the learner's own data and must
+  // work without a dictionary — so this is one of the two places that has to
+  // open it itself. Idempotent, and shared with every other caller.
+  const store = await openDictStore();
   const entries = await store.entries(ids);
   const version = store.status.state === 'ready' ? store.status.version : '';
   return { meta: { version }, entries };

@@ -30,8 +30,7 @@ import {
   encodeRowids,
   splitSchema,
 } from '@/lib/dict/artifact';
-import { dataDir } from '@/lib/dict/load';
-import { workspaceRoot } from '@/lib/server/roots';
+import { dataDir, workspaceRoot } from '@/lib/server/roots';
 import { dictArtifactPath, requireDictArtifact } from './data-required';
 
 const manifest = requireDictArtifact();

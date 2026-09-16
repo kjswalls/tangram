@@ -15,8 +15,7 @@ import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { dataDir } from '@/lib/dict/load';
-import { appRoot, workspaceRoot } from '@/lib/server/roots';
+import { appRoot, dataDir, workspaceRoot } from '@/lib/server/roots';
 
 const APP = appRoot(import.meta.dirname);
 const WORKSPACE = workspaceRoot(import.meta.dirname);

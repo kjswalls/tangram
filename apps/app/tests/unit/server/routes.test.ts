@@ -92,19 +92,15 @@ describe('the route inventory', () => {
   const routes = discoverApiRoutes(ROOT);
 
   it('finds every API route, and each one exports a handler', () => {
-    expect(routes.length).toBeGreaterThanOrEqual(7);
-    expect(routes.map((route) => route.path)).toEqual(
-      expect.arrayContaining([
-        '/api/ask',
-        '/api/dict/decomp',
-        '/api/dict/entries',
-        '/api/dict/hsk',
-        '/api/dict/search',
-        '/api/dict/segment',
-        '/api/examples',
-        '/api/recall',
-      ]),
-    );
+    // Exact, not `arrayContaining`: `data.md` D6 deleted the five dictionary
+    // routes and the three that are left are `backend.md` B1's to move, so a
+    // fourth appearing here is something nobody decided. It was a floor and a
+    // containment check while the set was shrinking; it is a set now.
+    expect(routes.map((route) => route.path).sort()).toEqual([
+      '/api/ask',
+      '/api/examples',
+      '/api/recall',
+    ]);
     for (const route of routes) {
       expect(route.methods, route.relativeFile).not.toHaveLength(0);
     }
@@ -115,9 +111,7 @@ describe('the route inventory', () => {
     // Every route in this app reads it except none — stated as a set rather
     // than a count so that adding a route that does *not* read it is also a
     // deliberate edit here.
-    expect(reading).toEqual(
-      expect.arrayContaining(['/api/ask', '/api/dict/search', '/api/examples', '/api/recall']),
-    );
+    expect(reading.sort()).toEqual(['/api/ask', '/api/examples', '/api/recall']);
   });
 });
 
@@ -217,11 +211,11 @@ describe('tracing coverage', () => {
   });
 
   it('matches keys the way Next does, `**` included', () => {
-    expect(tracingKeyMatches('/api/dict/**', '/api/dict/search')).toBe(true);
+    expect(tracingKeyMatches('/api/examples/**', '/api/examples/anything')).toBe(true);
     // `**` also matches nothing, which is why `/api/ask/**` covers `/api/ask`.
     expect(tracingKeyMatches('/api/ask/**', '/api/ask')).toBe(true);
     expect(tracingKeyMatches('/api/ask/**', '/api/asking')).toBe(false);
-    expect(tracingKeyMatches('/api/dict/**', '/api/ask')).toBe(false);
+    expect(tracingKeyMatches('/api/examples/**', '/api/ask')).toBe(false);
     expect(tracingKeyMatches('/api/recall', '/api/recall')).toBe(true);
   });
 });
@@ -279,10 +273,13 @@ describe('the host config (apps/app/vercel.json)', () => {
   });
 
   it('rule 1 — and does NOT swallow /api, the assets, or a real file', () => {
-    // `dist/` has no server. A catch-all rewrite answers `/api/dict/hsk?band=1`
-    // with 200 `index.html`, so the missing-data probe reads healthy while
-    // every dictionary call fails to parse. Found by W1's review, fixed here.
-    expect(rewriteFor(HOST, { pathname: '/api/dict/hsk' })).toBeNull();
+    // `dist/` has no server. A catch-all rewrite answers an `/api/**` path with
+    // 200 `index.html`, so a probe reads healthy while every call fails to
+    // parse. Found by W1's review against the dictionary routes `data.md` D6
+    // has since deleted; the rule is about `/api/**`, so it is asserted against
+    // a path under it that does exist and one that does not.
+    expect(rewriteFor(HOST, { pathname: '/api/ask' })).toBeNull();
+    expect(rewriteFor(HOST, { pathname: '/api/nothing/here' })).toBeNull();
     // A deleted entry chunk must 404, not answer the document that references
     // it — otherwise the one failure the smoke exists to catch is invisible.
     expect(rewriteFor(HOST, { pathname: '/assets/index-abc123.js' })).toBeNull();

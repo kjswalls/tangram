@@ -127,14 +127,10 @@ test.describe('the dictionary gate, driven by a store', () => {
  */
 test.describe('with the dictionary down', () => {
   test.beforeEach(async ({ page }) => {
-    // Every dictionary route refuses, so the store lands in `failed`.
-    await page.route('**/api/dict/**', (route) =>
-      route.fulfill({
-        status: 503,
-        contentType: 'application/json',
-        body: JSON.stringify({ error: 'dict-data-missing', hint: 'run pnpm data' }),
-      }),
-    );
+    // The manifest refuses, so the store lands in `failed`. Since `data.md` D6
+    // this is the whole of "the dictionary is down": there is no route left to
+    // refuse, and a manifest that will not load is a store that cannot open.
+    await page.route('**/dict-manifest.json', (route) => route.fulfill({ status: 503, body: '' }));
   });
 
   test('a review still runs start to finish', async ({ page }) => {

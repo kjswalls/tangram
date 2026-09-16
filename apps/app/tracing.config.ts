@@ -7,12 +7,15 @@
  * that type import could not resolve and both `tsc` and vitest's module graph
  * would fail on it.
  *
- * The rule it encodes has not changed and is still live, because
- * `/api/dict/*`, `/api/ask`, `/api/examples` and `/api/recall` still read
- * `data/` from disk in the dev and preview adapter, and `docs/deploy.md`'s
- * deployment still traces them. It exists because `/api/examples` and
- * `/api/recall` once shipped without their entries and only a human opening the
- * page noticed.
+ * The rule it encodes has not changed and is still live, because `/api/ask`,
+ * `/api/examples` and `/api/recall` still read `data/` from disk in the dev and
+ * preview adapter, and `docs/deploy.md`'s deployment still traces them. It
+ * exists because `/api/examples` and `/api/recall` once shipped without their
+ * entries and only a human opening the page noticed.
+ *
+ * **`data.md` D6 removed the fourth key**, along with the five dictionary routes
+ * it covered. The three that are left read the SQLite artifact out of the same
+ * `data/` directory rather than the JSON, so the globs are unchanged.
  *
  * **Delete this file and its test in the same commit as the thing they
  * guarded** — that is, when `data.md` D6 deletes the dictionary routes and
@@ -27,7 +30,6 @@
  * bundle with the dictionary and no marker resolves to the wrong directory.
  */
 export const OUTPUT_FILE_TRACING_INCLUDES: Readonly<Record<string, readonly string[]>> = {
-  '/api/dict/**': ['../../data/**', '../../pnpm-workspace.yaml'],
   '/api/ask/**': ['../../data/**', '../../pnpm-workspace.yaml'],
   '/api/examples/**': ['../../data/**', '../../pnpm-workspace.yaml'],
   '/api/recall/**': ['../../data/**', '../../pnpm-workspace.yaml'],

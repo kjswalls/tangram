@@ -1,24 +1,131 @@
 /**
- * Dictionary indexes (PLAN.md §3.2), built once per process from the loaded
- * `data/dict.json` and memoised beside it on `globalThis`.
+ * `data/dict.json`, parsed, and the seven indexes over it — **build side only**
+ * (docs/plans/data.md D6).
  *
- * Everything here is lookup plumbing only — routing a query to the right index and
- * ranking the results is `lib/dict/search.ts` (Phase 1). The indexes hold entry ids
- * pointing into the single parsed copy of the dictionary, never copies of entries.
+ * This is `lib/dict/load.ts` and `lib/dict/index.ts`, moved. D6 says both are
+ * "deleted with the routes", and out of the application they are: nothing the
+ * app ships parses 35 MB of JSON any more, `DictStore` over the SQLite artifact
+ * answers every lookup on every platform, and D6's acceptance criterion 2 — no
+ * `node:fs` outside `scripts/`, `tests/`, `lib/server/` and
+ * `lib/dict/runners/node.ts` — holds.
+ *
+ * Deleting the *code* would have broken `pnpm data`. `scripts/build-data.ts`
+ * builds the artifact **out of these indexes**: it walks `getDictIndex()` to
+ * write `entries`, `words`, `gloss_fts`, `chars` and `char_words`, and it calls
+ * `headwordFreq` and `headwordTotals` rather than re-implementing them, because
+ * SQL `MAX(freq)` and replaying `compareEntries` disagree wherever a jieba
+ * frequency is 0 or absent (data.md §6). `scripts/verify-data.ts` then proves
+ * the artifact against the same parse. So the JSON dictionary is not dead — it
+ * is the **input to the build**, which is exactly where it belonged all along,
+ * and D6's real content is that it is no longer *also* a runtime.
+ *
+ * Its third consumer is `tests/unit/dict/json-oracle.ts`, which re-exports it so
+ * the differential suites D2 and D3 wrote keep a live oracle instead of a
+ * golden file. Read that module's header for what that does and does not prove.
+ *
+ * Nothing under `apps/app/lib/**` may import this file, and nothing does.
  */
-import { dictCache, getDict } from './load';
-import { compareEntries, glossTokens, stemToken } from './rank';
-import { hasUnknownReading, normalizePinyin, readingKeys } from './pinyin';
-import type { DictEntry, DictMeta, EntryId, HskBand } from './types';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+import { MAX_WORD_CHARS } from '../apps/app/lib/dict/query/segment';
+import { compareEntries, glossTokens, hasCjk, stemToken } from '../apps/app/lib/dict/rank';
+import { hasUnknownReading, normalizePinyin, readingKeys } from '../apps/app/lib/dict/pinyin';
+import { dataDir } from '../apps/app/lib/server/roots';
+import {
+  attachIds,
+  planSegments,
+  type SegmentResult,
+  type SegmentScript,
+  type SegmentStats,
+} from '../apps/app/lib/dict/segment';
+import type {
+  DecompFile,
+  DictEntry,
+  DictFile,
+  DictMeta,
+  EntryId,
+  HskBand,
+} from '../apps/app/lib/dict/types';
+
+export { glossTokens, parseIdList, stemToken } from '../apps/app/lib/dict/rank';
+
+// ---------------------------------------------------------------------------
+// The file (was lib/dict/load.ts)
+// ---------------------------------------------------------------------------
+
+export class DictDataMissingError extends Error {
+  override readonly name = 'DictDataMissingError';
+  readonly path: string;
+
+  constructor(path: string, options?: { cause?: unknown }) {
+    super(`dictionary data not found at ${path} — run pnpm data`, options);
+    this.path = path;
+  }
+}
+
+interface DictCache {
+  dict?: DictFile;
+  decomp?: DecompFile;
+  /** Built by lib/dict/index.ts; kept here so both survive HMR together. */
+  index?: unknown;
+}
+
+const CACHE_KEY = Symbol.for('tangram.dict.cache');
+
+export function dictCache(): DictCache {
+  const holder = globalThis as typeof globalThis & { [CACHE_KEY]?: DictCache };
+  return (holder[CACHE_KEY] ??= {});
+}
+
+function readJson<T>(filename: string): T {
+  const path = resolve(dataDir(), filename);
+  let raw: string;
+  try {
+    raw = readFileSync(path, 'utf8');
+  } catch (cause) {
+    throw new DictDataMissingError(path, { cause });
+  }
+  try {
+    return JSON.parse(raw) as T;
+  } catch (cause) {
+    // A truncated or half-written file is missing data as far as callers care.
+    throw new DictDataMissingError(path, { cause });
+  }
+}
+
+/** The parsed `data/dict.json`. Throws `DictDataMissingError` when it is not built. */
+export function getDict(): DictFile {
+  const cache = dictCache();
+  if (!cache.dict) {
+    const file = readJson<DictFile>('dict.json');
+    if (!Array.isArray(file.entries) || file.entries.length === 0) {
+      throw new DictDataMissingError(resolve(dataDir(), 'dict.json'));
+    }
+    cache.dict = file;
+  }
+  return cache.dict;
+}
 
 /**
- * `stemToken`, `glossTokens` and `parseIdList` are `lib/dict/rank.ts`'s now —
- * they are pure, the SQLite builder and both stores need them, and nothing pure
- * should sit behind a 35 MB `node:fs` loader. Re-exported so every existing
- * importer and `tests/unit/dict/index.test.ts` are unaffected; they leave with
- * this module in D6.
+ * The parsed `data/decomp.json`. Separate from the dictionary on purpose: it is
+ * LGPL and must never be merged into a card snapshot.
  */
-export { glossTokens, parseIdList, stemToken } from './rank';
+export function getDecomp(): DecompFile {
+  const cache = dictCache();
+  cache.decomp ??= readJson<DecompFile>('decomp.json');
+  return cache.decomp;
+}
+
+/** Drop the memoised copies so a caller can change `TANGRAM_DATA_DIR`. */
+export function resetDictCache(): void {
+  const holder = globalThis as typeof globalThis & { [CACHE_KEY]?: DictCache };
+  delete holder[CACHE_KEY];
+}
+
+// ---------------------------------------------------------------------------
+// The indexes (was lib/dict/index.ts)
+// ---------------------------------------------------------------------------
 
 /** Parallel arrays sorted by `keys`, so a prefix is one binary search plus a walk. */
 export interface SortedIndex {
@@ -324,4 +431,125 @@ export function prefixIds(index: SortedIndex, prefix: string, limit = 200): Entr
 /** Ids whose glosses contain `word` (stemmed the same way the index was built). */
 export function glossIds(word: string): EntryId[] {
   return getDictIndex().byGloss.get(stemToken(word.toLowerCase())) ?? [];
+}
+
+/** `SegmentStats` per script. Keyed off the index object, so `resetDictCache()` drops it too. */
+interface SegmentIndex {
+  simp: SegmentStats;
+  trad: SegmentStats;
+}
+
+const STATS = new WeakMap<DictIndex, SegmentIndex>();
+
+/**
+ * The frequency the DP scores a headword at, and the value `words.freq` holds in
+ * the artifact. Exported because `scripts/build-data.ts` and
+ * `scripts/verify-data.ts` must *call* it rather than re-implement it: SQL
+ * `MAX(freq)` and replaying `compareEntries` give a different answer wherever a
+ * jieba frequency is 0 or absent, and the symptom is a sentence nobody wrote a
+ * segmentation case for (data.md §6).
+ */
+export function headwordFreq(index: DictIndex, ids: readonly EntryId[]): number {
+  // Ids are stored frequency-descending, so the first one carries the word's freq.
+  const first = ids.length > 0 ? index.entries.get(ids[0]) : undefined;
+  return first?.freq ?? 1;
+}
+
+/**
+ * The two numbers the DP needs about a script, before the log is taken:
+ * the summed head frequency of every headword, and the longest headword the
+ * scan will try.
+ *
+ * Exported for the same reason `headwordFreq` is. `scripts/build-data.ts`
+ * writes both into `meta` and `scripts/verify-data.ts` checks them, and D2
+ * replaces this function with a `meta` read — so all three have to agree about
+ * `maxLen`'s quirk (a headword longer than `MAX_WORD_CHARS` does not raise it)
+ * and about summing `headwordFreq` rather than raw `freq`. Two re-implementations
+ * of a nine-line loop is how the segmenter's floor quietly shifts.
+ */
+export function headwordTotals(
+  index: DictIndex,
+  script: SegmentScript,
+): { total: number; maxLen: number } {
+  const map = script === 'simp' ? index.bySimp : index.byTrad;
+  let total = 0;
+  let maxLen = 1;
+  for (const [word, ids] of map) {
+    total += headwordFreq(index, ids);
+    const length = [...word].length;
+    if (length > maxLen && length <= MAX_WORD_CHARS) maxLen = length;
+  }
+  return { total, maxLen };
+}
+
+function statsFor(index: DictIndex, script: SegmentScript): SegmentStats {
+  const { total, maxLen } = headwordTotals(index, script);
+  return { logTotal: Math.log(total || 1), maxLen };
+}
+
+function segmentIndex(index: DictIndex): SegmentIndex {
+  let cached = STATS.get(index);
+  if (!cached) {
+    cached = { simp: statsFor(index, 'simp'), trad: statsFor(index, 'trad') };
+    STATS.set(index, cached);
+  }
+  return cached;
+}
+
+/**
+ * Which script the text is written in. A character counts as evidence only when
+ * the two scripts disagree about it — 我 and 的 are the same in both and say
+ * nothing, 學 and 学 each say a great deal. Ties go to simplified, the app default.
+ */
+export function detectScript(index: DictIndex, text: string): SegmentScript {
+  let simp = 0;
+  let trad = 0;
+  for (const char of text) {
+    if (!hasCjk(char)) continue;
+    for (const id of index.bySimp.get(char) ?? []) {
+      const entry = index.entries.get(id) as DictEntry;
+      if (entry.trad !== char) {
+        simp += 1;
+        break;
+      }
+    }
+    for (const id of index.byTrad.get(char) ?? []) {
+      const entry = index.entries.get(id) as DictEntry;
+      if (entry.simp !== char) {
+        trad += 1;
+        break;
+      }
+    }
+  }
+  return trad > simp ? 'trad' : 'simp';
+}
+
+
+// ---------------------------------------------------------------------------
+// Segmentation against the JSON index (was lib/dict/segment.ts)
+// ---------------------------------------------------------------------------
+
+/**
+ * Segment a string against the JSON index.
+ *
+ * It drives the **same** DP the store does — `planSegments` and `attachIds` are
+ * `lib/dict/segment.ts`'s and are shared — so the two cannot disagree about the
+ * cutting, only about which candidates they were given. That is what made it a
+ * useful differential oracle, and it is why it moved here rather than going: the
+ * 20,000-character passage case in `tests/unit/dict/gloss.test.ts` still reads
+ * it, through `json-oracle.ts`.
+ */
+export function segment(text: string, options: { script?: SegmentScript } = {}): SegmentResult {
+  const index = getDictIndex();
+  const script = options.script ?? detectScript(index, text);
+  const stats = segmentIndex(index)[script];
+  const primary = script === 'simp' ? index.bySimp : index.byTrad;
+  const secondary = script === 'simp' ? index.byTrad : index.bySimp;
+  const lookup = (word: string): EntryId[] | undefined => primary.get(word) ?? secondary.get(word);
+  const freqOf = (word: string): number | undefined => {
+    const ids = lookup(word);
+    return ids ? headwordFreq(index, ids) : undefined;
+  };
+  const plan = planSegments(text, { script, stats, freqOf });
+  return attachIds(plan, (word) => lookup(word) ?? []);
 }

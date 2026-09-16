@@ -21,7 +21,7 @@ import type {
   ParsedGradeRecall,
 } from '@/lib/ai/provider';
 import { EXAMPLES_PROMPT_VERSION } from '@/lib/ai/cache-key';
-import { resetDictCache } from '@/lib/dict/load';
+import { closeServerDictStore, serverDictStore } from '@/lib/server/dict';
 import type { Entry, LearnerProfile } from '@/lib/types';
 import { requireDictData } from '../dict/data-required';
 import { entriesFor, entryFor, readingOf } from './helpers';
@@ -295,36 +295,41 @@ describe('a provider that breaks the rules', () => {
 });
 
 describe('the support pool', () => {
-  it('is frequency-ordered, excludes the target, and is bounded', () => {
+  // `supportEntries` takes the store now and is asynchronous with it
+  // (docs/plans/data.md D6); every expected value below is unchanged.
+  const pool = async (known: Parameters<typeof supportEntries>[1], exclude: string) =>
+    supportEntries(await serverDictStore(), known, exclude);
+
+  it('is frequency-ordered, excludes the target, and is bounded', async () => {
     const entry = entryFor('我');
-    const support = supportEntries({ ids: KNOWN_IDS }, entry.id);
+    const support = await pool({ ids: KNOWN_IDS }, entry.id);
     expect(support.some((row) => row.id === entry.id)).toBe(false);
     const ranks = support.map((row) => row.freqRank ?? Number.MAX_SAFE_INTEGER);
     expect([...ranks].sort((a, b) => a - b)).toEqual(ranks);
     expect(SUPPORT_CAP).toBeGreaterThan(0);
   });
 
-  it('never turns a known headword into every reading of it', () => {
+  it('never turns a known headword into every reading of it', async () => {
     const kan = readingOf('看', 'kan4');
     const kanOther = readingOf('看', 'kan1');
-    const ids = supportEntries({ ids: [kan.id] }, '').map((row) => row.id);
+    const ids = (await pool({ ids: [kan.id] }, '')).map((row) => row.id);
     expect(ids).toEqual([kan.id]);
     expect(ids).not.toContain(kanOther.id);
   });
 
-  it('takes a headword only when it has one reading, for a caller with no ids', () => {
+  it('takes a headword only when it has one reading, for a caller with no ids', async () => {
     // The fallback is deliberately lossy: "the learner knows 看" does not say
     // which 看, and guessing is what put an unmet reading on a card back.
-    const ambiguous = supportEntries({ headwords: ['看'] }, '');
+    const ambiguous = await pool({ headwords: ['看'] }, '');
     expect(ambiguous).toEqual([]);
 
-    const unambiguous = supportEntries({ headwords: ['学习'] }, '');
+    const unambiguous = await pool({ headwords: ['学习'] }, '');
     expect(unambiguous.map((row) => row.simp)).toEqual(['学习']);
   });
 
-  it('expands a band per entry, and lets a card outrank it', () => {
+  it('expands a band per entry, and lets a card outrank it', async () => {
     const wo = entryFor('我');
-    const banded = supportEntries({ knownBand: 1 }, '');
+    const banded = await pool({ knownBand: 1 }, '');
     expect(banded.length).toBeGreaterThan(50);
     for (const row of banded) expect(row.hskBand).toBe(1);
     expect(banded.some((row) => row.id === wo.id)).toBe(true);
@@ -333,7 +338,7 @@ describe('the support pool', () => {
     // characters are.
     expect(banded.some((row) => row.id === readingOf('看', 'kan1').id)).toBe(false);
 
-    const excluded = supportEntries({ knownBand: 1, excludeIds: [wo.id] }, '');
+    const excluded = await pool({ knownBand: 1, excludeIds: [wo.id] }, '');
     expect(excluded.some((row) => row.id === wo.id)).toBe(false);
   });
 });
@@ -341,15 +346,18 @@ describe('the support pool', () => {
 describe('when data/ has not been built', () => {
   const previous = process.env.TANGRAM_DATA_DIR;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     process.env.TANGRAM_DATA_DIR = mkdtempSync(join(tmpdir(), 'tangram-examples-nodata-'));
-    resetDictCache();
+    // The route memoises its connection, so the cases above have already opened
+    // one; without this the 503 case would pass through a live dictionary and
+    // prove nothing (docs/plans/data.md D6).
+    await closeServerDictStore();
   });
 
-  afterAll(() => {
+  afterAll(async () => {
     if (previous === undefined) delete process.env.TANGRAM_DATA_DIR;
     else process.env.TANGRAM_DATA_DIR = previous;
-    resetDictCache();
+    await closeServerDictStore();
   });
 
   it('answers 503 with the command that fixes it, like the dictionary routes', async () => {

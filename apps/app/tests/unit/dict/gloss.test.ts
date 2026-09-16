@@ -21,14 +21,23 @@
  * gloss**, so a list there can carry the same id several times, while an FTS5
  * index carries a rowid once per term. For the nine tokens whose lists exceed the
  * 5,000 cap, the JSON slice spends places on duplicates and the FTS one does not.
+ *
+ * **The JSON side is `golden/search.json` since `data.md` D6.** The router and
+ * the ranker it compared against are deleted; what they answered for this file's
+ * 200-query corpus, its six routing cases and its two paging walks was frozen on
+ * the commit before. `golden.test.ts` is what fails, by itself and by name, when
+ * the data moves under those fixtures. The segmentation oracle is still **live**
+ * — `segment()` survives at `scripts/dict-json.ts` because `pnpm data` needs the
+ * JSON index to build the artifact — so the long-passage case asserts against
+ * both it and the frozen digest.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { getDict } from '@/lib/dict/load';
+import { getDict, segment as jsonSegment } from './json-oracle';
 import { glossTier, glossTokens, lemmas } from '@/lib/dict/rank';
 import { nodeRunner } from '@/lib/dict/runners/node';
-import { search as jsonSearch, type SearchGroup, type SearchResult } from '@/lib/dict/search';
-import { segment as jsonSegment } from '@/lib/dict/segment';
+import type { SearchGroup, SearchResult } from '@/lib/dict/search';
+import { goldenSearch, sha256 } from './golden';
 import { SqliteDictStore } from '@/lib/dict/sqlite-store';
 import { buildMatch, quoteToken } from '@/lib/dict/query/gloss';
 import type { SqlQuery, SqlRunner } from '@/lib/dict/sql';
@@ -221,8 +230,14 @@ describe('the fuzz corpus never reaches SQLite as a syntax error', () => {
  * Two hundred English queries, taken from the dictionary's own gloss tokens in
  * rowid order so the corpus is deterministic and is not a list of words somebody
  * thought of.
+ *
+ * Read back from the fixture rather than recomputed, so a query and its frozen
+ * answer can never be misaligned — and then recomputed anyway and compared, so
+ * that a dictionary which has moved says so here instead of looking like 180
+ * lost groups. `golden.test.ts` carries the same alarm against the file's sha.
  */
 function corpus(): string[] {
+  const frozen = goldenSearch.corpus;
   const out: string[] = [];
   const seen = new Set<string>();
   for (const entry of getDict().entries) {
@@ -232,11 +247,18 @@ function corpus(): string[] {
         if (token.length < 3 || seen.has(token)) continue;
         seen.add(token);
         out.push(token);
-        if (out.length >= 180) return [...out, ...PHRASES];
+        if (out.length >= 180) {
+          expect(
+            [...out, ...PHRASES],
+            'the gloss corpus no longer derives from this dictionary — see golden/README.md',
+          ).toEqual(frozen);
+          return frozen;
+        }
       }
     }
   }
-  return [...out, ...PHRASES];
+  expect([...out, ...PHRASES]).toEqual(frozen);
+  return frozen;
 }
 
 /** Multi-word queries, which is where the intersection change shows. */
@@ -262,7 +284,7 @@ describe('the 200-query differential corpus', () => {
         // pushes groups off the end of the page, which looks like a loss and is
         // not one.
         const mine = new Set(keysOf(await store.search(query, WHOLE), 'english'));
-        const theirs = new Set(keysOf(jsonSearch(query, WHOLE), 'english'));
+        const theirs = new Set(goldenSearch.gloss[query]);
         const lost = [...theirs].filter((key) => !mine.has(key));
         if (lost.length === 0 && mine.size === theirs.size) identical.push(query);
         else if (lost.length === 0) wider.push(query);
@@ -290,7 +312,7 @@ describe('the 200-query differential corpus', () => {
       for (const query of [...wider].slice(0, 8)) {
         const queryWords = lemmas(query);
         const mine = sectionGroups(await store.search(query, WHOLE), 'english');
-        const theirs = new Set(keysOf(jsonSearch(query, WHOLE), 'english'));
+        const theirs = new Set(goldenSearch.gloss[query]);
         for (const group of mine) {
           if (theirs.has(group.key)) continue;
           const tier = Math.min(
@@ -317,12 +339,14 @@ describe('the 200-query differential corpus', () => {
 
   it.each(ROUTING)('%s leads with the %s section', async (query, leads) => {
     const mine = await store.search(query, { limit: 50 });
-    const theirs = jsonSearch(query, { limit: 50 });
+    const frozen = goldenSearch.routing[query];
+    expect(frozen, `${query} has no frozen routing in golden/search.json`).toBeDefined();
+    // Both directions: the section the plan names, and the whole section order
+    // the JSON router produced. The first is the readable claim; the second is
+    // what catches a section quietly swapping places.
     expect(mine.sections[0].source).toBe(leads);
-    expect(theirs.sections[0].source).toBe(leads);
-    expect(mine.sections.map((part) => part.source)).toEqual(
-      theirs.sections.map((part) => part.source),
-    );
+    expect(frozen[0]).toBe(leads);
+    expect(mine.sections.map((part) => part.source)).toEqual(frozen);
   });
 
   it('routes a romanised syllable to pinyin and a real gloss word to English', async () => {
@@ -379,25 +403,24 @@ describe('paging a broad query to the end', () => {
     ['to', true],
   ] as const)('%s', async (query, containment) => {
     const mine = await pages(query, (q, options) => store.search(q, options));
-    const theirs = await pages(query, async (q, options) => jsonSearch(q, options));
+    const theirs = goldenSearch.paging[query];
+    expect(theirs, `${query} has no frozen paging walk in golden/search.json`).toBeDefined();
 
     process.stdout.write(
       `\npaging "${query}": store ${mine.pages} pages / ${mine.keys.length} groups / total ${mine.totals[0]}` +
-        `; json ${theirs.pages} pages / ${theirs.keys.length} groups / total ${theirs.totals[0]}\n`,
+        `; json ${theirs.pages} pages / ${theirs.keys.length} groups / total ${theirs.total}\n`,
     );
 
-    // `total` is constant across the walk on both sides — it is the count before
-    // the page, not after it.
+    // `total` is constant across the walk — it is the count before the page, not
+    // after it. The frozen side carries one number for the same reason.
     expect(new Set(mine.totals).size).toBe(1);
-    expect(new Set(theirs.totals).size).toBe(1);
     // The walk visits every group exactly once, reaches all of them, and stops.
     expect(new Set(mine.keys).size).toBe(mine.keys.length);
     expect(mine.keys.length).toBe(mine.totals[0]);
-    expect(new Set(theirs.keys).size).toBe(theirs.keys.length);
-    expect(theirs.keys.length).toBe(theirs.totals[0]);
     expect(mine.pages).toBeLessThan(MAX_PAGES);
     if (containment) {
-      const lost = theirs.keys.filter((key) => !mine.keys.includes(key));
+      const seen = new Set(mine.keys);
+      const lost = theirs.keys.filter((key) => !seen.has(key));
       expect(lost).toEqual([]);
     }
   }, 300_000);
@@ -464,9 +487,9 @@ describe('the budget still holds with the English half in', () => {
   });
 
   it('segments a 20,000-character passage — the route’s documented limit', async () => {
-    // `app/api/dict/segment/route.ts` sets `MAX_TEXT_CHARS = 20_000` and its
-    // header says the reader posts whole paragraphs, so that is the contract the
-    // store is porting. Before the `IN (…)` lists were chunked this threw a raw
+    // The deleted segment route set `MAX_TEXT_CHARS = 20_000` and its header
+    // said the reader posts whole paragraphs, so that is the contract the store
+    // inherited. Before the `IN (…)` lists were chunked this threw a raw
     // `too many SQL variables` at about 2,100 hanzi: `candidateSubstrings` is
     // Θ(16n) and SQLite's parameter ceiling is a compile-time option that
     // differs between the three runtimes this store has to run on.
@@ -474,8 +497,14 @@ describe('the budget still holds with the English half in', () => {
     const batches = await spied(async (instance) => {
       const result = await instance.segment(text);
       expect(result.tokens.length).toBeGreaterThan(5_000);
-      // …and it is the same segmentation the JSON implementation gives.
+      // …and it is the same segmentation the JSON implementation gives — twice
+      // over: against the live oracle (`scripts/dict-json.ts`, which `pnpm data`
+      // still runs) and against the digest frozen before D6, which is what would
+      // catch the JSON side itself having moved.
       expect(result.tokens).toEqual(jsonSegment(text).tokens);
+      expect(sha256(text)).toBe(goldenSearch.longPassage.textSha256);
+      expect(result.tokens.length).toBe(goldenSearch.longPassage.tokenCount);
+      expect(sha256(JSON.stringify(result.tokens))).toBe(goldenSearch.longPassage.tokensSha256);
     });
     // Still two round trips. The chunks ride in the same batch, which is the
     // whole reason chunking is free here.

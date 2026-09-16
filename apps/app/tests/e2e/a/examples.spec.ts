@@ -57,13 +57,11 @@ async function knownVerdicts(page: Page, ids: string[]): Promise<string[]> {
     const byEntry = new Map(
       cards.filter((card) => card.entryId).map((card) => [card.entryId as string, card]),
     );
-    const query = wanted.map((id) => `ids=${encodeURIComponent(id)}`).join('&');
-    const response = await fetch(`/api/dict/entries?${query}`);
+    // The dictionary is on the device now (`data.md` D6), so the bands come
+    // from the same store the app reads rather than from a route.
+    const rows = await window.__tangram.dict.entries(wanted);
     const bands = new Map<string, number | undefined>(
-      ((await response.json()).entries as { id: string; hskBand?: number }[]).map((entry) => [
-        entry.id,
-        entry.hskBand,
-      ]),
+      rows.map((entry) => [entry.id, entry.hskBand]),
     );
     return wanted.map((id) => {
       if (declared.has(id)) return 'known';

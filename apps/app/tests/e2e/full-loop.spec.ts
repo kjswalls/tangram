@@ -374,14 +374,10 @@ test('the whole loop with i+1 sentences and free recall on', async ({ page }) =>
           const byEntry = new Map(
             allCards.filter((row) => row.entryId).map((row) => [row.entryId as string, row]),
           );
-          const query = ids.map((id) => `ids=${encodeURIComponent(id)}`).join('&');
+          // The dictionary is on the device now (`data.md` D6).
+          const rows = await window.__tangram.dict.entries(ids);
           const bands = new Map<string, number | undefined>(
-            (
-              (await (await fetch(`/api/dict/entries?${query}`)).json()).entries as {
-                id: string;
-                hskBand?: number;
-              }[]
-            ).map((entry) => [entry.id, entry.hskBand]),
+            rows.map((entry) => [entry.id, entry.hskBand]),
           );
           return ids.map((id) => {
             if (declared.has(id)) return 'known';

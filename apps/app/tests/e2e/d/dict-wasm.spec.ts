@@ -228,16 +228,21 @@ test.describe('the OPFS dictionary', () => {
    * after the first would be a `Map` lookup and the table would measure the
    * cache. D4 says: if any interactive query exceeds 50 ms, stop and report.
    *
-   * **It fired, and this test is written so it cannot be forgotten.** Two
-   * queries breach the bar — `to` and `the`, the English tokens whose FTS5
-   * posting lists are larger than `MAX_GLOSS_CANDIDATES` — and they are listed
-   * below by name with the number measured when the phase closed. Everything
-   * else must stay under 50 ms, and the two named queries must not get *worse*,
-   * so the exemption is a pinned measurement rather than a hole. `HANDOFF.md`
-   * carries the diagnosis and the decision the breach needs: lowering the gloss
-   * cap is `data.md` D3's recorded decision with three named consequences
-   * (`SearchResult.total`, `nextCursor` paging, and tier-0 matches dropping out
-   * of broad queries), and D4 declined to take it silently.
+   * **It fired, it was reported, and the decision came back "no".** Two queries
+   * breach the bar — `to` and `the`, the English tokens whose FTS5 posting lists
+   * are larger than `MAX_GLOSS_CANDIDATES` — and they are listed below by name
+   * with the numbers measured when the phase closed. Everything else must stay
+   * under 50 ms and the two named queries must not get *worse*, so the exemption
+   * is a pinned measurement rather than a hole.
+   *
+   * The lever the breach points at is the gloss cap, and the orchestrator ruled
+   * it stays at 5,000: at that cap the truncation binds eight tokens, every one
+   * an English function word, while at 1,000 it binds fifty-two including the
+   * content words a learner actually types. The distribution is in
+   * `lib/dict/query/gloss.ts` and pinned by
+   * `tests/unit/dict/gloss-order.test.ts`; `HANDOFF.md` carries the reasoning.
+   * **This pin is therefore permanent**, not provisional — it closes only if the
+   * two-pass projection follow-up in HANDOFF is built and turns out to pay.
    */
   const KNOWN_BREACH: Record<string, number> = {
     // Measured at 89–100 ms across runs when this phase closed, with the

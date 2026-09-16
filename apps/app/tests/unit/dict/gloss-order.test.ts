@@ -86,6 +86,47 @@ describe('the gloss candidate query returns rowids in ascending order', () => {
     expect(plain.sql).not.toContain('ORDER BY');
   });
 
+  /**
+   * The premise D4's cap decision rests on, pinned against the artifact.
+   *
+   * The orchestrator's ruling on criterion 2 keeps `MAX_GLOSS_CANDIDATES` at
+   * 5,000 on one fact: at that cap the truncation binds **only English function
+   * words**, while at 1,000 it starts binding content words a learner actually
+   * types (bird, city, county, china, name, specie, taiwan, district, time). A
+   * number in a comment rots; this does not. If a CC-CEDICT snapshot ever pushes
+   * a content word over the cap, the decision needs re-taking and this is what
+   * says so.
+   *
+   * `fts5vocab` is created in `temp`, which works on a read-only main database —
+   * and `cnt` comes back null through `node:sqlite`, so `doc` (the number of
+   * rows carrying the term) is the column to read.
+   */
+  it('pins the posting-list distribution the cap decision rests on', async () => {
+    const [rows] = await runner.query([
+      { sql: "CREATE VIRTUAL TABLE IF NOT EXISTS temp.gloss_vocab USING fts5vocab(main, gloss_fts, 'row')" },
+      { sql: 'SELECT term, doc FROM temp.gloss_vocab WHERE doc > ? ORDER BY doc DESC', params: [MAX_GLOSS_CANDIDATES] },
+    ]).then((results) => [results[1]]);
+
+    const overCap = rows.map((row) => String(row.term));
+    // Eight, and every one of them a function word or `idiom`. The list is
+    // asserted by value: "eight tokens" alone would still hold if the eight
+    // became eight content words, which is the failure that matters.
+    expect(overCap).toEqual(['to', 'of', 'a', 'in', 'the', 'and', 'idiom', 'or']);
+
+    // …and the boundary is real: the next token down is `for` at 4,918, so 5,000
+    // sits between the last function word and the first content word rather than
+    // in the middle of a run.
+    const [next] = await runner.query([
+      {
+        sql: 'SELECT term, doc FROM temp.gloss_vocab WHERE doc <= ? ORDER BY doc DESC LIMIT 1',
+        params: [MAX_GLOSS_CANDIDATES],
+      },
+    ]);
+    expect(next[0].term).toBe('for');
+    expect(Number(next[0].doc)).toBeLessThan(MAX_GLOSS_CANDIDATES);
+    expect(Number(next[0].doc)).toBeGreaterThan(4000);
+  });
+
   it('is testing tokens that really do exceed the cap, derived from the artifact', async () => {
     // Deduped: `to` is both a named token and a word inside `to be born`.
     const tokens = [...new Set([...NAMED, ...ORDINARY.flatMap((q) => q.split(/\s+/))])];

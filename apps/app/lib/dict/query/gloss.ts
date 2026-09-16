@@ -23,17 +23,38 @@ import { RANK_COLUMNS } from './entries';
 import type { SqlQuery } from '../sql';
 
 /**
- * `search.ts:89`'s constant, and the cap this phase deliberately keeps.
+ * `search.ts:89`'s constant. **5,000 is not a round number — it is a boundary in
+ * this artifact**, and D4 settled that it stays.
  *
- * D3 required this to be an explicit decision. Today's pre-ranking pool is
- * `MAX_GLOSS_CANDIDATES = 5000` per query word; a tighter cap would make this a
- * redesign rather than a port, because `glossTier` would rank only what the cap
- * admits, `SearchResult.total` would become a capped count, and `nextCursor`
- * paging would terminate early. Measured cost at this cap, native: 0.4 ms for
- * `"plan"`, 0.6 ms for `"to" AND "plan"`, 25 ms for the worst single common
- * token (`"to"`, which fills the cap). D4 may lower it if WASM makes the worst
- * case bite, and if it does it must say what to, why, and what happened to
- * `total` and to the group sequence of `da` and `to` paged to the end.
+ * D3 required the cap to be an explicit decision and left it to D4 "with the
+ * measurement in hand": `glossTier` ranks only what the cap admits, so a
+ * low-frequency tier-0 match drops out of a broad query; `SearchResult.total`
+ * becomes a capped count; `nextCursor` paging terminates earlier. D4 then
+ * measured `search('to')` at 89–100 ms in wasm against its own 50 ms
+ * interactive bar, which made lowering the cap the obvious lever.
+ *
+ * **It is the wrong lever, and the posting-list distribution is why.** Over the
+ * built artifact (`fts5vocab(gloss_fts, 'row')`, 47,125 distinct terms):
+ *
+ *     > 5000 postings :  8 tokens    to 31561, of 20839, a 15969, in 13978,
+ *     > 3000 postings : 14           the 12447, and 8706, idiom 5926, or 5506
+ *     > 2000 postings : 26           ── the boundary ──  for 4918, see 3611,
+ *     > 1000 postings : 52           etc 3291, on 3119, city 3095, with 2994…
+ *
+ * At 5,000 the cap binds **eight tokens, every one an English function word
+ * plus `idiom`** — nobody searches a Chinese dictionary for "of". At 1,000 it
+ * binds fifty-two, and the ones it newly catches are content words a learner
+ * really types: bird, city, county, china, chinese, name, specie, taiwan,
+ * district, time. D3's three consequences are acceptable on `of` and make a
+ * worse dictionary on `bird`. Lowering the cap spends ranking quality on ~44
+ * real searches to save 50 ms on eight queries nobody makes.
+ *
+ * `tests/unit/dict/gloss-order.test.ts` pins that distribution against the
+ * artifact, so the premise cannot rot as CC-CEDICT moves.
+ *
+ * The lever that *would* close the breach without touching ranking is a
+ * two-pass projection; see HANDOFF.md under D4, where it is recorded as an
+ * unowned follow-up with the reason it might not pay.
  */
 export const MAX_GLOSS_CANDIDATES = 5000;
 

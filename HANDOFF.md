@@ -7908,7 +7908,7 @@ the 5,000 cap (`"the"` is 12,447):
 | joined, full projection, **`ORDER BY e.rowid`**, LIMIT **400** | **1,031–1,127** | 400 |
 | a plain `rowid <= 5000` range over `entries`, same projection | 47–61 | 5000 |
 
-### Criterion 2 fired: two queries are over the 50 ms bar, and the remaining lever is D3's to pull
+### Criterion 2 fired: two queries are over the 50 ms bar, and the cap stays at 5,000
 
 `search('to')` and `search('the')` — measured across runs at **89–100 ms** — exceed D4's 50 ms interactive threshold.
 Every other measured call is under 15 ms. D4 says *stop and report rather than proceed*, so this is
@@ -7927,12 +7927,48 @@ the report and **`MAX_GLOSS_CANDIDATES` was not touched**.
   so a low-frequency tier-0 match drops out of a broad query; `SearchResult.total` becomes a capped
   count; `nextCursor` paging terminates earlier — and requires any change to say what to, why, and
   what happened to the group sequence of `da` and `to` paged to the end. At 1,000 the query would be
-  ~12 ms of SQL, comfortably inside the bar. **Somebody should own that trade**; the measurement it
-  needs is on the table above.
+  ~12 ms of SQL, comfortably inside the bar. D4 reported rather than took it.
+
+**The trade is now owned, and the answer is no.** The orchestrator session ruled on it and supplied
+the measurement it turns on — the posting-list distribution over the built artifact, read from
+`fts5vocab(gloss_fts, 'row')`. Reproduced here independently, term for term (note `cnt` comes back
+null through `node:sqlite`; `doc` is the column):
+
+    47,125 distinct terms
+    > 5000 postings :  8    to 31561, of 20839, a 15969, in 13978,
+    > 3000 postings : 14    the 12447, and 8706, idiom 5926, or 5506
+    > 2000 postings : 26    ──── the cap ────  for 4918, see 3611, etc 3291,
+    > 1000 postings : 52    on 3119, city 3095, with 2994, county 2872, fig 2844,
+                            china 2233, name 2088, bird 1693, chinese 1562…
+
+**That inverts the framing.** At 5,000 the cap binds **eight tokens, every one an English function
+word plus `idiom`** — nobody searches a Chinese dictionary for "of". At 1,000 it binds **fifty-two**,
+and the ones it newly catches are content words a learner really types: bird, city, county, china,
+chinese, name, specie, taiwan, district, time. D3's three consequences are acceptable on `of`; on
+`bird` they make a worse dictionary. Lowering the cap spends ranking quality on ~44 real searches to
+save 50 ms on eight queries nobody makes.
+
+So **5,000 is not arbitrary — it is a boundary in this artifact**, sitting between `or` at 5,506, the
+last function word, and `for` at 4,918, the first content word. That is now written where the
+constant is (`lib/dict/query/gloss.ts`) and **pinned by a test** rather than left as a quoted number:
+`gloss-order.test.ts` asserts the over-cap set is exactly those eight terms *by value* — "eight
+tokens" alone would still hold if the eight became eight content words, which is the failure that
+matters — and that the next term down is `for`. If a CC-CEDICT snapshot ever pushes a content word
+over the cap, the decision needs re-taking and that test is what says so.
+
 - The two breaches are pinned by name in `tests/e2e/d/dict-wasm.spec.ts` as `KNOWN_BREACH`, at a
   ceiling of 200 ms each (~2× the measurement). Any *other* interactive query over 50 ms fails the
-  suite, and either of these regressing past its ceiling fails it too. It is a pinned measurement,
-  not a hole — but it is an exemption, and it should close when the cap decision is taken.
+  suite, and either of these regressing past its ceiling fails it too. **The pin is permanent**, not
+  provisional: the cap decision has been taken, and the only thing that closes the exemption is the
+  follow-up below.
+
+**Follow-up, named and unowned: a two-pass gloss projection.** The breakdown above says the cost is
+per-row-per-column marshalling — rowid-only at `LIMIT 5000` is 10 ms, the full projection 46–51 ms —
+so the untried lever is to split the statement: pass 1 selects only the columns `glossTier` reads,
+pass 2 fetches the full projection for the survivors. It would close the breach with **no ranking
+change at all**, which is what makes it worth writing down. It is **not obviously a win and must be
+measured before anyone believes it**: `glosses` is plausibly most of the payload, and if it is, pass 1
+costs nearly what the single pass costs today and the second pass is pure addition. Nobody owns it.
 
 ### The one change to a landed phase's code: `ORDER BY e.rowid` is gone from the gloss query
 
@@ -8083,10 +8119,18 @@ where the two forms *could* differ.
   fallbacks are the in-memory rung this phase built (which a per-*file* cap would not touch) or the
   bare-table variant in `data.md` §7.
 - **Every browser except the container's Chromium.** One engine, one version, one machine.
-- **The native stores.** D5a and D5b are blocked on hardware. Three things they should carry: the
-  `char_words` BLOB is the only non-TEXT, non-INTEGER column in the artifact and `SqlValue` promises
-  `Uint8Array` (D1's open question); the FTS5 scan-order assertion above; and D2's note that
-  `wordsContaining`'s two round trips should be measured on a real device.
+- **The native stores.** D5a and D5b are blocked on hardware. Three things for the same device
+  session, in one place so none is lost:
+  1. **The `char_words` BLOB probe** (D1's open question) — it is the only non-TEXT, non-INTEGER
+     column in the artifact and the frozen `SqlValue` promises `Uint8Array`; whether
+     `@capacitor-community/sqlite` returns one is unverified.
+  2. **The FTS5 scan-order assertion**, immediately beside it. D4 removed `ORDER BY e.rowid` from the
+     gloss query and replaced it with two differential tests, on `node:sqlite` and on
+     `@sqlite.org/sqlite-wasm`. The SQLCipher FTS5 behind the plugin is a **third build** (STACK
+     register #20) and nothing asserts its order: if it does not scan ascending by rowid, `LIMIT 5000`
+     stops meaning "the 5,000 most frequent" and `isGlossToken`'s section routing drifts. Porting
+     either existing assertion onto the Capacitor runner is a few lines.
+  3. **`wordsContaining`'s two round trips**, measured on a real device, as D2 asked.
 - **D6.** `/api/dict/*` is untouched, `browser-store.ts` still constructs `HttpDictStore`, and
   `grep -rn "api/dict" apps/app/lib/` is not empty.
 - **The deployed host.** Brotli content negotiation, the real transfer size, and whether a real
@@ -8142,6 +8186,25 @@ where the two forms *could* differ.
    budget should count the bytes a page actually fetches, not `du dist/`.
 8. **`tests/unit/dict/deps.test.ts` needed the new dependency added by hand**, which is the test doing
    its job.
+
+### The orchestrator's ruling on criterion 2 — and what it settled
+
+The ruling arrived after the phase's first commit and is folded into this section rather than
+appended after it, because leaving "somebody should own that trade" standing above a note saying it
+was owned would make the writeup wrong in the middle. Three things it settled, all now in the code:
+
+1. **`MAX_GLOSS_CANDIDATES` stays at 5,000**, on the distribution above. Recorded at the constant and
+   pinned by a test.
+2. **The `KNOWN_BREACH` pin is accepted as built** — the two named queries at a 200 ms ceiling, every
+   other interactive query still failing at 50 ms — and its comment now says the pin is permanent
+   rather than provisional.
+3. **The second-tab re-fetch and the integrity-check timing are accepted as reported.** D4's
+   "revisit" instruction is satisfied by having measured it; re-measuring against a deployed host
+   once `web.md` W2's `.br` negotiation ships belongs to whoever deploys.
+
+Removing `ORDER BY e.rowid` is approved. The unasserted third runner is D5a/D5b's, above.
+
+Its measurement was re-run here rather than transcribed, and reproduces term for term.
 
 ### Gates, and what the adversarial review changed
 

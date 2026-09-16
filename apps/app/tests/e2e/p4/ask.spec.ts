@@ -8,7 +8,7 @@
  * repeat question with the same context is served from `ask_cache` while a
  * different context is a different question.
  */
-import { expect, type Page, test } from '@playwright/test';
+import { expect, type Page, test } from '../dict';
 
 import { resetApp } from '../p3/helpers';
 
@@ -62,6 +62,15 @@ async function cards(page: Page) {
 async function askCacheRows(page: Page): Promise<string[]> {
   return page.evaluate(async () => (await window.__tangram.db.ask_cache.toArray()).map((row) => row.id));
 }
+
+/**
+ * **This spec needs a dictionary on the device**, so it accepts the ask once
+ * before each test — `tests/e2e/dict.ts`, which is also where the next person
+ * to change this behaviour changes it. The default there is `'ask'`, a fresh
+ * origin with nothing stored, because that is what a fresh origin really gets
+ * now that `<DictGate>`'s mount probes instead of downloading.
+ */
+test.use({ dictionary: 'installed' });
 
 test.describe('the ask panel', () => {
   // The spine would otherwise put ten HSK words in front of the one card the

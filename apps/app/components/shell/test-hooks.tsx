@@ -3,7 +3,7 @@
 import { useEffect } from 'react';
 
 import { closeDb, getDb, getRepository } from '@/lib/db/get-db';
-import { getDecompStore, getDictStore } from '@/lib/dict/browser-store';
+import { getDecompStore, getDictOpener, getDictStore } from '@/lib/dict/browser-store';
 
 /**
  * Exposes the repository and the dictionary on `window.__tangram` so end-to-end
@@ -25,6 +25,18 @@ export function TestHooks() {
       get repo() { return getRepository(); },
       get db() { return getDb(); },
       get dict() { return getDictStore(); },
+      /**
+       * The **two-phase** open (`lib/dict/browser-store.ts`).
+       *
+       * `dict.open()` is the store's single one, and since the gate's mount
+       * became `openStored()` a spec that calls it can land on the probe's
+       * shared in-flight attempt and resolve without fetching anything — which
+       * reads as "the dictionary would not open" and is really "you joined a
+       * call that was never going to fetch". `dictOpener.download()` is what
+       * the `absent` card's button does, and it is what a spec that wants a
+       * dictionary should ask for.
+       */
+      get dictOpener() { return getDictOpener(); },
       get decomp() { return getDecompStore(); },
       getRepository,
       getDb,

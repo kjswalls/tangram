@@ -7,7 +7,7 @@
  * are about a surface a unit test cannot see: a sheet is geometry, focus and a
  * stacking order.
  */
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from '../dict';
 
 import { expectBaseText } from '../hanzi';
 import { DEMO_PARAGRAPH, readText, resetApp, token } from '../p5/helpers';
@@ -28,6 +28,15 @@ async function openWord(page: Page, word = WORD): Promise<void> {
   await token(page, word).click();
   await expect(page.getByTestId('word-sheet')).toBeVisible();
 }
+
+/**
+ * **This spec needs a dictionary on the device**, so it accepts the ask once
+ * before each test — `tests/e2e/dict.ts`, which is also where the next person
+ * to change this behaviour changes it. The default there is `'ask'`, a fresh
+ * origin with nothing stored, because that is what a fresh origin really gets
+ * now that `<DictGate>`'s mount probes instead of downloading.
+ */
+test.use({ dictionary: 'installed' });
 
 test.describe('the word sheet', () => {
   test('opens on a tap with every sense and an Add', async ({ page }) => {

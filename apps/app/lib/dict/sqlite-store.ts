@@ -446,6 +446,23 @@ export interface SqliteStoreOptions {
   connect: (context: ConnectContext) => Promise<SqlRunner>;
   /** Status while `connect()` runs; the web store reports download progress. */
   onStatus?: (status: DictStatus) => void;
+  /**
+   * Whether *this* open should show on the status, asked once per `open()`.
+   *
+   * Defaults to yes, and the only caller that says no is the browser store's
+   * **probe** — `WasmDictStoreHandle.openStored()`, which opens whatever this
+   * origin has already stored and fetches nothing. Announcing that would put
+   * `preparing` on screen, which is a card reading *"Getting the dictionary …
+   * you can carry on — this finishes in the background"* over an open that is
+   * downloading nothing and will be over in a moment; and it would take
+   * `dict-start` out from under a learner's finger every time some other
+   * surface mounted and probed.
+   *
+   * A quiet open reports only its **success**. Its failure is the caller's to
+   * interpret: "nothing stored" is a state, not something to put on a screen,
+   * and `openStored()` is what decides between the ask and a real failure.
+   */
+  announceOpen?: () => boolean;
   cacheSize?: number;
 }
 
@@ -482,7 +499,10 @@ export class SqliteDictStore implements DictStore {
   async open(): Promise<void> {
     if (this.#opened) return;
     if (this.#opening) return this.#opening;
-    this.#setStatus({ state: 'preparing' });
+    // Asked once, here, and carried through the attempt: a flag read again
+    // later could be answered by a *different* open's caller.
+    const announce = this.#options.announceOpen?.() ?? true;
+    if (announce) this.#setStatus({ state: 'preparing' });
     // The `.finally` is attached OUTSIDE the async body on purpose. An async
     // function runs synchronously up to its first suspension, so a `connect()`
     // that throws before ever awaiting would reach an inner `finally` *before*
@@ -494,19 +514,19 @@ export class SqliteDictStore implements DictStore {
     // slot by comparing against the attempt would never match, and a failed
     // open would latch its rejection into `#opening` — the same wedge in a new
     // place, and one a test caught.
-    const tracked: Promise<void> = this.#attemptOpen().finally(() => {
+    const tracked: Promise<void> = this.#attemptOpen(announce).finally(() => {
       if (this.#opening === tracked) this.#opening = undefined;
     });
     this.#opening = tracked;
     return tracked;
   }
 
-  async #attemptOpen(): Promise<void> {
+  async #attemptOpen(announce: boolean): Promise<void> {
     let runner: SqlRunner | undefined;
     let settled = false;
     const context: ConnectContext = {
       progress: (received, total) => {
-        if (settled) return;
+        if (settled || !announce) return;
         this.#setStatus({
           state: 'preparing',
           received,
@@ -538,16 +558,23 @@ export class SqliteDictStore implements DictStore {
       // origin and on Capacitor the plugin holds a native handle, so a leaked
       // connection is not garbage — it is a retry that can never succeed.
       if (runner) await runner.close().catch(() => {});
-      this.#setStatus({
-        state: 'failed',
-        // D4 refines the four reasons, and this is where it lands: a runner that
-        // fetched bytes knows whether the download was short, the import failed,
-        // storage refused it, or the file simply is not this dictionary. A
-        // runner that cannot tell (the Node one has none of those failure modes)
-        // reports the one that means "the file did not open as this dictionary".
-        reason: error instanceof DictOpenError ? error.reason : 'corrupt',
-        message: error instanceof Error ? error.message : String(error),
-      });
+      // D4 refines the four reasons, and this is where it lands: a runner that
+      // fetched bytes knows whether the download was short, the import failed,
+      // storage refused it, or the file simply is not this dictionary. A runner
+      // that cannot tell (the Node one has none of those failure modes) reports
+      // the one that means "the file did not open as this dictionary".
+      //
+      // A **quiet** open reports nothing: a probe that finds no dictionary has
+      // not failed at anything the learner needs told about, and putting
+      // `failed` on screen for the instant before `openStored()`'s `close()`
+      // puts it back to `absent` is a failure card that flashes for no reason.
+      if (announce) {
+        this.#setStatus({
+          state: 'failed',
+          reason: error instanceof DictOpenError ? error.reason : 'corrupt',
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
       throw error;
     } finally {
       settled = true;

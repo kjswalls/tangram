@@ -15,7 +15,7 @@
  * harder than before, is the cap: the charge still happens at card creation,
  * and a reload still hands out nothing further.
  */
-import { expect, test } from '@playwright/test';
+import { expect, test } from '../dict';
 
 import { expectTodayCounts, gradeAllNew, ready, resetApp } from './helpers';
 
@@ -26,6 +26,15 @@ async function practice(page: import('@playwright/test').Page): Promise<void> {
     page.getByTestId('review-session').or(page.getByTestId('review-empty')),
   ).toBeVisible({ timeout: 60_000 });
 }
+
+/**
+ * **This spec needs a dictionary on the device**, so it accepts the ask once
+ * before each test — `tests/e2e/dict.ts`, which is also where the next person
+ * to change this behaviour changes it. The default there is `'ask'`, a fresh
+ * origin with nothing stored, because that is what a fresh origin really gets
+ * now that `<DictGate>`'s mount probes instead of downloading.
+ */
+test.use({ dictionary: 'installed' });
 
 test.describe('today', () => {
   test('reports three new words without creating any, and Practice creates them', async ({

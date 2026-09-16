@@ -11,9 +11,14 @@
  *
  * The seam is `WasmRunnerOptions.spawn`, which exists for this.
  */
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DictOpenError } from '@/lib/dict/open-error';
+import {
+  dictionaryRequested,
+  forgetDictionaryRequest,
+  rememberDictionaryRequest,
+} from '@/lib/dict/requested';
 import { createWasmDictStore } from '@/lib/dict/wasm-store';
 import { wasmRunner } from '@/lib/dict/runners/wasm';
 import type { WasmRequest, WasmResponse } from '@/lib/dict/runners/wasm-protocol';
@@ -425,6 +430,244 @@ describe('the store around it', () => {
     await handle.settled();
     expect(handle.store.status).toMatchObject({ state: 'failed' });
     expect(workers, 'the store reopened against a worker that had just died').toHaveLength(1);
+  });
+
+  /**
+   * **The two-phase open**, which is the whole of the fix for `data.md` D6's one
+   * shipped defect.
+   *
+   * `<DictGate>`'s mount used to call `store.open()`, and once D6 pointed the
+   * app at the OPFS store that line meant *fetch 43 MB* — with no ask, and from
+   * `lib/lists/entry-source.ts` as well, which is not behind any gate. The
+   * mount is `openStored()` now. Asserted here rather than only in Playwright
+   * because the interesting half is which bytes were asked for, and `fetch` is
+   * a spy in this file.
+   */
+  describe('the two-phase open', () => {
+    // The ask is once **per origin** and the record of it is `localStorage`
+    // (`lib/dict/requested.ts`), which jsdom shares across tests in a file.
+    // Every case here says for itself whether this origin has consented.
+    beforeEach(() => forgetDictionaryRequest());
+    afterEach(() => forgetDictionaryRequest());
+
+    /**
+     * A worker that opens only when it is handed a manifest — an origin with
+     * nothing stored, which is what a fresh install is.
+     */
+    function spawnEmptyOrigin(into: FakeWorker[]): Worker {
+      const worker = spawnReadyWorker(into);
+      const fake = into[into.length - 1];
+      const base = fake.answer;
+      fake.answer = (request) =>
+        request.type === 'open' && request.manifest === null
+          ? { type: 'error', id: request.id, message: 'nothing stored', reason: 'import' }
+          : base(request);
+      return worker;
+    }
+
+    it('openStored() fetches nothing and leaves an empty origin in `absent`', async () => {
+      const workers: FakeWorker[] = [];
+      stubManifest();
+      const handle = createWasmDictStore({ spawn: () => spawnEmptyOrigin(workers) });
+      const seen: string[] = [];
+      handle.store.subscribe((status) => seen.push(status.state));
+
+      await handle.openStored();
+
+      // `absent` is the ask, and it is a state rather than an error: nothing
+      // rejected, and the screen with the size on it is what the gate draws.
+      expect(handle.store.status).toEqual({ state: 'absent' });
+      // Not even the manifest. This is the assertion the defect would fail.
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+      // And it said nothing on the way: no `preparing` card over a fetch that
+      // is not happening, and no `failed` card for a question, not an error.
+      // `close()`'s own `absent` is the only transition a probe may publish.
+      expect(seen.filter((state) => state !== 'absent')).toEqual([]);
+      await handle.close();
+    });
+
+    it('a probe that has found nothing does not look again', async () => {
+      const workers: FakeWorker[] = [];
+      stubManifest();
+      const handle = createWasmDictStore({ spawn: () => spawnEmptyOrigin(workers) });
+
+      await handle.openStored();
+      await handle.openStored();
+      await handle.openStored();
+
+      // One worker for three probes. `openStored()` is called from a mount
+      // effect and from `openDictStore()`, which the lists page calls per band
+      // and the card back calls per card; a fresh install would otherwise spend
+      // a worker, a wasm boot and a pool install to re-learn the same "no".
+      expect(workers).toHaveLength(1);
+      expect(handle.store.status).toEqual({ state: 'absent' });
+      await handle.close();
+    });
+
+    /**
+     * **The ask is once per origin**, and this is the case that rule exists
+     * for: a second tab cannot take `opfs-sahpool`'s exclusive handles, so its
+     * probe fails exactly as a fresh install's does. Asking again would be
+     * asking twice for something the learner has already paid for — the same
+     * reasoning `recover()` above already applies to an eviction.
+     */
+    it('an origin that has already said yes gets a full open, not the ask', async () => {
+      const workers: FakeWorker[] = [];
+      stubManifest();
+      rememberDictionaryRequest();
+      const handle = createWasmDictStore({ spawn: () => spawnEmptyOrigin(workers) });
+
+      await handle.openStored();
+
+      expect(handle.store.status).toEqual({ state: 'ready', version: 'test' });
+      expect(globalThis.fetch).toHaveBeenCalled();
+      await handle.close();
+    });
+
+    it('download() records the ask before it fetches, not after', async () => {
+      const workers: FakeWorker[] = [];
+      stubManifest();
+      const handle = createWasmDictStore({
+        spawn: () => {
+          // Fails, so nothing is stored and nothing succeeded — and the record
+          // must still be there, because a reload part-way through a download
+          // has to come back to a download rather than to the ask.
+          const worker = new FakeWorker();
+          worker.answer = (request) => ({
+            type: 'error',
+            id: request.id,
+            message: 'the connection dropped',
+            reason: 'download',
+          });
+          workers.push(worker);
+          return worker as unknown as Worker;
+        },
+      });
+
+      await expect(handle.download()).rejects.toThrow(/connection dropped/);
+      expect(dictionaryRequested()).toBe(true);
+      await handle.close();
+    });
+
+    it('download() is the full open, and it is what the ask reaches', async () => {
+      const workers: FakeWorker[] = [];
+      stubManifest();
+      const handle = createWasmDictStore({ spawn: () => spawnEmptyOrigin(workers) });
+
+      await handle.openStored();
+      expect(handle.store.status.state).toBe('absent');
+
+      await handle.download();
+
+      expect(handle.store.status).toEqual({ state: 'ready', version: 'test' });
+      expect(globalThis.fetch).toHaveBeenCalled();
+      await handle.close();
+    });
+
+    it('openStored() over a dictionary that is already there costs nothing', async () => {
+      const workers: FakeWorker[] = [];
+      stubManifest();
+      const handle = createWasmDictStore({ spawn: () => spawnReadyWorker(workers) });
+
+      await handle.download();
+      expect(handle.store.status.state).toBe('ready');
+
+      await handle.openStored();
+
+      // One worker, one open: a returning learner's every later mount is free.
+      expect(workers).toHaveLength(1);
+      expect(handle.store.status).toEqual({ state: 'ready', version: 'test' });
+      await handle.close();
+    });
+
+    /**
+     * **The race the split creates.** `SqliteDictStore.open()` shares one
+     * in-flight attempt across every caller, which is right within a kind of
+     * open and wrong across them: a `download()` that simply awaited `open()`
+     * while a probe was out would join the probe, resolve when the probe
+     * resolved, and fetch nothing — the learner presses "Get it" and lands back
+     * on the same card.
+     */
+    it('a download asked for during a probe still downloads', async () => {
+      const workers: FakeWorker[] = [];
+      stubManifest();
+      let held: WasmRequest | undefined;
+      const handle = createWasmDictStore({
+        spawn: () => {
+          const worker = spawnEmptyOrigin(workers);
+          const fake = workers[workers.length - 1];
+          const base = fake.answer;
+          fake.answer = (request) => {
+            // Hold the probe open, so the press below really does land while it
+            // is still out rather than after it.
+            if (request.type === 'open' && request.manifest === null) {
+              held = request;
+              return undefined;
+            }
+            return base(request);
+          };
+          return worker;
+        },
+      });
+
+      const probe = handle.openStored();
+      const download = handle.download();
+
+      // …and now the probe answers: there was nothing stored after all.
+      workers[0].emit('message', {
+        data: { type: 'error', id: held!.id, message: 'nothing stored', reason: 'import' },
+      });
+      await probe;
+      await download;
+
+      expect(handle.store.status).toEqual({ state: 'ready', version: 'test' });
+      expect(globalThis.fetch).toHaveBeenCalled();
+      await handle.close();
+    });
+
+    it('a probe asked for during a download joins it rather than racing it', async () => {
+      const workers: FakeWorker[] = [];
+      stubManifest();
+      const handle = createWasmDictStore({ spawn: () => spawnReadyWorker(workers) });
+
+      const download = handle.download();
+      const probe = handle.openStored();
+      await Promise.all([download, probe]);
+
+      // One worker: the probe did not start a second open, and — the thing that
+      // would actually hurt — it did not close the download's store behind it.
+      expect(workers).toHaveLength(1);
+      expect(handle.store.status).toEqual({ state: 'ready', version: 'test' });
+      await handle.close();
+    });
+
+    it('a probe leaves a settled failure, and its message, alone', async () => {
+      const workers: FakeWorker[] = [];
+      stubManifest();
+      const handle = createWasmDictStore({
+        spawn: () => {
+          const worker = new FakeWorker();
+          worker.answer = (request) => ({
+            type: 'error',
+            id: request.id,
+            message: 'no storage',
+            reason: 'storage',
+          });
+          workers.push(worker);
+          return worker as unknown as Worker;
+        },
+      });
+
+      await expect(handle.download()).rejects.toThrow(/no storage/);
+      expect(handle.store.status).toMatchObject({ state: 'failed', reason: 'storage' });
+
+      // An ungated caller mounting a moment later — the Practice queue's draw,
+      // a card back — must not replace the reason on screen with a bare ask.
+      await handle.openStored();
+      expect(handle.store.status).toMatchObject({ state: 'failed', reason: 'storage' });
+      expect(workers).toHaveLength(1);
+      await handle.close();
+    });
   });
 
   it('does not chase a worker that reports a failure reason on open', async () => {

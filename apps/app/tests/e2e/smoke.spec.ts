@@ -1,5 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 
+import { installDictionary } from './dict';
+
 /**
  * The app shell, rebuilt around three tabs (docs/plans/core.md C7).
  *
@@ -72,6 +74,10 @@ test.describe('app shell', () => {
   });
 
   test('the Look up tab renders the panel shell with its slot contract', async ({ page }) => {
+    // The panel is inside `<DictGate>`, so this one needs a dictionary. The ask
+    // is accepted here rather than through `tests/e2e/dict.ts`'s option,
+    // because two tests in this file are *about* a fresh origin.
+    await installDictionary(page);
     await page.goto('/');
     await expect(page.getByTestId('lookup-panel')).toBeVisible();
     await expect(page.getByTestId('lookup-body')).toBeVisible();
@@ -98,10 +104,19 @@ test.describe('app shell', () => {
     // what a missing `data/` directory looks like to a learner.
     await page.route('**/dict-manifest.json', (route) => route.fulfill({ status: 503, body: '' }));
     await page.goto('/');
-    await expect(page.getByTestId('dict-gate')).toBeVisible();
+    const gate = page.getByTestId('dict-gate');
+    await expect(gate).toBeVisible();
     await expect(page.getByTestId('dict-status')).toBeVisible();
     // …and the search box is not offered, rather than offered and broken.
     await expect(page.getByTestId('lookup-input')).toHaveCount(0);
+
+    // The first screen is the ask, because the gate's mount fetches nothing —
+    // a manifest that refuses is not something a mount effect finds out. The
+    // learner presses it and *then* is told what went wrong, with a retry.
+    await expect(gate).toHaveAttribute('data-state', 'absent');
+    await gate.getByTestId('dict-start').click();
+    await expect(gate).toHaveAttribute('data-state', 'failed');
+    await expect(gate.getByTestId('dict-retry')).toBeVisible();
 
     // The learner's own data is untouched.
     await page.goto('/library');
@@ -109,7 +124,17 @@ test.describe('app shell', () => {
     await expect(page.getByTestId('dict-gate')).toHaveCount(0);
   });
 
+  /**
+   * **A learner who has the dictionary sees no gate**, which is the other half
+   * of the two-phase open and the half a suite can lose without noticing.
+   *
+   * `installDictionary()` is the ask, accepted once — so this test earns its
+   * origin rather than assuming one, and would fail both if the ask stopped
+   * appearing and if accepting it stopped producing a working lookup box.
+   * `tests/e2e/d/dict-ask.spec.ts` is where the byte counts behind it live.
+   */
   test('no gate when the dictionary answers', async ({ page }) => {
+    await installDictionary(page);
     await page.goto('/');
     await expect(page.getByTestId('lookup-input')).toBeVisible();
     await expect(page.getByTestId('dict-gate')).toHaveCount(0);

@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from '../dict';
 
 import {
   DASUAN,
@@ -20,6 +20,15 @@ const DAY_MS = 86_400_000;
  * (`components/shell/test-hooks.tsx`) — the app is local-first, so the database
  * is the fixture.
  */
+/**
+ * **This spec needs a dictionary on the device**, so it accepts the ask once
+ * before each test — `tests/e2e/dict.ts`, which is also where the next person
+ * to change this behaviour changes it. The default there is `'ask'`, a fresh
+ * origin with nothing stored, because that is what a fresh origin really gets
+ * now that `<DictGate>`'s mount probes instead of downloading.
+ */
+test.use({ dictionary: 'installed' });
+
 test.describe('/practice', () => {
   test('walks the due queue: flip, four intervals, grade with 1–4, one review row', async ({
     page,

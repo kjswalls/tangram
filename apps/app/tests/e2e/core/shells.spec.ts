@@ -15,7 +15,7 @@
  * different designs; comparing the text is what fails the day one shell starts
  * showing something the other does not.
  */
-import { expect, test, type Locator, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '../dict';
 
 import { DASUAN, openReview, seed } from '../p2/fixtures';
 
@@ -99,6 +99,15 @@ async function shell(page: Page): Promise<string> {
   expect(phone + wide, 'exactly one shell, always').toBe(1);
   return phone === 1 ? 'phone' : 'wide';
 }
+
+/**
+ * **This spec needs a dictionary on the device**, so it accepts the ask once
+ * before each test — `tests/e2e/dict.ts`, which is also where the next person
+ * to change this behaviour changes it. The default there is `'ask'`, a fresh
+ * origin with nothing stored, because that is what a fresh origin really gets
+ * now that `<DictGate>`'s mount probes instead of downloading.
+ */
+test.use({ dictionary: 'installed' });
 
 test.describe('the two shells', () => {
   test('are chosen, never both rendered', async ({ page }) => {

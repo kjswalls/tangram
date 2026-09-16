@@ -201,11 +201,36 @@ test.describe('with the dictionary down', () => {
     await expect(page.getByText('Loading words…')).toHaveCount(0);
   });
 
+  /**
+   * **A dictionary that is down is not discovered until it is asked for**, and
+   * that is the two-phase open working rather than a weakening of this case.
+   *
+   * The gate's mount is `openStored()` now: it opens what this origin already
+   * has and fetches nothing, so a manifest that refuses is invisible to it —
+   * the settled first-visit screen is `absent`, the ask, whether the server is
+   * healthy or in pieces. The failure is real and the learner still sees it,
+   * one press later, which is where it belongs: a reason on screen is only
+   * worth anything if something was actually attempted.
+   */
   test('…and /lookup and /read are the two that DO gate', async ({ page }) => {
-    for (const route of ['/', '/read']) {
-      await page.goto(route);
-      await expect(page.getByTestId('dict-gate'), route).toBeVisible();
-      await expect(page.getByTestId('dict-gate'), route).toHaveAttribute('data-state', 'failed');
-    }
+    // `/` first, on an origin that has never asked for a dictionary.
+    await page.goto('/');
+    const gate = page.getByTestId('dict-gate');
+    await expect(gate).toBeVisible();
+    // The ask, not a failure: nothing has been fetched yet, so nothing can have
+    // gone wrong yet.
+    await expect(gate).toHaveAttribute('data-state', 'absent');
+
+    // …and pressing it is what finds out, with the reason and a retry.
+    await gate.getByTestId('dict-start').click();
+    await expect(gate).toHaveAttribute('data-state', 'failed');
+    await expect(gate.getByTestId('dict-retry')).toBeVisible();
+
+    // `/read` gates too — and it does **not** ask again. The ask is once per
+    // origin (`lib/dict/requested.ts`): this learner has already said yes, so
+    // the reader goes straight at the manifest and lands on the same failure.
+    await page.goto('/read');
+    await expect(gate).toBeVisible();
+    await expect(gate).toHaveAttribute('data-state', 'failed');
   });
 });

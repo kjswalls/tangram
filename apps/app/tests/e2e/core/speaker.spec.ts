@@ -144,6 +144,65 @@ test.describe('the gesture, against a provider that reports a voice but makes no
     expect(await recorded(page)).toEqual(atRelease);
   });
 
+  /**
+   * **Real touch, with drift — the case `page.mouse` cannot produce.**
+   *
+   * The C6 review found this by driving CDP touch instead of the mouse: at the
+   * UA default `touch-action`, a thumb that moves past the browser's touch slop
+   * during the three-second hold hands the touch to the scroller, which fires
+   * `pointercancel` — the reading stopped mid-word and the page scrolled. Every
+   * gate was green, because every other case here uses `page.mouse`, which
+   * never pans.
+   */
+  test('a thumb that drifts does not lose the hold to the scroller', async ({ browser }) => {
+    const context = await browser.newContext({
+      hasTouch: true,
+      viewport: { width: 390, height: 844 },
+    });
+    const page = await context.newPage();
+    try {
+      await page.goto('/gallery#section-speaker');
+      await expect(page.getByTestId('speak-button')).toHaveAttribute('data-tts-status', 'ready');
+      await record(page);
+
+      // The declaration itself, so a failure names its own cause.
+      expect(
+        await page.evaluate(
+          () => getComputedStyle(document.querySelector('[data-testid="speak-button"]')!).touchAction,
+        ),
+      ).toBe('none');
+
+      const box = (await page.getByTestId('speak-button').boundingBox())!;
+      const x = box.x + box.width / 2;
+      const y = box.y + box.height / 2;
+      const cdp = await context.newCDPSession(page);
+      const touch = (type: 'touchStart' | 'touchMove' | 'touchEnd', at: number) =>
+        cdp.send('Input.dispatchTouchEvent', {
+          type,
+          touchPoints: type === 'touchEnd' ? [] : [{ x, y: at }],
+        });
+
+      // The hash in the URL has already scrolled the page to the section; what
+      // matters is that the DRIFT moves it no further.
+      const before = await page.evaluate(() => window.scrollY);
+      await touch('touchStart', y);
+      await page.waitForTimeout(HOLD_MS + 200);
+      // Past the touch slop, twice over, while the sequence is running.
+      for (let step = 1; step <= 6; step += 1) await touch('touchMove', y + step * 4);
+      await page.waitForTimeout(900);
+
+      const seen = await recorded(page);
+      expect(seen.length, 'the drift cancelled the hold').toBeGreaterThanOrEqual(2);
+      expect(seen.join('')).toBe(BLOCK.slice(0, seen.length));
+      // …and the page did not scroll out from under the thumb.
+      expect(await page.evaluate(() => window.scrollY)).toBe(before);
+
+      await touch('touchEnd', y);
+    } finally {
+      await context.close();
+    }
+  });
+
   test('a press shorter than the threshold is a tap, and lights nothing', async ({ page }) => {
     await record(page);
     await holdSpeaker(page, Math.max(0, HOLD_MS - 250));

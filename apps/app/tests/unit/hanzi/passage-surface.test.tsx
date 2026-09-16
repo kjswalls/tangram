@@ -76,14 +76,17 @@ describe('the passage a span is dragged over', () => {
     // is exactly the shape of the defect this replaces (a stylesheet that did
     // not exist while every unit test passed).
     const css = readFileSync(resolve(appRoot, 'app/globals.css'), 'utf8');
-    const rule = css.slice(css.indexOf('.hanzi-span-host'));
-    expect(rule).toContain('.hanzi-span-host');
-    expect(rule.slice(0, 200)).toContain('user-select: none');
-    expect(rule.slice(0, 200)).toContain('-webkit-user-select: none');
+    // The RULE, not the first mention: the comment on `.speak-hold` next door
+    // names this selector, and `indexOf` found that instead.
+    const at = css.indexOf('.hanzi-span-host {');
+    expect(at, '.hanzi-span-host has no rule in globals.css').toBeGreaterThan(-1);
+    const rule = css.slice(at, css.indexOf('}', at));
+    expect(rule).toContain('user-select: none');
+    expect(rule).toContain('-webkit-user-select: none');
     // The half Tailwind's `select-none` does not emit, and the half that stops
     // WebKit's edit-menu callout — the `UIEditMenuInteraction` path
     // `wave-zero.md` §10d rules out because this design does not use it.
-    expect(rule.slice(0, 200)).toContain('-webkit-touch-callout: none');
+    expect(rule).toContain('-webkit-touch-callout: none');
   });
 });
 

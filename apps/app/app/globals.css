@@ -70,6 +70,33 @@ body {
 }
 
 /*
+ * The speaker's hold target (docs/plans/core.md C6).
+ *
+ * **`touch-action: none` is what keeps a hold alive.** The gesture holds a
+ * finger down for 500 ms plus the whole sequence — three seconds or more for a
+ * four-character word — on a 40x32 target. At the UA default, a thumb that
+ * drifts past the browser's touch slop (~8px in Chromium, ~10px on iOS) hands
+ * the touch to the scroller, which fires `pointercancel`: the reading stops
+ * mid-word and the page slides out from under the finger. Measured with real
+ * touch input; `page.mouse` never produces a pan, which is exactly why every
+ * gate was green without it.
+ *
+ * It is a rule rather than a utility because the two WebKit halves beside it
+ * have none — `-webkit-touch-callout` in particular, which is what stops a long
+ * press on a button summoning the iOS callout over the card being read.
+ *
+ * This is the opposite decision from `.hanzi-span-host`'s `pan-y`, and
+ * deliberately so: the passage IS the scroll surface and must keep vertical
+ * panning, while a 32px button is not one and taking the touch is free.
+ */
+.speak-hold {
+  touch-action: none;
+  -webkit-touch-callout: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/*
  * The character being read aloud (docs/plans/core.md C6).
  *
  * `lib/tts/sequence.ts` enqueues one utterance per character and advances this

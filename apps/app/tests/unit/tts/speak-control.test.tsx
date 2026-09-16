@@ -12,6 +12,10 @@
  * hand-cranked `FakeProvider`, so what is asserted is the contract rather than
  * whatever a fake timer happened to do.
  */
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -21,6 +25,8 @@ import { SLOW_RATE } from '@/lib/tts/sequence';
 
 import { FakeProvider } from './fake-provider';
 import { act, fireEvent, render, screen, waitFor } from '../render';
+
+const APP_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
 afterEach(() => {
   vi.useRealTimers();
@@ -146,6 +152,101 @@ describe('holding the speaker', () => {
 
     expect(first.settled).toBe(true);
     expect(provider.spoken.at(-1)?.text).toBe('打算明');
+  });
+});
+
+describe('the block speaker from the keyboard', () => {
+  /**
+   * C6's fifth criterion — "the block speaker is reachable and activatable by
+   * keyboard" — **had no test at all**, which is how the bug below shipped: the
+   * only keyboard case in this file pressed the *slow* control, and the e2e
+   * Tabs past the speaker to reach it.
+   */
+  it('Enter on the focused speaker plays the block', async () => {
+    const user = userEvent.setup();
+    const provider = new FakeProvider();
+    render(<SpeakControl text="打算" provider={provider} />);
+    await ready();
+
+    screen.getByTestId('speak-button').focus();
+    await user.keyboard('{Enter}');
+    await act(async () => provider.settleMicrotasks());
+    expect(provider.spoken.map((u) => u.text)).toEqual(['打算']);
+  });
+
+  it('…and still does after a hold that ended off the button', async () => {
+    /**
+     * The defect this asserts against: a release *on* the button fires
+     * `pointerup` then `click`, but a drag-off fires `pointerleave` and **no
+     * click**. One flag served both, so the drag-off path left "swallow the
+     * next click" set for ever — and Chromium focuses a button on mousedown, so
+     * the very next Enter on the still-focused speaker was eaten and the
+     * learner got silence. Reproduced in a real browser before the fix.
+     */
+    const user = userEvent.setup();
+    const provider = new FakeProvider();
+    render(<SpeakControl text="打算" provider={provider} />);
+    await ready();
+
+    vi.useFakeTimers();
+    const button = screen.getByTestId('speak-button');
+    hold();
+    await act(async () => provider.settleMicrotasks());
+    expect(provider.spoken.map((u) => u.text)).toEqual(['打']);
+
+    // Drag off and release outside: leave, no up, no click.
+    fireEvent.pointerLeave(button);
+    await act(async () => provider.settleMicrotasks());
+
+    vi.useRealTimers();
+    button.focus();
+    await user.keyboard('{Enter}');
+    await act(async () => provider.settleMicrotasks());
+
+    // The block, on the FIRST Enter.
+    expect(provider.spoken.at(-1)?.text).toBe('打算');
+  });
+
+  it('a hold that ends ON the button still swallows its own click', async () => {
+    // The other half, so the fix cannot be "clear the flag everywhere".
+    const provider = new FakeProvider();
+    render(<SpeakControl text="打算" provider={provider} />);
+    await ready();
+
+    vi.useFakeTimers();
+    const button = screen.getByTestId('speak-button');
+    hold();
+    await act(async () => provider.settleMicrotasks());
+    fireEvent.pointerUp(button);
+    fireEvent.click(button);
+    await act(async () => provider.settleMicrotasks());
+
+    expect(provider.spoken.map((u) => u.text)).toEqual(['打']);
+  });
+});
+
+describe('the hold target', () => {
+  it('takes the touch for the whole gesture', () => {
+    /**
+     * A thumb that drifts past the browser's touch slop during a three-second
+     * hold hands the touch to the scroller, which fires `pointercancel` — the
+     * reading stops mid-word and the page slides away. jsdom has no scrolling
+     * and `page.mouse` never pans, so the class and the rule behind it are what
+     * a test can hold.
+     */
+    const provider = new FakeProvider();
+    render(<SpeakControl text="打算" provider={provider} />);
+    expect(screen.getByTestId('speak-button').className).toContain('speak-hold');
+
+    const css = readFileSync(resolve(APP_ROOT, 'app/globals.css'), 'utf8');
+    // The RULE, not the first mention — the prose above it names the selector.
+    const at = css.indexOf('.speak-hold {');
+    expect(at, '.speak-hold has no rule in globals.css').toBeGreaterThan(-1);
+    const rule = css.slice(at, css.indexOf('}', at));
+    expect(rule).toContain('touch-action: none');
+    // …and the half that stops a long press summoning the iOS callout over the
+    // card being read. Tailwind emits no utility for it.
+    expect(rule).toContain('-webkit-touch-callout: none');
   });
 });
 

@@ -169,8 +169,21 @@ export function SpeakControl({ text, provider, className, label }: SpeakControlP
   const utterance = useRef<Utterance | null>(null);
   const sequence = useRef<SpeakSequence | null>(null);
   const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** A hold has fired, so the `click` that follows the release is not a tap. */
+  /** A hold has fired: the sequence is running and a release must stop it. */
   const held = useRef(false);
+  /**
+   * The **next** `click` is the tail of a hold and must be swallowed.
+   *
+   * Separate from `held` because the two are not the same question, and the
+   * first version conflated them. A release *on* the button fires `pointerup`
+   * and then `click`; a release after dragging off fires `pointerleave` and
+   * **no click at all**. Reusing one flag therefore left it set for ever on the
+   * drag-off path, and Chromium focuses a button on mousedown — so the next
+   * Enter on the still-focused speaker was eaten by the suppression and the
+   * learner got silence, on the one path C6's fifth criterion is about. Only a
+   * release that will actually produce a click sets this.
+   */
+  const swallowClick = useRef(false);
 
   /**
    * `available()` has a different answer at different times, so it is asked
@@ -297,6 +310,7 @@ export function SpeakControl({ text, provider, className, label }: SpeakControlP
   const onPointerDown = () => {
     if (disabled) return;
     held.current = false;
+    swallowClick.current = false;
     if (holdTimer.current !== null) clearTimeout(holdTimer.current);
     holdTimer.current = setTimeout(() => {
       holdTimer.current = null;
@@ -305,13 +319,22 @@ export function SpeakControl({ text, provider, className, label }: SpeakControlP
     }, HOLD_MS);
   };
 
-  const endHold = () => {
+  /**
+   * The gesture is over. `clicks` says whether a `click` will follow — true for
+   * a release on the button, false for a drag-off or a cancel, where the
+   * browser sends none. See `swallowClick`.
+   */
+  const endHold = (clicks: boolean) => {
     if (holdTimer.current !== null) {
       clearTimeout(holdTimer.current);
       holdTimer.current = null;
     }
     // Releasing stops the sequence. C6: "Releasing stops the sequence."
-    if (held.current) stopSequence();
+    if (held.current) {
+      stopSequence();
+      swallowClick.current = clicks;
+    }
+    held.current = false;
   };
 
   const onClick = () => {
@@ -319,13 +342,15 @@ export function SpeakControl({ text, provider, className, label }: SpeakControlP
     /**
      * The `click` that follows a hold is not a tap.
      *
-     * A press-and-hold fires `pointerdown`, `pointerup` **and** `click`, so
-     * without this the release would start a block utterance on top of the
-     * sequence it just stopped — the slow reading followed instantly by the
-     * fast one, every time.
+     * A press-and-hold that ends **on** the button fires `pointerdown`,
+     * `pointerup` and `click`, so without this the release would start a block
+     * utterance on top of the sequence it just stopped — the slow reading
+     * followed instantly by the fast one, every time. A hold that ends off the
+     * button sends no click, which is why the flag is set at release rather
+     * than when the hold fires.
      */
-    if (held.current) {
-      held.current = false;
+    if (swallowClick.current) {
+      swallowClick.current = false;
       return;
     }
     speakBlock();
@@ -356,7 +381,7 @@ export function SpeakControl({ text, provider, className, label }: SpeakControlP
         data-speaking={speakingBlock ? 'true' : 'false'}
         variant="ghost"
         size="sm"
-        className={cn('px-2', className)}
+        className={cn('speak-hold px-2', className)}
         disabled={disabled}
         title={tooltip}
         // The accessible NAME carries the state ("Play 打算" / "Stop 打算"),
@@ -364,10 +389,24 @@ export function SpeakControl({ text, provider, className, label }: SpeakControlP
         // 打算, toggle button, pressed" — which is the documented either/or.
         // The glyph swaps with the name, so the name is the half to keep.
         aria-label={tooltip}
+        /**
+         * **`touch-action: none`, and it is load-bearing.**
+         *
+         * The hold keeps a finger down for 500 ms plus the whole sequence —
+         * three seconds or more for a four-character word — on a 40×32 target.
+         * At the UA default a thumb that drifts past the browser's touch slop
+         * (~8px) hands the touch to the scroller, which dispatches
+         * `pointercancel`; the reading then stops mid-word and the page slides
+         * out from under the finger. Measured with real touch input in
+         * Chromium. `page.mouse` never produces a pan, which is why the gate
+         * was green. The class carries the iOS callout suppression with it, for
+         * the same reason `.hanzi-span-host` does: a long press on a button is
+         * exactly what summons it.
+         */
         onPointerDown={onPointerDown}
-        onPointerUp={endHold}
-        onPointerLeave={endHold}
-        onPointerCancel={endHold}
+        onPointerUp={() => endHold(true)}
+        onPointerLeave={() => endHold(false)}
+        onPointerCancel={() => endHold(false)}
         onClick={onClick}
       >
         <Glyph aria-hidden className="size-4" />

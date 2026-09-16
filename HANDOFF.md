@@ -7981,3 +7981,125 @@ should own them.
 
 `pnpm data`, `pnpm lint`, `pnpm typecheck`, `pnpm test` (1,597 unit tests), `pnpm build`,
 `pnpm e2e` (204 specs) — all green.
+
+---
+
+## `core.md` C6 — the speaker control, completed: hold to slow
+
+**Landed.** Tap reads the block as one utterance; **hold** reads it character by character
+at 0.6× with each character lit; a tap on a character reads that syllable alone. The
+adversarial review that followed confirmed two defects and both are fixed in this branch —
+§"The C6 review" below.
+
+### The hold threshold is 500 ms, and here is why
+
+C6 asks for the platform's own long-press convention, "the number a learner's hand already
+expects", recorded rather than assumed. **Both platforms agree on 500 ms**: iOS's
+`UILongPressGestureRecognizer.minimumPressDuration` defaults to 0.5 s, and Android's
+`ViewConfiguration.getLongPressTimeout()` is 500 ms. `HOLD_MS` in
+`components/hanzi/speak-control.tsx` is that number and nothing else. `ios.md` I4 and
+`android.md` A4 should re-check it on hardware, where a thumb is less precise than a
+synthetic pointer — a hold that is *too short* is the dangerous direction, because it turns
+an ordinary tap into a slow reading.
+
+### Where the control lives, and why `components/tts/speak-button.tsx` is now a re-export
+
+C6's Files list is three files — `speak-control.tsx`, `lib/tts/sequence.ts`,
+`hanzi-text.tsx` — which only works if the four existing call sites gain the hold **without
+an edit each**. So `components/hanzi/speak-control.tsx` is the control (next to the
+per-character DOM it lights and the character tap it answers) and
+`components/tts/speak-button.tsx` re-exports it under the old name. Everything the C2
+section records about `SpeakButton` is still true of it.
+
+### Two things C6 specifies that this phase did differently, both on the record
+
+1. **The speaking mark is a class on the character, not a second Custom Highlight.** C6 asks
+   for the Custom Highlight API "with a different highlight name, so the 'currently
+   speaking' mark and the 'selected span' mark compose instead of fighting". The
+   *requirement* there is the composition, and a class and a `::highlight()` are different
+   mechanisms that both apply — `tests/unit/tts/speak-control.test.tsx` asserts both marks
+   present on one block. What the Highlight API buys is **no DOM mutation per pointer
+   move**, which is why C5a chose it for a drag; a sequence changes one character per
+   utterance, roughly once a second. Buying it here would mean building a character map
+   inside every card face and every headword row that might ever speak. The reasoning is in
+   `SPEAKING_CLASS`'s comment so the next reader does not have to reconstruct it.
+2. **Slow mode's non-gesture trigger is a visible "Slow" button**, named here as C6 asks.
+   It toggles rather than holds, because nothing can hold a key on an assistive device, and
+   it drives the same `speakCharacters()` call — not a second code path. It is **absent**,
+   not disabled, when there is no voice.
+
+### `lib/tts/sequence.ts` had no test at all
+
+C2 built it and nothing exercised it; every one of C6's criteria is a statement about that
+file. `tests/unit/tts/sequence.test.ts` now covers the contract, including the two cases
+that would otherwise be assumed: that it behaves identically with `supportsBoundary: true`
+(STACK §2.1 makes per-character utterances the rule, not the fallback) and that it works
+against an adapter that fires `start` from inside `speak()`, which is the shape
+`@capacitor-community/text-to-speech` forces on `ios.md` I4 and `android.md` A4.
+
+### The gallery has a `TTSProvider` of its own, and that is a real decision
+
+**Headless Chromium has no voices at all**, so against the real Web Speech adapter the only
+state the e2e suite can observe is `unavailable` — which leaves every behavioural criterion
+C6 states unobservable in a browser. `components/gallery/fake-tts.ts` reports a voice and
+settles each utterance on a timer; it makes no sound, the spec that drives it says so, and
+`src/routes.tsx`'s build-mode guard keeps it out of production with the rest of the gallery.
+It is what caught the touch defect below, which no unit test could have.
+
+### The C6 review — two confirmed defects, both fixed
+
+Three lenses, one skeptic per finding. Eleven findings, two survived refutation.
+
+**1 (major) A hold that ended off the button swallowed the next keyboard activation.**
+`held.current` was set when the hold fired and cleared only in `onClick`, on the reasoning
+that a click always follows a release. It does — but only for a release **on** the button.
+A drag-off fires `pointerleave` and no click at all, so the flag stayed set; Chromium
+focuses a button on mousedown, so the very next Enter on the still-focused speaker was eaten
+by the suppression and the learner got silence. That is C6's fifth criterion ("the block
+speaker is reachable and activatable by keyboard"), and **it had no test at all** — the only
+keyboard case pressed the *slow* control and the e2e Tabs past the speaker to reach it.
+Fixed by splitting the two questions: `held` means "a sequence is running", `swallowClick`
+means "the next click is the tail of a hold", and only a release that will produce a click
+sets it. Three unit tests now cover the keyboard path, including the drag-off one.
+
+**2 (major) The speaker button had no `touch-action`, so a real thumb lost the hold.**
+The gesture keeps a finger down for 500 ms plus the whole sequence — three seconds or more
+for a four-character word — on a 40×32 target at the UA default. A thumb that drifts past
+the browser's touch slop (~8 px) hands the touch to the scroller, which fires
+`pointercancel`; `endHold` treats that as a release, so the reading stopped mid-word and the
+page scrolled out from under the finger. **Every gate was green**: jsdom has no scrolling,
+and every case in `speaker.spec.ts` drove the hold with `page.mouse`, which never pans.
+Fixed with `.speak-hold` in `globals.css` — `touch-action: none` plus
+`-webkit-touch-callout: none` (which stops a long press summoning the iOS callout over the
+card being read, and which Tailwind emits no utility for). This is the **opposite**
+decision from `.hanzi-span-host`'s `pan-y`, deliberately: the passage is the scroll surface
+and must keep vertical panning; a 32px button is not one.
+The regression guard is a real-touch e2e case driving CDP `Input.dispatchTouchEvent` with
+drift, and it was mutation-checked: with `touch-action: auto` the drift cancels the hold
+after one character and the case fails on the behavioural assertion, not just the
+declaration.
+
+Nine findings were **refuted** and are recorded so they are not re-raised: the lit
+character's contrast (1.29:1 against paper — the verifier rendered it and found a 36×33px
+filled block plainly visible in both themes, and the speaker's glyph swaps as a second
+signal); the Slow button's icon-only label; `aria-pressed` alongside a name that flips; a
+right-click arming the hold; the invisible placeholder's width; tap-a-character being
+pointer-only (the keyboard route is the character sheet, which has its own speaker); the
+"composes" test asserting the word grouping rather than the character; the
+releasing-cancels test's mutation coverage; and the claim that the HANDOFF entries were
+missing — C6 says to record them *after* the phase, which is this section.
+
+### One thing C6 asks for that is deliberately not built
+
+**The word sheet's speaker does not light its own characters.** `entry-detail.tsx` renders
+the headword's `<HanziText>` from the *selected reading* while `SpeakButton` is handed
+`group.simp`, and the speaking store matches on the block's text — so the two agree only
+when the sheet is showing the simplified form. It is not in C6's Files list, it is not a
+regression (nothing lit before either), and fixing it means deciding which string a
+multi-script sheet is "reading", which is `entry-detail.tsx`'s question. Recorded rather
+than smuggled in.
+
+### Gates after this round
+
+`pnpm data`, `pnpm lint`, `pnpm typecheck`, `pnpm test` (1,625 unit tests), `pnpm build`,
+`pnpm e2e` (210 specs) — all green.

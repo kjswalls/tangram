@@ -70,23 +70,21 @@ Node **>= 22.22** (React Router 8's floor); pnpm 10. Playwright uses the contain
 >
 > Five things a builder must not read a green gate as having finished:
 >
-> - **The first dictionary download is never asked for.** D6 landed, so lookup is on-device:
->   `http-store.ts` and the five `app/api/dict/*` routes are gone. But `<DictGate>`'s mount calls
->   `store.open()`, which used to mean a one-query probe and now means *fetch 43 MB* — and
->   `entry-source.ts` and `example-sentences.tsx` sit outside the gate deliberately, so opening
->   **Library** on a fresh install starts it with no progress bar and no cancel. `dict-status.tsx`'s
->   own header calls that "a hostile default", and `dict-start` has no production path that reaches
->   it. Pinned by `tests/unit/dict/dict-gate.test.tsx`; the fix is `openStored()` at the gate and
->   `download()` behind the button, plus the ~120 specs that must then start the download themselves.
+> - **`pnpm smoke` needs to be told where the API is.** Since B1 the app's own origin 404s every
+>   `/api/**` path, so the command refuses to run without `--api-base <origin>` or `--no-api` rather
+>   than passing vacuously. The server half is its own command and wants `--base-url` plus a
+>   `TANGRAM_DATA_DIR` that really holds the artifact: its seventh case exists because the first six
+>   all passed against a server that could not answer a single real request.
 > - **The native dictionary stores are unproven**, and so is the web one on Apple platforms. D5a and
 >   D5b need an Android phone and a Mac with a physical iOS 26 device; register #4 (the reported
 >   10 MB per-file OPFS cap in WKWebView) is unanswered because the container has no Safari.
-> - **There are no accounts, no sync and no AI proxy.** The three model-backed routes still run in
->   the app rather than `apps/server`, which is `backend.md` **B1**. Its blocker is gone: wave 0's
->   move has run, `packages/ai/` holds all twelve modules, and `apps/app/lib/ai/` no longer exists —
->   `ask-client.ts`, the one browser-side module §5 keeps out of the package, is B2's and unwritten.
->   Accounts and sync (B3–B5) additionally need a Supabase project, a domain, a host account and an
->   SMTP sender, which `backend.md` §4 item 4 says the owner brings; no phase provisions them.
+> - **There are no accounts and no sync.** The AI proxy exists — B1 moved the three model routes
+>   into `apps/server`, so `apps/app` has no API at all and the client calls `VITE_API_BASE`. What is
+>   left is `backend.md` B2's remainder (the contract flip, and `ask-client.ts`, which §5 keeps out
+>   of `packages/ai` and which is still unwritten) and B3–B7. Those need a Supabase project, a
+>   domain, a host account and an SMTP sender, which `backend.md` §4 item 4 says the owner brings;
+>   **no phase provisions them**, and every criterion that needs one is marked *(deploy)* and is
+>   committed-and-flagged rather than run.
 > - **Backup, restore and sync are declared, not implemented.** The seven members wave 0 added to
 >   `lib/db/repository.ts` throw; `web.md` W5 and `backend.md` B5 write the bodies. They throw on
 >   purpose — see the guard in `tests/unit/db/repository.test.ts`.

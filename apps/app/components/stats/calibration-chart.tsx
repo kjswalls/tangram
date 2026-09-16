@@ -180,7 +180,7 @@ export function CalibrationChart({
             <svg
               viewBox={`0 0 ${W} ${H}`}
               role="img"
-              aria-label={`Predicted against observed recall, ${drawn.length} deciles with at least ${summary.minBucketReviews} reviews each.`}
+              aria-label={`What the app expected against what you remembered, over ${drawn.length} levels of confidence with at least ${summary.minBucketReviews} words behind each.`}
               onPointerLeave={() => setTooltip(null)}
             >
               {TICKS.map((tick) => (
@@ -359,13 +359,18 @@ export function CalibrationChart({
             <ChartTooltip tooltip={tooltip} width={W} height={H} />
           </ChartFrame>
 
+          {/* C8's jargon gate, applied to the body and not only to the title:
+              "cards in the Review state" is the FSRS card-state vocabulary that
+              `retention-panel.tsx` was rewritten to remove in the same commit,
+              and "decile" is a word this panel used five times. */}
           <p data-testid="stats-calibration-note" className="mt-2 text-sm text-muted">
-            {formatCount(summary.used)} reviews of cards in the Review state, all time, in{' '}
-            {drawn.length} of 10 deciles. Dot size is the reviews behind it.
+            {formatCount(summary.used)} times you came back to a word you had got right before,
+            all time, spread over {drawn.length} of 10 confidence levels. A bigger dot is more
+            words behind it.
             {summary.thin > 0 ? (
               <>
                 {' '}
-                {10 - drawn.length} deciles held fewer than {summary.minBucketReviews} reviews (
+                {10 - drawn.length} levels held fewer than {summary.minBucketReviews} of them (
                 {formatCount(summary.thin)} in all) and are not drawn.
               </>
             ) : null}
@@ -379,17 +384,17 @@ export function CalibrationChart({
           needed={summary.needed}
         >
           {summary.used >= summary.needed
-            ? `A calibration curve is ten rates, not one. Your predictions all land in ${
-                drawn.length === 1 ? 'a single decile' : 'deciles'
-              } with enough reviews to plot — which is what a well-scheduled log looks like, nearly everything predicted above 90% — so there is no curve to draw yet. The line above is the finding.`
-            : 'A calibration curve is ten rates, not one, so it needs the reviews to spread out before any decile holds enough to plot.'}
+            ? `This chart compares ten levels of confidence, not one. Yours all land in ${
+                drawn.length === 1 ? 'a single level' : 'a few levels'
+              } — which is what a well-scheduled history looks like, nearly everything the app was sure of — so there is nothing to plot yet. The line above is the answer.`
+            : 'This chart compares ten levels of confidence, not one, so it needs your words to spread out before any level holds enough to plot.'}
         </NotEnough>
       )}
 
       <TableView
-        label="Every decile, including the ones not drawn"
+        label="Every level, including the ones not drawn"
         testId="stats-calibration-table"
-        head={['Predicted', 'Reviews', 'Mean predicted', 'Observed']}
+        head={['Expected', 'Words', 'Average expected', 'You remembered']}
         rows={rows}
       />
 

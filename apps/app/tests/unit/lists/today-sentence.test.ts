@@ -4,7 +4,7 @@
  * The tiles were rejected because they were the most prominent thing on the
  * screen and are not the most important thing on it. What replaces them has one
  * rule that a hardcoded string would not have: **a clause whose count is zero
- * is not in the sentence.** "8 words to practice, 0 new words to learn, and 0
+ * is not in the sentence.** "8 words to practise, 0 new words to learn, and 0
  * to write from memory" is the tile grid again, with commas.
  *
  * The duration is the other half. C8 is explicit that it must not be invented,
@@ -35,16 +35,23 @@ describe('the sentence', () => {
   it('reads the way C8 writes it', () => {
     // The plan's own example, at the placeholder pace: 15 items × 8 s = 120 s.
     expect(todaySentence({ practice: 8, fresh: 5, write: 2 }, DEFAULT_SECONDS_PER_REVIEW)).toBe(
-      '8 words to practice, 5 new words to learn, and 2 to write from memory. About two minutes.',
+      '8 words to practise, 5 new words to learn, and 2 to write from memory. About two minutes.',
     );
   });
 
   it('drops every clause whose count is zero', () => {
-    expect(countsClause({ practice: 8, fresh: 0, write: 0 })).toBe('8 words to practice');
+    expect(countsClause({ practice: 8, fresh: 0, write: 0 })).toBe('8 words to practise');
     expect(countsClause({ practice: 0, fresh: 5, write: 0 })).toBe('5 new words to learn');
-    expect(countsClause({ practice: 0, fresh: 0, write: 2 })).toBe('2 to write from memory');
+    // The writing clause carries its own noun when it leads: it has no earlier
+    // clause to borrow one from, and "2 to write from memory" is two of what?
+    expect(countsClause({ practice: 0, fresh: 0, write: 2 })).toBe('2 words to write from memory');
+    expect(countsClause({ practice: 0, fresh: 0, write: 1 })).toBe('1 word to write from memory');
+    // …and it drops the noun again as soon as there is one in front of it.
     expect(countsClause({ practice: 8, fresh: 0, write: 2 })).toBe(
-      '8 words to practice and 2 to write from memory',
+      '8 words to practise and 2 to write from memory',
+    );
+    expect(countsClause({ practice: 8, fresh: 0, write: 2 })).toBe(
+      '8 words to practise and 2 to write from memory',
     );
     for (const clause of [
       countsClause({ practice: 8, fresh: 0, write: 0 }),
@@ -56,7 +63,7 @@ describe('the sentence', () => {
 
   it('says one word rather than 1 words', () => {
     expect(countsClause({ practice: 1, fresh: 1, write: 1 })).toBe(
-      '1 word to practice, 1 new word to learn, and 1 to write from memory',
+      '1 word to practise, 1 new word to learn, and 1 to write from memory',
     );
   });
 
@@ -65,6 +72,11 @@ describe('the sentence', () => {
       NOTHING_WAITING,
     );
     expect(NOTHING_WAITING).not.toMatch(/due|card|interval|review/i);
+    // …and it does not promise tomorrow. An explicitly added word is in
+    // *today's* queue, uncapped (`lib/lists/queue.ts`), and the two other
+    // surfaces that state this fact say "the next session".
+    expect(NOTHING_WAITING).toContain('your next session');
+    expect(NOTHING_WAITING).not.toMatch(/tomorrow/i);
   });
 
   it('joins with the Oxford comma, and with none at all for two', () => {

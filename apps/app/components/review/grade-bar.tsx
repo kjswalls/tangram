@@ -54,15 +54,25 @@ export function GradeBar({
           data-suggested={option.rating === suggested ? 'true' : undefined}
           variant={option.rating === 3 ? 'primary' : 'secondary'}
           size="lg"
+          /*
+            **The shape, not a copy of it** (core.md C8's review). `shape="grade"`
+            exists so the two-line auto-height layout lives in one place, and
+            this bar was still hand-rolling `h-auto flex-col gap-0.5 …` — so the
+            gallery's `shape="grade"` row showed a button the app did not render,
+            and a regression in either could not be seen from the other. The
+            interval goes through `sub`, which is what `sub` is for.
+          */
+          shape="grade"
+          sub={option.interval}
           disabled={disabled}
           aria-keyshortcuts={String(option.rating)}
           className={cn(
-            // `text-center leading-tight` and the `px-2` override are C8's
-            // doing: "Barely remembered" is two words longer than "Hard" and on
-            // a 390px phone the 2×2 grid gives each button about 170px. It
-            // wraps to two lines and must stay centred and un-clipped rather
-            // than pushing the grid wider than the viewport.
-            'h-auto flex-col gap-0.5 px-2 py-2 text-center leading-tight',
+            // The `px-2`/`py-2` override is C8's doing: "Barely remembered" is
+            // two words longer than "Hard" and on a 390px phone the 2×2 grid
+            // gives each button about 170px. It wraps to two lines and must
+            // stay un-clipped rather than pushing the grid wider than the
+            // viewport. The centring and the column come from the shape.
+            'px-2 py-2',
             option.rating === suggested &&
               'ring-2 ring-accent ring-offset-2 ring-offset-background',
           )}
@@ -74,7 +84,11 @@ export function GradeBar({
             </span>
             <span className="min-w-0">{option.label}</span>
           </span>
-          <span className="text-xs font-normal opacity-80">{option.interval}</span>
+          {/*
+            Above the interval rather than below it, which is where the
+            hand-rolled version put it: `sub` is always the button's last line,
+            and the cue belongs next to the label it is a cue for.
+          */}
           {option.rating === suggested ? (
             <span
               data-testid="grade-suggested-note"

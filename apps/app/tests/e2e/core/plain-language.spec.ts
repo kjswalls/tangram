@@ -202,11 +202,25 @@ test.describe('the pinyin control changes a real passage', () => {
    */
   const PASSAGE = '我打算明天去北京。';
 
+  /**
+   * **Set it through the control, not through the repository.**
+   *
+   * The first version of this spec called `repo.setSettings({ pinyinDisplay })`
+   * from `page.evaluate`, which tests C3's rendering and not C8's wiring: the
+   * `<select>`'s `onChange` — the only new code C8 added for "the pinyin
+   * control is reachable at last" — was covered by nothing, and an inert
+   * handler would have shipped green. Found by C8's adversarial review.
+   */
   async function readWith(page: Page, display: 'always' | 'tap' | 'never'): Promise<void> {
-    await page.evaluate(
-      (value) => window.__tangram.repo.setSettings({ pinyinDisplay: value }),
-      display,
-    );
+    await page.goto('/library');
+    await ready(page);
+    await page.getByTestId('settings-pinyin-display').selectOption(display);
+    await expect(page.getByTestId('settings-status')).toHaveText('Saved');
+    // …and the control really wrote the field the renderer reads.
+    expect(await page.evaluate(() => window.__tangram.repo.getSettings())).toMatchObject({
+      pinyinDisplay: display,
+    });
+
     await page.goto('/read');
     await ready(page);
     await page.getByTestId('reader-input').fill(PASSAGE);

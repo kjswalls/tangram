@@ -40,7 +40,7 @@ test.describe('today', () => {
     await expectTodayCounts(page, { fresh: 3, practice: 0, write: 0 }, { timeout: 60_000 });
     // **Nothing has been created.** This is the half the merge is about: the
     // number is what the cap allows, and the database is still empty.
-    await expect(page.getByText('0 of 3 new words introduced today')).toBeVisible();
+    await expect(page.getByText('0 of 3 new words started today')).toBeVisible();
     expect(await page.evaluate(() => window.__tangram.repo.allCards())).toHaveLength(0);
 
     await practice(page);
@@ -53,7 +53,7 @@ test.describe('today', () => {
     await page.goto('/');
     await expectTodayCounts(page, { fresh: 3 }, { timeout: 60_000 });
     await expect(page.getByTestId('today-new-word')).toHaveCount(3);
-    await expect(page.getByText('3 of 3 new words introduced today')).toBeVisible();
+    await expect(page.getByText('3 of 3 new words started today')).toBeVisible();
 
     // A second visit to Practice introduces nothing further: the counter is
     // persisted and charged at creation, not at grading.

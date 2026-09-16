@@ -175,7 +175,23 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
         returning: returningWithin(all, now, SESSION_RETURN_HORIZON_MS, deferred),
         deferred: [...deferred],
         attempts: queue[0] ? (repeats[queue[0].id] ?? 0) : 0,
-        waiting: summary.queue.draws.length,
+        /**
+         * **New words the day allows that could not be created.**
+         *
+         * It used to be `summary.queue.draws.length`, which is structurally
+         * always zero — `today.ts` never passes `newCandidates` to
+         * `buildQueue`, so `Queue.draws` is `[]` — and the empty state's
+         * "N new words are waiting, once the dictionary is back" branch was
+         * dead code. During an outage the learner got the *other* branch
+         * instead: "look a word up and it joins your next session", which is
+         * advice the missing dictionary makes impossible to follow. Found by
+         * C8's adversarial review.
+         *
+         * The honest number is what the day's cap still allows, and it is only
+         * meaningful when the draw actually failed — otherwise the words were
+         * created and are in the queue.
+         */
+        waiting: summary.drawError === undefined ? 0 : summary.queue.drawLimit,
         ...(summary.drawError === undefined ? {} : { drawError: summary.drawError }),
         now,
         index: 0,

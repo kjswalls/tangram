@@ -2,7 +2,7 @@
   "id": "/",
   "name": "Tangram",
   "short_name": "Tangram",
-  "description": "Look it up in context, keep it, review it.",
+  "description": "Look it up in context, keep it, practise it.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

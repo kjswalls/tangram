@@ -8468,3 +8468,108 @@ the grep caught.
 
 **Gates.** `pnpm data`, `pnpm lint`, `pnpm typecheck`, `pnpm test` (1,695 app + 75 server unit
 tests), `pnpm build`, `pnpm e2e` (234 specs) — all green on `ab10ca4`.
+
+## `core.md` C8, second pass — what four adversarial lenses found
+
+The C8 commit was reviewed from four angles at once (acceptance criteria; wording as a learner
+reads it; what breaks that no test covers; consistency between what the code does and what its own
+comments, the plans and the docs say). Thirty findings; the first fifteen were fixed inside
+`ab10ca4`'s follow-up and are described in the section above. This is the rest of them, and the
+four that were real bugs come first.
+
+### The bugs
+
+- **`newToOffer` reported the whole day's allowance during a dictionary outage.** In
+  `lib/lists/today.ts`, `drawable` was assigned only *after* `collectDrawCandidates` returned, so
+  the `catch` left it `undefined` — and `undefined` was the sentinel meaning "nobody asked, report
+  the cap". A fresh database with the dictionary missing put **"10 new words to learn. About one
+  minute."** directly above **"No new words could be drawn: dict-data-missing"**, with "Start
+  practice" enabled over a session that would introduce none. That is exactly the
+  allowance-for-inventory bug the field was written to remove, surviving in the one state nobody
+  asserted: `merged-session.test.ts`'s outage case checked `drawError` and `dueCount` and not the
+  number the banner sits under. The `catch` sets `drawable = 0`, and the test now says so.
+
+- **The reporting path walked the whole spine on every mount of the Look up tab.** C7 moved the
+  collection onto the reporting path so Today could say a true number, which is right. But
+  `collectDrawCandidates` short-circuits only when it *reaches* its limit: the case where the spine
+  cannot fill the cap — every eligible word already carded, known or filtered — is the case that
+  pages every active band to its end, and `EntrySource` memoises whole bands and deliberately not
+  windows. HSK 7–9 alone is 23 pages. Because reporting never charges the counter, the walk never
+  settled: switching to Practice and back re-ran it, forever. The reporting path now remembers its
+  answer against the inputs that decide it (day key, draw limit, the three draw settings, the card
+  and known-word counts, the lists' ids/active flags/`updatedAt`, the dictionary version); an
+  introducing run always recomputes, and an outage is never remembered, so recovery needs no
+  invalidation. Two tests: one counts band reads across two mounts, one takes the dictionary down
+  and brings it back.
+
+- **The ask panel's live region excluded the one state it was added for.** The `role="status"`
+  wrapper opened above `thinking` and closed above `ungrounded`, which rendered in a sibling
+  subtree — so a screen-reader learner heard "Thinking about…" disappear and never heard that
+  grounding had rejected the answer. The panel's own comment claimed all three states were inside.
+  PLAN.md §3.4's promise is the one thing on that panel that most needs saying out loud. The
+  `EmptyState` moved inside the region, and `ask-states.spec.ts` asserts the **ancestry** — the only
+  thing that decides whether it is spoken — rather than the text alone.
+
+- **`--tab-bar-height` was a pixel short.** It summed the tab item's `min-h-11` and the list's
+  `py-1` and forgot the bar's own `border-t`. A pixel does not show, which is the problem: the next
+  change to the bar will be a whole row and will be exactly as quiet. The token now writes its terms
+  out one per line against the class each comes from, and `shells.spec.ts` resolves the token in the
+  browser and compares it with the bar's measured height. Mutation-checked: with the `1px` removed
+  the new test fails by exactly one pixel.
+
+### The rest
+
+- **The optimizer's preview paragraph still called rating 3 "Good"** — ts-fsrs's name for a button
+  C8 relabelled and the learner has never seen. It reads `RATING_LABELS[3]` now.
+- **`shape="grade"` existed and nothing used it.** `components/ui/button.tsx` grew the shape in C1
+  precisely so the two-line auto-height grade button would stop being hand-rolled; the gallery
+  rendered `shape="grade"`, the actual grade bar rendered `h-auto flex-col gap-0.5 …` by hand, and
+  so the gallery was showing a button the app did not use. `grade-bar.tsx` uses the shape and passes
+  the interval through `sub`. One visible consequence: the "suggested" cue now sits above the
+  interval rather than below it, because `sub` is always the button's last line — which is the
+  better place for it anyway, next to the label it is a cue for.
+- **`components/lookup/ask-panel.tsx` came back from C8 reformatted by a different formatter** — 18
+  double-quoted imports and an ~80-column wrap, alone among 133 files — so a ~25-line semantic fix
+  arrived as a 500-line diff that could not be read. There is no Prettier config and `pnpm lint` has
+  no quote rule, so nothing would have pulled it back. The file is requoted, five stragglers
+  elsewhere in the tree went with it, and `tests/unit/source-style.test.ts` now pins the half of the
+  convention a machine can check exactly: a string literal outside a JSX attribute is single-quoted,
+  a JSX attribute is double-quoted, and a literal containing an apostrophe is exempt. The column
+  width is deliberately **not** checked — it varies across the app already and pinning it would fail
+  on lines a long identifier makes unavoidable. (There is no CI, so a rule that wants enforcement is
+  a unit test.)
+- **The installed app described itself with the old verb.** `manifest.webmanifest` and `index.html`
+  both said "Look it up in context, keep it, review it." Neither is in a directory C8's jargon sweep
+  walked, and nothing held the two copies to each other; `manifest.test.ts` now does both.
+- Three comments had gone stale against their own files within one commit and are corrected:
+  `screens/today.tsx`'s header still said the two number tiles survived, `tangram-progress.tsx`'s
+  said the completion state has no square while `review-session.tsx` renders one there, and
+  `TangramProgress.total`'s prop doc said "what the session started with" while both call sites pass
+  a value that moves.
+- **`README.md` gave the Node floor as 20.9**, against `>=22.22` in both `package.json`s, `22.22` in
+  `.nvmrc` and 22.22 in CLAUDE.md. Corrected to 22.22, with the reason (React Router 8).
+
+### What was found wrong in the plan set
+
+- **`lib/types.ts`: `core.md` §4 and CLAUDE.md contradict each other, and the first pass edited it.**
+  CLAUDE.md's settle-first table lists `lib/types.ts` as frozen by Phase 0. `core.md` §4's unfreeze
+  row says in bold **"`lib/types.ts` is not on that list"**, on the grounds that no phase here
+  changes the `Entry` shape — which is true, and `KnownBand` is an addition rather than a change to
+  anything in the file, but the file is frozen and nobody unfroze it. CLAUDE.md's rule is to stop,
+  write the need down and continue without it, so: **`KnownBand` has moved to `lib/db/schema.ts`**,
+  which the *same* `core.md` row does explicitly unfreeze for C8. It describes a settings field, so
+  that is also where it belongs on the merits. `lib/types.ts` is untouched by this plan again. The
+  contradiction itself is for whoever rewrites the settle-first table: a plan cannot unfreeze a
+  surface by asserting it was never frozen.
+- **`docs/STACK.md` §5.2 still recommends cutting the calibration chart.** "**Recommendation: cut it
+  from v1.**" — and C8 shipped it, behind Library, rewritten in plain English, with the
+  owner-sentence draft recorded in the section above. The decision record now disagrees with the
+  build in a way that reads as live advice to a future builder. Not edited here: STACK.md is the
+  orchestrator's record and this is not a builder's call. (§5.1, "Default theme is unresolved", is
+  in the same position — Inkstone shipped as the default and `theme.spec.ts` pins it.)
+- **`components/stats/workload-chart.tsx` says "already overdue"**, which one lens read as a jargon
+  hit. Left alone deliberately: "overdue" is ordinary English about a thing with a date on it, not
+  a spaced-repetition term, and C8's rule is about the scheduler's vocabulary rather than about
+  every word that touches time.
+
+**Gates.** `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm e2e` — all green.

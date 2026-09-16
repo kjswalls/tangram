@@ -24,6 +24,7 @@ import { collectDrawCandidates } from '@/lib/lists/draw';
 import { getEntrySource, type EntrySource } from '@/lib/lists/entry-source';
 import { introduceCards } from '@/lib/lists/introduce';
 import { buildQueue, type Queue } from '@/lib/lists/queue';
+import { todayKey } from '@/lib/srs/day';
 import { ensureSystemLists } from '@/lib/lists/system-lists';
 
 export interface TodayInput {
@@ -106,6 +107,57 @@ interface InFlightRun {
 
 const inFlight = new WeakMap<Repository, InFlightRun>();
 
+/**
+ * The reporting path's last answer, so that mounting Look up twice does not
+ * walk the spine twice (core.md C8's review, finding 18).
+ *
+ * `collectDrawCandidates` stops as soon as it has `limit` candidates, so on an
+ * ordinary day it reads one window of one band. **The case that is not
+ * ordinary is the one that cannot be short-circuited**: when the spine cannot
+ * fill the cap — every eligible word already carded, known, or filtered out —
+ * the collector has no way to know that without paging every active band to its
+ * end, and `EntrySource` memoises whole bands but deliberately not windows. C7
+ * moved that walk onto the reporting path, where it reruns on every mount of
+ * the Look up tab and, because reporting never charges the counter, never
+ * settles.
+ *
+ * So the reporting path remembers its answer against the inputs that decide it.
+ * Any of them moving recomputes; an introducing run always recomputes and
+ * refreshes this. The set is deliberately explicit rather than a hash of the
+ * settings row: a field that does not change the draw must not invalidate it.
+ */
+interface ReportedDraw {
+  key: string;
+  drawable: number;
+}
+
+const reported = new WeakMap<Repository, ReportedDraw>();
+
+function drawKey(input: {
+  dayKey: string;
+  drawLimit: number;
+  settings: SettingsRow;
+  cards: number;
+  known: number;
+  lists: readonly ListRow[];
+  dictVersion: string | undefined;
+}): string {
+  // Lists change the draw by their order, their activity and their membership;
+  // `updatedAt` moves whenever any of the three does.
+  const lists = input.lists.map((list) => `${list.id}:${list.active ? 1 : 0}:${list.updatedAt}`);
+  return [
+    input.dayKey,
+    input.drawLimit,
+    input.settings.spineStartBand,
+    input.settings.knownBand,
+    input.settings.newPerDay,
+    input.cards,
+    input.known,
+    input.dictVersion ?? '',
+    lists.join(','),
+  ].join('|');
+}
+
 async function run(input: TodayInput): Promise<TodaySummary> {
   const now = input.now ?? Date.now();
   const source = input.source ?? getEntrySource();
@@ -134,36 +186,68 @@ async function run(input: TodayInput): Promise<TodaySummary> {
   let drawable: number | undefined;
   if (first.drawLimit > 0) {
     drew = input.introduce !== false;
-    try {
-      const candidates = await collectDrawCandidates({
-        repo,
-        settings,
-        lists,
-        limit: first.drawLimit,
-        cards,
-        source,
-      });
-      drawable = candidates.length;
-      if (input.introduce !== false && candidates.length > 0) {
-        // Read after the draw, not before: the source only knows the snapshot
-        // once it has fetched something from it.
-        const dictVersion = source.dictVersion?.();
-        const outcome = await introduceCards(repo, candidates, {
-          now,
-          source,
+    // Read once here rather than twice inside `drawExclusions`: the reporting
+    // path needs the count for its cache key, and the collector takes the list.
+    const knownEntryIds = await repo.knownEntryIds();
+    const key = drawKey({
+      dayKey: todayKey(now, settings.dayRollover),
+      drawLimit: first.drawLimit,
+      settings,
+      cards: cards.length,
+      known: knownEntryIds.length,
+      lists,
+      dictVersion: source.dictVersion?.(),
+    });
+    const remembered = drew ? undefined : reported.get(repo);
+    if (remembered?.key === key) {
+      drawable = remembered.drawable;
+    } else {
+      try {
+        const candidates = await collectDrawCandidates({
+          repo,
           settings,
-          // The draw has just read the dictionary, so the source knows which
-          // snapshot these rows came from; without it the card records
-          // 'unknown' and can never be re-checked against a rebuilt dictionary.
-          ...(dictVersion === undefined ? {} : { dictVersion }),
+          lists,
+          limit: first.drawLimit,
+          cards,
+          knownEntryIds,
+          source,
         });
-        created = outcome.created;
-        after = outcome.settings;
+        drawable = candidates.length;
+        // Only a run that did not create anything may be remembered: an
+        // introducing run's candidates are rows a moment later, so its count
+        // answers a question nobody will ask again today.
+        if (!drew) reported.set(repo, { key, drawable });
+        if (input.introduce !== false && candidates.length > 0) {
+          // Read after the draw, not before: the source only knows the snapshot
+          // once it has fetched something from it.
+          const dictVersion = source.dictVersion?.();
+          const outcome = await introduceCards(repo, candidates, {
+            now,
+            source,
+            settings,
+            // The draw has just read the dictionary, so the source knows which
+            // snapshot these rows came from; without it the card records
+            // 'unknown' and can never be re-checked against a rebuilt dictionary.
+            ...(dictVersion === undefined ? {} : { dictVersion }),
+          });
+          created = outcome.created;
+          after = outcome.settings;
+        }
+      } catch (error) {
+        // `data/` is missing or the route is down. The due cards are local and
+        // still valid, so the page renders with a note instead of an error.
+        drawError = error instanceof Error ? error.message : String(error);
+        /**
+         * **Nothing was drawn, so nothing can be offered** (core.md C8's review,
+         * finding 16). Leaving this `undefined` made `newToOffer` fall back to
+         * the day's whole allowance — "10 new words to learn. About one minute."
+         * directly above "No new words could be drawn" — which is the exact
+         * allowance-for-inventory bug the field was introduced to remove. An
+         * outage is not remembered: `reported` is untouched, so the next mount
+         * retries.
+         */
+        drawable = 0;
       }
-    } catch (error) {
-      // `data/` is missing or the route is down. The due cards are local and
-      // still valid, so the page renders with a note instead of an error.
-      drawError = error instanceof Error ? error.message : String(error);
     }
   }
 

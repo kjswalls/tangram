@@ -205,8 +205,23 @@ export function ReviewSession() {
           built for is the one nobody would ever see. It is here when a session
           just ended (`graded > 0`) and absent on an idle Practice tab, which is
           what "never appears outside a running session" means.
+
+          **The denominator is not `graded`.** It was, for one commit, and that
+          made the square 7/7 and the label "All done" every time the queue was
+          *momentarily* empty: press "Forgot it" on the only card and the page
+          says "1 word comes back in 1 minute. Stay on this page" under a
+          finished square. The work still owed is the cards coming back inside
+          the session's horizon plus the ones it set aside, so they are in the
+          total. The square completes only when both are zero — which is what
+          "at the end the square is complete" was always supposed to mean.
         */}
-        {graded > 0 ? <TangramProgress done={graded} total={graded} className="mb-3" /> : null}
+        {graded > 0 ? (
+          <TangramProgress
+            done={graded}
+            total={graded + returning + deferred.length}
+            className="mb-3"
+          />
+        ) : null}
         <p data-testid="review-empty" className="text-base">
           {emptyStateMessage({ next: nextDue, now, waiting, returning, deferred: deferred.length })}
         </p>

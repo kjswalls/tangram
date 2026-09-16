@@ -21,7 +21,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { closeDb, getDb, getRepository } from '@/lib/db/get-db';
 import type { CardRow } from '@/lib/db/schema';
 import { loadToday } from '@/lib/lists/today';
-import { interleaveNew } from '@/lib/srs/session';
+import { emptyStateMessage, interleaveNew } from '@/lib/srs/session';
 import { todayKey } from '@/lib/srs/day';
 import type { Entry, EntryId } from '@/lib/types';
 
@@ -317,6 +317,122 @@ describe('the merged session’s three non-negotiables', () => {
     // Missing data is a banner, not a crash (CLAUDE.md): everything else is
     // still true and nothing threw.
     expect(reported.dueCount).toBe(0);
+    /**
+     * **And the number the banner sits under is 0, not the cap.**
+     *
+     * `drawable` stayed `undefined` on the catch path, and `newToOffer` read
+     * `undefined` as "report the whole allowance" — so Today said "10 new words
+     * to learn. About one minute." directly above "No new words could be
+     * drawn", with "Start practice" enabled over a session that would introduce
+     * none. That is the allowance-for-inventory bug the field was written to
+     * remove, surviving in the one state nobody asserted. Found by C8's
+     * adversarial review.
+     */
+    expect(reported.newToOffer).toBe(0);
+  });
+
+  it('retries the spine after an outage, but does not re-walk it after a good read', async () => {
+    /**
+     * C7 moved the collection onto the reporting path so Today could say a true
+     * number. The collector stops as soon as it has `limit` candidates, so an
+     * ordinary day costs one window — but the day it *cannot* fill the cap it
+     * has to page every active band to its end to find that out, and reporting
+     * never charges the counter, so the walk repeated on every mount of the
+     * Look up tab forever. The answer is remembered against the inputs that
+     * decide it.
+     */
+    const repo = getRepository();
+    await repo.setSettings({ newPerDay: 10, knownBand: 1, spineStartBand: 2 });
+    const now = Date.UTC(2026, 8, 16, 9);
+
+    let bandReads = 0;
+    const thin = entrySource(3);
+    const counted = {
+      ...thin,
+      band: async (...args: Parameters<typeof thin.band>) => {
+        bandReads += 1;
+        return thin.band(...args);
+      },
+    } as never;
+
+    const first = await loadToday({ repo, now, source: counted, introduce: false });
+    expect(first.newToOffer).toBe(3);
+    const afterFirst = bandReads;
+    expect(afterFirst).toBeGreaterThan(0);
+
+    // Same day, same cards, same lists, same settings: the same answer, unread.
+    const second = await loadToday({ repo, now, source: counted, introduce: false });
+    expect(second.newToOffer).toBe(3);
+    expect(bandReads).toBe(afterFirst);
+
+    // A setting that moves the draw invalidates it — nothing is remembered past
+    // the inputs it was measured against.
+    await repo.setSettings({ newPerDay: 4 });
+    const third = await loadToday({ repo, now, source: counted, introduce: false });
+    expect(third.newToOffer).toBe(3);
+    expect(bandReads).toBeGreaterThan(afterFirst);
+  });
+
+  it('does not remember an outage: the next mount asks again', async () => {
+    const repo = getRepository();
+    await repo.setSettings({ newPerDay: 10, knownBand: 1, spineStartBand: 2 });
+    const now = Date.UTC(2026, 8, 16, 9);
+    let down = true;
+    const healthy = entrySource(3);
+    const flaky = {
+      ...healthy,
+      band: async (...args: Parameters<typeof healthy.band>) => {
+        if (down) throw new Error('dict-data-missing');
+        return healthy.band(...args);
+      },
+    } as never;
+
+    const outage = await loadToday({ repo, now, source: flaky, introduce: false });
+    expect(outage.drawError).toContain('dict-data-missing');
+    expect(outage.newToOffer).toBe(0);
+
+    down = false;
+    const recovered = await loadToday({ repo, now, source: flaky, introduce: false });
+    expect(recovered.drawError).toBeUndefined();
+    expect(recovered.newToOffer).toBe(3);
+  });
+
+  it('tells the session how many new words an outage is holding', async () => {
+    /**
+     * `emptyStateMessage`'s `waiting > 0` branch — "N new words are waiting,
+     * once the dictionary is back" — was dead code: the store fed it
+     * `queue.draws.length`, and `today.ts` never passes `newCandidates` to
+     * `buildQueue`, so `draws` is always `[]`. During an outage the learner got
+     * "look a word up and it joins your next session" instead, which is advice
+     * the missing dictionary makes impossible to follow. Found by C8's
+     * adversarial review; the store now derives it from the cap and the error.
+     */
+    const repo = getRepository();
+    await repo.setSettings({ newPerDay: 7, knownBand: 1, spineStartBand: 2 });
+    const now = Date.UTC(2026, 8, 16, 9);
+    const broken = {
+      band: async () => {
+        throw new Error('dict-data-missing');
+      },
+      entries: async () => [],
+      search: async () => [],
+      dictVersion: () => 'test',
+    } as never;
+
+    const summary = await loadToday({ repo, now, source: broken });
+    expect(summary.drawError).toContain('dict-data-missing');
+    // The two the store reads: the cap still allows seven, and nothing was
+    // created, so seven is what is being held.
+    expect(summary.queue.drawLimit).toBe(7);
+    expect(summary.created).toHaveLength(0);
+    expect(
+      emptyStateMessage({ next: null, now, waiting: summary.queue.drawLimit }),
+    ).toBe('All done — 7 new words are waiting, once the dictionary is back.');
+
+    // …and with no outage the same call reports nothing held, so the branch
+    // cannot fire on a working day.
+    const fine = await loadToday({ repo, now, source: entrySource(20) as never });
+    expect(fine.drawError).toBeUndefined();
   });
 
   it('reports what the session will offer WITHOUT creating it', async () => {

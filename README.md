@@ -25,7 +25,7 @@ pnpm sw           # generate public/sw.js (gitignored) from scripts/sw.template.
 pnpm smoke        # hit every route of a built, running server and fail on any non-2xx
 ```
 
-Node >= 20.9 (`.nvmrc` says 22), pnpm 10.
+Node >= 22.22 — React Router 8's floor, and what `package.json`, `apps/app/package.json` and `.nvmrc` all say. pnpm 10.
 
 ## Data
 

@@ -50,6 +50,24 @@ describe('manifest.webmanifest', () => {
     expect(manifest.background_color).toMatch(/^#[0-9a-f]{6}$/i);
   });
 
+  it('describes itself in the app’s own words, in both places at once', () => {
+    /**
+     * The tagline is written twice — once in the manifest, once as the entry
+     * document's `<meta name="description">` — and the installed app shows the
+     * manifest's copy. C8 renamed the verb everywhere a learner can see it and
+     * both copies kept saying "review it", because neither is in a directory
+     * the jargon sweep walked and nothing held them to each other. Found by
+     * C8's adversarial review.
+     */
+    const meta = /<meta name="description" content="([^"]+)"/.exec(html)?.[1];
+    expect(meta).toBeDefined();
+    expect(manifest.description).toBe(meta);
+    // The one word C8 replaced. Not a general jargon sweep — that lives in the
+    // components — just the tagline the home screen quotes back.
+    expect(manifest.description).not.toMatch(/\breviews?\b/i);
+    expect(manifest.description).toMatch(/practise/i);
+  });
+
   it('leaves orientation to the device', () => {
     // Locking portrait forces an installed tablet out of the wide reader layout.
     expect(manifest.orientation).toBeUndefined();

@@ -84,6 +84,33 @@ test.describe('the tangram fills as the session runs', () => {
     await expect(page.getByTestId('tangram-label')).toHaveText('All done');
   });
 
+  test('does not call a session finished while a word is still coming back', async ({ page }) => {
+    /**
+     * The empty state's square used to be `done={graded} total={graded}` — a
+     * denominator defined to equal its numerator, so it was 7/7 and "All done"
+     * every time the queue was *momentarily* empty. Press "Forgot it" on the
+     * only card and the page said "1 word comes back in 1 minute. Stay on this
+     * page" under a finished square. Found by C8's adversarial review.
+     */
+    await openReview(page);
+    await seed(page, [{ entry: DASUAN, gradedDaysAgo: 30 }]);
+    await expect(page.getByTestId('review-session')).toBeVisible({ timeout: 30_000 });
+
+    await page.getByTestId('reveal').click();
+    await expect(page.getByTestId('card-back')).toBeVisible();
+    // "Forgot it": the card comes back inside the session, so the session is
+    // not over — and the page says so itself.
+    await page.getByTestId('grade-1').click();
+    await expect(page.getByTestId('review-empty')).toBeVisible();
+    await expect(page.getByTestId('review-empty')).toContainText('comes back in');
+
+    // One done, one still owed.
+    await expect(bar(page)).toHaveAttribute('aria-valuenow', '1');
+    await expect(bar(page)).toHaveAttribute('aria-valuemax', '2');
+    await expect(page.getByTestId('tangram-label')).toHaveText('1 of 2 done');
+    expect(await filledCount(page)).toBeLessThan(7);
+  });
+
   test('is absent on an idle Practice tab', async ({ page }) => {
     // Nothing to do and nothing done: no session, so no square.
     await resetApp(page, { newPerDay: 0 });

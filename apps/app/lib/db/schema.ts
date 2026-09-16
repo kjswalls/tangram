@@ -14,7 +14,26 @@
  * no side effects — importing it from anywhere, on any runtime, is free.
  */
 
-import type { CardContext, HskBand, KnownBand } from '@/lib/types';
+import type { CardContext, HskBand } from '@/lib/types';
+
+/**
+ * `settings.knownBand`: an HSK band, or **0 for "assume nothing known"**
+ * (docs/plans/core.md C8).
+ *
+ * A band, plus a value below the lowest one. It is not an `HskBand` because 0
+ * is not a band — nothing is in it — and the comparisons that read it
+ * (`hskBand <= knownBand`) are all true-by-arithmetic at zero, which is the
+ * behaviour a learner who is starting wants.
+ *
+ * **Here rather than in `lib/types.ts`, deliberately.** `lib/types.ts` is
+ * frozen (CLAUDE.md's settle-first table) and `core.md` §4 says in bold that
+ * this plan does **not** unfreeze it, while the same row *does* unfreeze
+ * `lib/db/schema.ts` for C8. It describes a settings field, so this is where it
+ * belongs on the merits too. It lived in `lib/types.ts` for one commit and C8's
+ * adversarial review caught it; the contradiction between the two documents is
+ * recorded in HANDOFF.md.
+ */
+export type KnownBand = HskBand | 0;
 
 export const DB_NAME = 'tangram';
 

@@ -129,7 +129,7 @@ describe("'tap' — one gesture, two effects", () => {
     expect(screen.getByTestId('hanzi-text').getAttribute('data-band')).toBe('none');
   });
 
-  it("works with NO callback at all, which is every real call site", async () => {
+  it('works with NO callback at all, which is every real call site', async () => {
     // The reveal lives in the delegated handler, and the handler used to be
     // attached only when a caller supplied `onWord` or `onCharacter`. The
     // gallery was the one call site that did — so `'tap'` behaved exactly like

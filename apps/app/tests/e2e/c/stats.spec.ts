@@ -108,10 +108,10 @@ test.describe('/library', () => {
       percent(RECALLED_WINDOW, REVIEWS_WINDOW),
     );
     await expect(page.getByTestId('stats-retention-denominator')).toContainText(
-      `${RECALLED_WINDOW} of ${REVIEWS_WINDOW} reviews recalled`,
+      `${RECALLED_WINDOW} of ${REVIEWS_WINDOW} remembered`,
     );
     await expect(page.getByTestId('stats-retention-denominator')).toContainText(
-      'already in the Review state',
+      'coming back to after getting them right before',
     );
     await expect(page.getByTestId('stats-retention-all')).toContainText(
       percent(RECALLED_ALL, REVIEWS_ALL),
@@ -129,7 +129,7 @@ test.describe('/library', () => {
     const dots = page.getByTestId('stats-calibration-dot');
     expect(await dots.count()).toBeGreaterThan(0);
     await expect(page.getByTestId('stats-calibration-note')).toContainText(
-      `${REVIEWS_ALL} reviews of cards in the Review state`,
+      `${REVIEWS_ALL} times you came back to a word you had got right before`,
     );
     for (const dot of await dots.all()) {
       // Nothing thin reached the chart.

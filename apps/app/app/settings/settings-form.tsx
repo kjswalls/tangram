@@ -132,7 +132,11 @@ export function SettingsForm({ onSettings }: SettingsFormProps = {}) {
         </label>
 
         <label className="flex flex-col gap-1 text-sm">
-          <span>Spine starts at HSK</span>
+          {/* "Spine starts at HSK" with the hint "the first band the auto-draw
+              takes new words from" is the internal vocabulary C8 exists to
+              remove — and it is what the Your level card's own Change button
+              scrolls to. */}
+          <span>New words come from HSK</span>
           <select
             className={SELECT}
             data-testid="settings-spine-start-band"
@@ -145,7 +149,10 @@ export function SettingsForm({ onSettings }: SettingsFormProps = {}) {
               </option>
             ))}
           </select>
-          <span className="text-xs text-muted">The first band the auto-draw takes new words from.</span>
+          <span className="text-xs text-muted">
+            Where the app starts picking words for you. Anything you already know, below, is
+            skipped as well.
+          </span>
         </label>
 
         <label className="flex flex-col gap-1 text-sm">
@@ -215,7 +222,10 @@ export function SettingsForm({ onSettings }: SettingsFormProps = {}) {
             <option value="never">Never</option>
           </select>
           <span className="text-xs text-muted">
-            “Only when I tap” hides the readings until you tap a word to hear how it sounds.
+            {/* **See, not hear.** Tapping in `tap` mode reveals the written
+                reading and opens the word sheet; nothing speaks. The plan's own
+                wording is "tap a word to see how it sounds". */}
+            “Only when I tap” hides the readings until you tap a word to see how it sounds.
           </span>
         </label>
 
@@ -291,7 +301,7 @@ export function SettingsForm({ onSettings }: SettingsFormProps = {}) {
               checked={settings.productionDirection ?? DEFAULT_SETTINGS.productionDirection}
               onChange={(event) => void patch({ productionDirection: event.target.checked })}
             />
-            Also practise the other direction
+            Also write words from memory
           </span>
           <span className="text-xs text-muted">
             English on the front, the hanzi recalled. A second card per word, with its own

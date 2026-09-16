@@ -219,7 +219,7 @@ test.describe('/practice', () => {
     await expect(page.getByTestId('review-empty')).toBeVisible({ timeout: 60_000 });
     await page.goto('/');
     await expectTodayCounts(page, { fresh: 0 }, { timeout: 60_000 });
-    await expect(page.getByText('3 of 3 new words introduced today')).toBeVisible();
+    await expect(page.getByText('3 of 3 new words started today')).toBeVisible();
     expect(await page.evaluate(() => window.__tangram.repo.allCards())).toHaveLength(3);
   });
 

@@ -20,6 +20,7 @@ import {
   type PreviousWeights,
 } from '@/lib/fsrs-optimize';
 import { describeParameters } from '@/lib/srs/params';
+import { RATING_LABELS } from '@/lib/srs/card';
 import { gradeOptions } from '@/lib/srs/session';
 
 /**
@@ -425,8 +426,14 @@ function OptimizerResult({
         </table>
       </div>
       <p className="text-xs text-muted">
-        Worked examples, not your cards: what &ldquo;Good&rdquo; would schedule for a card of that
-        age at average difficulty. Applying changes nothing you have already answered — no review
+        {/*
+          The button's own label, not the scheduler's name for rating 3. "Good"
+          is ts-fsrs's word and C8 renamed every one of the four on screen; this
+          paragraph is the last place the old name survived, and it named a
+          button the learner has never seen (core.md C8's review).
+        */}
+        Worked examples, not your cards: what &ldquo;{RATING_LABELS[3]}&rdquo; would schedule for a
+        card of that age at average difficulty. Applying changes nothing you have already answered — no review
         is rewritten, and every card keeps the state it is in.
       </p>
       <div>

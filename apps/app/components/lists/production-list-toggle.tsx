@@ -1,7 +1,8 @@
 'use client';
 
 /**
- * "Also study production" for one list (Phase 8, builder B).
+ * "Also write these words from memory" for one list (Phase 8, builder B;
+ * reworded by core.md C8, which named the direction "Write").
  *
  * The list is where a learner decides what a body of words is *for*, so it is
  * where the second direction belongs: turn it on for HSK 2 and the words in it
@@ -150,7 +151,7 @@ export function ProductionListToggle({
           data-testid="list-production-toggle"
           className="h-4 w-4 accent-[var(--lookup)]"
           checked={on}
-          aria-label="Also study production for this list"
+          aria-label="Also write these words from memory"
           onChange={(event) => {
             const next = event.target.checked;
             setProductionList(listId, next);
@@ -159,25 +160,28 @@ export function ProductionListToggle({
             if (!next) setStatus(undefined);
           }}
         />
-        Also study production (meaning → hanzi)
+        {/* C8's vocabulary: "Recognise" and "Write", never the arrows. The
+            arrows describe the card's mechanism and hand the learner the
+            scheduler's problem (`lib/srs/direction.ts`). */}
+        Also write these words from memory
       </label>
 
       <p data-testid="list-production-status" className="mt-1 text-xs text-muted">
         {!on ? (
-          'Off. The words here are asked one way round: hanzi → meaning.'
+          'Off. These words are only asked one way round: you read them.'
         ) : working ? (
-          'Adding reverse cards…'
+          'Adding them…'
         ) : status ? (
           <>
             {status.created > 0
-              ? `${status.created} reverse card${status.created === 1 ? '' : 's'} added today.`
-              : 'No reverse cards added today.'}{' '}
+              ? `${status.created} word${status.created === 1 ? '' : 's'} to write added today.`
+              : 'No words to write added today.'}{' '}
             {status.pending > 0
               ? `${status.pending} more are waiting for a later day's allowance.`
               : 'Every started word in this list has one.'}
           </>
         ) : (
-          'On. Words you have started here get a reverse card, under the daily new-card cap.'
+          'On. Words you have started here are also asked the other way round, within the day’s allowance for new words.'
         )}
       </p>
 

@@ -256,7 +256,7 @@ test.describe('/lists, also study production', () => {
     await toggle.click();
 
     await expect(page.getByTestId('list-production-status')).toContainText(
-      '1 reverse card added today',
+      '1 word to write added today',
     );
     await expect(page.getByTestId('list-production-status')).toContainText('1 more');
     const twins = await page.evaluate(async () =>

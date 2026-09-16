@@ -19,9 +19,10 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { useEffect, useMemo, useState } from 'react';
 
 import { getRepository } from '@/lib/db/get-db';
+import type { KnownBand } from '@/lib/db/schema';
 import { getEntrySource } from '@/lib/lists/entry-source';
 import { buildReaderIndex, type ReaderIndex } from '@/lib/reader/states';
-import { HSK_BANDS, type EntryId, type HskBand, type KnownBand } from '@/lib/types';
+import { HSK_BANDS, type EntryId, type HskBand } from '@/lib/types';
 
 interface Bands {
   /** The `knownBand` these were fetched for — a stale set colours the wrong words. */

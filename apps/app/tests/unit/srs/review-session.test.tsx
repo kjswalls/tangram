@@ -18,6 +18,20 @@ afterEach(async () => {
   await closeDb();
 });
 
+/**
+ * No spine draw, stated rather than inherited.
+ *
+ * There is no dictionary in jsdom, so a session that tries to draw the day's
+ * new words fails — and since C8's review revived the outage branch of the
+ * empty state (`waiting > 0`), that failure now has a *message*: "N new words
+ * are waiting, once the dictionary is back." It is the right message for a
+ * real outage and the wrong one for these cases, which are about a single
+ * seeded card. Turning the draw off is what makes them about that.
+ */
+async function noDraw(): Promise<void> {
+  await getRepository().setSettings({ newPerDay: 0 });
+}
+
 /** The session component drives the real store against a real (fake-indexed) db. */
 describe('the review session', () => {
   it('flips on space and grades on 1–4, ignoring every other key', async () => {
@@ -212,7 +226,7 @@ describe('the review session', () => {
     const card = await repo.addCardFromEntry(DASUAN, context({ source: 'lookup' }));
     // Off, so the card is a day out: with the short steps on it is ten minutes
     // away, which is the *other* empty state (below).
-    await repo.setSettings({ shortTermSteps: false });
+    await repo.setSettings({ shortTermSteps: false, newPerDay: 0 });
     await repo.grade(card.id, 3, Date.now());
 
     render(<ReviewSession />);
@@ -230,6 +244,7 @@ describe('the review session', () => {
     // and the learner was told to come back tomorrow-ish for a card that was
     // ten minutes away.
     const repo = getRepository();
+    await noDraw();
     const card = await repo.addCardFromEntry(DASUAN, context({ source: 'lookup' }));
     await repo.grade(card.id, 3, Date.now());
 
@@ -320,6 +335,7 @@ describe('the review session', () => {
   }, 15_000);
 
   it('says so when there is nothing scheduled at all', async () => {
+    await noDraw();
     render(<ReviewSession />);
     const empty = await screen.findByTestId('review-empty');
     expect(empty).toHaveTextContent('Nothing to practise yet — look a word up and it joins the next session.');

@@ -41,7 +41,7 @@ export async function gradeAllNew(page: Page, rating: 1 | 2 | 3 | 4 = 3): Promis
  * Today's counts, read back out of the sentence (docs/plans/core.md C8).
  *
  * C8 replaced the two number tiles with one line of English, and a clause whose
- * count is zero **is not in the sentence at all** — "8 words to practice, 0 new
+ * count is zero **is not in the sentence at all** — "8 words to practise, 0 new
  * words to learn" is the tile grid with commas. So a missing clause reads as
  * zero here, which is what the old `toHaveText('0')` assertions meant.
  *
@@ -55,8 +55,24 @@ export interface TodayCounts {
   write: number;
 }
 
+/**
+ * The number in the clause that contains `phrase`.
+ *
+ * **Split into clauses first.** The first version matched `(\d+)[^,.]*<phrase>`
+ * across the whole sentence, relying on a comma to stop it — and
+ * `joinClauses` writes exactly two clauses as "A and B" with **no comma**. So
+ * on a two-clause day every count read back as the first clause's number:
+ * "8 words to practise and 2 to write from memory" reported write = 8. Found by
+ * C8's adversarial review; every call site happened to pass a one-clause
+ * sentence, which is why the suite was green.
+ */
 function countIn(sentence: string, phrase: string): number {
-  return Number(new RegExp(`(\\d+)[^,.]*${phrase}`).exec(sentence)?.[1] ?? '0');
+  const counts = sentence
+    .split('.')[0]
+    .split(/,\s*|\s+and\s+/)
+    .filter((clause) => clause.includes(phrase))
+    .map((clause) => Number(/(\d+)/.exec(clause)?.[1] ?? '0'));
+  return counts[0] ?? 0;
 }
 
 export async function todayCounts(page: Page): Promise<TodayCounts> {
@@ -66,7 +82,7 @@ export async function todayCounts(page: Page): Promise<TodayCounts> {
   // an unfinished read.
   if (sentence.includes('Counting')) return { practice: -1, fresh: -1, write: -1 };
   return {
-    practice: countIn(sentence, 'to practice'),
+    practice: countIn(sentence, 'to practise'),
     fresh: countIn(sentence, 'new word'),
     write: countIn(sentence, 'to write'),
   };

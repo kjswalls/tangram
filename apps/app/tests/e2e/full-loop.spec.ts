@@ -254,7 +254,7 @@ test('the whole loop with i+1 sentences and free recall on', async ({ page }) =>
   // The two adds are never subject to the daily cap (§3.3), so they are on the
   // day's plate even with `newPerDay: 0`, and the demo left cards due.
   expect(numberBefore('new word'), sentence).toBeGreaterThanOrEqual(2);
-  expect(numberBefore('to practice') + numberBefore('to write'), sentence).toBeGreaterThanOrEqual(1);
+  expect(numberBefore('to practise') + numberBefore('to write'), sentence).toBeGreaterThanOrEqual(1);
 
   // --- the session, with both card features live ---------------------------
   await page.getByTestId('start-review').click();
@@ -560,9 +560,9 @@ test('the whole loop with i+1 sentences and free recall on', async ({ page }) =>
 
   await expect(page.getByTestId('stats-retention-empty')).toHaveCount(0, { timeout: 60_000 });
   await expect(page.getByTestId('stats-retention-rate')).toHaveText(/^\d+%$/);
-  await expect(page.getByTestId('stats-retention-denominator')).toContainText('reviews recalled');
+  await expect(page.getByTestId('stats-retention-denominator')).toContainText('remembered');
   await expect(page.getByTestId('stats-retention-denominator')).toContainText(
-    'already in the Review state',
+    'coming back to after getting them right before',
   );
 
   await expect(page.getByTestId('stats-calibration-empty')).toHaveCount(0);

@@ -156,6 +156,17 @@ test.describe('the Look up tab’s three answer states', () => {
     await expect(panel(page)).toHaveAttribute('data-ask-state', 'ungrounded', { timeout: 20_000 });
     // It says so, in an EmptyState rather than an empty answer body.
     await expect(page.getByTestId('ask-ungrounded')).toContainText(ASK_UNGROUNDED_TITLE);
+    /**
+     * **And it is announced.** The panel's `role="status"` region was added for
+     * the three asynchronous states and carried two of them: `ungrounded`
+     * rendered in a sibling subtree, so a screen-reader learner heard the
+     * "Thinking about…" line disappear and never heard why. The text alone
+     * cannot catch that, so this asserts the ancestry — the only thing that
+     * decides whether it is spoken (C8's adversarial review).
+     */
+    await expect(
+      page.locator('[role="status"][aria-live="polite"] [data-testid="ask-ungrounded"]'),
+    ).toHaveCount(1);
     // …and shows nothing it could not check.
     await expect(page.getByTestId('ask-sayits')).toHaveCount(0);
     await expect(page.getByTestId('ask-matches')).toHaveCount(0);

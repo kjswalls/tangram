@@ -25,7 +25,7 @@ export interface RetentionPanelProps {
 }
 
 function denominator(summary: RetentionSummary, span: string): string {
-  return `${formatCount(summary.recalled)} of ${formatCount(summary.reviews)} reviews recalled — cards already in the Review state, ${span}`;
+  return `${formatCount(summary.recalled)} of ${formatCount(summary.reviews)} remembered — words you were coming back to after getting them right before, ${span}`;
 }
 
 export function RetentionPanel({ window, allTime, windowDays }: RetentionPanelProps) {
@@ -77,7 +77,11 @@ export function RetentionPanel({ window, allTime, windowDays }: RetentionPanelPr
           label="Not counted"
           testId="stats-retention-excluded"
           value={formatCount(allTime.excluded)}
-          hint="same-sitting tries, all time"
+          // Not "same-sitting tries": the excluded set is every review of a
+          // word that was not yet in the come-back-later state — which is each
+          // word's **first** meeting as well as the repeats, and any word being
+          // relearned. Found by C8's adversarial review.
+          hint="first meetings and words you were relearning, all time"
         />
       </div>
 
@@ -85,9 +89,10 @@ export function RetentionPanel({ window, allTime, windowDays }: RetentionPanelPr
           named the four buttons by their old names, so it was both jargon and
           out of date the moment `RATING_LABELS` changed. */}
       <p className="mt-3 text-sm text-muted">
-        “Forgot it” is the only miss; the other three all count as remembered. Words you were
-        still working through in the same sitting are left out — they say how many times you
-        pressed a button that day, not whether the word stayed with you.
+        “Forgot it” is the only miss; the other three all count as remembered. Words you had not
+        got right yet are left out — the first time you meet a word, and any you were relearning —
+        because those say how many times you pressed a button, not whether the word stayed with
+        you.
       </p>
     </Card>
   );

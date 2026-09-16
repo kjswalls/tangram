@@ -206,8 +206,21 @@
    * tap on the centre of "Got it" at 390px hit the Look up tab and left the
    * session. Not a colour, so it is not one of the tiers the swatch list
    * reviews.
+   *
+   * **It is a hand-computed copy of a height nothing measures**, and the first
+   * version of it was a pixel short: it carried the tab item's `min-h-11` and
+   * the list's `py-1` and forgot the bar's own `border-t`. A pixel does not
+   * show, which is the problem — the next change to the bar will be a whole row
+   * and will be just as silent. So the terms are written out one per line
+   * against the class each comes from, and
+   * `tests/e2e/core/shells.spec.ts` measures the rendered bar against the
+   * resolved token rather than trusting this arithmetic.
    */
-  --tab-bar-height: calc(3.25rem + env(safe-area-inset-bottom, 0px));
+  --tab-bar-height: calc(
+    /* `ui/tab-bar.tsx`: the item's `min-h-11` */ 2.75rem +
+      /* the `<ul>`'s `py-1`, top and bottom */ 0.5rem +
+      /* the bar's own `border-t` */ 1px + env(safe-area-inset-bottom, 0px)
+  );
 }
 
 /*

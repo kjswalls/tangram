@@ -18,10 +18,10 @@
  */
 
 import type { Repository } from '@/lib/db/repository';
-import type { FsrsCardState } from '@/lib/db/schema';
+import type { FsrsCardState, KnownBand } from '@/lib/db/schema';
 import type { EntrySource } from '@/lib/lists/entry-source';
 import { wordState, type WordState } from '@/lib/srs/states';
-import { HSK_BANDS, type EntryId, type HskBand, type KnownBand, type Token } from '@/lib/types';
+import { HSK_BANDS, type EntryId, type HskBand, type Token } from '@/lib/types';
 
 /** Just enough of a card for `wordState`. */
 export type CardState = Pick<FsrsCardState, 'state' | 'stability'>;

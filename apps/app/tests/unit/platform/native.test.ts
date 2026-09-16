@@ -181,7 +181,7 @@ describe('the seam is the only reader of the bridge', () => {
     // Otherwise the assertion above passes just as well with a regex that
     // matches nothing, which is the shape of test this repo has been bitten by.
     for (const violation of [
-      "const cap = (window as any).Capacitor;",
+      'const cap = (window as any).Capacitor;',
       'if (globalThis.Capacitor?.isNativePlatform()) return;',
       'const platform = window.Capacitor.getPlatform();',
       'const native = self.Capacitor !== undefined;',

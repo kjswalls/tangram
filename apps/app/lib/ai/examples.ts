@@ -45,10 +45,15 @@ import {
 } from '@/lib/ai/ground';
 import type { ParsedExampleSentences } from '@/lib/ai/provider';
 import type { Repository } from '@/lib/db/repository';
-import { isPhraseSnapshot, type CardRow, type SettingsRow } from '@/lib/db/schema';
+import {
+  isPhraseSnapshot,
+  type CardRow,
+  type KnownBand,
+  type SettingsRow,
+} from '@/lib/db/schema';
 import { KNOWN_SAMPLE_LIMIT } from '@/lib/srs/profile';
 import { wordState } from '@/lib/srs/states';
-import { parseEntryId, type Entry, type EntryId, type HskBand, type KnownBand } from '@/lib/types';
+import { parseEntryId, type Entry, type EntryId, type HskBand } from '@/lib/types';
 
 /**
  * How many sentences reach the card back. The provider may return up to

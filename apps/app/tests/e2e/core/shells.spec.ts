@@ -270,6 +270,39 @@ test.describe('the two shells', () => {
     }
   });
 
+  test('the tab-bar height token is the tab bar’s height, measured', async ({ page }) => {
+    /**
+     * `--tab-bar-height` is arithmetic done by hand in `tokens.css` over
+     * classes that live in `ui/tab-bar.tsx`, and nothing made the two agree:
+     * the first version summed the item's `min-h-11` and the list's `py-1` and
+     * forgot the bar's own `border-t`, so the token was a pixel short. A pixel
+     * does not show — the next change to the bar would be a whole row and would
+     * be exactly as quiet. This is the only check that can see it: resolve the
+     * token in the browser and compare it with what the bar actually occupies.
+     * Found by C8's adversarial review.
+     */
+    await page.setViewportSize(PHONE);
+    await page.goto('/');
+    await expect(page.getByTestId('phone-shell')).toBeVisible();
+
+    const measured = await page.evaluate(() => {
+      const bar = document.querySelector('[data-testid="tab-bar"]') as HTMLElement;
+      // A probe rather than `getPropertyValue`, which hands back the unresolved
+      // `calc(...)` text: the browser computes `env()` and the rem scale.
+      const probe = document.createElement('div');
+      probe.style.position = 'absolute';
+      probe.style.visibility = 'hidden';
+      probe.style.height = 'var(--tab-bar-height)';
+      document.body.append(probe);
+      const token = probe.getBoundingClientRect().height;
+      probe.remove();
+      return { token, bar: bar.getBoundingClientRect().height };
+    });
+
+    // Sub-pixel layout rounding only: half a pixel, not a row.
+    expect(Math.abs(measured.token - measured.bar)).toBeLessThanOrEqual(0.5);
+  });
+
   test('the wide shell puts the tabs in the header, not under the thumb', async ({ page }) => {
     // The one difference between the shells, asserted so "close to free" stays
     // true rather than becoming a second design.

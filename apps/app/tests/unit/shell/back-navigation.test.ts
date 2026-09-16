@@ -115,7 +115,7 @@ describe('rule 2 — pop the current tab before leaving it', () => {
     expect(nav.handleBack({ overlayOpen: false })).toEqual({ type: 'pop' });
   });
 
-  it("a POP arrival unwinds the stack it came from", () => {
+  it('a POP arrival unwinds the stack it came from', () => {
     const nav = createBackNavigation(THREE, { belongsTo: SUB_PATHS });
     nav.visit('/library');
     nav.visit('/library/hsk-1');
@@ -291,7 +291,7 @@ describe('a sub-path of a tab (core.md C7: /read lives inside Look up)', () => {
   });
 });
 
-describe("the seven-route shell A1 actually ships against", () => {
+describe('the seven-route shell A1 actually ships against', () => {
   it("makes '/' the tab the app backs out of, and does not swallow the others", () => {
     const nav = createBackNavigation(SEVEN);
     nav.visit('/');

@@ -25,23 +25,46 @@ import type { HskBand } from '@/lib/types';
 import { hskBandLabel } from '@/lib/types';
 
 /**
+ * **The band new words will actually come from.**
+ *
+ * Two settings decide it and only one of them is called "where new words come
+ * from": `lib/lists/draw.ts` skips a band below `spineStartBand` **and** any
+ * band at or below `knownBand`, so the real answer is whichever is higher.
+ * Saying `spineStartBand` alone made the line a promise the draw did not keep
+ * — "new words come from HSK 1, easiest first, and HSK 3 and below are treated
+ * as words you already know" was a sentence that contradicted itself in the
+ * middle, and the first half was the false one. Found by C8's adversarial
+ * review.
+ */
+export function effectiveStartBand(
+  settings: Pick<SettingsRow, 'spineStartBand' | 'knownBand'>,
+): HskBand {
+  const start = (settings.spineStartBand ?? DEFAULT_SETTINGS.spineStartBand) as HskBand;
+  const known = settings.knownBand ?? DEFAULT_SETTINGS.knownBand;
+  return Math.min(7, Math.max(start, known + 1)) as HskBand;
+}
+
+/**
  * What to call where a learner is starting.
  *
  * Deliberately four names over seven bands: the distinctions a beginner can
  * act on are "I am starting", "I have some", "I have a lot" and "I am well
  * past the textbooks", and inventing seven adjectives would be inventing
  * precision the band number does not carry either.
+ *
+ * It takes the **effective** band, so a learner who has declared HSK 6 known is
+ * not called "Just starting" because the spine setting was left at 1.
  */
-export function levelName(spineStartBand: HskBand): string {
-  if (spineStartBand <= 1) return 'Just starting';
-  if (spineStartBand <= 3) return 'Getting going';
-  if (spineStartBand <= 5) return 'Well along';
+export function levelName(band: HskBand): string {
+  if (band <= 1) return 'Just starting';
+  if (band <= 3) return 'Getting going';
+  if (band <= 5) return 'Well along';
   return 'Advanced';
 }
 
 /** The whole line, so a test can assert the sentence rather than its pieces. */
 export function levelSentence(settings: Pick<SettingsRow, 'spineStartBand' | 'knownBand'>): string {
-  const band = (settings.spineStartBand ?? DEFAULT_SETTINGS.spineStartBand) as HskBand;
+  const band = effectiveStartBand(settings);
   const known = settings.knownBand ?? DEFAULT_SETTINGS.knownBand;
   const from = `new words come from HSK ${hskBandLabel(band)}, easiest first`;
   // `knownBand: 0` means "assume nothing", which has no second clause to say.
@@ -63,7 +86,7 @@ export function LearnerLevel({
   return (
     <div
       data-testid="learner-level"
-      data-band={String(settings.spineStartBand ?? DEFAULT_SETTINGS.spineStartBand)}
+      data-band={String(effectiveStartBand(settings))}
       className="flex flex-wrap items-baseline justify-between gap-3"
     >
       <p className="text-sm">

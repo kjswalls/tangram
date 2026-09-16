@@ -45,8 +45,13 @@ function front(card: CardRow): { simp: string; pinyin: string; gloss: string } {
  * (`TodaySummary.newToOffer`). The number
  * is the same number; what changed is that reading it costs nothing.
  *
- * C8 turns the two tiles below into one sentence. This phase moved the file and
- * cut the introduction; the tiles are still the tiles.
+ * **C8 turned the two tiles into one sentence, and they are gone** — not folded
+ * into it as spans. `today-due-count`, `today-new-count` and
+ * `today-direction-split` no longer exist; the wording lives in
+ * `lib/lists/today-sentence.ts` so it can be tested without a browser, and the
+ * specs that read the tiles read `today-sentence`. (This header said the tiles
+ * survived for one commit after they did not — C7 wrote it and C8 did the work
+ * a few lines below without coming back up here.)
  */
 export function TodayView() {
   const go = useScreenNavigate();
@@ -145,7 +150,16 @@ export function TodayView() {
 
   return (
     <div className="flex flex-col gap-4">
-      <Card title="Queue" aside={summary ? <Badge tone="neutral">{summary.newPerDay}/day</Badge> : null}>
+      {/* "Queue" and "10/day" are the scheduler's words on the screen C8 made
+          into a sentence; "introduced" below is `introduceCards`'s verb. All
+          three were inside the directories C8's jargon gate covers and all
+          three survived the first pass. */}
+      <Card
+        title="Today"
+        aside={
+          summary ? <Badge tone="neutral">{summary.newPerDay} new a day</Badge> : null
+        }
+      >
         {error ? (
           <p role="status" className="text-sm text-warning">
             {error}
@@ -171,7 +185,7 @@ export function TodayView() {
           </Button>
           {summary ? (
             <span className="text-sm text-muted">
-              {summary.introducedToday} of {summary.newPerDay} new words introduced today
+              {summary.introducedToday} of {summary.newPerDay} new words started today
             </span>
           ) : null}
         </div>

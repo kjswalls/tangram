@@ -3,8 +3,8 @@
  * thresholds are what colour every token in the reader and every row in a list.
  */
 
-import type { FsrsCardState } from '@/lib/db/schema';
-import type { HskBand, KnownBand } from '@/lib/types';
+import type { FsrsCardState, KnownBand } from '@/lib/db/schema';
+import type { HskBand } from '@/lib/types';
 import { State, toFsrsCard, toStoredCard } from '@/lib/srs/card';
 
 export type WordState = 'new' | 'learning' | 'known';

@@ -16,8 +16,14 @@
  *   items, so a session of three items does not fill three sevenths and stop.
  * - **It is the only animated element**, and the motion is plain CSS (§7): a
  *   fill transition, nothing that runs when nothing is happening.
- * - **It never appears outside a running session.** The Practice tab's idle and
- *   completion states have no square.
+ * - **It never appears outside a running session.** The Practice tab's idle
+ *   state has no square. The *completion* state does carry one, and that is a
+ *   correction the review of C8 forced rather than a loosening: a session whose
+ *   queue has momentarily emptied while cards are still coming back is not
+ *   over, so its square must show the cards still owed rather than vanish (see
+ *   `review-session.tsx`, which passes `graded + returning + deferred.length`).
+ *   The rule the line was protecting — no square on a tab nobody is practising
+ *   on — is unchanged and `tests/e2e/core/tangram.spec.ts` pins it.
  * - **It carries a text alternative.** A square filling up is not an accessible
  *   progress report, so the group is a `role="progressbar"` with the real
  *   value and max. **If the piece count and the item count disagree the pieces
@@ -114,7 +120,18 @@ export function progressLabel(done: number, total: number): string {
 export interface TangramProgressProps {
   /** Items finished in this session. */
   done: number;
-  /** Items the session started with — the merged queue's length. */
+  /**
+   * Everything this session still owes, finished or not — `done` plus what is
+   * left.
+   *
+   * **Not "what the session started with".** It is read on every render and it
+   * moves: grading a card 1 or 2 sends it back into the same session, and
+   * `shortTermSteps` defaults true, so most sessions end with a total larger
+   * than the one they opened on. A denominator that froze at the opening count
+   * would fill the square to seven pieces with cards still coming back, which
+   * is the one failure that would make the whole thing a lie. Both call sites
+   * compute it from the live queue for that reason.
+   */
   total: number;
   className?: string;
 }

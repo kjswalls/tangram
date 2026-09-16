@@ -76,9 +76,16 @@ Node **>= 22.22** (React Router 8's floor); pnpm 10. Playwright uses the contain
 >
 > - **`pnpm smoke` needs to be told where the API is.** Since B1 the app's own origin 404s every
 >   `/api/**` path, so the command refuses to run without `--api-base <origin>` or `--no-api` rather
->   than passing vacuously. The server half is its own command and wants `--base-url` plus a
->   `TANGRAM_DATA_DIR` that really holds the artifact: its seventh case exists because the first six
->   all passed against a server that could not answer a single real request.
+>   than passing vacuously, and it reports how many API cases it skipped. The server half is its own
+>   command — `cd apps/server && npx tsx src/smoke.ts --base-url <url>` — and since B2 it needs **no**
+>   `TANGRAM_DATA_DIR` and no `data/`, because the server holds no dictionary. It is 8/8 that way.
+> - **The fonts are self-hosted subsets and the coverage check is the guard that matters.**
+>   `pnpm font:check` reads `cmap` tables per face and per weight and fails with the list of
+>   uncovered code points, because a missing glyph renders as `.notdef` — which has a *non-zero*
+>   advance width, so any width-based assertion passes on exactly the failure it exists to catch.
+>   Register #9 is answered: 0 uncovered beyond a reviewed 79-character residue, none of it ranked.
+>   Do not add a `@font-face` without a `unicode-range`, and do not put font files in `public/` —
+>   `src/styles/fonts.css`'s header says why, and four mutation tests hold both rules.
 > - **The native dictionary stores are unproven**, and so is the web one on Apple platforms. D5a and
 >   D5b need an Android phone and a Mac with a physical iOS 26 device; register #4 (the reported
 >   10 MB per-file OPFS cap in WKWebView) is unanswered because the container has no Safari.

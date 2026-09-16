@@ -10537,3 +10537,29 @@ imports B1 removed and named six runtime edges where two remain, and
 the main build's service-worker shell list, so its precache degrades silently — a throwaway build,
 no production path. And `CLAUDE.md:57` now points at `apps/app/tracing.config.ts`, which this phase
 deletes; it joins the list above for whoever merges.
+
+### A trap this phase makes much worse, for whoever runs the suite next
+
+`playwright.config.ts` has set `reuseExistingServer: true` since `web.md` W1, and it is useful: a
+preview server already on `:3000` is reused and the six-minute build is skipped. **After B1 that is
+a loaded gun.** The e2e build is the only thing that bakes in `VITE_API_BASE` (`.env.e2e`), so a
+server left running from a plain `pnpm build` — or from a `pnpm smoke` session somebody forgot to
+close — is silently substituted for the one the suite meant to test, and the app it serves has an
+*empty* API base and no `/gallery`.
+
+I did exactly that to myself between two runs, and the presentation is worth recording because it
+looks nothing like its cause: **78 failures spread across `a/examples`, `b/recall`, `p4/ask`,
+`core/dict-states` and `core/gallery`**, none of them mentioning the API, the run taking 16.8
+minutes instead of 5.5, and `pnpm -F server smoke`, the unit suites and the access-gate spec all
+green throughout. The tell is `core/gallery` failing — that spec touches no network at all, and it
+is only in the bundle under `--mode e2e`, so its absence says "the build you are testing is not the
+build this command makes".
+
+`ss` is not installed in this container and `pkill -f` is forbidden, so the check is:
+
+```bash
+ps -eo pid,args | grep -E '[p]review|[d]ist/index.js'
+```
+
+before trusting a red e2e. I have left the setting alone — it belongs to `web.md` and the
+convenience is real — but a later phase that wants to close this properly has the evidence here.

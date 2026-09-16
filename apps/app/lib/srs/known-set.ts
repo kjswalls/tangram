@@ -318,9 +318,35 @@ export async function supportEntries(
   for (const entry of await store.entries(pool.ids ?? [])) add(entry);
 
   if (pool.knownBand !== undefined) {
+    /**
+     * **Bounded, and the bound is exact rather than a guess.**
+     *
+     * This ran on the server before `backend.md` B2, in process against
+     * `node:sqlite` on a warm machine, and read whole bands: with
+     * `knownBand: 7` that is **11,028 rows and 3.16 MB of JSON**, to choose the
+     * forty this function returns. After the flip it runs in a WebView, over
+     * OPFS, on the first flip of every review card — and `lib/dict/query/hsk.ts`
+     * grew `limit`/`offset` warning about exactly this ("not a thing to
+     * serialise whole on the way to a list that shows fifty"). An adversarial
+     * reviewer caught that the move had not taken the warning with it.
+     *
+     * `hsk_sort` **is** frequency order — `hskBandQuery` orders by it and
+     * `hsk.ts`'s header says it folds the null-`freqRank` sentinel in so that
+     * SQLite's NULLS-first does not put unranked entries at the head — so the
+     * first `perBand` rows of a band are its most frequent.
+     *
+     * Why `+ excluded.size + 1` and not a round number: an entry outside a
+     * band's top `perBand` has at least `perBand` entries in its own band that
+     * beat it. At most `excluded.size` of those are excluded and at most one is
+     * the target, so at least `SUPPORT_CAP` of them survive and beat it — which
+     * means it cannot reach the cut. The bound is therefore not an
+     * approximation, and `tests/unit/srs/support-pool.test.ts` asserts the
+     * bounded read returns exactly what the unbounded one did.
+     */
+    const perBand = SUPPORT_CAP + excluded.size + 1;
     for (const band of HSK_BANDS) {
       if (band > pool.knownBand) continue;
-      for (const entry of await store.hskBand(band)) add(entry);
+      for (const entry of await store.hskBand(band, { limit: perBand })) add(entry);
     }
   }
 

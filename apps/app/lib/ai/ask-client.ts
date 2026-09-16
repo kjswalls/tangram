@@ -286,7 +286,7 @@ export async function ask(input: AskInput, options: AskOptions = {}): Promise<As
     const fromSearch = await mergedSearch(store, query);
     let candidates: string[] = [];
     if (await needsProposals(store, query)) {
-      candidates = await propose(fetchImpl, query, context, signal);
+      candidates = await propose(fetchImpl, info, query, context, signal);
     }
     const retrieved = mergeRetrieved(fromSearch, await candidateEntries(store, candidates));
 
@@ -314,9 +314,37 @@ export async function ask(input: AskInput, options: AskOptions = {}): Promise<As
     }
     const body = (await res.json()) as AskAnswerResponse;
 
+    /**
+     * The body is checked for *shape* before it is grounded, and the reason is
+     * that "unavailable" has to mean what it says.
+     *
+     * `ground()` and `scrubProse` assume strings where the contract says
+     * strings. A 200 whose `whyThisOne` is a number — a captive portal, a stale
+     * proxy, a half-deployed server — throws a `TypeError` inside `scrubProse`,
+     * which the outer handler maps to `reason: 'offline'`, and `core.md` C7's
+     * "Dictionary only — offline" chip then covers a server that answered. It
+     * fails closed either way; it fails closed with the wrong words. An
+     * adversarial reviewer found it.
+     *
+     * `groundedAskResponseSchema` rather than a new one: `AskResponse` and
+     * `GroundedAskResponse` are the same four fields — `ground()` is what turns
+     * one into the other, and the flags the grounded schema adds are optional
+     * with defaults, which is exactly how it already parses a cache row written
+     * before those flags existed. A second schema for the same shape is the
+     * drift `schemas.ts` keeps warning about.
+     */
+    const shaped = groundedAskResponseSchema.safeParse(body.response);
+    if (!shaped.success) {
+      return {
+        state: 'unavailable',
+        reason: 'server',
+        message: 'The ask service answered something this app could not read.',
+      };
+    }
+
     // 4 — grounding, against the same entries the prompt was built from. Nothing
     // the model cited outside `retrieved` survives this line.
-    let response = await groundWithStore(body.response, store, retrieved);
+    let response = await groundWithStore(shaped.data, store, retrieved);
     let fallback = false;
     if (
       response.interpretation.length === 0 &&
@@ -370,6 +398,7 @@ export async function ask(input: AskInput, options: AskOptions = {}): Promise<As
  */
 async function propose(
   fetchImpl: ApiFetch,
+  info: AskInfoResponse,
   query: string,
   context: CardContext | undefined,
   signal: AbortSignal | undefined,
@@ -383,9 +412,33 @@ async function propose(
     });
     if (!res.ok) return [];
     const body = (await res.json()) as AskProposeResponse;
+    /**
+     * **The handshake is checked here too, and an adversarial reviewer is why.**
+     * The *answer* is checked before the cache write — a row keyed under one
+     * provider and written from another is how a cache starts lying — but the
+     * proposals shaped the retrieved set the answer was built from, and they
+     * were not checked at all. Two replicas behind one origin, one with a key
+     * and one without, is enough: the proposals come from `anthropic`, the
+     * answer from `fake`, and the row is keyed under the second. Dropping the
+     * candidates costs recall on one ask; keeping them silently mixes two
+     * configurations into one cached answer.
+     */
+    if (body.provider !== info.provider || body.promptVersion !== info.promptVersion) return [];
     return Array.isArray(body.candidates) ? body.candidates : [];
   } catch (error) {
     if (isAbort(error)) throw error;
+    /**
+     * **A failure is "no candidates" — unless the caller has given up.**
+     *
+     * The panel aborts with a `TimeoutError`, which is not an `AbortError`, so
+     * the check above let it through as an empty proposal list and the `/answer`
+     * call was then issued on an already-aborted signal. With the real `fetch`
+     * that rejects at once and the learner sees the right thing; with any
+     * `fetchImpl` that ignores `signal` it is a paid model call after the
+     * deadline. Found by an adversarial reviewer; the signal, not the error's
+     * name, is what decides.
+     */
+    if (signal?.aborted) throw error;
     return [];
   }
 }

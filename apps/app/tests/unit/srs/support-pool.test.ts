@@ -19,6 +19,7 @@ import { offeredSupport, supportEntries, type SupportPool } from '@/lib/srs/know
 import { SUPPORT_CAP } from '@tangram/ai/schemas';
 import { closeServerDictStore, serverDictStore } from '@/lib/server/dict';
 import type { DictStore } from '@/lib/dict/store';
+import { HSK_BANDS, type Entry, type HskBand } from '@/lib/types';
 import { requireDictData } from '../dict/data-required';
 import { entriesFor, entryFor, readingOf } from '../ai/helpers';
 
@@ -74,7 +75,11 @@ describe('the support pool', () => {
   it('expands a band per entry, and lets a card outrank it', async () => {
     const wo = entryFor('我');
     const banded = await pool({ knownBand: 1 }, '');
-    expect(banded.length).toBeGreaterThan(50);
+    // The expansion happens and every row really is in the band. The count is
+    // `SUPPORT_CAP + 1` rather than the whole band — see "the band read is
+    // bounded" below, which is where that number is justified. The moved
+    // version of this case asserted `> 50` against an unbounded read.
+    expect(banded.length).toBe(SUPPORT_CAP + 1);
     for (const row of banded) expect(row.hskBand).toBe(1);
     expect(banded.some((row) => row.id === wo.id)).toBe(true);
 
@@ -107,5 +112,105 @@ describe('what actually goes on the wire', () => {
     const whole = await supportEntries(store, { knownBand: 2 }, '');
     expect(whole.length).toBeGreaterThan(SUPPORT_CAP);
     expect(offered.map((row) => row.id)).toEqual(whole.slice(0, SUPPORT_CAP).map((row) => row.id));
+  });
+});
+
+describe('the band read is bounded', () => {
+  /**
+   * **An adversarial reviewer's finding, and the test that keeps it fixed.**
+   *
+   * `supportEntries` reads the HSK bands the learner has assumed. It ran on the
+   * server before `backend.md` B2 and read them **whole**: `knownBand: 7` is
+   * 11,028 rows and 3.16 MB of JSON, marshalled to choose forty. That was
+   * tolerable in process against `node:sqlite`; after the flip it runs in a
+   * WebView over OPFS on the first flip of every review card, and
+   * `lib/dict/query/hsk.ts` grew `limit`/`offset` warning about exactly this.
+   *
+   * The bound is `SUPPORT_CAP + |excludeIds| + 1` per band, and the claim is
+   * that it is **exact, not an approximation**. This is the oracle for that: the
+   * unbounded computation, written out longhand here, against the same
+   * dictionary.
+   */
+  const unboundedOffered = async (knownBand: HskBand, excludeIds: string[], exclude: string) => {
+    const excluded = new Set(excludeIds);
+    const seen = new Set<string>([exclude]);
+    const out: Entry[] = [];
+    for (const band of HSK_BANDS) {
+      if (band > knownBand) continue;
+      for (const entry of await store.hskBand(band)) {
+        if (seen.has(entry.id) || excluded.has(entry.id)) continue;
+        seen.add(entry.id);
+        out.push(entry);
+      }
+    }
+    return out
+      .sort(
+        (a, b) =>
+          (a.freqRank ?? Number.MAX_SAFE_INTEGER) - (b.freqRank ?? Number.MAX_SAFE_INTEGER) ||
+          (a.id < b.id ? -1 : 1),
+      )
+      .slice(0, SUPPORT_CAP);
+  };
+
+  it('returns exactly what the unbounded read returned, for every band', async () => {
+    for (const knownBand of HSK_BANDS) {
+      const bounded = await offeredSupport(store, { knownBand }, '');
+      const oracle = await unboundedOffered(knownBand, [], '');
+      expect(bounded.map((row) => row.id), `band ${knownBand}`).toEqual(
+        oracle.map((row) => row.id),
+      );
+    }
+  });
+
+  it('…and still does when the learner has cards outranking the band', async () => {
+    // The exclusions are what makes the `+ |excludeIds|` term necessary: without
+    // it, excluding the top forty of a band would push the true forty-first out
+    // of the window and the bounded read would silently return fewer.
+    const knownBand: HskBand = 3;
+    const top = await offeredSupport(store, { knownBand }, '');
+    const excludeIds = top.map((row) => row.id);
+    expect(excludeIds).toHaveLength(SUPPORT_CAP);
+
+    const bounded = await offeredSupport(store, { knownBand, excludeIds }, '');
+    const oracle = await unboundedOffered(knownBand, excludeIds, '');
+    expect(bounded.map((row) => row.id)).toEqual(oracle.map((row) => row.id));
+    // And it really did move on: none of the excluded forty came back.
+    for (const id of excludeIds) expect(bounded.map((row) => row.id)).not.toContain(id);
+  });
+
+  it('reads a bounded number of rows rather than the whole band', async () => {
+    // The point of the fix, counted. Band 7 alone is thousands of rows.
+    const counted: number[] = [];
+    // Delegated explicitly rather than spread: `SqliteDictStore`'s methods live
+    // on its prototype, so `{...store}` copies `status` and nothing else.
+    const counting: DictStore = {
+      get status() {
+        return store.status;
+      },
+      subscribe: (listener) => store.subscribe(listener),
+      open: () => store.open(),
+      entries: (ids) => store.entries(ids),
+      search: (query, options) => store.search(query, options),
+      segment: (text, options) => store.segment(text, options),
+      readingCount: (simp) => store.readingCount(simp),
+      wordsContaining: (ch, options) => store.wordsContaining(ch, options),
+      hskBand: async (band, options) => {
+        const rows = await store.hskBand(band, options);
+        counted.push(rows.length);
+        return rows;
+      },
+    };
+    await offeredSupport(counting, { knownBand: 7 }, '');
+    expect(counted).toHaveLength(HSK_BANDS.length);
+    for (const rows of counted) expect(rows).toBeLessThanOrEqual(SUPPORT_CAP + 1);
+    const total = counted.reduce((a, b) => a + b, 0);
+    // 7 bands x 41 rows, against the 11,028 the unbounded read marshalled.
+    expect(total).toBeLessThanOrEqual(HSK_BANDS.length * (SUPPORT_CAP + 1));
+    const whole = (await Promise.all(HSK_BANDS.map((band) => store.hskBand(band)))).reduce(
+      (sum, rows) => sum + rows.length,
+      0,
+    );
+    expect(whole).toBeGreaterThan(10_000);
+    expect(total).toBeLessThan(whole / 20);
   });
 });

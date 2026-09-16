@@ -11242,14 +11242,17 @@ retrieval, grounding and filtering moved to the side that now does it.
 | `examples-route.test.ts` — the 404 for an id the dictionary lacks | `examples-card.test.tsx`, "says so quietly when this device has no dictionary" and the missing-target branch |
 | `recall-route.test.ts` — everything | kept, with `{entryId}` → `{entry}`. The 404 is deleted (no dictionary) and `parseRecallBody`'s unit case is absorbed into `POST`, because the parser is a zod schema in `wire.ts` now |
 
-**2. Two caps in the frozen contract are NOT enforced, and the measurement is why.**
+**2. Two caps in the frozen contract are NOT enforced, a third local one replaces them, and the
+measurement is why.**
 `MAX_GLOSSES_PER_ENTRY` (12) and `MAX_GLOSS_CHARS` (200) are **below what CC-CEDICT produces**:
 38 of 124,188 entries carry more than twelve glosses — `白|白[bai2]` carries **21** — and the longest
 single gloss is **496** characters. Enforcing either as a reject would answer 400 to a lookup of 白;
 truncating instead would silently shorten the prompt for those entries, which is the same class of
-change B2 forbids for `hskBand`. So gloss volume is bounded by `MAX_BODY_BYTES` instead, which was
-always the cap doing the real work (27.5 KB worst case against 256 KB). **See "A frozen surface I
-did not change" for the need this creates.** `MAX_HEADWORD_CHARS` and `MAX_ENTRY_ID_CHARS` were
+change B2 forbids for `hskBand`. So gloss volume is bounded as a **total** instead, by a local
+`MAX_GLOSS_BYTES = 32 KB` in `wire.ts`. `MAX_BODY_BYTES` alone was **not** enough and an adversarial
+reviewer proved it — see review finding 1 below. The worst *real* 40-entry gloss volume is 18.8 KB,
+so nothing legitimate comes within 40% of the bound. **See "A frozen surface I did not change" for
+the need this creates.** `MAX_HEADWORD_CHARS` and `MAX_ENTRY_ID_CHARS` were
 measured the same way (19 against 24, 145 against 160) and **are** enforced; I verified that **zero**
 of the 124,188 rows fails the validator.
 
@@ -11389,8 +11392,8 @@ only), `apps/app/lib/srs/known-set.ts` (gained `supportEntries` / `offeredSuppor
 | `pnpm lint` | clean | clean |
 | `pnpm typecheck` | clean | clean |
 | `pnpm build` | clean | clean (server bundle 131 KB → **68.0 KB**) |
-| `pnpm test` | 1,824 app + 102 server | **1,933 app + 103 server** |
-| `PORT=3000 pnpm e2e` | 268 specs, 5.6 min | **282 specs, 8.3 min** |
+| `pnpm test` | 1,824 app + 102 server | **1,941 app + 103 server** |
+| `PORT=3000 pnpm e2e` | 268 specs, 5.6 min | **282 specs, 8.1 min** |
 | `pnpm smoke --base-url … --api-base …` | 21 ok | **22 ok** |
 | `pnpm -F server smoke --gate off` | 7/7 (and 6/7 with no artifact) | **8/8, and no artifact exists to be missing** |
 | `pnpm -F server smoke --gate on` | 11/11 | **15/15** |
@@ -11446,3 +11449,66 @@ Three of its observations were accepted and not acted on: the prompt test's band
 band 1–7 is pinned now, which is strictly more), the retired seventh smoke case (recorded, with what
 it costs), and that the boot RSS did not fall (recorded, with why B2's own text points at the wrong
 row).
+
+**The second reviewer — "what breaks that no test covers", led by the grounding contract — found no
+way to put a fabricated headword on screen**, and said so after tracing all four surfaces rather
+than after reading one. It also verified two of this phase's claims against the real 124,188-row
+artifact rather than taking them: `fake.ts`'s replacements for the dropped `Entry` fields are
+**exact** (`pinyinNumOf(e) === e.pinyinNum` for every row; `looksLikeVariant` / `looksLikeProperNoun`
+/ `looksLikeSurname` agree with `build-data.ts` with zero false positives and zero false negatives
+over 3,231 / 20,477 / 767 positives), and `wire.ts`'s caps reject nothing real. It confirmed the
+`ask_cache` licence invariant and that the prompt text is byte-identical.
+
+**Five survivors were fixed. Each has a test that fails against the old code.**
+
+1. **The edge accepted 40 legal rows carrying 240 KB of gloss text.** The most serious of the five
+   and the one this phase should have seen: `MAX_BODY_BYTES` is 256 KB and the worst *legitimate*
+   40-entry payload carries **18.8 KB** of gloss text, so a body could be nine times the honest size,
+   pass every count cap, and put a quarter of a megabyte through `entryLine()` into one prompt. The
+   reviewer built it — one entry, 1,200 glosses of 200 characters — and got a **200**. Decision 2
+   above was right that the frozen per-entry caps cannot be enforced and wrong to conclude that no
+   gloss bound was needed. **Fixed** with `MAX_GLOSS_BYTES = 32 KB` as a **total** over the request
+   (the target and the pool together, for `/api/examples`), which is 70% above the worst real
+   payload and rejects the reviewer's. Verified both ways by curl against the built bundle.
+2. **`supportEntries` read whole HSK bands.** With `knownBand: 7` that is **11,028 rows and 3.16 MB
+   of JSON** — to choose forty, on the first flip of every review card. It was a verbatim move from
+   the server route, where it ran in process against `node:sqlite`; after the flip it runs in a
+   WebView over OPFS, and `lib/dict/query/hsk.ts` grew `limit`/`offset` warning about exactly this
+   ("not a thing to serialise whole on the way to a list that shows fifty"). The move did not take
+   the warning with it. **Fixed** with a per-band limit of `SUPPORT_CAP + |excludeIds| + 1`, which is
+   **exact rather than approximate** — `hsk_sort` is frequency order, and an entry outside a band's
+   top `perBand` has at least `SUPPORT_CAP` surviving entries beating it. `support-pool.test.ts`
+   asserts the bounded read returns *identically* what an unbounded oracle returns, for every band
+   and with forty exclusions, and that the row count falls by more than 20×.
+3. **A propose/answer provider disagreement was invisible.** The *answer*'s handshake is checked
+   before the cache write; the proposals that shaped the retrieved set were not checked at all. Two
+   replicas behind one origin, one with a key and one without, is enough. **Fixed**: `propose()`
+   drops its candidates when the provider or prompt version differs from the handshake the key was
+   derived under.
+4. **`propose()` ate the client's own timeout.** The panel aborts with a `TimeoutError`, which is not
+   an `AbortError`, so it was swallowed as "no candidates" and the `/answer` call went out on an
+   already-aborted signal — with the real `fetch` that rejects at once, but with any transport that
+   ignores `signal` it is a paid model call after the deadline. **Fixed**: the signal, not the
+   error's name, decides.
+5. **A malformed 200 painted the "offline" chip.** The client validated cache rows and not the wire,
+   so a 200 whose `whyThisOne` is a number threw a `TypeError` inside `scrubProse` and
+   `unavailableReason` mapped it to `offline` — `core.md` C7's "Dictionary only — offline" over a
+   server that had answered. **Fixed**: the body is shape-checked with `groundedAskResponseSchema`
+   (the same four fields; `ground()` is what turns one into the other) and a failure is `server`.
+
+**Two were accepted and recorded rather than fixed, both because they are pre-existing and neither
+is B2's to change.**
+
+- **The ask's 35 s client deadline does not cover the server's 8 s + 30 s.** `ASK_TIMEOUT_MS` in
+  `ask-panel.tsx` must now cover propose plus answer plus two round trips plus local retrieval, and
+  an 8 + 29 path is abandoned at 35 s *after the model was billed*. **The arithmetic was already
+  wrong before the flip** — the merged route ran both deadlines inside one request — so this is not a
+  regression, and the constant is `core.md` C7's file. It wants either a 40 s client deadline or a
+  shorter propose deadline, and it is worth `backend.md` B7's attention with the rest of the
+  operational surface.
+- **The ask panel draws `?` for a token whose entry no longer resolves**, where the card back filters
+  the sentence out and has a test pinning that it never draws a hole. Reachable from a warm
+  `ask_cache` row after a dictionary rebuild, because `askCachePayload` does not fold in
+  `dictVersion`. Unchanged by B2 — a *fresh* answer cannot have a missing token, since every cited id
+  survived grounding against rows from this same store — but `filterCachedSentences` documents the
+  identical hazard for the other surface, and the panel is `core.md` C7's.

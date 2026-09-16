@@ -220,6 +220,58 @@ describe('POST /api/ask/answer', () => {
     expect(await hint(over)).toContain(String(RETRIEVED_CAP));
   });
 
+  it('refuses 40 legal rows carrying forty times the legal gloss volume', async () => {
+    /**
+     * **An adversarial reviewer's finding, and the hole it closes.**
+     *
+     * `MAX_BODY_BYTES` is 256 KB and the worst *legitimate* 40-entry payload in
+     * this dictionary carries 18.8 KB of gloss text — so a body could be nine
+     * times the honest size, pass every count cap, and put a quarter of a
+     * megabyte of gloss text into one prompt through `entryLine()`. The reviewer
+     * built exactly that: one entry with 1,200 glosses of 200 characters, which
+     * answered 200. It is the same class of hole as "a client that could name
+     * the model" — it names the token count instead.
+     *
+     * The frozen contract's per-entry caps cannot do this job (`src/wire.ts`
+     * says why: 38 real entries exceed 12 glosses and 235 carry one over 200
+     * characters), so the bound is a total, and it is set so that no real
+     * lookup comes within 40% of it.
+     */
+    let called = false;
+    stub = provider({
+      async answer() {
+        called = true;
+        return { interpretation: '', matches: [], sayIt: [], notes: [] };
+      },
+    });
+    const huge = {
+      ...DASUAN,
+      glosses: Array.from({ length: 1_200 }, () => 'x'.repeat(200)),
+    };
+    const res = await ANSWER(
+      post('/api/ask/answer', { query: '打算', profile: PROFILE, retrieved: [huge] }),
+    );
+    expect(res.status).toBe(400);
+    expect(await hint(res)).toContain('bytes in total');
+    expect(called).toBe(false);
+  });
+
+  it('…and lets the worst legitimate payload through', async () => {
+    // The other half, and the one that would catch a cap set too low: forty
+    // entries each carrying the most gloss text any row in the artifact has
+    // (711 bytes) is 27.8 KB, comfortably inside the 32 KB bound.
+    stub = provider({});
+    const fat = Array.from({ length: RETRIEVED_CAP }, (_unused, index) => ({
+      ...DASUAN,
+      id: `x|x[x${index}]`,
+      glosses: ['g'.repeat(700)],
+    }));
+    const res = await ANSWER(
+      post('/api/ask/answer', { query: '打算', profile: PROFILE, retrieved: fat }),
+    );
+    expect(res.status).toBe(200);
+  });
+
   it('refuses a body over the byte cap before it reaches a provider', async () => {
     // Cost control, which is what validation is for after the flip. The header
     // is checked first so an oversized body is refused without being read.

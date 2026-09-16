@@ -230,6 +230,84 @@ describe('the two round trips', () => {
   });
 });
 
+  it('drops proposals answered by a different provider than the answer will be', async () => {
+    // **An adversarial reviewer's finding.** The answer's handshake is checked
+    // before the cache write; the proposals — which shaped the retrieved set the
+    // answer is built from — were not checked at all. Two replicas behind one
+    // origin, one with a key and one without, is enough to mix them.
+    const net = transport({ candidates: ['随便'] });
+    const mixed: ApiFetch = async (path, init) => {
+      const res = await net.fetchImpl(path, init);
+      if (path !== ASK_PROPOSE_PATH) return res;
+      const body = (await res.json()) as Record<string, unknown>;
+      return json({ ...body, provider: 'anthropic' });
+    };
+    const { repo } = fakeRepository();
+    await ask(
+      { query: "how do I say I'm just browsing" },
+      { store, repository: repo, fetchImpl: mixed },
+    );
+    const retrieved = (net.posted.answer?.retrieved ?? []) as RetrievedEntry[];
+    // The dictionary search still stands; what is gone is the phrase the other
+    // configuration proposed.
+    expect(retrieved.length).toBeGreaterThan(0);
+    expect(retrieved.some((entry) => entry.id === entryFor('随便').id)).toBe(false);
+  });
+
+  it('does not issue the answer call once the caller has given up', async () => {
+    // Also a reviewer's. The panel aborts with a `TimeoutError`, which is not an
+    // `AbortError`, so `propose` used to swallow it as "no candidates" and the
+    // answer call went out on an already-aborted signal — a paid model call
+    // after the deadline, for any transport that ignores `signal`.
+    const controller = new AbortController();
+    let answerCalls = 0;
+    const impl: ApiFetch = async (path) => {
+      if (path === ASK_INFO_PATH) return json({ provider: 'fake', promptVersion: ASK_PROMPT_VERSION });
+      if (path === ASK_PROPOSE_PATH) {
+        controller.abort(new DOMException('timeout', 'TimeoutError'));
+        throw new DOMException('timeout', 'TimeoutError');
+      }
+      answerCalls += 1;
+      return json({ provider: 'fake', promptVersion: ASK_PROMPT_VERSION, response: {} });
+    };
+    const { repo } = fakeRepository();
+    const outcome = await ask(
+      { query: 'how do I ask for the bill' },
+      { store, repository: repo, fetchImpl: impl, signal: controller.signal },
+    );
+    expect(answerCalls).toBe(0);
+    if (outcome.state !== 'unavailable') throw new Error('expected unavailable');
+    expect(outcome.reason).toBe('timeout');
+  });
+
+  it('calls a malformed 200 a server problem, not an offline one', async () => {
+    // A reviewer's third: the client validated cache rows and not the wire, so a
+    // 200 whose `whyThisOne` is a number threw a `TypeError` inside `scrubProse`
+    // and `unavailableReason` painted C7's "Dictionary only — offline" chip over
+    // a server that had answered. A captive portal or a stale proxy is the
+    // realistic source.
+    const net = transport({
+      reply: (path) =>
+        path === ASK_ANSWER_PATH
+          ? json({
+              provider: 'fake',
+              promptVersion: ASK_PROMPT_VERSION,
+              response: {
+                interpretation: 'fine',
+                matches: [{ entryId: 'a|a[a]', senseIndex: 0, whyThisOne: 42 }],
+                sayIt: [],
+                notes: [],
+              },
+            })
+          : undefined,
+    });
+    const { repo, cache } = fakeRepository();
+    const outcome = await ask({ query: '打算' }, { store, repository: repo, fetchImpl: net.fetchImpl });
+    if (outcome.state !== 'unavailable') throw new Error('expected unavailable');
+    expect(outcome.reason).toBe('server');
+    expect(cache.size).toBe(0);
+  });
+
 // ---------------------------------------------------------------------------
 // What goes on the wire
 // ---------------------------------------------------------------------------

@@ -35,12 +35,17 @@
  * would quietly shorten the prompt for those entries, which is the same class of
  * silent model-behaviour change `backend.md` B2 forbids for `hskBand`.
  *
- * So the gloss volume is bounded by `MAX_BODY_BYTES` instead, which is the cap
- * that was always doing the real work: the **worst possible** 40-entry payload
- * in this dictionary — the forty largest entries there are — serialises to
- * **24.0 KB**, and a typical one to 6.4 KB, against a 256 KB limit. The need for
- * the two numbers to rise (to at least 21 and 512) is recorded in `HANDOFF.md`;
- * this phase does not edit the frozen file to get it.
+ * So the gloss volume is bounded **as a total**, by `MAX_GLOSS_BYTES` below,
+ * rather than per gloss and per entry. The need for the two frozen numbers to
+ * rise (to at least 21 and 512) is recorded in `HANDOFF.md`; this phase does not
+ * edit the frozen file to get it.
+ *
+ * `MAX_BODY_BYTES` alone was **not** enough, and an adversarial reviewer showed
+ * why: 256 KB is 9× the worst legitimate payload, so a single entry carrying
+ * 1,200 glosses of 200 characters passed the edge and `entryLine()` joined every
+ * one of them into the prompt. That is the same class of hole as "a client that
+ * could name the model" — it names the token count instead — and cost control is
+ * what this module is for.
  *
  * `MAX_HEADWORD_CHARS` and `MAX_ENTRY_ID_CHARS` were measured the same way and
  * both clear the dictionary comfortably (19 against 24, 145 against 160), so
@@ -72,6 +77,22 @@ import {
  * the generous side of that by a factor of two. Recorded in `HANDOFF.md`.
  */
 export const MAX_PINYIN_CHARS = MAX_HEADWORD_CHARS * 8;
+
+/**
+ * How many bytes of gloss text one request may carry, over every entry in it.
+ *
+ * A **total**, deliberately, because the two per-entry caps the frozen contract
+ * names cannot be enforced (see the header) and a per-entry bound is the wrong
+ * shape anyway: what costs money is the size of the prompt, not the shape of any
+ * one row in it.
+ *
+ * 32 KB, from the same measurement as the other local bound. The **worst
+ * possible** legitimate request — the forty entries with the most gloss text in
+ * the whole 124,188-row artifact — carries **18.8 KB**, and a typical one
+ * carries about 5 KB. So no real lookup comes within 40% of this, and the
+ * 240 KB prompt a reviewer built is refused.
+ */
+export const MAX_GLOSS_BYTES = 32 * 1024;
 
 // ---------------------------------------------------------------------------
 // Reading the body
@@ -237,6 +258,27 @@ export const askProposeRequestSchema = z.object({
   context: askContextSchema.optional(),
 });
 
+/**
+ * The total-gloss-bytes rule, as a refinement over a list of rows.
+ *
+ * It is a `superRefine` on the array rather than a check inside
+ * `retrievedEntrySchema`, because the bound is on the request and not on any one
+ * entry: forty ordinary rows and one enormous one are the same cost to the
+ * model, and only the sum knows that.
+ */
+function boundGlossBytes(rows: { glosses: string[] }[], ctx: z.RefinementCtx): void {
+  let bytes = 0;
+  for (const row of rows) {
+    for (const gloss of row.glosses) bytes += byteLength(gloss);
+  }
+  if (bytes > MAX_GLOSS_BYTES) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `glosses are at most ${MAX_GLOSS_BYTES} bytes in total`,
+    });
+  }
+}
+
 export const askAnswerRequestSchema = z.object({
   query: typedText(MAX_QUERY_CHARS, 'query'),
   context: askContextSchema.optional(),
@@ -245,19 +287,26 @@ export const askAnswerRequestSchema = z.object({
   dictVersion: z.string().max(MAX_HEADWORD_CHARS * 4).optional(),
   retrieved: z
     .array(retrievedEntrySchema)
-    .max(RETRIEVED_CAP, { message: `at most ${RETRIEVED_CAP} retrieved entries` }),
+    .max(RETRIEVED_CAP, { message: `at most ${RETRIEVED_CAP} retrieved entries` })
+    .superRefine(boundGlossBytes),
 });
 
-export const examplesRequestSchema = z.object({
-  entry: retrievedEntrySchema,
-  senseIndex: z.number().int().min(0).optional(),
-  profile: learnerProfileSchema,
-  support: z
-    .array(retrievedEntrySchema)
-    .max(SUPPORT_CAP, { message: `at most ${SUPPORT_CAP} support entries` })
-    .optional()
-    .transform((value) => value ?? []),
-});
+export const examplesRequestSchema = z
+  .object({
+    entry: retrievedEntrySchema,
+    senseIndex: z.number().int().min(0).optional(),
+    profile: learnerProfileSchema,
+    support: z
+      .array(retrievedEntrySchema)
+      .max(SUPPORT_CAP, { message: `at most ${SUPPORT_CAP} support entries` })
+      .optional()
+      .transform((value) => value ?? []),
+  })
+  // The target AND the pool: `examplesUserPrompt` renders both through
+  // `entryLine`, so the bound is over the two together.
+  .superRefine((body, ctx) => {
+    boundGlossBytes([body.entry, ...body.support], ctx);
+  });
 
 /**
  * Which gloss the card is about — **dropped rather than rejected**, and the
@@ -277,7 +326,10 @@ const droppedSenseIndex = z
   );
 
 export const recallRequestSchema = z.object({
-  entry: retrievedEntrySchema,
+  // One entry rather than a list, so the same total is the entry's own.
+  entry: retrievedEntrySchema.superRefine((row, ctx) => {
+    boundGlossBytes([row], ctx);
+  }),
   senseIndex: droppedSenseIndex.optional(),
   answer: typedText(MAX_RECALL_ANSWER_CHARS, 'answer'),
 });

@@ -19,10 +19,21 @@
  * `entryIds` carries **every** reading of the matched headword, frequency-ordered
  * and never truncated: 了 is one token with `le` and `liǎo` on it, and the panel
  * that opens from a tap is the thing that decides between them.
+ *
+ * **What is left here after `data.md` D6.** The DP — `route`, `planSegments`,
+ * `attachIds`, `segmentWith` — is what D3 inverted so that it takes an injected
+ * candidate map and a `SegmentStats` value instead of reaching into an in-memory
+ * index, and it is **shared**: `lib/dict/sqlite-store.ts` drives it on every
+ * platform. What is gone is the entry point that reached into
+ * `lib/dict/index.ts` for the candidates and for `detectScript`, together with
+ * the three index-shaped helpers (`headwordFreq`, `headwordTotals`,
+ * `detectScript`) that only ever served the build step and its verifier. Those
+ * moved to `scripts/dict-json.ts`, which is where the JSON dictionary now lives;
+ * `detectScriptFrom(chars, text)` in `lib/dict/sqlite-store.ts` is the store's
+ * answer to the same question, off the `chars` table.
  */
-import { getDictIndex, type DictIndex } from './index';
-import { hasCjk } from './search';
-import type { DictEntry, EntryId } from './types';
+import { hasCjk } from './rank';
+import type { EntryId } from './types';
 import type { Token } from '../types';
 
 export type SegmentScript = 'simp' | 'trad';
@@ -37,106 +48,6 @@ export interface SegmentResult {
   /** The script the DAG was matched against. */
   script: SegmentScript;
   tokens: Token[];
-}
-
-/** Longest headword the DAG will try. CC-CEDICT's proverbs run longer; a 16-hanzi
- *  span is already far past any word a reader taps, and it bounds the scan. */
-const MAX_WORD_CHARS = 16;
-
-interface ScriptStats {
-  logTotal: number;
-  maxLen: number;
-}
-
-interface SegmentIndex {
-  simp: ScriptStats;
-  trad: ScriptStats;
-}
-
-/** Keyed off the index object, so `resetDictCache()` drops this with everything else. */
-const STATS = new WeakMap<DictIndex, SegmentIndex>();
-
-/**
- * The frequency the DP scores a headword at, and the value `words.freq` holds in
- * the artifact. Exported because `scripts/build-data.ts` and
- * `scripts/verify-data.ts` must *call* it rather than re-implement it: SQL
- * `MAX(freq)` and replaying `compareEntries` give a different answer wherever a
- * jieba frequency is 0 or absent, and the symptom is a sentence nobody wrote a
- * segmentation case for (data.md §6).
- */
-export function headwordFreq(index: DictIndex, ids: readonly EntryId[]): number {
-  // Ids are stored frequency-descending, so the first one carries the word's freq.
-  const first = ids.length > 0 ? index.entries.get(ids[0]) : undefined;
-  return first?.freq ?? 1;
-}
-
-/**
- * The two numbers the DP needs about a script, before the log is taken:
- * the summed head frequency of every headword, and the longest headword the
- * scan will try.
- *
- * Exported for the same reason `headwordFreq` is. `scripts/build-data.ts`
- * writes both into `meta` and `scripts/verify-data.ts` checks them, and D2
- * replaces this function with a `meta` read — so all three have to agree about
- * `maxLen`'s quirk (a headword longer than `MAX_WORD_CHARS` does not raise it)
- * and about summing `headwordFreq` rather than raw `freq`. Two re-implementations
- * of a nine-line loop is how the segmenter's floor quietly shifts.
- */
-export function headwordTotals(
-  index: DictIndex,
-  script: SegmentScript,
-): { total: number; maxLen: number } {
-  const map = script === 'simp' ? index.bySimp : index.byTrad;
-  let total = 0;
-  let maxLen = 1;
-  for (const [word, ids] of map) {
-    total += headwordFreq(index, ids);
-    const length = [...word].length;
-    if (length > maxLen && length <= MAX_WORD_CHARS) maxLen = length;
-  }
-  return { total, maxLen };
-}
-
-function statsFor(index: DictIndex, script: SegmentScript): ScriptStats {
-  const { total, maxLen } = headwordTotals(index, script);
-  return { logTotal: Math.log(total || 1), maxLen };
-}
-
-function segmentIndex(index: DictIndex): SegmentIndex {
-  let cached = STATS.get(index);
-  if (!cached) {
-    cached = { simp: statsFor(index, 'simp'), trad: statsFor(index, 'trad') };
-    STATS.set(index, cached);
-  }
-  return cached;
-}
-
-/**
- * Which script the text is written in. A character counts as evidence only when
- * the two scripts disagree about it — 我 and 的 are the same in both and say
- * nothing, 學 and 学 each say a great deal. Ties go to simplified, the app default.
- */
-export function detectScript(index: DictIndex, text: string): SegmentScript {
-  let simp = 0;
-  let trad = 0;
-  for (const char of text) {
-    if (!hasCjk(char)) continue;
-    for (const id of index.bySimp.get(char) ?? []) {
-      const entry = index.entries.get(id) as DictEntry;
-      if (entry.trad !== char) {
-        simp += 1;
-        break;
-      }
-    }
-    for (const id of index.byTrad.get(char) ?? []) {
-      const entry = index.entries.get(id) as DictEntry;
-      if (entry.simp !== char) {
-        trad += 1;
-        break;
-      }
-    }
-  }
-  return trad > simp ? 'trad' : 'simp';
 }
 
 interface Cut {
@@ -162,7 +73,7 @@ interface Cut {
 function route(
   chars: readonly string[],
   freqOf: (word: string) => number | undefined,
-  stats: ScriptStats,
+  stats: SegmentStats,
 ): Cut[] {
   const n = chars.length;
   const floor = -stats.logTotal;
@@ -311,6 +222,18 @@ export function planSegments(
  * `entryIds` carries **every** reading of the matched headword, frequency-ordered
  * and never truncated: 了 is one token with `le` and `liǎo` on it, and the panel
  * that opens from a tap is the thing that decides between them.
+ *
+ * **What is left here after `data.md` D6.** The DP — `route`, `planSegments`,
+ * `attachIds`, `segmentWith` — is what D3 inverted so that it takes an injected
+ * candidate map and a `SegmentStats` value instead of reaching into an in-memory
+ * index, and it is **shared**: `lib/dict/sqlite-store.ts` drives it on every
+ * platform. What is gone is the entry point that reached into
+ * `lib/dict/index.ts` for the candidates and for `detectScript`, together with
+ * the three index-shaped helpers (`headwordFreq`, `headwordTotals`,
+ * `detectScript`) that only ever served the build step and its verifier. Those
+ * moved to `scripts/dict-json.ts`, which is where the JSON dictionary now lives;
+ * `detectScriptFrom(chars, text)` in `lib/dict/sqlite-store.ts` is the store's
+ * answer to the same question, off the `chars` table.
  */
 export function attachIds(
   plan: SegmentPlan,
@@ -335,28 +258,4 @@ export function segmentWith(text: string, input: SegmentInput): SegmentResult {
     freqOf: (word) => input.candidates.get(word),
   });
   return attachIds(plan, input.idsFor);
-}
-
-/**
- * Segment a string against the JSON index. Throws `DictDataMissingError` when
- * `data/` has not been built, which the route turns into a 503.
- *
- * Kept until D6: it is the differential oracle `tests/unit/dict/segment.test.ts`
- * and the store's own tests compare against, and it now drives the **same** DP
- * the store does, so the two cannot disagree about the cutting — only about
- * which candidates they were given.
- */
-export function segment(text: string, options: SegmentOptions = {}): SegmentResult {
-  const index = getDictIndex();
-  const script = options.script ?? detectScript(index, text);
-  const stats = segmentIndex(index)[script];
-  const primary = script === 'simp' ? index.bySimp : index.byTrad;
-  const secondary = script === 'simp' ? index.byTrad : index.bySimp;
-  const lookup = (word: string): EntryId[] | undefined => primary.get(word) ?? secondary.get(word);
-  const freqOf = (word: string): number | undefined => {
-    const ids = lookup(word);
-    return ids ? headwordFreq(index, ids) : undefined;
-  };
-  const plan = planSegments(text, { script, stats, freqOf });
-  return attachIds(plan, (word) => lookup(word) ?? []);
 }

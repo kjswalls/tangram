@@ -163,11 +163,26 @@ export function mergeRetrieved(
  */
 const MAX_GROUND_ROUNDS = 4;
 
-export async function groundWithStore(
-  raw: RawAskResponse,
+/**
+ * Run anything that wants a synchronous `GroundContext` over an asynchronous
+ * `DictStore`.
+ *
+ * `groundWithStore` below is the ask pipeline's use of it. `data.md` D6 needed
+ * a second one — `app/api/examples/route.ts` calls `groundExamples()`, which
+ * takes the same context and applies the card-back rules on top — and copying
+ * the fixed point into the route would have meant two loops that have to agree
+ * about convergence. So the loop is the shared thing and the function it drives
+ * is the parameter.
+ *
+ * `run` is called **several times with the same input** and must be pure, which
+ * is exactly what `lib/ai/ground.ts` and `lib/ai/examples.ts` are. Anything it
+ * asks the context for and is not told, it is told on the next round.
+ */
+export async function withStoreContext<T>(
   store: DictStore,
   retrieved: readonly Entry[],
-): Promise<GroundedAskResponse> {
+  run: (context: GroundContext) => T,
+): Promise<T> {
   const segments = new Map<string, Token[]>();
   const entries = new Map<EntryId, Entry>();
   const readings = new Map<string, number>();
@@ -209,9 +224,9 @@ export async function groundWithStore(
       },
     };
 
-    const grounded = ground(raw, context);
+    const result = run(context);
     if (wantSegments.size === 0 && wantEntries.size === 0 && wantReadings.size === 0) {
-      return grounded;
+      return result;
     }
 
     await Promise.all([
@@ -231,4 +246,12 @@ export async function groundWithStore(
   // Four rounds without closing means something asks for a new string every
   // time, which `ground()` cannot do — it is a bug here, not a slow convergence.
   throw new Error('grounding did not converge; see packages/ai/retrieve.ts');
+}
+
+export async function groundWithStore(
+  raw: RawAskResponse,
+  store: DictStore,
+  retrieved: readonly Entry[],
+): Promise<GroundedAskResponse> {
+  return withStoreContext(store, retrieved, (context) => ground(raw, context));
 }

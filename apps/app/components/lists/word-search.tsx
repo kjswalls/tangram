@@ -11,7 +11,7 @@ import type { Entry } from '@/lib/types';
 /**
  * Add a word to a list by looking it up.
  *
- * `EntrySource.search` goes through `/api/dict/search`, so this box and the
+ * `EntrySource.search` goes through `DictStore.search`, so this box and the
  * lookup box rank a query identically; walking the HSK bands is the offline
  * fallback for a 503 (HANDOFF.md, "Phases 1–3 (merged)").
  */

@@ -5,7 +5,7 @@
  */
 import { beforeAll, describe, expect, it } from 'vitest';
 
-import { getDecomp, getDict } from '@/lib/dict/load';
+import { getDecomp, getDict } from './dict/json-oracle';
 import { requireDictData } from './dict/data-required';
 import type { DictEntry } from '@/lib/dict/types';
 

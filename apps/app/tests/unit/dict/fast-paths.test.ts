@@ -1,25 +1,48 @@
 /**
- * The cold-start work: the dictionary indexes are built lazily, and the two
- * fast paths inside them answer exactly what the slow ones did.
+ * The two fast paths, proved against the whole built dictionary
+ * (docs/plans/data.md D6).
  *
- * Both halves are *proved against the built dictionary*, not against a handful
- * of chosen examples. A faster spelling of a function that is right about 124k
- * readings and wrong about the 125th is a word that quietly stops being
- * findable, which is the one bug a learner cannot diagnose.
+ * `readingKeys` is a fast spelling of `normalizePinyin` for the one shape the
+ * dictionary's own pinyin always has, and `glossTokens` is one scan where there
+ * used to be four passes. Both are *optimisations of something that already
+ * worked*, and the only honest way to check an optimisation is against the thing
+ * it replaced, over everything — a function that is right about 124,000 readings
+ * and wrong about the 125th is a word that quietly stops being findable, which
+ * is the one bug a learner cannot diagnose.
+ *
+ * ## Why this file exists, and why that is a correction
+ *
+ * These two cases lived in `tests/unit/server/cold-start.test.ts`, whose third
+ * describe block was about `LazyDictIndex`'s build order. `data.md` D6's
+ * disposition table says that file may be deleted — but **only** because "D1
+ * already carries its two load-bearing properties … re-asserted against the
+ * artifact". **That is not true, and this phase deleted the file on the strength
+ * of it before an adversarial reviewer caught the error.**
+ *
+ * `scripts/verify-data.ts` does check the artifact's `py_toneless`/`py_toned`
+ * columns and its `gloss_fts` posting lists — but it computes what it expects
+ * with `readingKeys(…) ?? normalizePinyin(…)` and `glossTokens(gloss)`, which is
+ * the *same expression* `scripts/build-data.ts` wrote them with. That comparison
+ * can catch a SQL or insert bug and can never catch a wrong `readingKeys`: both
+ * sides are the function under test. Deleting these two cases would have left a
+ * change to either function green through `pnpm test`, green through
+ * `pnpm data:verify`, and wrong in the artifact on every platform.
+ *
+ * So they move here, beside the functions they are about, which is where they
+ * always belonged: neither has anything to do with a route, a loader or a cold
+ * start. The build-order block did die with `LazyDictIndex`, exactly as D6 says.
+ * The dictionary comes through `json-oracle.ts`, which reads `data/dict.json` —
+ * still emitted, still the build's input — so both are live differentials rather
+ * than frozen answers.
  */
 import { describe, expect, it } from 'vitest';
 
-import {
-  builtIndexParts,
-  getDictIndex,
-  glossTokens,
-  hskBand,
-  stemToken,
-} from '@/lib/dict/index';
-import { getDict, resetDictCache } from '@/lib/dict/load';
+import { glossTokens, stemToken } from '@/lib/dict/rank';
 import { hasUnknownReading, normalizePinyin, readingKeys } from '@/lib/dict/pinyin';
-import { search } from '@/lib/dict/search';
-import { segment } from '@/lib/dict/segment';
+import { getDict } from './json-oracle';
+import { requireDictData } from './data-required';
+
+requireDictData();
 
 describe('readingKeys — the fast path over the dictionary’s own pinyin', () => {
   // Generous timeouts: these walk the whole 124k-entry dictionary, and the
@@ -105,48 +128,4 @@ describe('glossTokens — one scan instead of four passes', () => {
     expect(glossTokens("'''")).toEqual([]);
     expect(glossTokens('')).toEqual([]);
   });
-});
-
-describe('the indexes are built one at a time', () => {
-  it('builds only what the route in front of it asked for', () => {
-    // One walk through a fresh cache, because reopening it costs a 33 MB parse
-    // each time. The order is the order a deployment meets these routes in.
-    resetDictCache();
-    expect(builtIndexParts()).toEqual([]);
-
-    // Nothing is built by asking for the index itself.
-    getDictIndex();
-    expect(builtIndexParts()).toEqual([]);
-
-    // /api/dict/hsk — the Today page's first request. It must not build the
-    // 47,000-key English inverted index it will never read.
-    hskBand(1);
-    expect(builtIndexParts()).toEqual(['sorted', 'entries', 'hsk']);
-
-    // /api/dict/segment adds the hanzi maps and nothing else.
-    segment('我们今天去北京');
-    expect(builtIndexParts()).toEqual(['sorted', 'entries', 'hanzi', 'hsk']);
-
-    // An English query is what finally pays for the gloss index.
-    search('plan', { limit: 5 });
-    expect(builtIndexParts()).toContain('gloss');
-
-    // A pinyin query is the one that needs everything.
-    search('dasuan', { limit: 5 });
-    expect(builtIndexParts()).toEqual(['sorted', 'entries', 'hanzi', 'pinyin', 'gloss', 'hsk']);
-  }, 60_000);
-
-  it('answers the same as it always did once everything is built', () => {
-    const index = getDictIndex();
-    expect(index.entries.size).toBe(getDict().entries.length);
-    expect(index.bySimp.get('学习')).toContain('學習|学习[xue2 xi2]');
-    expect(index.byTrad.get('學習')).toContain('學習|学习[xue2 xi2]');
-    expect(index.byPinyinToneless.keys).toEqual([...index.byPinyinToneless.keys].sort());
-    expect(index.byPinyinToned.keys).toEqual([...index.byPinyinToned.keys].sort());
-    expect((index.byHsk.get(1) ?? []).length).toBeGreaterThan(0);
-    expect(index.byGloss.size).toBeGreaterThan(10_000);
-    // Same object across calls, so the WeakMaps in search.ts and segment.ts
-    // that key on it keep their caches.
-    expect(getDictIndex()).toBe(index);
-  }, 60_000);
 });

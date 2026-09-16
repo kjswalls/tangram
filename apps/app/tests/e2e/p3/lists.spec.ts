@@ -109,7 +109,7 @@ test.describe('lists', () => {
     await page.getByLabel('Find a word').fill('跑步');
     await page.getByRole('button', { name: 'Find' }).click();
     await expect(page.getByTestId('word-search-results')).toBeVisible({ timeout: 60_000 });
-    // `exact`: the search now goes through P1's /api/dict/search, which also
+    // `exact`: the search now goes through P1's router in `DictStore`, which also
     // returns 跑步机 and 跑步者 — a substring match would be ambiguous.
     await page.getByRole('button', { name: 'Add 跑步', exact: true }).click();
 

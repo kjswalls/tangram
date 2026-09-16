@@ -14,7 +14,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { MANIFEST_FILE, SCHEMA_VERSION, type DictManifest } from '@/lib/dict/artifact';
-import { dataDir } from '@/lib/dict/load';
+import { dataDir } from '@/lib/server/roots';
 
 const RUN = 'run `pnpm data` before `pnpm test`';
 

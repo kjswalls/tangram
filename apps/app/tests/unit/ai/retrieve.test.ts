@@ -5,9 +5,12 @@
  *
  * Two things are being proved. First, that the ported `mergedSearch` and
  * `candidateEntries` return the same entries, in the same order, as
- * `app/api/ask/route.ts`'s — which is why those two are exported from the route
- * until D6 deletes them, rather than re-implemented here as an oracle that could
- * be wrong in the same way.
+ * `app/api/ask/route.ts`'s did — the route's copies were exported for exactly
+ * this comparison rather than re-implemented here as an oracle that could be
+ * wrong in the same way, and **`data.md` D6 deleted them**. What they answered
+ * for the two query lists below was frozen first, on the commit before, and the
+ * comparison now reads `golden/retrieve.json`. `../dict/golden.test.ts` is what
+ * fails, by itself and by name, if the dictionary moves under that fixture.
  *
  * Second, and this is the harder half, that the synchronous/asynchronous seam
  * holds: `GroundContext.segment` is `(text: string) => Token[]` and
@@ -20,7 +23,6 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { candidateEntries as routeCandidateEntries, mergedSearch as routeMergedSearch } from '@/app/api/ask/route';
 import { ground } from '@tangram/ai/ground';
 import {
   candidateEntries,
@@ -28,10 +30,10 @@ import {
   mergeRetrieved,
   mergedSearch,
 } from '@tangram/ai/retrieve';
-import { getEntry, readingCount } from '@/lib/dict/index';
 import { nodeRunner } from '@/lib/dict/runners/node';
-import { segment } from '@/lib/dict/segment';
 import { SqliteDictStore } from '@/lib/dict/sqlite-store';
+import { goldenRetrieve } from '../dict/golden';
+import { getEntry, readingCount, segment } from '../dict/json-oracle';
 import type { GroundContext, RawAskResponse } from '@tangram/ai/ground';
 import type { DictStore } from '@/lib/dict/store';
 import type { Entry } from '@/lib/types';
@@ -80,7 +82,17 @@ const ASK_QUERIES = [
 
 describe('mergedSearch — the ported retrieval matches the route’s', () => {
   it.each(ASK_QUERIES)('%j', async (query) => {
-    expect(ids(await mergedSearch(store, query))).toEqual(ids(routeMergedSearch(query)));
+    const frozen = goldenRetrieve.mergedSearch[query];
+    expect(frozen, `${JSON.stringify(query)} has no frozen answer in golden/retrieve.json`).toBeDefined();
+    expect(ids(await mergedSearch(store, query))).toEqual(frozen);
+  });
+
+  it('covers every query the fixture froze, and no more', () => {
+    // Both directions. A query dropped from `ASK_QUERIES` would otherwise leave
+    // a frozen answer nothing reads, and a query added without regenerating the
+    // fixture would fail above — but only as "undefined", which reads like a
+    // typo rather than like a missing freeze.
+    expect([...ASK_QUERIES].sort()).toEqual(Object.keys(goldenRetrieve.mergedSearch).sort());
   });
 });
 
@@ -97,20 +109,40 @@ describe('candidateEntries — every token of every proposed phrase, in phrase o
     ['我'.repeat(60)],
   ];
 
-  it.each(PHRASES.map((phrases) => [phrases] as const))('%j', async (phrases) => {
-    expect(ids(await candidateEntries(store, phrases))).toEqual(ids(routeCandidateEntries(phrases)));
+  it.each(PHRASES.map((phrases, index) => [phrases, index] as const))('%j', async (phrases, index) => {
+    const frozen = goldenRetrieve.candidateEntries[index];
+    expect(frozen, `phrase set ${index} has no frozen answer`).toBeDefined();
+    expect(frozen.phrases, `phrase set ${index} drifted from the fixture`).toEqual(phrases);
+    expect(ids(await candidateEntries(store, phrases))).toEqual(frozen.ids);
+  });
+
+  it('covers every phrase set the fixture froze', () => {
+    expect(PHRASES.length).toBe(goldenRetrieve.candidateEntries.length);
   });
 });
 
 describe('mergeRetrieved', () => {
   it('takes the search head, then the proposals, then the rest, to the cap', async () => {
+    // `mergeRetrieved` is pure and shared — the route imports the same function
+    // now — so the thing worth asserting is the merge's own rule rather than a
+    // second call to it. The inputs are the frozen ones, so the assertion is
+    // still anchored to what the JSON pipeline retrieved.
+    const proposals = goldenRetrieve.candidateEntries[1];
+    const fromCandidates = await candidateEntries(store, proposals.phrases);
+    expect(ids(fromCandidates)).toEqual(proposals.ids);
+
     for (const query of ASK_QUERIES.slice(0, 8)) {
       const fromSearch = await mergedSearch(store, query);
-      const fromCandidates = await candidateEntries(store, ['我随便看看', '这个多少钱']);
-      const mine = mergeRetrieved(fromSearch, fromCandidates);
-      const theirs = mergeRetrieved(routeMergedSearch(query), routeCandidateEntries(['我随便看看', '这个多少钱']));
-      expect(ids(mine)).toEqual(ids(theirs));
-      expect(mine.length).toBeLessThanOrEqual(40);
+      expect(ids(fromSearch)).toEqual(goldenRetrieve.mergedSearch[query]);
+      const merged = mergeRetrieved(fromSearch, fromCandidates);
+      expect(merged.length).toBeLessThanOrEqual(40);
+      // The head of the search leads, then the proposals, then the rest.
+      const head = ids(fromSearch).slice(0, Math.min(16, merged.length));
+      expect(ids(merged).slice(0, head.length)).toEqual(head);
+      for (const id of proposals.ids.slice(0, 40 - head.length)) {
+        expect(ids(merged)).toContain(id);
+      }
+      expect(new Set(ids(merged)).size).toBe(merged.length);
     }
   });
 });
@@ -119,7 +151,15 @@ describe('mergeRetrieved', () => {
 // The synchronous/asynchronous seam
 // ---------------------------------------------------------------------------
 
-/** The route's `GroundContext`, built the way `app/api/ask/route.ts` builds it. */
+/**
+ * The `GroundContext` the route used to build, over the JSON index.
+ *
+ * It is the oracle for the fixed point below: `groundWithStore` reaches the same
+ * grounded answer asynchronously, and this is the synchronous one it has to
+ * match. The index is `scripts/dict-json.ts`'s — alive because `pnpm data`
+ * builds the artifact out of it — so this comparison stayed differential through
+ * D6 instead of becoming a fixture.
+ */
 function routeContext(retrieved: readonly Entry[]): GroundContext {
   return {
     retrieved,

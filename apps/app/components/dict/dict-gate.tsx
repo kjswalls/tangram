@@ -15,7 +15,7 @@
  * leaves them typing into it.
  *
  * It replaces `components/shell/data-banner.tsx` one-for-one (`data.md` D4 says
- * so), including that file's `HEAD /api/dict/hsk?band=1` probe: the store's
+ * so), including that file's `HEAD` probe of the HSK route: the store's
  * `open()` is that probe now, asked once for the whole app instead of once per
  * route mount.
  */
@@ -29,8 +29,33 @@ import type { DictStatus, DictStore } from '@/lib/dict/store';
  * The store's status, live.
  *
  * Subscribes before reading, so a status that changes between the two is not
- * lost — `open()` resolves in a microtask and a read-then-subscribe would miss
+ * lost — the open resolves in a microtask and a read-then-subscribe would miss
  * a store that was already warm.
+ *
+ * **A silent 14 MB download is what this mount now means, and that is a known
+ * defect rather than a design.** Until `data.md` D6 this call was
+ * `HttpDictStore.open()` — one HSK query against a route, the cheap successor to
+ * the old `HEAD` banner probe, free to make from anywhere. D6 pointed the app at
+ * the OPFS store, so the same line came to mean *download the artifact*. The
+ * line did not change; what it costs did.
+ *
+ * The consequence is that the `absent` screen below — the one with the size on
+ * it and a start button, which `components/dict/dict-status.tsx` says exists
+ * because "a silent 14 MB download on a metered connection is a hostile
+ * default" — is **unreachable**: the effect moves the store to `preparing` on
+ * the first render, so `onStart` has no production path that reaches it. This is
+ * asserted, not merely described: `tests/unit/dict/dict-gate.test.tsx`'s third
+ * case pins it against the real store, and whoever fixes this deletes that case.
+ *
+ * **The fix is small here and large everywhere else, which is the whole reason
+ * D6 left it.** `getDictHandle().openStored()` instead of `store.open()`, with
+ * the button's `onStart` calling `download()`, reconciles the three intentions
+ * the repository holds rather than choosing between them — a learner who has the
+ * artifact gets it back silently and sees no gate, a learner who does not gets
+ * the ask, and D4's determinate bar draws during the download the button starts.
+ * What it also does is invalidate the first-visit assumption of about 120 tests
+ * across 19 spec files, each of which opens a gated route on an origin with an
+ * empty OPFS. HANDOFF.md under D6 carries the full reckoning.
  */
 export function useDictStatus(store: DictStore = getDictStore()): DictStatus {
   const [status, setStatus] = useState<DictStatus>(() => store.status);
@@ -38,9 +63,12 @@ export function useDictStatus(store: DictStore = getDictStore()): DictStatus {
   useEffect(() => {
     const unsubscribe = store.subscribe(setStatus);
     setStatus(store.status);
-    // Idempotent and safe on every mount — the interface promises it, and the
-    // implementation shares one in-flight probe across every caller.
-    void store.open();
+    // The rejection is swallowed **here and nowhere else**: an open rejects on
+    // failure (`SqliteDictStore` does; the HTTP bridge D6 replaced did not), and
+    // a `void` on a rejecting promise is an unhandled rejection that fails a
+    // Playwright run on a page error. Nothing is lost — the failure is already
+    // on `status`, with its reason, which is what this component renders.
+    void store.open().catch(() => undefined);
     return unsubscribe;
   }, [store]);
 
@@ -68,7 +96,7 @@ export function DictGate({ children, source, store, className }: DictGateProps) 
         status={status}
         {...(source === undefined ? {} : { source })}
         onStart={() => {
-          void resolved.open();
+          void resolved.open().catch(() => undefined);
         }}
       />
     </div>

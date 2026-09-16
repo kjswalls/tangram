@@ -25,15 +25,20 @@ import {
   splitSchema,
   type DictManifest,
 } from '../apps/app/lib/dict/artifact';
-import { getDictIndex, glossTokens, type DictIndex } from '../apps/app/lib/dict/index';
-import { resetDictCache } from '../apps/app/lib/dict/load';
+import {
+  getDictIndex,
+  glossTokens,
+  headwordFreq,
+  headwordTotals,
+  resetDictCache,
+  type DictIndex,
+} from './dict-json';
 import {
   hasUnknownReading,
   normalizePinyin,
   readingKeys,
   toMarked,
 } from '../apps/app/lib/dict/pinyin';
-import { headwordFreq, headwordTotals } from '../apps/app/lib/dict/segment';
 import { dirOf, workspaceRoot } from '../apps/app/lib/server/roots';
 
 import type { SegmentScript } from '../apps/app/lib/dict/segment';

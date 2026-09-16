@@ -30,12 +30,19 @@ import {
   decodeRowids,
   type DictManifest,
 } from '../apps/app/lib/dict/artifact';
-import { getDict, resetDictCache } from '../apps/app/lib/dict/load';
-import { getDictIndex, glossTokens, hskBand } from '../apps/app/lib/dict/index';
+import {
+  detectScript,
+  getDict,
+  getDictIndex,
+  glossTokens,
+  headwordFreq,
+  headwordTotals,
+  hskBand,
+  resetDictCache,
+} from './dict-json';
 import { hasUnknownReading, normalizePinyin, readingKeys } from '../apps/app/lib/dict/pinyin';
 import { compareEntries } from '../apps/app/lib/dict/rank';
 import { hasCjk } from '../apps/app/lib/dict/search';
-import { detectScript, headwordFreq, headwordTotals } from '../apps/app/lib/dict/segment';
 import { dirOf, workspaceRoot } from '../apps/app/lib/server/roots';
 
 import type { DictEntry, EntryId, HskBand } from '../apps/app/lib/dict/types';

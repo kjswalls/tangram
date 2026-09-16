@@ -4,7 +4,7 @@
  */
 import { beforeAll, describe, expect, it } from 'vitest';
 
-import { getDict } from '@/lib/dict/load';
+import { getDict } from '../dict/json-oracle';
 import { spineEligible } from '@/lib/lists/spine';
 import type { DictEntry } from '@/lib/dict/types';
 import { requireDictData } from '../dict/data-required';

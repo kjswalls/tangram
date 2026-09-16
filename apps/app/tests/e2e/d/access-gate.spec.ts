@@ -118,8 +118,12 @@ test.describe('with TANGRAM_ACCESS_SECRET set', () => {
   test('leaves the dictionary, the pages and the PWA files open', async () => {
     // They cost CPU, not money, and the PWA has to install without a key. A
     // gate that quietly widened would break offline review for a stranger.
-    expect((await api.get('/api/dict/search?q=%E4%BD%A0%E5%A5%BD')).status()).toBe(200);
-    expect((await api.get('/api/dict/hsk?band=1')).status()).toBe(200);
+    //
+    // The two dictionary routes that used to lead this list went with `data.md`
+    // D6; the dictionary is a **static file** now, and the manifest below is
+    // what a learner's first load fetches before anything else. If the gate ever
+    // reached it, the app would install and then have no words in it.
+    expect((await api.get('/dict-manifest.json')).status()).toBe(200);
     for (const path of ['/', '/read', '/practice', '/library', '/offline.html', '/sw.js', '/manifest.webmanifest']) {
       expect((await api.get(path)).status(), path).toBe(200);
     }

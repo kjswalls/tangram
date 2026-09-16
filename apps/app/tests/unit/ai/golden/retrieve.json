@@ -1,0 +1,66 @@
+{
+  "provenance": {
+    "dictVersion": "1.3.20251213",
+    "entryCount": 124188,
+    "dictEntriesSha256": "3c05a36b660af756fa8cbd68da342374310805f7b7b489e71f3046e58e8c3989",
+    "frozenBy": "scripts/freeze-golden.ts (data.md D6; see README.md)"
+  },
+  "mergedSearch": {
+    "how do I say I am just browsing": ["多|多[duo1]","怎麼|怎么[zen3 me5]","哪|哪[na3]","哪|哪[na5]","哪|哪[ne2]","哪|哪[nei3]","成語|成语[cheng2 yu3]","名言|名言[ming2 yan2]","說|说[shuo1]","說|说[shui4]","就|就[jiu4]","正|正[zheng4]","正|正[zheng1]","第|第[di4]"],
+    "what does this mean": ["什麼|什么[shen2 me5]","怎麼|怎么[zen3 me5]","哪些|哪些[na3 xie1]","雌鹿|雌鹿[ci2 lu4]","麀|麀[you1]","不必|不必[bu4 bi4]","這|这[zhe4]","這|这[zhei4]","本|本[ben3]","者|者[zhe3]","辦法|办法[ban4 fa3]","意思|意思[yi4 si5]","意義|意义[yi4 yi4]"],
+    "how do you say thank you in Chinese": ["多|多[duo1]","怎麼|怎么[zen3 me5]","哪|哪[na3]","哪|哪[na5]","哪|哪[ne2]","哪|哪[nei3]","你|你[ni3]","你們|你们[ni3 men5]","有|有[you3]","成語|成语[cheng2 yu3]","名言|名言[ming2 yan2]","說|说[shuo1]","說|说[shui4]","謝謝|谢谢[xie4 xie5]","感謝|感谢[gan3 xie4]","謝意|谢意[xie4 yi4]","語文|语文[yu3 wen2]","崋|崋[hua2]","中|中[Zhong1]","中|中[zhong1]","中|中[zhong4]"],
+    "I would like to order the beef noodles": ["最好|最好[zui4 hao3]","不如|不如[bu4 ru2]","看上去|看上去[kan4 shang5 qu5]","一樣|一样[yi1 yang4]","如同|如同[ru2 tong2]","立刻|立刻[li4 ke4]","次|次[ci4]","程序|程序[cheng2 xu4]","順序|顺序[shun4 xu4]","這|这[zhe4]","這|这[zhei4]","那|那[na4]","那|那[nuo2]","那|那[Na1]","那|那[Nuo2]","那|那[na3]","等|等[deng3]","牛肉|牛肉[niu2 rou4]","牛肉麵|牛肉面[niu2 rou4 mian4]","牛油|牛油[niu2 you2]","麵|面[mian4]","麵條|面条[mian4 tiao2]","掛麵|挂面[gua4 mian4]"],
+    "is this seat taken": ["這|这[zhe4]","這|这[zhei4]","本|本[ben3]","者|者[zhe3]","位|位[wei4]","座|座[zuo4]","座位|座位[zuo4 wei4]","乾|干[gan1]","乾|干[Gan1]","歸|归[gui1]","歸|归[Gui1]","登|登[deng1]"],
+    "where is the nearest subway station": ["哪裏|哪里[na3 li3]","哪裡|哪里[na3 li3]","哪兒|哪儿[na3 r5]","這|这[zhe4]","這|这[zhei4]","那|那[na4]","那|那[nuo2]","那|那[Na1]","那|那[Nuo2]","那|那[na3]","等|等[deng3]","最近|最近[zui4 jin4]","四鄰|四邻[si4 lin2]","近日點|近日点[jin4 ri4 dian3]","地鐵|地铁[di4 tie3]","軌道交通|轨道交通[gui3 dao4 jiao1 tong1]","捷運|捷运[jie2 yun4]","站|站[zhan4]","臺|台[tai2]","臺|台[Tai2]","駐地|驻地[zhu4 di4]"],
+    "plan": ["計劃|计划[ji4 hua4]","打算|打算[da3 suan4]","設計|设计[she4 ji4]","安排|安排[an1 pai2]","主意|主意[zhu3 yi5]","方案|方案[fang1 an4]","略|略[lu:e4]","計較|计较[ji4 jiao4]","構思|构思[gou4 si1]","算盤|算盘[suan4 pan2]","策|策[ce4]","策|策[Ce4]","謨|谟[mo2]","小九九|小九九[xiao3 jiu3 jiu3]","刨工|刨工[bao4 gong1]","繆巧|缪巧[miu4 qiao3]","圖|图[tu2]","劃|划[hua4]","劃|划[hua2]","規劃|规划[gui1 hua4]","計|计[ji4]","計|计[Ji4]","擬|拟[ni3]"],
+    "water": ["水|水[shui3]","水|水[Shui3]","水域|水域[shui3 yu4]","溍|溍[jin4]","澆|浇[jiao1]","澆水|浇水[jiao1 shui3]","澆灌|浇灌[jiao1 guan4]","上水|上水[shang4 shui3]","上水|上水[Shang4 shui3]","流|流[liu2]","片|片[pian4]","片|片[pian1]","成立|成立[cheng2 li4]","湯|汤[tang1]","湯|汤[shang1]","湯|汤[Tang1]","涼水|凉水[liang2 shui3]","沖|冲[chong1]","投|投[tou2]","高潮|高潮[gao1 chao2]","開水|开水[kai1 shui3]","礦泉水|矿泉水[kuang4 quan2 shui3]","純淨水|纯净水[chun2 jing4 shui3]","熱水|热水[re4 shui3]","冷水|冷水[leng3 shui3]"],
+    "tomorrow": ["明天|明天[ming2 tian1]","未來|未来[wei4 lai2]","明日|明日[ming2 ri4]","明兒|明儿[ming2 r5]","明早|明早[ming2 zao3]","明兒個|明儿个[ming2 r5 ge5]","翌|翌[yi4]","來朝|来朝[lai2 zhao1]","後天|后天[hou4 tian1]","明朝|明朝[ming2 zhao1]","明朝|明朝[Ming2 chao2]","明晚|明晚[ming2 wan3]","後兒|后儿[hou4 r5]","後日|后日[hou4 ri4]","今日事今日畢|今日事今日毕[jin1 ri4 shi4 jin1 ri4 bi4]","明天見|明天见[ming2 tian1 jian4]","當天事當天畢|当天事当天毕[dang4 tian1 shi4 dang4 tian1 bi4]"],
+    "expensive": ["貴|贵[gui4]","貴|贵[Gui4]","昂貴|昂贵[ang2 gui4]","值錢|值钱[zhi2 qian2]","高昂|高昂[gao1 ang2]","昂|昂[ang2]","天價|天价[tian1 jia4]","大紅袍|大红袍[da4 hong2 pao2]","寸土寸金|寸土寸金[cun4 tu3 cun4 jin1]","不划算|不划算[bu4 hua2 suan4]","食玉炊桂|食玉炊桂[shi2 yu4 chui1 gui4]","不當家不知柴米貴|不当家不知柴米贵[bu4 dang1 jia1 bu4 zhi1 chai2 mi3 gui4]","洛陽紙貴|洛阳纸贵[Luo4 yang2 zhi3 gui4]"],
+    "beautiful": ["漂亮|漂亮[piao4 liang5]","美|美[mei3]","美|美[Mei3]","勝|胜[sheng4]","美麗|美丽[mei3 li4]","美好|美好[mei3 hao3]","秀麗|秀丽[xiu4 li4]","美妙|美妙[mei3 miao4]","美觀|美观[mei3 guan1]","悅耳|悦耳[yue4 er3]","那|那[nuo2]","那|那[na4]","那|那[Na1]","那|那[Nuo2]","那|那[na3]","佳|佳[jia1]","佳|佳[Jia1]","秀|秀[xiu4]","娥|娥[e2]","綺|绮[qi3]","娟|娟[juan1]","麗|丽[li4]","麗|丽[Li2]","奼|姹[cha4]","瓊|琼[qiong2]","瓊|琼[Qiong2]","佚|佚[yi4]","佚|佚[Yi4]","佚|佚[die2]","綺麗|绮丽[qi3 li4]"],
+    "打算": ["打算|打算[da3 suan4]","打算盤|打算盘[da3 suan4 pan2]"],
+    "我打算明天去北京": [],
+    "学习": ["學習|学习[xue2 xi2]","學習強國|学习强国[Xue2 xi2 Qiang2 guo2]","學習時報|学习时报[Xue2 xi2 Shi2 bao4]"],
+    "中华人民共和国": ["中華人民共和國|中华人民共和国[Zhong1 hua2 Ren2 min2 Gong4 he2 guo2]"],
+    "你好吗": [],
+    "这个多少钱": [],
+    "how do I say 打算": [],
+    "what is 学习": [],
+    "the difference between 二 and 两": [],
+    "zzzqqqnothing": [],
+    "": []
+  },
+  "candidateEntries": [
+    {
+      "phrases": ["我随便看看"],
+      "ids": ["我|我[wo3]","隨便|随便[sui2 bian4]","看看|看看[kan4 kan5]"]
+    },
+    {
+      "phrases": ["我打算明天去北京","这个多少钱"],
+      "ids": ["我|我[wo3]","打算|打算[da3 suan4]","明天|明天[ming2 tian1]","去|去[qu4]","北京|北京[Bei3 jing1]","這個|这个[zhe4 ge5]","多少|多少[duo1 shao3]","多少|多少[duo1 shao5]","錢|钱[qian2]","錢|钱[Qian2]"]
+    },
+    {
+      "phrases": ["谢谢","不客气","对不起"],
+      "ids": ["謝謝|谢谢[xie4 xie5]","不|不[bu4]","客氣|客气[ke4 qi5]","對不起|对不起[dui4 bu5 qi3]"]
+    },
+    {
+      "phrases": ["学习中文很有意思"],
+      "ids": ["學習|学习[xue2 xi2]","中文|中文[Zhong1 wen2]","很|很[hen3]","有意思|有意思[you3 yi4 si5]"]
+    },
+    {
+      "phrases": ["第0个句子测试","第1个句子测试","第2个句子测试","第3个句子测试","第4个句子测试","第5个句子测试","第6个句子测试","第7个句子测试","第8个句子测试","第9个句子测试","第10个句子测试","第11个句子测试"],
+      "ids": ["第|第[di4]","個|个[ge3]","個|个[ge4]","箇|个[ge4]","句子|句子[ju4 zi5]","測試|测试[ce4 shi4]"]
+    },
+    {
+      "phrases": ["   ",""],
+      "ids": []
+    },
+    {
+      "phrases": ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+      "ids": []
+    },
+    {
+      "phrases": ["我我我我我我我我我我我我我我我我我我我我我我我我我我我我我我我我我我我我我我我我我我我我我我我我我我我我我我我我我我我我"],
+      "ids": ["我|我[wo3]"]
+    }
+  ]
+}

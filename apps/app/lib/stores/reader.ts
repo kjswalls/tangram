@@ -10,7 +10,7 @@
  *
  * Segmentation lives here rather than in the view because the tokens are part of
  * that surviving state: coming back from another route must not re-post the
- * whole paragraph to `/api/dict/segment`.
+ * whole paragraph to `DictStore.segment`.
  *
  * What is *not* here: the token colours. Those are read live from IndexedDB by
  * `components/reader/use-reader-index.ts`, so an Add or a "Mark known"

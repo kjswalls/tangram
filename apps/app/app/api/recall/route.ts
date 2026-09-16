@@ -35,8 +35,7 @@ import {
   type LLMProvider,
   type ProviderName,
 } from '@tangram/ai/provider';
-import { getEntry } from '@/lib/dict/index';
-import { dictErrorResponse } from '@/lib/dict/load';
+import { dictErrorResponse, serverDictStore } from '@/lib/server/dict';
 import type { Entry } from '@/lib/types';
 import { requireAccess } from '@tangram/access';
 
@@ -183,7 +182,7 @@ export async function POST(request: Request): Promise<Response> {
 
   let entry: Entry | undefined;
   try {
-    entry = getEntry(entryId);
+    [entry] = await (await serverDictStore()).entries([entryId]);
   } catch (error) {
     const missing = dictErrorResponse(error);
     if (missing) return missing;

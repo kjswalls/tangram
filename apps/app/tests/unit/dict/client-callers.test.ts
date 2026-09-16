@@ -1,19 +1,54 @@
 /**
- * The `DictStore` cutover, enforced (docs/plans/core.md C4a).
+ * The cutover, finished and enforced (docs/plans/core.md C4a, data.md D6).
  *
- * C4a's first acceptance criterion is a pair of greps, and `data.md` D6 — the
- * phase that deletes `app/api/dict/**` — is gated verbatim on them. With no CI,
- * a grep in a plan is a grep nobody runs, so it is a test (CLAUDE.md: "every
- * rule that wants enforcement becomes a unit test under `tests/unit/`").
+ * C4a's acceptance criterion was a pair of greps and this file was where they
+ * became a test, because with no CI a grep in a plan is a grep nobody runs
+ * (CLAUDE.md: "every rule that wants enforcement becomes a unit test under
+ * `tests/unit/`"). What it locked in then was **one** caller, not zero:
+ * `lib/dict/http-store.ts` was a `DictStore` over the HTTP routes, and it
+ * existed because until `data.md` D4 there was no `DictStore` a browser could
+ * construct.
  *
- * The state it locks in is **one** caller, not zero, and the difference is the
- * whole honest position of this phase: `lib/dict/http-store.ts` is a `DictStore`
- * over the HTTP routes, and it exists because until `data.md` D4 gives the
- * browser a `SqlRunner` over sqlite-wasm there is no `DictStore` a browser can
- * construct. Every consumer above the dictionary layer codes against the
- * interface now; one file behind it still fetches. **D6 is therefore not yet
- * unblocked**, and this test is where that fact is written down in a form that
- * changes when it stops being true.
+ * **D6 is the phase that made it zero**, and the same greps are now its
+ * acceptance criteria 1 and 2:
+ *
+ *  1. no dictionary route is named anywhere in this app's TypeScript;
+ *  2. no module outside `scripts/`, `tests/`, `lib/server/`,
+ *     `lib/dict/runners/node.ts` — and `vite-plugins/**`, which D6 does not list
+ *     and which is the build itself — imports `node:fs`.
+ *
+ * Both are asserted below, over **every** `.ts`/`.tsx` file under `apps/app`
+ * rather than a hand-picked list of directories — the narrow version of this
+ * walk is what an earlier review caught, because `components/screens/today.tsx`
+ * and `app/settings/settings-form.tsx` were outside it.
+ *
+ * **Two scope notes, both deliberate and both recorded in HANDOFF.md's D6
+ * section.**
+ *
+ * *Comments count.* D6's criterion 1 is a plain `grep`, so a stale comment
+ * naming a deleted route fails it. That is the right reading: a comment
+ * pointing at a route that does not exist is how the next session learns
+ * something false. Two comments in files D6 itself wrote failed it and were
+ * corrected rather than exempted.
+ *
+ * *The walk stops at `apps/app`.* D6 wrote its grep as `.` at a time when the
+ * repository was one deployable. It is now three, and **the literal grep across
+ * the workspace still returns hits** — this list is exhaustive, so a reader
+ * running the criterion as written can check it off rather than conclude the
+ * phase is unfinished:
+ *
+ *  - `packages/ai/schemas.ts` — a **frozen** surface, citing the deletion in its
+ *    header;
+ *  - `apps/server`, asserting that asking the server for one of those paths is a
+ *    404 rather than a 401, which `wave-zero.md` §10a requires and which cannot
+ *    be written without the string;
+ *  - `scripts/smoke.ts`, explaining in the past tense which deleted case used to
+ *    supply `SMOKE_ENTRY_ID`;
+ *  - `CLAUDE.md` and `HANDOFF.md`, which are prose and are not `.ts` anyway.
+ *
+ * Widening this walk past `apps/app` would therefore fail on files that are
+ * correct. The substance of the criterion — **the app** names no dictionary
+ * route — is what is enforced here.
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
@@ -21,6 +56,10 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
+const here = relative(
+  resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..'),
+  fileURLToPath(import.meta.url),
+);
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
 const SKIP = new Set([
@@ -28,10 +67,10 @@ const SKIP = new Set([
   'dist',
   'test-results',
   'playwright-report',
-  // `tests/` is excluded from the WHOLE-APP walk deliberately: a spec that
-  // routes `**/api/dict/**` or names the client in a scope assertion is not a
-  // caller. The criterion is about production code.
-  'tests',
+  '.cache',
+  // `cap sync` copies the whole Vite build into these, minified bundle and all.
+  'ios',
+  'android',
 ]);
 
 function sources(dir: string): string[] {
@@ -45,72 +84,75 @@ function sources(dir: string): string[] {
   return out;
 }
 
-/** The file with comments taken out: prose may name a route; code may not. */
-function code(path: string): string {
-  return readFileSync(path, 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^\s*\/\/.*$/gm, '');
+/** Every `.ts`/`.tsx` file in the app, this file excepted. */
+function appSources(): string[] {
+  return sources(appRoot)
+    .map((path) => relative(appRoot, path))
+    .filter((path) => path !== here)
+    .sort();
 }
 
-/**
- * **Two root lists, because the plan states two different greps.**
- *
- * `wholeApp` is criterion one's `.` — every production source file under
- * `apps/app`, `app/` and `vite-plugins/` included. It was `[components, lib,
- * src]`, which is what the review caught: `components/screens/today.tsx` and
- * `app/settings/settings-form.tsx` are real client components, and an import of
- * `lib/dict/client` added to either left this suite green while the criterion's
- * own grep reported two importers. `data.md` D6 is gated verbatim on this
- * evidence, so a blind spot here is a false "unblocked" rather than a missed nit.
- *
- * `routeScope` is criterion two's `components/ lib/`, kept narrow on purpose —
- * with `src/` added, which is stricter than the plan asks and costs nothing.
- */
-//
-// **Both lists reach outside `apps/app`, because production code now lives
-// outside it.** Wave 0's deliverable 5 moved eleven modules to `packages/ai/`,
-// and one of them — `retrieve.ts` — is the `DictStore` consumer this criterion
-// is actually about. A walk rooted at the app alone would have stopped seeing
-// it the day it moved, which is W0's own lesson (a file that leaves a scope is
-// a file nothing checks) applied to the file that matters most here.
-const sharedAi = resolve(appRoot, '..', '..', 'packages', 'ai');
-const wholeApp = [appRoot, sharedAi];
-const routeScope = [join(appRoot, 'components'), join(appRoot, 'lib'), join(appRoot, 'src'), sharedAi];
+function read(path: string): string {
+  return readFileSync(resolve(appRoot, path), 'utf8');
+}
 
-describe('the DictStore cutover', () => {
-  it('nothing imports lib/dict/client except the store that replaces it', () => {
-    const importers = wholeApp
-      .flatMap(sources)
-      // Relative (`./client`) as well as aliased (`@/lib/dict/client`): the
-      // bridge sits next door to the client and imports it the short way.
-      // Anchored on the dictionary's own path so `react-dom/client` is not a hit.
-      .filter((path) =>
-        /from ['"](?:\.{1,2}\/client|[^'"]*lib\/dict\/client)['"]/.test(code(path)),
-      )
-      .map((path) => relative(appRoot, path))
-      .sort();
-    // `http-store.ts` is the bridge; `client.ts` is what it bridges to.
-    expect(importers).toEqual(['lib/dict/http-store.ts']);
+describe('the DictStore cutover, finished', () => {
+  it('names no dictionary route anywhere — criterion 1', () => {
+    // The literal is assembled rather than written, so that this assertion is
+    // not itself the thing it is looking for in some future wider walk.
+    const needle = `api/${'dict'}`;
+    const offenders = appSources().filter((path) => read(path).includes(needle));
+    expect(offenders).toEqual([]);
   });
 
-  it('nothing but the client and the store names an /api/dict route in code', () => {
-    const callers = routeScope
-      .flatMap(sources)
-      .filter((path) => /['"`][^'"`]*\/api\/dict/.test(code(path)))
-      .map((path) => relative(appRoot, path))
-      .sort();
-    expect(callers).toEqual(['lib/dict/client.ts']);
+  it('has no HTTP dictionary left to import — criterion 1', () => {
+    const gone = ['lib/dict/client.ts', 'lib/dict/http-store.ts', 'lib/dict/index.ts', 'lib/dict/load.ts'];
+    const importers = appSources().filter((path) => {
+      const source = read(path);
+      return gone.some((module) => {
+        const bare = module.replace(/^lib\/dict\//, '').replace(/\.ts$/, '');
+        return (
+          source.includes(`@/${module.replace(/\.ts$/, '')}`) ||
+          new RegExp(`from ['"]\\.{1,2}/${bare}['"]`).test(source)
+        );
+      });
+    });
+    expect(importers).toEqual([]);
   });
 
-  it('no component or store constructs a dictionary itself', () => {
+  it('keeps node:fs to the places D6 names — criterion 2', () => {
+    // D6 names four: `scripts/`, `tests/`, `lib/server/` and
+    // `lib/dict/runners/node.ts`. `scripts/` is outside this walk, and the tree
+    // needs one more that the criterion does not list — `vite-plugins/**`, which
+    // is the build itself and runs in Node by definition. Nothing else, and a
+    // build config that starts reading the disk is a deliberate edit here rather
+    // than a silent exemption.
+    //
+    // (`lib/dict/runners/node.ts` does not in fact import `node:fs` — it imports
+    // `node:sqlite`. It stays on the list because D6 puts it there and because a
+    // runner reading a file is exactly what it would be for.)
+    const allowed = /^(tests\/|lib\/server\/|vite-plugins\/|lib\/dict\/runners\/node\.ts$)/;
+    const offenders = appSources()
+      .filter((path) => !allowed.test(path))
+      .filter((path) => /from ['"]node:fs(\/promises)?['"]/.test(read(path)));
+    expect(offenders).toEqual([]);
+  });
+
+  it('constructs the dictionary in exactly one place the app ships', () => {
     // C4 requires the sheets to take the store as an injected dependency, and
     // C4a makes `browser-store.ts` the one construction site — the single edit
-    // `data.md` D4 has to make.
-    const constructors = wholeApp
-      .flatMap(sources)
-      .filter((path) => /new HttpDictStore\(|new HttpDecompStore\(/.test(code(path)))
-      .map((path) => relative(appRoot, path))
-      .sort();
-    expect(constructors).toEqual(['lib/dict/browser-store.ts']);
+    // D6 finally made, from the HTTP bridge to the OPFS store.
+    //
+    // `wasm-store.ts` declares the factory and `dict-wasm-harness.tsx` is D4's
+    // dev-only `/dict-wasm` page, which is outside `<Root>` and absent from a
+    // production build (`src/routes.tsx`'s `devOnlyStandalone`). Anything else
+    // in this list is a component that built its own dictionary.
+    const constructors = appSources()
+      .filter((path) => !path.startsWith('tests/'))
+      .filter((path) => /(?<!function )createWasmDictStore\(|new JsonDecompStore\(/.test(read(path)));
+    expect(constructors).toEqual([
+      'components/gallery/dict-wasm-harness.tsx',
+      'lib/dict/browser-store.ts',
+    ]);
   });
 });

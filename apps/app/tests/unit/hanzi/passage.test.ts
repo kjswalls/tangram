@@ -15,8 +15,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { PASSAGE_RUNS, passageRuns } from '@/components/gallery/passage';
-import { getEntries } from '@/lib/dict/index';
-import { segment } from '@/lib/dict/segment';
+import { getEntries, segment } from '../dict/json-oracle';
 
 import { DEMO_PARAGRAPH } from '../../e2e/p5/paragraph';
 

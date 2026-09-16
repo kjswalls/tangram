@@ -57,8 +57,41 @@ const REPO_ROOT = resolve(workspaceRoot(dirOf(import.meta.url)), 'apps/app');
 /** Vite's build manifest, relative to `dist/`. Read off the installed Vite, not assumed. */
 export const VITE_MANIFEST = '.vite/manifest.json';
 
+/**
+ * The entry id the two model-backed POSTs are exercised with.
+ *
+ * It used to come from the search case: `/api/dict/search?q=你好` ran first and
+ * stashed a real id from *this* dictionary build, which is better than a
+ * constant a CC-CEDICT snapshot could quietly stop containing. `data.md` D6
+ * deleted that route, and there is no longer any HTTP endpoint that can answer
+ * "give me an id" — the dictionary is on the client now.
+ *
+ * So it is a constant, and the trade is stated rather than hidden. 你好 is the
+ * most stable headword in the corpus, and if it ever does leave, the failure is
+ * loud and specific **without any help from this file**: `runSmoke` reports a
+ * non-2xx as `POST <url> → 404 Not Found · <body>`, and the body is
+ * `{"error":"entry-not-found","hint":"no dictionary entry with id …"}` — the
+ * route names the id it could not find. The line to change is this one.
+ *
+ * (An earlier version of this comment promised a `must()` inside the two cases'
+ * `expect` callbacks. It could never have run: `runSmoke` pushes a failure and
+ * `continue`s on any non-2xx **before** `expect` is reached, so the guidance
+ * would have been unreachable by construction. An adversarial reviewer caught
+ * it; the guards are gone and this paragraph is what replaced them.)
+ *
+ * `backend.md` B2's contract puts retrieved entries on the wire, at which point
+ * the smoke sends rows rather than an id and this goes.
+ */
+export const SMOKE_ENTRY_ID = '你好|你好[ni3 hao3]';
+
 /** Values one case hands to the next: real ids beat invented ones. */
 export interface SmokeContext {
+  /**
+   * An entry id one case found for the next. Unused since `data.md` D6 deleted
+   * the search case that filled it — see `SMOKE_ENTRY_ID` — and left in place
+   * because this file is `web.md` W2's and D6's licence there is to remove the
+   * dictionary entries, not to reshape its types.
+   */
   entryId?: string;
   /** The module script `/` served, e.g. `/assets/index-<hash>.js`. */
   entryScript?: string;
@@ -91,78 +124,14 @@ function must(condition: unknown, message: string): asserts condition {
 }
 
 /**
- * The API cases. Ordered: the search runs first so everything downstream can
- * use a real entry id from *this* dictionary build rather than a hard-coded one
- * that a CC-CEDICT snapshot could quietly stop containing.
+ * The API cases.
+ *
+ * `data.md` D6 removed the five dictionary cases with the routes they exercised;
+ * `web.md` W2 owns this file and its final shape (wave-zero §3). The id the two
+ * POSTs need is now `SMOKE_ENTRY_ID` rather than something an earlier case
+ * stashed — see that constant for why, and for what happens when it goes stale.
  */
 export const SMOKE_CASES: SmokeCase[] = [
-  {
-    name: 'search finds a common word',
-    method: 'GET',
-    route: '/api/dict/search',
-    api: true,
-    url: () => `/api/dict/search?q=${encodeURIComponent('你好')}`,
-    expect: (payload, context) => {
-      const result = payload as { groups?: { entries?: { id?: string }[] }[] };
-      const id = result.groups?.[0]?.entries?.[0]?.id;
-      must(typeof id === 'string' && id.length > 0, 'search returned no entries');
-      context.entryId = id;
-    },
-  },
-  {
-    name: 'entries answers for an id search just gave us',
-    method: 'GET',
-    route: '/api/dict/entries',
-    api: true,
-    url: (context) => `/api/dict/entries?ids=${encodeURIComponent(context.entryId as string)}`,
-    expect: (payload) => {
-      const result = payload as { entries?: unknown[] };
-      must(result.entries?.length === 1, 'entries did not round-trip the id');
-    },
-  },
-  {
-    name: 'the HSK spine has a band 1',
-    method: 'GET',
-    route: '/api/dict/hsk',
-    api: true,
-    url: () => '/api/dict/hsk?band=1',
-    expect: (payload) => {
-      const result = payload as { entries?: unknown[] };
-      must((result.entries?.length ?? 0) > 0, 'HSK band 1 came back empty');
-    },
-  },
-  {
-    // `components/shell/data-banner.tsx` probes with HEAD, and a HEAD that
-    // 405s is a permanent "run pnpm data" banner over a working dictionary.
-    name: 'the data banner’s HEAD probe',
-    method: 'HEAD',
-    route: '/api/dict/hsk',
-    api: true,
-    url: () => '/api/dict/hsk?band=1',
-  },
-  {
-    name: 'decomposition (its own licence, its own file)',
-    method: 'GET',
-    route: '/api/dict/decomp',
-    api: true,
-    url: () => `/api/dict/decomp?chars=${encodeURIComponent('你好')}`,
-    expect: (payload) => {
-      const result = payload as { characters?: unknown[] };
-      must((result.characters?.length ?? 0) > 0, 'decomp returned no characters');
-    },
-  },
-  {
-    name: 'segmentation of a sentence',
-    method: 'POST',
-    route: '/api/dict/segment',
-    api: true,
-    url: () => '/api/dict/segment',
-    body: () => ({ text: '我们今天去北京' }),
-    expect: (payload) => {
-      const result = payload as { tokens?: unknown[] };
-      must((result.tokens?.length ?? 0) > 0, 'segment returned no tokens');
-    },
-  },
   {
     name: 'ask handshake',
     method: 'GET',
@@ -208,8 +177,8 @@ export const SMOKE_CASES: SmokeCase[] = [
     api: true,
     gated: true,
     url: () => '/api/examples',
-    body: (context) => ({
-      entryId: context.entryId,
+    body: () => ({
+      entryId: SMOKE_ENTRY_ID,
       profile: { estimatedBand: 1, knownSample: [] },
       knownBand: 1,
     }),
@@ -225,7 +194,7 @@ export const SMOKE_CASES: SmokeCase[] = [
     api: true,
     gated: true,
     url: () => '/api/recall',
-    body: (context) => ({ entryId: context.entryId, answer: 'hello' }),
+    body: () => ({ entryId: SMOKE_ENTRY_ID, answer: 'hello' }),
     expect: (payload) => {
       const result = payload as { suggested?: number };
       must(
@@ -241,8 +210,8 @@ export const SMOKE_CASES: SmokeCase[] = [
  *
  * This is the half that survives the next person: a new route with no case
  * fails `pnpm smoke` and the e2e suite the day it is written, instead of
- * failing in production the day it is deployed. `data.md` D6 removes the
- * `/api/dict/*` entries when it retires those routes; `backend.md` inherits the
+ * failing in production the day it is deployed. `data.md` D6 removed the five
+ * dictionary entries when it retired those routes; `backend.md` inherits the
  * same rule for the three that move to the server.
  */
 export function checkRouteCoverage(repoRoot: string = REPO_ROOT): string[] {

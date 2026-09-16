@@ -24,10 +24,26 @@ export type DictStorageMode = 'opfs' | 'memory';
 export interface OpenRequest {
   type: 'open';
   id: number;
-  /** The manifest as fetched; `bytes` is the truncation check and `file` the cache key. */
-  manifest: DictManifest;
-  /** Where the `.sqlite` is. Absolute or same-origin relative. */
-  url: string;
+  /**
+   * The manifest as fetched, or **null when it could not be** — which offline is
+   * the ordinary case (docs/plans/data.md D6).
+   *
+   * The manifest is two hundred bytes served `no-cache`, and everything the
+   * worker needs it for is about *importing*: `file` is the name to import
+   * under, `bytes` is the truncation check, `dictVersion` is the third of the
+   * three header checks. A dictionary already in the pool needs none of them —
+   * it is content-addressed by its own filename, and `PRAGMA application_id`
+   * and `PRAGMA user_version` still say whether it is this artifact. So a null
+   * manifest means **open what the pool already holds, and never import**: a
+   * learner who has used the app once has a dictionary with no network, which
+   * is D6's acceptance criterion 3 and was the phase's whole claim.
+   *
+   * With a null manifest there is nothing to fetch, so both rungs that fetch —
+   * an import and the in-memory fallback — are refused rather than attempted.
+   */
+  manifest: DictManifest | null;
+  /** Where the `.sqlite` is. Absolute or same-origin relative. Null with a null manifest. */
+  url: string | null;
   /**
    * Tests only: skip `opfs-sahpool` and go straight to the in-memory rung, so
    * the fallback can be exercised without a second tab.

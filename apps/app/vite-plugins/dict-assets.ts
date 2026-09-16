@@ -36,8 +36,7 @@ import { basename, join, resolve } from 'node:path';
 import type { Connect, Plugin } from 'vite';
 
 import { MANIFEST_FILE } from '../lib/dict/artifact.ts';
-import { dataDir } from '../lib/dict/load.ts';
-import { appRoot, dirOf } from '../lib/server/roots.ts';
+import { appRoot, dataDir, dirOf } from '../lib/server/roots.ts';
 
 /** `dict-1-1.3.20251213.sqlite`, and nothing else shaped like a path. */
 const ARTIFACT = /^dict-\d+-[A-Za-z0-9._-]+\.sqlite$/;

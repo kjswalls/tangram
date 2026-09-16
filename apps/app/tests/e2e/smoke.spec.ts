@@ -92,14 +92,11 @@ test.describe('app shell', () => {
    * requirement of this phase and the easiest thing to lose.
    */
   test('a dictionary that cannot answer gates Look up, and says what to do', async ({ page }) => {
-    // Deterministic stand-in for a missing data/ directory (PLAN.md §3.2).
-    await page.route('**/api/dict/hsk*', (route) =>
-      route.fulfill({
-        status: 503,
-        contentType: 'application/json',
-        body: JSON.stringify({ error: 'dict-data-missing', hint: 'run pnpm data' }),
-      }),
-    );
+    // Deterministic stand-in for a deploy that skipped `pnpm data` (PLAN.md
+    // §3.2). Since `data.md` D6 the dictionary is a file the browser fetches,
+    // not a route it calls, so the manifest is what refuses — which is exactly
+    // what a missing `data/` directory looks like to a learner.
+    await page.route('**/dict-manifest.json', (route) => route.fulfill({ status: 503, body: '' }));
     await page.goto('/');
     await expect(page.getByTestId('dict-gate')).toBeVisible();
     await expect(page.getByTestId('dict-status')).toBeVisible();

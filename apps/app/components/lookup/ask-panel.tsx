@@ -12,7 +12,7 @@
  *    entry body untouched. Its own failure is a line of text, not a blank.
  *  - **It renders nothing the dictionary did not supply.** Hanzi and pinyin
  *    come from the entries the route returned (or, on a cache hit, from
- *    `/api/dict/entries`), through `renderPhrase`. The model's own strings are
+ *    the dictionary store), through `renderPhrase`. The model's own strings are
  *    visibly marked, and so is anything grounding could not verify.
  *  - **It checks the cache before it asks.** `askCacheKey` is derivable in the
  *    browser precisely so this can happen client-side; a repeat question with

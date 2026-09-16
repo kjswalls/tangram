@@ -14,6 +14,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ExamplesRouteResponse } from '@/app/api/examples/route';
 import { ExampleSentences, resetExamplesInfo } from '@/components/review/example-sentences';
 import { closeDb, getDb, getRepository } from '@/lib/db/get-db';
+import { resetDictStores, setDictStore } from '@/lib/dict/browser-store';
+import type { DictStore } from '@/lib/dict/store';
 import type { Entry } from '@/lib/types';
 
 const WO: Entry = {
@@ -92,7 +94,7 @@ interface Calls {
 
 let calls: Calls;
 let body: ExamplesRouteResponse;
-/** What `/api/dict/entries` still resolves. A rebuilt dictionary drops rows. */
+/** What the dictionary still resolves. A rebuilt dictionary drops rows. */
 let dictEntries: Entry[];
 /** The last body the card back POSTed, so the known set it sends can be read. */
 let posted: Record<string, unknown> | undefined;
@@ -107,19 +109,15 @@ beforeEach(() => {
   body = answer(ONE_SENTENCE);
   dictEntries = [WO, KAISHI, FUJIN];
   posted = undefined;
+  // The card back resolves cited ids through `getDictStore()`. Before
+  // `data.md` D6 that was a `fetch` of the entries route and this file stubbed
+  // it; the browser's store is `sqlite-wasm` on OPFS now, so a jsdom test
+  // installs a stand-in instead. Same rows, same counting.
+  setDictStore(dictStandIn());
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url.startsWith('/api/dict/entries')) {
-        calls.entries += 1;
-        // Repeated `ids=` params, the way `fetchEntriesResponse` sends them.
-        const ids = new Set(new URL(url, 'http://localhost').searchParams.getAll('ids'));
-        return json({
-          meta: { version: '2026-01-01' },
-          entries: dictEntries.filter((entry) => ids.has(entry.id)),
-        });
-      }
       if (url === '/api/examples' && init?.method === 'POST') {
         calls.post += 1;
         posted = JSON.parse(String(init.body)) as Record<string, unknown>;
@@ -136,9 +134,36 @@ beforeEach(() => {
 
 afterEach(async () => {
   vi.unstubAllGlobals();
+  await resetDictStores();
   await getDb().delete();
   await closeDb();
 });
+
+/**
+ * The dictionary the card back reads cited ids through. Only `entries` and
+ * `status` are exercised; everything else on the frozen interface throws, so a
+ * component that started calling one would say so rather than quietly get `[]`.
+ */
+function dictStandIn(): DictStore {
+  const refuse = () => {
+    throw new Error('the card back should not reach this method');
+  };
+  return {
+    status: { state: 'ready', version: '2026-01-01' },
+    subscribe: () => () => {},
+    open: async () => {},
+    async entries(ids) {
+      calls.entries += 1;
+      const wanted = new Set(ids);
+      return dictEntries.filter((entry) => wanted.has(entry.id));
+    },
+    search: refuse,
+    segment: refuse,
+    hskBand: refuse,
+    readingCount: refuse,
+    wordsContaining: refuse,
+  };
+}
 
 describe('the example sentences on a card back', () => {
   it('draws the hanzi and the reading of every cited entry, and says it is offline', async () => {
@@ -176,8 +201,8 @@ describe('the example sentences on a card back', () => {
     const section = await screen.findByTestId('examples-list');
     expect(section).toBeInTheDocument();
 
-    // No second ask, and the words came back from `/api/dict/entries`: the row
-    // holds ids, so the dictionary text is fetched rather than stored.
+    // No second ask, and the words came back from the dictionary store: the row
+    // holds ids, so the dictionary text is resolved rather than stored.
     expect(calls.post).toBe(1);
     expect(calls.entries).toBe(1);
     expect(screen.getAllByTestId('example-token')[1]).toHaveTextContent('开始');

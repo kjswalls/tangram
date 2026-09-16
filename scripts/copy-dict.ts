@@ -66,8 +66,7 @@ import { fileURLToPath } from 'node:url';
 import { brotliCompressSync, brotliDecompressSync, constants } from 'node:zlib';
 
 import { MANIFEST_FILE, type DictManifest } from '../apps/app/lib/dict/artifact';
-import { dataDir } from '../apps/app/lib/dict/load';
-import { dirOf, workspaceRoot } from '../apps/app/lib/server/roots';
+import { dataDir, dirOf, workspaceRoot } from '../apps/app/lib/server/roots';
 
 /** The extra file that is never in `data/`: the artifact's brotli sibling. */
 export const BROTLI_SUFFIX = '.br';

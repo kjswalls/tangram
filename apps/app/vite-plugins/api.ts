@@ -3,10 +3,10 @@
  *
  * **This is a bridge, not a product.** It mounts the existing
  * `app/api/<route>/route.ts` handlers in the dev server and the preview server so
- * that `/api/dict/*` keeps answering until `data.md` deletes those five routes,
- * and `/api/ask`, `/api/examples` and `/api/recall` keep answering until
- * `backend.md` has a server. It never ships: it is not in `dist/`, and the phase
- * that removes the last handler removes it too.
+ * that `/api/ask`, `/api/examples` and `/api/recall` keep answering until
+ * `backend.md` B1 moves them to `apps/server`. `data.md` D6 deleted the five
+ * dictionary routes it also carried. It never ships: it is not in `dist/`, and
+ * the phase that removes the last handler removes it too.
  *
  * It reuses `discoverApiRoutes()` from `lib/server/route-inventory.ts`, which is
  * the machinery STACK §2.2 calls "the fifth, smaller casualty" of leaving Next.
@@ -21,11 +21,11 @@
  *  2. **It dispatches by method**, because `ask` and `examples` each export both
  *     `GET` and `POST`.
  *  3. **It derives `HEAD` from `GET`** — calls the `GET` handler and returns its
- *     status and headers with the body dropped. `components/shell/data-banner.tsx`
- *     probes `/api/dict/hsk?band=1` with `HEAD` and reads only the status; Next
- *     synthesised that from `GET` and nothing else will. Without it the
- *     missing-data banner silently stops working and the failure looks like a
- *     data problem.
+ *     status and headers with the body dropped. Next synthesised that and
+ *     nothing else will. The caller it was built for was the missing-data
+ *     banner's `HEAD` probe of the HSK route, which `core.md` C4a replaced with
+ *     `DictStore.open()` and `data.md` D6 deleted; it stays because it is what
+ *     an HTTP client is entitled to and it costs three lines.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { pathToFileURL } from 'node:url';

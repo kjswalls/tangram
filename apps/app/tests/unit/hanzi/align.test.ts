@@ -15,7 +15,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { alignReading, isReadingPunctuation } from '@/lib/hanzi/align';
-import { dataDir } from '@/lib/dict/load';
+import { dataDir } from '@/lib/server/roots';
 import type { DictFile } from '@/lib/types';
 
 describe('the cases that break a naive zip', () => {

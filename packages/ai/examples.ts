@@ -247,7 +247,7 @@ export async function getKnownSet(
  *
  * The band branch is why this takes an `Entry` rather than an id: a band is a
  * property of the dictionary row, and the row only reaches the browser once
- * `/api/dict/entries` has resolved it. It reads `wordState` in the one order
+ * the dictionary store has resolved it. It reads `wordState` in the one order
  * that matters — a declared id, then the band, minus the cards that outrank it.
  */
 export function knownEntryFilter(

@@ -12,10 +12,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { GET, POST, mergeRetrieved, needsProposals, RETRIEVED_CAP, SEARCH_HEAD } from '@/app/api/ask/route';
+import { GET, POST, needsProposals, RETRIEVED_CAP, SEARCH_HEAD } from '@/app/api/ask/route';
 import type { AskRouteInfo, AskRouteResponse } from '@/app/api/ask/route';
 import { ASK_PROMPT_VERSION } from '@tangram/ai/cache-key';
-import { resetDictCache } from '@/lib/dict/load';
+import { mergeRetrieved } from '@tangram/ai/retrieve';
+import { closeServerDictStore, serverDictStore } from '@/lib/server/dict';
+import type { DictStore } from '@/lib/dict/store';
 import { requireDictData } from '../dict/data-required';
 import { entriesFor, entryFor } from './helpers';
 
@@ -121,13 +123,16 @@ describe('the request contract', () => {
 });
 
 describe('retrieval', () => {
-  it('asks for proposals only when the dictionary cannot answer alone', () => {
-    expect(needsProposals('how do I say I am just browsing')).toBe(true);
-    expect(needsProposals('dasuan')).toBe(true);
-    expect(needsProposals('打算')).toBe(false);
-    expect(needsProposals('看')).toBe(false);
+  it('asks for proposals only when the dictionary cannot answer alone', async () => {
+    // `needsProposals` segments, so it takes the store now rather than reaching
+    // into a JSON index (docs/plans/data.md D6).
+    const store: DictStore = await serverDictStore();
+    expect(await needsProposals(store, 'how do I say I am just browsing')).toBe(true);
+    expect(await needsProposals(store, 'dasuan')).toBe(true);
+    expect(await needsProposals(store, '打算')).toBe(false);
+    expect(await needsProposals(store, '看')).toBe(false);
     // A whole sentence of hanzi is not a headword either.
-    expect(needsProposals('我打算明天去北京')).toBe(true);
+    expect(await needsProposals(store, '我打算明天去北京')).toBe(true);
   });
 
   it('reserves room for the proposed phrases inside the cap', () => {
@@ -154,15 +159,18 @@ describe('retrieval', () => {
 describe('when data/ has not been built', () => {
   const previous = process.env.TANGRAM_DATA_DIR;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     process.env.TANGRAM_DATA_DIR = mkdtempSync(join(tmpdir(), 'tangram-ask-nodata-'));
-    resetDictCache();
+    // The route memoises its connection, so the earlier cases in this file have
+    // already opened one; without this the 503 case would silently pass through
+    // a live dictionary and prove nothing (docs/plans/data.md D6).
+    await closeServerDictStore();
   });
 
-  afterAll(() => {
+  afterAll(async () => {
     if (previous === undefined) delete process.env.TANGRAM_DATA_DIR;
     else process.env.TANGRAM_DATA_DIR = previous;
-    resetDictCache();
+    await closeServerDictStore();
   });
 
   it('answers 503 with the command that fixes it, like the dictionary routes', async () => {

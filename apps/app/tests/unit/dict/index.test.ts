@@ -1,5 +1,13 @@
 /**
- * Index behaviour, against the real generated dictionary. Run `pnpm data` first.
+ * The JSON index, against the real generated dictionary. Run `pnpm data` first.
+ *
+ * **It is a build-side module now** (docs/plans/data.md D6). `lib/dict/index.ts`
+ * left the application with the five dictionary routes, but not the repository:
+ * `scripts/build-data.ts` writes `dict-<schema>-<cedict>.sqlite` **out of these
+ * indexes**, and `scripts/verify-data.ts` proves the artifact against the same
+ * parse. So it is still worth testing — a wrong index here is a wrong artifact
+ * on every platform — and `tests/unit/dict/json-oracle.ts` is the one import
+ * path the test tree reaches it by.
  */
 import { beforeAll, describe, expect, it } from 'vitest';
 
@@ -13,7 +21,7 @@ import {
   hskBand,
   prefixIds,
   stemToken,
-} from '@/lib/dict/index';
+} from './json-oracle';
 import { normalizePinyin } from '@/lib/dict/pinyin';
 import { requireDictData } from './data-required';
 

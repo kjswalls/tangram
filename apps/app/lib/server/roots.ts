@@ -51,9 +51,37 @@ export function appRoot(from: string = process.cwd()): string {
  * Falls back to `from` when there is no workspace above it, so that a tree
  * extracted on its own (a Capacitor copy, a vendored checkout) still resolves
  * to something rather than throwing. `TANGRAM_DATA_DIR` overrides this
- * everywhere it matters and is the authoritative mechanism; see
- * `lib/dict/load.ts`.
+ * everywhere it matters and is the authoritative mechanism; see `dataDir()`.
  */
 export function workspaceRoot(from: string = process.cwd()): string {
   return findUp('pnpm-workspace.yaml', from) ?? resolve(from);
+}
+
+/**
+ * The directory `pnpm data` writes to and everything Node-side reads from.
+ *
+ * **It lived in `lib/dict/load.ts` until `data.md` D6 deleted that file**, and
+ * it is the half of it that was never about JSON: `CLAUDE.md` calls it the
+ * reader of the pair that decides where `data/` is, and the pairing is with
+ * `scripts/build-data.ts`, not with the 35 MB parse. It moves here rather than
+ * dying with the loader, and here is where the other root resolvers already are.
+ *
+ * `TANGRAM_DATA_DIR` is the **authoritative** mechanism and the root `data`,
+ * `data:ensure`, `data:verify`, `dict:copy` and `build` scripts set it to the
+ * absolute workspace-root `data/`. The default below is the safety net for
+ * everything they do not wrap — `pnpm -F app dev`, `pnpm preview`, vitest, the
+ * Playwright web server — all of which run with cwd `apps/app/`. It must **not**
+ * be `<cwd>/data`: that would read `apps/app/data`, and `scripts/build-data.ts`'s
+ * matching default would write there too, so the two agree with each other in
+ * the wrong place while every test still passes (docs/plans/web.md W0).
+ * `tests/unit/workspace.test.ts` is the guard.
+ */
+export function dataDir(): string {
+  const configured = process.env.TANGRAM_DATA_DIR;
+  // Resolved against the workspace root rather than the cwd, because there are
+  // now two cwds in routine use — the root scripts run at the workspace root,
+  // everything under `pnpm -F app` runs at `apps/app/`. An absolute value is
+  // unaffected (`resolve` returns it unchanged); a relative one would otherwise
+  // mean two different directories to the writer and the reader.
+  return configured ? resolve(workspaceRoot(), configured) : resolve(workspaceRoot(), 'data');
 }

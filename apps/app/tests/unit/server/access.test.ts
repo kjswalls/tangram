@@ -160,7 +160,10 @@ describe('which paths the gate covers', () => {
   it('stops at a path separator, so it never covers a route nobody listed', () => {
     expect(isGatedPath('/api/asking')).toBe(false);
     expect(isGatedPath('/api/ask-anything')).toBe(false);
-    expect(isGatedPath('/api/dict/search')).toBe(false);
+    // Any path nobody listed. It was a dictionary route until `data.md` D6
+    // deleted all five; the assertion is about the prefix match rather than
+    // about that route, so it keeps its meaning with a path that does not exist.
+    expect(isGatedPath('/api/unknown')).toBe(false);
     expect(isGatedPath('/')).toBe(false);
     expect(isGatedPath('/sw.js')).toBe(false);
   });
@@ -303,7 +306,7 @@ describe('the API base', () => {
     // Which is every build so far: `backend.md` has not deployed a server, and
     // the dev and preview servers answer /api/** themselves.
     expect(apiUrl('/api/ask')).toBe('/api/ask');
-    expect(apiUrl('/api/dict/hsk?band=1')).toBe('/api/dict/hsk?band=1');
+    expect(apiUrl('/api/examples?band=1')).toBe('/api/examples?band=1');
   });
 });
 
@@ -349,10 +352,10 @@ describe('the routes', () => {
     expect(examples.GET(new Request('https://tangram.example/api/examples')).status).toBe(401);
   });
 
-  it('leaves the dictionary routes open — they cost CPU, not money', async () => {
-    process.env.TANGRAM_ACCESS_SECRET = SECRET;
-    const search = await import('@/app/api/dict/search/route');
-    const response = search.GET(new Request('https://tangram.example/api/dict/search?q=%E4%BD%A0'));
-    expect(response.status).toBe(200);
-  });
+  // "It leaves the dictionary routes open — they cost CPU, not money" lived
+  // here and went with them (`data.md` D6): every API route this app still has
+  // reaches a paid model, so there is no ungated handler left to assert against.
+  // The gate's own boundary is covered by `isGatedPath` above, and
+  // `apps/server/tests/routes.test.ts` is what asserts the server answers 404
+  // rather than 401 for a deleted dictionary path (wave-zero §10a).
 });

@@ -42,13 +42,13 @@ import {
   type LLMProvider,
   type ProviderName,
 } from '@tangram/ai/provider';
-import { getDictIndex, getEntry, readingCount } from '@/lib/dict/index';
-import { dictErrorResponse } from '@/lib/dict/load';
-import { segment } from '@/lib/dict/segment';
+import { withStoreContext } from '@tangram/ai/retrieve';
+import { dictErrorResponse, serverDictStore } from '@/lib/server/dict';
+import type { DictStore } from '@/lib/dict/store';
 import { HSK_BANDS, type Entry, type EntryId, type HskBand, type LearnerProfile } from '@/lib/types';
 import { requireAccess } from '@tangram/access';
 
-// The dictionary is read from disk per process; never prerender this at build time.
+// The dictionary is opened from disk per process; never prerender at build time.
 export const dynamic = 'force-dynamic';
 
 /**
@@ -246,35 +246,36 @@ export interface KnownPool {
  *     "the learner knows 看" does not say which 看. Variants, proper nouns and
  *     surnames are dropped too; none of them is a word somebody learned.
  */
-export function supportEntries(pool: KnownPool, exclude: EntryId): Entry[] {
-  const index = getDictIndex();
+export async function supportEntries(
+  store: DictStore,
+  pool: KnownPool,
+  exclude: EntryId,
+): Promise<Entry[]> {
   const excluded = new Set<string>(pool.excludeIds ?? []);
   const seen = new Set<EntryId>([exclude]);
   const out: Entry[] = [];
 
-  const add = (id: EntryId): void => {
-    if (seen.has(id) || excluded.has(id)) return;
-    const entry = getEntry(id);
-    if (!entry) return;
-    seen.add(id);
+  const add = (entry: Entry | undefined): void => {
+    if (!entry || seen.has(entry.id) || excluded.has(entry.id)) return;
+    seen.add(entry.id);
     out.push(entry);
   };
 
-  for (const id of pool.ids ?? []) add(id);
+  for (const entry of await store.entries(pool.ids ?? [])) add(entry);
 
   if (pool.knownBand !== undefined) {
     for (const band of HSK_BANDS) {
       if (band > pool.knownBand) continue;
-      for (const id of index.byHsk.get(band) ?? []) add(id);
+      for (const entry of await store.hskBand(band)) add(entry);
     }
   }
 
   for (const word of pool.headwords ?? []) {
-    const bucket = index.bySimp.get(word) ?? [];
+    const bucket = await readingsOf(store, word);
     if (bucket.length !== 1) continue;
-    const entry = getEntry(bucket[0]);
-    if (!entry || entry.properNoun || entry.isVariant || entry.surname) continue;
-    add(entry.id);
+    const [entry] = bucket;
+    if (entry.properNoun || entry.isVariant || entry.surname) continue;
+    add(entry);
   }
 
   return out.sort(
@@ -282,6 +283,44 @@ export function supportEntries(pool: KnownPool, exclude: EntryId): Entry[] {
       (a.freqRank ?? Number.MAX_SAFE_INTEGER) - (b.freqRank ?? Number.MAX_SAFE_INTEGER) ||
       (a.id < b.id ? -1 : 1),
   );
+}
+
+/**
+ * Every entry whose **simplified** headword is exactly `word` — what
+ * `lib/dict/index.ts`'s `bySimp.get(word)` answered before `data.md` D6 deleted
+ * it (docs/plans/data.md D6).
+ *
+ * A `DictStore` has no `bySimp`, deliberately: the frozen interface asks
+ * questions a learner asks, and "every row under this simplified form" is an
+ * index, not a question. The exact-match section of a hanzi search is the same
+ * set — `search('看')`'s exact groups are the headwords equal to 看 in either
+ * script — so the rows are taken from there and filtered to the simplified side.
+ *
+ * It spans **groups**, not one group, and that is the whole reason it is a
+ * function rather than an inline `groups[0]`: a group is one `trad|simp` pair,
+ * while CC-CEDICT keeps a row per traditional variant, so 后 is 后|后 *and*
+ * 後|后 and the caller's rule ("skip a headword with more than one entry,
+ * because 'the learner knows 看' does not say which 看") reads the count across
+ * both. The limit is 200 because the exact matches lead the page and no
+ * headword has anything near that many readings; prefix matches are dropped by
+ * the `simp === word` filter.
+ *
+ * **One thing `bySimp` answered that this cannot**, measured rather than
+ * assumed: `DictStore.search` routes on whether the query contains CJK, so the
+ * 274 CC-CEDICT headwords that contain **none** — `OK`, `3Q`, `ACG`, `110`, `%`
+ * — go down the English/pinyin path and never match themselves exactly. A
+ * mixed headword (`X光`, `卡拉OK`) is fine; a wholly Latin one resolves to
+ * nothing and is skipped. Reaching them would need a `bySimp`-shaped question
+ * on the frozen `DictStore` interface, which CLAUDE.md says a builder does not
+ * add mid-phase, so the need is recorded in HANDOFF.md under D6 and the gap is
+ * taken: it costs one Latin abbreviation out of a support pool that is already
+ * lossy by design, and none of the 274 is a word an example sentence leans on.
+ */
+async function readingsOf(store: DictStore, word: string): Promise<Entry[]> {
+  const result = await store.search(word, { limit: 200 });
+  return result.groups
+    .filter((group) => group.simp === word)
+    .flatMap((group) => group.entries);
 }
 
 export interface ExamplesInput {
@@ -307,8 +346,9 @@ export type ExamplesOutcome =
 export async function examplesFor(
   input: ExamplesInput,
   provider: LLMProvider,
+  store: DictStore,
 ): Promise<ExamplesOutcome> {
-  const support = supportEntries(input.known, input.entry.id);
+  const support = await supportEntries(store, input.known, input.entry.id);
   const offered = support.slice(0, SUPPORT_CAP);
 
   let raw: unknown;
@@ -341,23 +381,19 @@ export async function examplesFor(
   // — and they are still enforced separately, because the day the route offers
   // a wider pool (a live provider that needs a particle the learner has not
   // formally met) the promise on the card back must not quietly widen with it.
-  const sentences = groundExamples(
-    parsed.data,
-    {
-      retrieved: [input.entry, ...offered],
-      segment: (text: string) => segment(text).tokens,
-      entry: (id: EntryId) => getEntry(id),
-      readings: readingCount,
-    },
-    {
+  //
+  // `withStoreContext` is `lib/ai/retrieve.ts`'s synchronous/asynchronous seam
+  // (docs/plans/data.md D3): `groundExamples` is pure and still takes a
+  // synchronous `GroundContext`, and the store answers what each round asked
+  // for and could not be told.
+  const sentences = await withStoreContext(store, [input.entry, ...offered], (context) =>
+    groundExamples(parsed.data, context, {
       targetId: input.entry.id,
       allowed: new Set(offered.map((entry) => entry.id)),
-    },
+    }),
   );
 
-  const entries = citedEntryIds(sentences)
-    .map((id) => getEntry(id))
-    .filter((entry): entry is Entry => entry !== undefined);
+  const entries = await store.entries(citedEntryIds(sentences));
 
   return { ok: true, sentences, entries, support: offered.length };
 }
@@ -412,9 +448,11 @@ export async function POST(request: Request): Promise<Response> {
   // data/ build is a 503 with the same body the other routes answer with.
   let entry: Entry | undefined;
   let dictVersion: string;
+  let store: DictStore;
   try {
-    dictVersion = getDictIndex().meta.version;
-    entry = getEntry(entryId);
+    store = await serverDictStore();
+    dictVersion = store.status.state === 'ready' ? store.status.version : '';
+    [entry] = await store.entries([entryId]);
   } catch (error) {
     const missing = dictErrorResponse(error);
     if (missing) return missing;
@@ -441,6 +479,7 @@ export async function POST(request: Request): Promise<Response> {
       },
     },
     provider,
+    store,
   );
 
   if (!outcome.ok) {

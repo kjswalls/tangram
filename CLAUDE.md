@@ -60,18 +60,31 @@ Node **>= 22.22** (React Router 8's floor); pnpm 10. Playwright uses the contain
 `executablePath: /opt/pw-browsers/chromium` — **never run `playwright install`**. `pnpm e2e` occupies
 `$PORT` (default 3000).
 
-> **Migration state, as of `web.md` W1.** W0 (the workspace) and W1 (the Vite swap) have landed:
-> the table above is what the repo actually does, Next is uninstalled, and `pnpm typecheck` is in
-> the phase gate. Three things the following phases still owe, so that a builder does not read a
-> green gate as a finished one:
+> **Migration state, as of `web.md` W4 and `data.md` D4.** Landed: the workspace and the Vite swap
+> (W0, W1), the host config and the dictionary's web delivery (W2), the service worker's real cache
+> name (W3), the access gate (W4), the SQLite dictionary and its Node and browser stores (D1–D4),
+> the server and the frozen ask contract (`backend.md` B0 and B2's first commit), and wave 0's
+> `Repository` interface diff. **The three debts this block used to name are discharged** — the gate
+> is `packages/access` reading `X-Tangram-Access`, the worker's cache name is a hash of Vite's
+> output, and `pnpm smoke` asserts content rather than status.
 >
-> - **The access gate does not exist** until **W4**. `middleware.ts` is deleted and nothing can set
->   the cookie the three model-backed routes read, so with `TANGRAM_ACCESS_SECRET` set they refuse
->   everyone. Do not deploy with it set before W4 lands.
-> - **The service worker's cache name is `dev` on every build** until **W3** restamps it from a hash
->   of Vite's output, so `activate` purges nothing between builds.
-> - **`pnpm smoke`'s page cases prove nothing** until **W2**. The SPA fallback answers every
->   non-file path with 200 `index.html`, so a status-only check passes against a broken build.
+> Five things a builder must not read a green gate as having finished:
+>
+> - **The app still looks words up through the server.** `data.md` D4 built the browser store, but
+>   **D6** is what points the app at it: `lib/dict/http-store.ts` and the five `app/api/dict/*`
+>   routes are still the live path. Until D6, the SPA is not actually offline for lookup.
+> - **The native dictionary stores are unproven**, and so is the web one on Apple platforms. D5a and
+>   D5b need an Android phone and a Mac with a physical iOS 26 device; register #4 (the reported
+>   10 MB per-file OPFS cap in WKWebView) is unanswered because the container has no Safari.
+> - **There are no accounts, no sync and no AI proxy.** The three model-backed routes still run in
+>   the app rather than `apps/server`, and `packages/ai/` holds only `schemas.ts` and `retrieve.ts`
+>   — wave 0's move of the ten `lib/ai/**` modules has not run, and `backend.md` B1 gates on it.
+> - **Backup, restore and sync are declared, not implemented.** The seven members wave 0 added to
+>   `lib/db/repository.ts` throw; `web.md` W5 and `backend.md` B5 write the bodies. They throw on
+>   purpose — see the guard in `tests/unit/db/repository.test.ts`.
+> - **Two gloss searches exceed the 50 ms interactive budget** in wasm (`to` and `the`, at
+>   89–100 ms) and are pinned by name at a 200 ms ceiling. `wave-zero.md` §10e is why the cap was
+>   not lowered; any *other* interactive query over 50 ms fails the suite.
 >
 > `HANDOFF.md` has the full list with what each phase owes. Check `package.json` rather than
 > assuming.

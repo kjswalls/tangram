@@ -498,7 +498,7 @@ into a build plan. Bundling still requires a `copyFromAssets()` of a 43.1 MB fil
 first launch and again whenever `dict.version` changes. Nobody measured how long that takes, it can
 fail on a device low on storage, and it means the installed footprint carries the dictionary
 **twice** — compressed inside the package and expanded in app storage — so budget **≈63 MB** on
-device (19.5 MB packaged + 43.1 MB expanded, `data.md` D5's figure), not 14. Design it as a one-time
+device (19.5 MB packaged + 43.1 MB expanded, `data.md` D5a's figure), not 14. Design it as a one-time
 progress state, not as "offline from the first second". Register entry #18 is the measurement. And
 state the consequence plainly: **bundling ties every dictionary refresh to a store release** and its
 review latency. That is the trade the
@@ -781,7 +781,7 @@ path. D1 still declines it for v1; the case is in `data.md` §7.
 **Any on-device footprint estimate has to double the file.** A bundled dictionary sits compressed in
 the app package *and* expanded in app storage after `copyFromAssets()`, so the installed cost on a
 phone is roughly the download plus the 43.1 MB expansion, not the download alone: **≈63 MB**
-(19.5 MB packaged + 43.1 MB expanded), which is the figure `data.md` D5, `ios.md` and `android.md`
+(19.5 MB packaged + 43.1 MB expanded), which is the figure `data.md` D5a, `ios.md` and `android.md`
 all budget against, with the packaged half resting on register entry #16 (§2.5, register entry #18).
 
 ### Query latency

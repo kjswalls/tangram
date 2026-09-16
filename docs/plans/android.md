@@ -317,7 +317,7 @@ disproves — a plan that contradicts a source it cites is worse than no plan).
 **Builds.** An installable debug APK of the current app, running on a real phone.
 
 **A note on what "the shell" means at this point, because it is not three tabs yet.** The three-tab
-shell is `core.md` C7, and §4 deliberately does **not** gate this phase on it. C7 sits after C5 in
+shell is `core.md` C7, and §4 deliberately does **not** gate this phase on it. C7 sits after C5b in
 `core.md`'s sequence and `ios.md` I2 forbids any C5b production file landing before a physical iOS 26
 device has answered register #1 — so gating A1 on C7 would put Android's first phase behind an iPhone,
 which is the opposite of this plan's premise and of STACK §4's claim that the two mobile tracks are
@@ -1004,20 +1004,21 @@ renders in the built app alongside the CC BY-SA and LGPL notices that already ex
 ### A6 — The WebView floor, and what the app says below it
 
 **Builds.** A version gate. Short phase, deliberately late, because the floor is determined by which
-engine features the reader actually shipped with in `core.md` C3–C5.
+engine features the reader actually shipped with in `core.md` C3–C5b.
 
-**There is one floor, not two, and the reason is that `core.md` C5 already committed to a degrade.**
+**There is one floor, not two, and the reason is that `core.md` C5a already committed to a degrade.**
 An earlier draft of this phase set up a "hard floor" against a "comfort floor" and told the builder to
-find out by reading C5 whether the reader had a fallback. C5 is written and readable now, and it
+find out by reading C5 — then one phase, now split — whether the reader had a fallback. C5a is
+written and readable now, and it
 answers the question: the fallback is **tap-the-first-character, then tap "…to here" on the last** —
 *"the current `extend()` model generalised to characters, needs no `caretRangeFromPoint`, no Custom
-Highlight API and no `pointermove` at all"* — and C5 says to *"ship it as the automatic degrade when
+Highlight API and no `pointermove` at all"* — and C5a says to *"ship it as the automatic degrade when
 either API is missing, feature-detected at runtime, so the fallback is exercised in normal operation
 rather than being dead code discovered in a crisis"*. It is committed, not conditional, and it is not
-"span painting"; that term was this plan's invention and does not appear in C5.
+"span painting"; that term was this plan's invention and does not appear in C5a.
 
 So the engine features STACK §6 lists do **not** set a floor. The CSS Custom Highlight API is Chrome
-**105**+ and C5 degrades without it; `caretRangeFromPoint` is ancient in Blink and needs no floor;
+**105**+ and C5a degrades without it; `caretRangeFromPoint` is ancient in Blink and needs no floor;
 `caretPositionFromPoint` is Chrome **128**+ but is only the standards-track upgrade over a proprietary
 API present everywhere; per-character (mono-ruby) `<ruby>` wraps naturally in any Chromium version,
 and the Chrome 128 line-breakable-ruby work matters only for multi-character pairs, which this app
@@ -1064,8 +1065,8 @@ does not use.
   alongside it is exactly the wall this phase refuses. The key stays at its default and
   `tests/unit/platform/android-project.test.ts` fails if a later phase raises it.
 - **The verification job:** walk `core.md` C3–C6 and confirm that every engine feature they depend on
-  either works in any Chromium the app can meet or has a feature-detected degrade the way C5's does.
-  C5 is settled. If any *other* surface turns out to depend on a versioned feature with no degrade,
+  either works in any Chromium the app can meet or has a feature-detected degrade the way C5a's does.
+  C5a is settled. If any *other* surface turns out to depend on a versioned feature with no degrade,
   **that** surface sets a hard floor — and this phase reports it back to `core.md` as a missing
   fallback rather than inventing a version wall to hide it. Record the walk, feature by feature, even
   when the answer is "no floor".
@@ -1095,9 +1096,9 @@ notice primitive `core.md` C1 leaves in `components/ui/**` and say which in `HAN
 2. On a device below the comfort floor, the banner appears once, is dismissible, and the app remains
    fully usable. On a device above it, no banner. Both observed on hardware or on an emulator image
    with an old WebView.
-3. C5's committed degrade works inside the app, not only in desktop Chromium: feature-flag
+3. C5a's committed degrade works inside the app, not only in desktop Chromium: feature-flag
    `CSS.highlights` off in a debug build and check that tap-then-tap-to-here still selects a span on
-   the device. This is a device re-run of C5's own fallback spec, and it is what makes "no hard floor"
+   the device. This is a device re-run of C5a's own fallback spec, and it is what makes "no hard floor"
    a tested claim rather than an inference from another document.
 4. The C3–C6 feature walk is in `HANDOFF.md`, feature by feature, with "degrades / no floor / floor at
    N" against each. Any feature with no degrade is reported to `core.md` by name.

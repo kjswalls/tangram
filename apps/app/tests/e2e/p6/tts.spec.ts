@@ -43,7 +43,7 @@ test.describe('speaker button', () => {
   });
 
   test('is in the lookup entry detail, disabled, with the reason', async ({ page }) => {
-    await page.goto('/lookup');
+    await page.goto('/');
     await page.getByTestId('lookup-input').fill('dasuan');
     const first = page.getByTestId('search-result').first();
     await expectBaseText(first, '打算', { timeout: 20_000 });

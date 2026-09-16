@@ -28,7 +28,7 @@ async function loadDemo(page: Page): Promise<void> {
 }
 
 async function openReview(page: Page): Promise<void> {
-  await page.goto('/review');
+  await page.goto('/practice');
   await ready(page);
   await expect(page.getByTestId('review-card')).toBeVisible({ timeout: 60_000 });
 }

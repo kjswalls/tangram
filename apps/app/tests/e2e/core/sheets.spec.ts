@@ -95,23 +95,43 @@ test.describe('the word sheet', () => {
     await page.setViewportSize(PHONE);
     await openWord(page);
 
-    const geometry = await page.evaluate((word) => {
-      const sheet = document.querySelector('[data-testid="word-sheet"]');
-      const tapped = document.querySelector(`[data-token="${word}"]`);
-      if (!sheet || !tapped) return null;
-      const s = sheet.getBoundingClientRect();
-      const t = tapped.getBoundingClientRect();
-      return { top: s.top, height: s.height, viewport: window.innerHeight, tappedBottom: t.bottom };
-    }, WORD);
+    const measure = () =>
+      page.evaluate((word) => {
+        const sheet = document.querySelector('[data-testid="word-sheet"]');
+        const tapped = document.querySelector(`[data-token="${word}"]`);
+        if (!sheet || !tapped) return null;
+        const s = sheet.getBoundingClientRect();
+        const t = tapped.getBoundingClientRect();
+        return {
+          top: s.top,
+          height: s.height,
+          viewport: window.innerHeight,
+          tappedBottom: t.bottom,
+        };
+      }, WORD);
 
+    const geometry = await measure();
     expect(geometry).not.toBeNull();
-    const { top, height, viewport, tappedBottom } = geometry!;
+    const { height, viewport } = geometry!;
     // "The lower two thirds", both ways: a cap and a floor. A strip pinned to
     // the bottom edge is not the surface the learner is now working in.
     expect(height).toBeLessThanOrEqual(viewport * 0.67 + 1);
     expect(height).toBeGreaterThanOrEqual(viewport * 0.5 - 1);
-    // …and the word that was tapped is still readable above it.
-    expect(tappedBottom).toBeLessThanOrEqual(top);
+
+    /**
+     * …and the word that was tapped is lifted clear of it — **polled**, because
+     * the lift is asynchronous by design. `reader-screen.tsx` waits two frames
+     * after the sheet opens: the first commits the column's bottom padding and
+     * the second lays it out, and there is nothing to scroll until it has.
+     * Reading the geometry once was a race the spec happened to win until the
+     * passage grew per-character ruby at C5b.
+     */
+    await expect
+      .poll(async () => {
+        const now = await measure();
+        return now === null ? 1 : now.tappedBottom - now.top;
+      }, { timeout: 5_000 })
+      .toBeLessThanOrEqual(0);
   });
 });
 

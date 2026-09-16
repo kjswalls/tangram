@@ -1,7 +1,8 @@
 'use client';
 
-import { Link } from 'react-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+
+import { useScreenNavigate } from '@/components/screens/navigate';
 
 import { AddReverse } from '@/components/review/add-reverse';
 import { ExampleSentences } from '@/components/review/example-sentences';
@@ -41,6 +42,7 @@ import { useReviewStore } from '@/lib/stores/review';
  * key press and a button click, exactly as it was before the feature existed.
  */
 export function ReviewSession() {
+  const go = useScreenNavigate();
   const queue = useReviewStore((state) => state.queue);
   const index = useReviewStore((state) => state.index);
   const revealed = useReviewStore((state) => state.revealed);
@@ -212,16 +214,22 @@ export function ReviewSession() {
             Stay on this page — they come back on their own, with nothing to press.
           </p>
         ) : null}
-        {/* Never a dead end: the one place that says what there is to do today. */}
+        {/*
+          Never a dead end. Since core.md C7 both halves of this sentence are
+          the same destination — Today is a region of the Look up tab — so it is
+          one way out rather than two, and it goes through `useScreenNavigate`
+          because a screen may not know a path.
+        */}
         <p className="mt-3 text-sm text-muted">
-          <Link to="/" className="text-accent underline underline-offset-2">
-            Back to Today
-          </Link>{' '}
-          for what is left, or{' '}
-          <Link to="/lookup" className="text-accent underline underline-offset-2">
-            look a word up
-          </Link>
-          .
+          <button
+            type="button"
+            data-testid="practice-empty-lookup"
+            className="text-accent underline underline-offset-2"
+            onClick={() => go({ tab: 'lookup' })}
+          >
+            Look a word up
+          </button>{' '}
+          — what you add is in the next session.
         </p>
       </Card>
     );

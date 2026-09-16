@@ -167,7 +167,7 @@ test.describe('with the dictionary down', () => {
       return list.id;
     });
 
-    await page.goto(`/lists/${listId}`);
+    await page.goto(`/library/lists/${listId}`);
     await expect(page.getByTestId('dict-gate')).toHaveCount(0);
     // The word is there. Its gloss and reading are not — those are the
     // dictionary's — and that is the whole shape of "degrades, not dies".
@@ -188,7 +188,7 @@ test.describe('with the dictionary down', () => {
    * the two calls that can reject.
    */
   test('an HSK band never opened before says so, instead of loading for ever', async ({ page }) => {
-    await page.goto('/lists');
+    await page.goto('/library');
     const hsk = page.getByTestId('list-card').filter({ hasText: 'HSK 3' }).first();
     await expect(hsk).toBeVisible();
     await hsk.getByRole('link', { name: /HSK 3/ }).click();
@@ -206,7 +206,7 @@ test.describe('with the dictionary down', () => {
   });
 
   test('…and /lookup and /read are the two that DO gate', async ({ page }) => {
-    for (const route of ['/lookup', '/read']) {
+    for (const route of ['/', '/read']) {
       await page.goto(route);
       await expect(page.getByTestId('dict-gate'), route).toBeVisible();
       await expect(page.getByTestId('dict-gate'), route).toHaveAttribute('data-state', 'failed');

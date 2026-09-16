@@ -19,7 +19,7 @@ const KAN4_SENSE = 5;
 
 /** The panel is on the lookup page; typing is all it takes to ask. */
 async function ask(page: Page, query: string): Promise<void> {
-  await page.goto('/lookup');
+  await page.goto('/');
   await page.getByTestId('lookup-input').fill(query);
   await expect(page.getByTestId('ask-panel')).toHaveAttribute('data-status', 'ready', {
     timeout: 20_000,
@@ -136,7 +136,7 @@ test.describe('the ask panel', () => {
     // that quotes its own front is not provenance (the review's minor fix).
     expect(saved[0].context?.question).toBeUndefined();
 
-    await page.goto('/review');
+    await page.goto('/practice');
     await expect(page.getByTestId('review-card')).toBeVisible();
     await page.keyboard.press('Space');
     const glosses = page.getByTestId('card-glosses').locator('li');

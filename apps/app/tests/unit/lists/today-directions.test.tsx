@@ -9,7 +9,7 @@
 import { render, screen, waitFor } from '../render';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { TodayView } from '@/app/(today)/today-view';
+import { TodayView } from '@/components/screens/today';
 import { closeDb, getDb, getRepository } from '@/lib/db/get-db';
 import { entryFromSnapshot, wordSnapshot } from '@/lib/srs/direction';
 import { context, DASUAN, KANKAN } from '../db/fixtures';

@@ -299,19 +299,6 @@ export function ReaderScreen() {
           <Badge tone="accent" data-testid="reader-counts">
             {counts.new} new · {counts.learning} learning · {counts.known} known
           </Badge>
-          {degraded && open ? (
-            <Button
-              variant={spanSelect.anchor === null ? 'secondary' : 'primary'}
-              size="sm"
-              data-testid="span-to-here"
-              aria-pressed={spanSelect.anchor !== null}
-              onClick={() =>
-                spanSelect.setAnchor(spanSelect.anchor === null ? (selected ?? null) : null)
-              }
-            >
-              {spanSelect.anchor === null ? 'Select to…' : '…to here'}
-            </Button>
-          ) : null}
           <Button variant="secondary" size="sm" onClick={() => setView('compose')}>
             Edit
           </Button>
@@ -320,6 +307,32 @@ export function ReaderScreen() {
           </Button>
         </div>
       </div>
+
+      {/*
+        **The degrade's control, on its own row and on the left.**
+        It started in the toolbar row's right-hand group and was unreachable
+        there: at a wide width the word sheet is a right-aligned side panel and
+        sat on top of it, so the click that arms the span landed on the sheet's
+        "Reading" heading. The sheet is bottom-anchored on a phone and
+        right-anchored above 45rem, so a left-aligned control above the passage
+        is clear of both — and it has to stay reachable while the learner hunts
+        for the far end of the span.
+      */}
+      {degraded && open ? (
+        <div className="flex">
+          <Button
+            variant={spanSelect.anchor === null ? 'secondary' : 'primary'}
+            size="sm"
+            data-testid="span-to-here"
+            aria-pressed={spanSelect.anchor !== null}
+            onClick={() =>
+              spanSelect.setAnchor(spanSelect.anchor === null ? (selected ?? null) : null)
+            }
+          >
+            {spanSelect.anchor === null ? 'Select to…' : '…to here'}
+          </Button>
+        </div>
+      ) : null}
 
       <div className="grid gap-4 md:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] md:items-start">
         <div className={cn('order-1', open && 'pb-[65dvh] md:pb-0')}>

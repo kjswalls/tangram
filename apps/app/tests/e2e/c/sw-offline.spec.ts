@@ -46,12 +46,12 @@ test.describe('the service worker offline', () => {
 
     await context.setOffline(true);
     try {
-      await page.goto('/lookup');
+      await page.goto('/');
       // The nav is rendered by React, so seeing it means the document AND its
       // script AND its stylesheet all came out of the cache. A blank page —
       // the bug this is here for — fails on this line.
       await expect(page.getByRole('navigation', { name: 'Main' })).toBeVisible();
-      await expect(page.getByRole('heading', { name: 'Lookup' })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Look up' })).toBeVisible();
       const bodyText = (await page.locator('body').innerText()).trim();
       expect(bodyText.length, 'offline page rendered empty').toBeGreaterThan(20);
     } finally {

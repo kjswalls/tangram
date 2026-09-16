@@ -62,15 +62,15 @@ async function seedHistory(page: Page): Promise<void> {
   );
 }
 
-test.describe('/stats', () => {
+test.describe('/library', () => {
   test('the demo seed gets an honest empty state, not a chart', async ({ page }) => {
     await resetApp(page);
     await page.goto('/?seed=demo');
     await expect(page).toHaveURL(/\/$/, { timeout: 120_000 });
     await expect(page.getByTestId('today-due-count')).not.toHaveText('—', { timeout: 120_000 });
 
-    await page.goto('/stats');
-    await expect(page.getByRole('heading', { level: 1, name: 'Stats' })).toBeVisible();
+    await page.goto('/library');
+    await expect(page.getByRole('heading', { level: 1, name: 'Library' })).toBeVisible();
 
     // The demo's whole history is a handful of backdated grades, most of them
     // of cards still inside their learning steps.
@@ -95,7 +95,7 @@ test.describe('/stats', () => {
 
   test('reads the real numbers off a seeded history', async ({ page }) => {
     await resetApp(page, { newPerDay: 0 });
-    await page.goto('/stats');
+    await page.goto('/library');
     await ready(page);
     await seedHistory(page);
     await page.reload();
@@ -157,11 +157,11 @@ test.describe('/stats', () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto('/');
     await page
-      .getByRole('navigation', { name: 'Main' })
-      .getByRole('link', { name: 'Stats', exact: true })
+      .getByTestId('tab-bar')
+      .getByRole('link', { name: 'Library', exact: true })
       .click();
-    await expect(page).toHaveURL(/\/stats$/);
-    await expect(page.getByRole('heading', { level: 1, name: 'Stats' })).toBeVisible();
+    await expect(page).toHaveURL(/\/library$/);
+    await expect(page.getByRole('heading', { level: 1, name: 'Library' })).toBeVisible();
 
     // Charts scale to the viewport rather than pushing the page sideways.
     const overflow = await page.evaluate(

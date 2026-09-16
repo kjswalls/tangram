@@ -1,59 +1,82 @@
 import { expect, test, type Page } from '@playwright/test';
 
 /**
- * The nav routes of PLAN.md §4 plus Phase 8's `/stats`, and the heading each
- * one opens with. The order is `components/shell/nav.ts`'s order.
+ * The app shell, rebuilt around three tabs (docs/plans/core.md C7).
+ *
+ * This spec was seven routes and their headings; it is three destinations and
+ * the two sub-paths inside them. What it asserts is unchanged in kind — every
+ * page renders, the bar marks where you are, the bar walks everywhere, the
+ * dictionary gate covers the surfaces that need it and nothing else, the
+ * licences render, and it all fits a 390px phone.
  */
-const ROUTES = [
-  { path: '/', label: 'Today', heading: 'Today' },
-  { path: '/lookup', label: 'Lookup', heading: 'Lookup' },
-  { path: '/review', label: 'Review', heading: 'Review' },
-  { path: '/read', label: 'Read', heading: 'Read' },
-  { path: '/lists', label: 'Lists', heading: 'Lists' },
-  { path: '/stats', label: 'Stats', heading: 'Stats' },
-  { path: '/settings', label: 'Settings', heading: 'Settings' },
+const PAGES = [
+  { path: '/', tab: 'lookup', heading: 'Look up' },
+  { path: '/read', tab: 'lookup', heading: 'Your own texts' },
+  { path: '/practice', tab: 'practice', heading: 'Practice' },
+  { path: '/library', tab: 'library', heading: 'Library' },
 ] as const;
 
-const nav = (page: Page) => page.getByRole('navigation', { name: 'Main' });
+const TABS = [
+  { key: 'lookup', label: 'Look up' },
+  { key: 'practice', label: 'Practice' },
+  { key: 'library', label: 'Library' },
+] as const;
+
+const bar = (page: Page) => page.getByTestId('tab-bar');
 
 test.describe('app shell', () => {
-  for (const route of ROUTES) {
-    test(`${route.path} renders its heading and the full nav`, async ({ page }) => {
-      await page.goto(route.path);
-      await expect(page.getByRole('heading', { level: 1, name: route.heading })).toBeVisible();
-      for (const item of ROUTES) {
-        await expect(nav(page).getByRole('link', { name: item.label, exact: true })).toBeVisible();
+  for (const entry of PAGES) {
+    test(`${entry.path} renders its heading and the whole tab bar`, async ({ page }) => {
+      await page.goto(entry.path);
+      await expect(page.getByRole('heading', { level: 1, name: entry.heading })).toBeVisible();
+      for (const tab of TABS) {
+        await expect(bar(page).getByRole('link', { name: tab.label, exact: true })).toBeVisible();
       }
+      // …and exactly one bar. The two shells are chosen, never both rendered:
+      // two would mean two `aria-current`s and a screen reader reading the
+      // hidden one.
+      await expect(bar(page)).toHaveCount(1);
     });
   }
 
-  test('the nav marks the route you are on', async ({ page }) => {
-    await page.goto('/lists');
-    await expect(nav(page).getByRole('link', { name: 'Lists', exact: true })).toHaveAttribute(
-      'aria-current',
-      'page',
-    );
-    await expect(nav(page).getByRole('link', { name: 'Today', exact: true })).not.toHaveAttribute(
+  test('a sub-path keeps its own tab marked', async ({ page }) => {
+    // `/read` is inside Look up and `/library/lists/:id` inside Library. A tab
+    // that unmarks itself as soon as a learner opens something is the failure
+    // `tabForPath`'s longest-prefix rule exists to prevent.
+    await page.goto('/read');
+    await expect(bar(page).getByRole('link', { name: 'Look up', exact: true })).toHaveAttribute(
       'aria-current',
       'page',
     );
   });
 
-  test('the nav walks every route', async ({ page }) => {
+  test('the bar marks the tab you are on, and only that one', async ({ page }) => {
+    await page.goto('/library');
+    await expect(bar(page).getByRole('link', { name: 'Library', exact: true })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+    await expect(
+      bar(page).getByRole('link', { name: 'Look up', exact: true }),
+    ).not.toHaveAttribute('aria-current', 'page');
+  });
+
+  test('the bar walks every tab', async ({ page }) => {
     await page.goto('/');
-    for (const route of ROUTES.slice(1)) {
-      await nav(page).getByRole('link', { name: route.label, exact: true }).click();
-      await expect(page).toHaveURL(new RegExp(`${route.path}$`));
-      await expect(page.getByRole('heading', { level: 1, name: route.heading })).toBeVisible();
+    for (const tab of TABS.slice(1)) {
+      await bar(page).getByRole('link', { name: tab.label, exact: true }).click();
+      const target = PAGES.find((entry) => entry.tab === tab.key)!;
+      await expect(page).toHaveURL(new RegExp(`${target.path}$`));
+      await expect(page.getByRole('heading', { level: 1, name: target.heading })).toBeVisible();
     }
   });
 
-  test('/lookup renders the panel shell with its slot contract', async ({ page }) => {
-    await page.goto('/lookup');
+  test('the Look up tab renders the panel shell with its slot contract', async ({ page }) => {
+    await page.goto('/');
     await expect(page.getByTestId('lookup-panel')).toBeVisible();
     await expect(page.getByTestId('lookup-body')).toBeVisible();
     // Nothing injects the slot, and with no query there is nothing to ask
-    // about either: both ask regions are absent on a bare /lookup.
+    // about either: both ask regions are absent on a bare Look up tab.
     await expect(page.getByTestId('lookup-ask-slot')).toHaveCount(0);
     await expect(page.getByTestId('lookup-ask')).toHaveCount(0);
   });
@@ -61,14 +84,14 @@ test.describe('app shell', () => {
   /**
    * `components/shell/data-banner.tsx` is **deleted** (core.md C4a, `data.md`
    * D4): a banner on every route, driven by a `HEAD` probe on every mount, is
-   * replaced one-for-one by `<DictGate>` on the two routes that actually need
-   * the dictionary. The two cases move with it.
+   * replaced one-for-one by `<DictGate>` on the surfaces that actually need the
+   * dictionary. The two cases move with it.
    *
-   * Today, lists and stats are the learner's own data and are **not** gated —
-   * asserted below, because "the app keeps working without a dictionary" is
-   * `data.md` D4's requirement of this phase and the easiest thing to lose.
+   * Library is the learner's own data and is **not** gated — asserted below,
+   * because "the app keeps working without a dictionary" is `data.md` D4's
+   * requirement of this phase and the easiest thing to lose.
    */
-  test('a dictionary that cannot answer gates /lookup, and says what to do', async ({ page }) => {
+  test('a dictionary that cannot answer gates Look up, and says what to do', async ({ page }) => {
     // Deterministic stand-in for a missing data/ directory (PLAN.md §3.2).
     await page.route('**/api/dict/hsk*', (route) =>
       route.fulfill({
@@ -77,50 +100,71 @@ test.describe('app shell', () => {
         body: JSON.stringify({ error: 'dict-data-missing', hint: 'run pnpm data' }),
       }),
     );
-    await page.goto('/lookup');
+    await page.goto('/');
     await expect(page.getByTestId('dict-gate')).toBeVisible();
     await expect(page.getByTestId('dict-status')).toBeVisible();
     // …and the search box is not offered, rather than offered and broken.
     await expect(page.getByTestId('lookup-input')).toHaveCount(0);
 
     // The learner's own data is untouched.
-    await page.goto('/');
-    await expect(page.getByRole('heading', { level: 1, name: 'Today' })).toBeVisible();
+    await page.goto('/library');
+    await expect(page.getByRole('heading', { level: 1, name: 'Library' })).toBeVisible();
     await expect(page.getByTestId('dict-gate')).toHaveCount(0);
   });
 
   test('no gate when the dictionary answers', async ({ page }) => {
-    await page.goto('/lookup');
+    await page.goto('/');
     await expect(page.getByTestId('lookup-input')).toBeVisible();
     await expect(page.getByTestId('dict-gate')).toHaveCount(0);
   });
 
-  test('/settings carries the licences section, rendered as prose', async ({ page }) => {
-    await page.goto('/settings');
+  test('Library carries the licences section, rendered as prose', async ({ page }) => {
+    await page.goto('/library');
     await expect(page.getByRole('heading', { name: 'Licenses' })).toBeVisible();
     // ATTRIBUTION.md is Markdown: it must not reach the page as raw `##` and `**`.
     await expect(page.getByRole('heading', { name: /CC-CEDICT/ })).toBeVisible();
     await expect(page.locator('main')).not.toContainText('## CC-CEDICT');
   });
 
-  test('the nav fits a 390px phone', async ({ page }) => {
-    // The links used to total 381px in a 366px row and scroll silently, so the
-    // last one read "Setting" with no affordance to reach the rest. Phase 8
-    // added a seventh (`/stats`), which is why this still has to be checked.
+  test('the tab bar fits a 390px phone, and is where a thumb is', async ({ page }) => {
+    // Seven links used to total 381px in a 366px row and scroll silently, so
+    // the last one read "Setting" with no affordance to reach the rest. Three
+    // tabs have room; what has to be checked now is the other half of §1's
+    // statement — that the bar is at the BOTTOM and clears the home indicator.
     const width = 390;
-    await page.setViewportSize({ width, height: 844 });
+    const height = 844;
+    await page.setViewportSize({ width, height });
     await page.goto('/');
-    for (const route of ROUTES) {
-      const link = nav(page).getByRole('link', { name: route.label, exact: true });
+    for (const tab of TABS) {
+      const link = bar(page).getByRole('link', { name: tab.label, exact: true });
       const box = await link.boundingBox();
-      if (!box) throw new Error(`${route.label} has no box`);
+      if (!box) throw new Error(`${tab.label} has no box`);
       expect(box.x + box.width).toBeLessThanOrEqual(width);
-      expect(box.height).toBeGreaterThanOrEqual(32);
+      // A hand-sized target, not a text link.
+      expect(box.height).toBeGreaterThanOrEqual(40);
+      // Thumb reach: the bar is in the bottom quarter of the viewport.
+      expect(box.y).toBeGreaterThan(height * 0.75);
     }
     const overflow = await page.evaluate(
       () => document.documentElement.scrollWidth - window.innerWidth,
     );
     expect(overflow).toBeLessThanOrEqual(0);
+  });
+
+  test('the fixed bar does not sit on top of the screen’s last control', async ({ page }) => {
+    // A bar fixed over a scrolling column hides whatever the column ends with.
+    // On this app that is the grade dock, which is the one control a learner
+    // cannot do without — so the column reserves the bar's height.
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/library');
+    const barBox = await bar(page).boundingBox();
+    const mainBottom = await page.evaluate(() => {
+      const main = document.querySelector('main')!;
+      const style = getComputedStyle(main);
+      return Number.parseFloat(style.paddingBottom);
+    });
+    expect(barBox).not.toBeNull();
+    expect(mainBottom).toBeGreaterThanOrEqual(barBox!.height - 8);
   });
 
   test('the tab icon exists, so no route 404s on a favicon', async ({ page }) => {

@@ -136,6 +136,10 @@ async function gradeAndAdvance(page: Page, id: string | null, key: string): Prom
 test('the whole loop with i+1 sentences and free recall on', async ({ page }) => {
   // --- the demo learner, and both Phase 6 toggles --------------------------
   await resetApp(page);
+  // `resetApp` wipes from `/read` since core.md C7 — the one page that neither
+  // draws nor materialises anything — so the settings form needs a visit of its
+  // own. It is in Library now, beside the lists.
+  await page.goto('/library');
   await page.getByTestId('load-demo').click(); // arms the confirmation
   await page.getByTestId('load-demo').click(); // runs it
   await expect(page.getByTestId('settings-status')).toContainText('Demo', { timeout: 120_000 });
@@ -177,11 +181,11 @@ test('the whole loop with i+1 sentences and free recall on', async ({ page }) =>
 
   // The spine draw is off for the rest of the walk: this spec is about the two
   // cards it adds by hand and the demo's own due cards, not about the ten HSK
-  // words `/review` would otherwise introduce on top of them.
+  // words `/practice` would otherwise introduce on top of them.
   await page.evaluate(() => window.__tangram.repo.setSettings({ newPerDay: 0 }));
 
   // --- ask an English sentence, and add the phrase (P4) --------------------
-  await page.goto('/lookup');
+  await page.goto('/');
   await page.getByTestId('lookup-input').fill(BROWSING);
   const ask = page.getByTestId('ask-panel');
   await expect(ask).toHaveAttribute('data-status', 'ready', { timeout: 60_000 });
@@ -250,7 +254,7 @@ test('the whole loop with i+1 sentences and free recall on', async ({ page }) =>
 
   // --- the session, with both card features live ---------------------------
   await page.getByTestId('start-review').click();
-  await expect(page).toHaveURL(/\/review$/);
+  await expect(page).toHaveURL(/\/practice$/);
   await expect(page.getByTestId('review-session')).toBeVisible({ timeout: 60_000 });
 
   let sawPhrase = false;
@@ -508,7 +512,7 @@ test('the whole loop with i+1 sentences and free recall on', async ({ page }) =>
   await ready(page);
   await expect(page.getByTestId('today-due-count')).toHaveText('0');
   await expect(page.getByTestId('today-new-count')).toHaveText('0');
-  await expect(page.getByTestId('start-review').getByRole('button')).toBeDisabled();
+  await expect(page.getByTestId('start-review')).toBeDisabled();
   // The split line counts *today's plate*, and the walk emptied it — so the
   // correct thing for it to do here is not appear. What is durable is the row:
   // one production card, its own schedule, its own review.
@@ -533,8 +537,8 @@ test('the whole loop with i+1 sentences and free recall on', async ({ page }) =>
   // had barely started, and the retention denominator counts Review-state
   // reviews only. So the page has almost nothing to go on, and the thing it
   // must not do is draw a confident curve over it.
-  await page.goto('/stats');
-  await expect(page.getByRole('heading', { level: 1, name: 'Stats' })).toBeVisible();
+  await page.goto('/library');
+  await expect(page.getByRole('heading', { level: 1, name: 'Library' })).toBeVisible();
 
   const retentionEmpty = page.getByTestId('stats-retention-empty');
   await expect(retentionEmpty).toBeVisible({ timeout: 60_000 });

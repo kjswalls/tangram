@@ -1,10 +1,7 @@
-import { Attribution } from '@/app/settings/attribution';
-import { SettingsForm } from '@/app/settings/settings-form';
-import { PageHeader } from '@/components/shell/page-header';
-import { Card } from '@/components/ui/card';
+import { LibraryScreen } from '@/components/screens/library';
 
 /**
- * `data/ATTRIBUTION.md`, rendered in /settings.
+ * `data/ATTRIBUTION.md`, rendered in Library (docs/plans/core.md C7).
  *
  * This used to be a per-request `readFile` of `<dataDir()>/ATTRIBUTION.md` from
  * a `force-dynamic` server component, so that `TANGRAM_DATA_DIR` could relocate
@@ -15,25 +12,13 @@ import { Card } from '@/components/ui/card';
  * makes rendering it a licence obligation, not a nicety. A build now carries the
  * attribution that was committed when it was built, which is the licence-correct
  * pairing anyway: the notice ships with the code it describes.
+ *
+ * It is read **here**, in the route module, rather than in the screen: `?raw`
+ * is a bundler feature, and a screen that reaches for one cannot be rendered by
+ * anything but this bundler.
  */
 import attribution from '@data/ATTRIBUTION.md?raw';
 
-export function SettingsRoute() {
-  return (
-    <>
-      <PageHeader title="Settings">
-        New cards per day, the spine band, what counts as known.
-      </PageHeader>
-
-      <div className="flex flex-col gap-4">
-        <Card title="Study">
-          <SettingsForm />
-        </Card>
-
-        <Card title="Licenses">
-          <Attribution source={attribution} />
-        </Card>
-      </div>
-    </>
-  );
+export function LibraryRoute() {
+  return <LibraryScreen attribution={attribution} />;
 }

@@ -35,7 +35,19 @@ export interface TodaySummary {
   /** Cards this call brought into being. */
   created: CardRow[];
   dueCount: number;
+  /** New cards that already exist. */
   newCount: number;
+  /**
+   * What a session will actually offer: the new cards that exist **plus** what
+   * today's cap still allows to be drawn (docs/plans/core.md C7).
+   *
+   * The merge moved the introduction into the Practice session, so Today reports
+   * rather than creates — and `newCount` alone reads 0 on a fresh database while
+   * the cap is holding ten words for the learner. This is the honest number for
+   * a screen that says "5 new words to learn", and it is the same number the
+   * session will hand out, because both come from the same `drawLimit`.
+   */
+  newAvailable: number;
   introducedToday: number;
   newPerDay: number;
   /**
@@ -119,6 +131,9 @@ async function run(input: TodayInput): Promise<TodaySummary> {
     created,
     dueCount: queue.due.length,
     newCount: queue.newCards.length,
+    // `drawLimit` is 0 once a draw has run and charged the counter, so this is
+    // the same total whether or not this call introduced anything.
+    newAvailable: queue.newCards.length + queue.drawLimit,
     introducedToday: queue.introducedToday,
     newPerDay: queue.newPerDay,
     ...(drawError === undefined ? {} : { drawError }),

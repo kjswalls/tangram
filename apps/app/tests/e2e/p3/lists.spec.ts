@@ -11,7 +11,7 @@ const HSK_NAMES = ['HSK 1', 'HSK 2', 'HSK 3', 'HSK 4', 'HSK 5', 'HSK 6', 'HSK 7â
 test.describe('lists', () => {
   test('seven HSK lists and Looked up appear on the first visit', async ({ page }) => {
     await resetApp(page);
-    await page.goto('/lists');
+    await page.goto('/library');
     await ready(page);
 
     const cards = page.getByTestId('list-card');
@@ -29,7 +29,7 @@ test.describe('lists', () => {
 
   test('an HSK list fills in its words and counts them', async ({ page }) => {
     await resetApp(page);
-    await page.goto('/lists');
+    await page.goto('/library');
     const band1 = page.locator('[data-list-name="HSK 1"]');
     await expect(band1.getByTestId('list-count')).toHaveText(/\d+/, { timeout: 60_000 });
     expect(Number(await band1.getByTestId('list-count').innerText())).toBeGreaterThan(400);
@@ -37,7 +37,7 @@ test.describe('lists', () => {
 
   test('the active toggle persists', async ({ page }) => {
     await resetApp(page);
-    await page.goto('/lists');
+    await page.goto('/library');
     const band6 = page.locator('[data-list-name="HSK 6"]');
     await expect(band6).toHaveAttribute('data-active', 'true');
     await band6.getByRole('checkbox').uncheck();
@@ -63,9 +63,9 @@ test.describe('lists', () => {
 
   test('opening a list shows its words with their state', async ({ page }) => {
     await resetApp(page);
-    await page.goto('/lists');
+    await page.goto('/library');
     await page.locator('[data-list-name="HSK 1"]').getByRole('link', { name: 'Open' }).click();
-    await expect(page).toHaveURL(/\/lists\/[0-9a-f-]+$/);
+    await expect(page).toHaveURL(/\/library\/lists\/[0-9a-f-]+$/);
 
     const members = page.getByTestId('list-member');
     await expect(members.first()).toBeVisible({ timeout: 60_000 });
@@ -76,7 +76,7 @@ test.describe('lists', () => {
 
   test('a custom list can be created, filled by search, and queued from', async ({ page }) => {
     await resetApp(page);
-    await page.goto('/lists');
+    await page.goto('/library');
     await page.getByLabel('New list name').fill('Kitchen Chinese');
     await page.getByRole('button', { name: 'Create list' }).click();
 
@@ -111,7 +111,7 @@ test.describe('lists', () => {
     // `deleteList` / `removeListMembers` are the repository additions the merge
     // applied for HANDOFF-p3 "Needs 2": a custom list used to be permanent.
     await resetApp(page);
-    await page.goto('/lists');
+    await page.goto('/library');
     await page.getByLabel('New list name').fill('Kitchen Chinese');
     await page.getByRole('button', { name: 'Create list' }).click();
     await page.locator('[data-list-name="Kitchen Chinese"]').getByRole('link', { name: 'Open' }).click();
@@ -128,7 +128,7 @@ test.describe('lists', () => {
     // Deleting is two clicks, and it lands back on /lists without the list.
     await page.getByTestId('delete-list').click();
     await page.getByTestId('confirm-delete-list').click();
-    await expect(page).toHaveURL(/\/lists$/);
+    await expect(page).toHaveURL(/\/library$/);
     await expect(page.locator('[data-list-name="Kitchen Chinese"]')).toHaveCount(0);
     await page.reload();
     await expect(page.locator('[data-list-name="Kitchen Chinese"]')).toHaveCount(0);

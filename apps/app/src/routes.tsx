@@ -42,18 +42,17 @@
 
 import type { RouteObject } from 'react-router';
 
+import { TAB_PATHS } from '@/components/shell/nav';
+
 import { Root } from './root';
 import { GalleryRoute } from './routes/gallery';
 import { SpanSelectRoute } from './routes/span-select';
 import { ListDetailRoute } from './routes/list-detail';
-import { ListsRoute } from './routes/lists';
+import { LibraryRoute } from './routes/library';
 import { NotFoundRoute } from './routes/not-found';
-import { LookupRoute } from './routes/lookup';
-import { ReadRoute } from './routes/read';
-import { ReviewRoute } from './routes/review';
-import { SettingsRoute } from './routes/settings';
-import { StatsRoute } from './routes/stats';
-import { TodayRoute } from './routes/today';
+import { LookUpRoute } from './routes/look-up';
+import { PracticeRoute } from './routes/practice';
+import { TextsRoute } from './routes/texts';
 
 /** Empty in every production build. See the note above. */
 const devOnlyRoutes: RouteObject[] =
@@ -88,17 +87,29 @@ export const routes: RouteObject[] = [
         <NotFoundRoute />
       </Root>
     ),
+    /**
+     * **Three tabs** (docs/plans/core.md C7). Seven routes became three
+     * destinations plus two sub-paths that keep their tab marked: `/read` is a
+     * text a learner comes back to, and `/library/lists/:id` is one list.
+     *
+     * The paths come from `components/shell/nav.ts`'s `TAB_PATHS` rather than
+     * being written here, so the tab bar and the router cannot disagree about
+     * where a tab is — which is the job `NAV_ITEMS` did for the seven.
+     *
+     * **There are no redirects from the old paths, deliberately.** There are no
+     * users and no bookmarks (CLAUDE.md), and a redirect would make C7's
+     * criterion "no spec references a removed route" untestable: a stale
+     * `page.goto('/review')` would keep passing.
+     * `tests/unit/shell/tab-routes.test.ts` fails if one comes back.
+     */
     children: [
-      { index: true, element: <TodayRoute /> },
-      { path: 'lookup', element: <LookupRoute /> },
-      { path: 'review', element: <ReviewRoute /> },
-      { path: 'read', element: <ReadRoute /> },
-      { path: 'lists', element: <ListsRoute /> },
-      { path: 'lists/:id', element: <ListDetailRoute /> },
-      { path: 'stats', element: <StatsRoute /> },
-      { path: 'settings', element: <SettingsRoute /> },
+      { index: true, element: <LookUpRoute /> },
+      { path: TAB_PATHS.texts.slice(1), element: <TextsRoute /> },
+      { path: TAB_PATHS.practice.slice(1), element: <PracticeRoute /> },
+      { path: TAB_PATHS.library.slice(1), element: <LibraryRoute /> },
+      { path: TAB_PATHS.list.slice(1), element: <ListDetailRoute /> },
       ...devOnlyRoutes,
-      // Inside the layout, so a 404 keeps the header and the nav.
+      // Inside the layout, so a 404 keeps the header and the tab bar.
       { path: '*', element: <NotFoundRoute /> },
     ],
   },

@@ -1,6 +1,5 @@
 'use client';
 
-import { Link } from 'react-router';
 import { useEffect, useState } from 'react';
 
 import { OptimizerPanel } from '@/components/settings/optimizer-panel';
@@ -291,10 +290,7 @@ export function SettingsForm() {
         <p className="text-sm text-muted">
           The demo replaces everything in this browser with a worked example: HSK 1–2 known, eight cards
           carrying where they came from, a paragraph to read. You can also reach it at{' '}
-          <Link to="/?seed=demo" className="text-accent underline underline-offset-2">
-            /?seed=demo
-          </Link>
-          .
+          <code className="text-accent">/?seed=demo</code>.
         </p>
         <div className="flex flex-wrap items-center gap-3">
           <Button

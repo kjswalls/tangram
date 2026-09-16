@@ -51,7 +51,7 @@ test.describe('?seed=demo', () => {
 
   test('the settings page loads and wipes the same demo', async ({ page }) => {
     await resetApp(page);
-    await page.goto('/settings');
+    await page.goto('/library');
     await page.getByTestId('load-demo').click();
     await page.getByTestId('load-demo').click();
     await expect(page.getByTestId('settings-status')).toContainText('Demo loaded', {

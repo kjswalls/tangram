@@ -24,7 +24,7 @@
 import { useEffect, useRef } from 'react';
 import { useLocation, useNavigate, useNavigationType } from 'react-router';
 
-import { NAV_ITEMS } from '@/components/shell/nav';
+import { TABS } from '@/components/shell/nav';
 import { isAndroid } from '@/lib/platform/native';
 import {
   closeTopOverlay,
@@ -37,13 +37,14 @@ import {
 /**
  * The tab roots, in order; the first is the one the app backs **out of**.
  *
- * At A1 this is `components/shell/nav.ts`'s seven routes, because `web.md` W1
+ * At A1 this was `components/shell/nav.ts`'s seven routes, because `web.md` W1
  * ported the existing app rather than restructuring it and A1 deliberately does
- * not gate on `core.md` C7 (`wave-zero.md` §4). **C7 re-baselines it** — to
- * three tabs, with Look up first — by passing its own list, which is why this is
- * a prop with a default rather than a constant read inside the model.
+ * not gate on `core.md` C7 (`wave-zero.md` §4). **C7 has re-baselined it**: it
+ * is the three tabs now, Look up first, read from the same `TABS` the bar
+ * renders so the button and the bar cannot disagree about what a tab root is.
+ * It stays a prop with a default because A1's tests drive it directly.
  */
-const DEFAULT_TABS = NAV_ITEMS.map((item) => item.href);
+const DEFAULT_TABS = TABS.map((tab) => tab.path);
 
 /**
  * The plugin module, fetched once for the life of the page.

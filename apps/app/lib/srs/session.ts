@@ -52,6 +52,55 @@ export function buildReviewQueue(input: ReviewQueueInput): CardRow[] {
 }
 
 /**
+ * **The merged session** (docs/plans/core.md C7; wave-zero.md §9).
+ *
+ * product-decisions §1's central claim is that learning a new word, recognising
+ * it and writing it are **one** session. Until C7 they were not: `buildQueue`
+ * returns `[...due, ...newCards]`, so a learner with fifteen reviews and five
+ * new words worked through fifteen cards and only then met a new word — and the
+ * new words were introduced on a *different screen*, which is the half
+ * `wave-zero.md` §9 says C7 owns.
+ *
+ * This is the interleave. It is composition over `buildQueue` and **nothing
+ * about FSRS changes**: the scheduler decides when a card comes back, this
+ * decides only the order the session offers what is already in the queue.
+ *
+ * The rule: spread the new words evenly through the due ones rather than
+ * fronting or tailing them. A learner who stops halfway has then met roughly
+ * half the day's new words, which is the honest split — fronting them spends
+ * the whole day's introductions on a session that might be abandoned, and
+ * tailing them means a bad day of reviews costs the new words entirely.
+ *
+ * **Due first at equal position.** The first card of a session is a review, not
+ * a new word: opening Practice to something you have never seen reads as the
+ * app ignoring the work you have waiting.
+ */
+export function interleaveNew(
+  due: readonly CardRow[],
+  fresh: readonly CardRow[],
+): CardRow[] {
+  if (fresh.length === 0) return [...due];
+  if (due.length === 0) return [...fresh];
+  const out: CardRow[] = [];
+  // One new word every `step` cards, counted over the merged length so the last
+  // new word lands near the end rather than in the middle.
+  const step = (due.length + fresh.length) / fresh.length;
+  let placed = 0;
+  let nextAt = step;
+  for (const card of due) {
+    out.push(card);
+    while (placed < fresh.length && out.length >= Math.round(nextAt)) {
+      out.push(fresh[placed]);
+      placed += 1;
+      nextAt += step;
+    }
+  }
+  // Whatever did not fit — a session with more new words than reviews.
+  for (; placed < fresh.length; placed += 1) out.push(fresh[placed]);
+  return out;
+}
+
+/**
  * How many times one card may be served in a single session before it is set
  * aside (see `deferredCardIds`). With `shortTermSteps` on, Again on a card in a
  * learning step schedules it a minute out, so a learner who keeps missing it is

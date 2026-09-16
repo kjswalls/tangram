@@ -8,11 +8,17 @@ export async function ready(page: Page): Promise<void> {
 }
 
 /**
- * A clean database for a spec. `/settings` is the one route that neither draws
- * new cards nor materialises a list, so wiping from there cannot race the page.
+ * A clean database for a spec.
+ *
+ * **`/read`, not Library.** The rule is unchanged — wipe from the one page that
+ * neither draws new cards nor materialises a list, so the reset cannot race the
+ * page — but the page changed: core.md C7 folded `/settings` into Library
+ * *beside* the lists, and `ListsView` fills HSK membership in the background on
+ * mount. The texts view is the quiet one now: a paste box, a dictionary gate,
+ * and no reads of the learner's data at all.
  */
 export async function resetApp(page: Page, settings?: Partial<SettingsRow>): Promise<void> {
-  await page.goto('/settings');
+  await page.goto('/read');
   await ready(page);
   await page.evaluate(async (patch) => {
     await window.__tangram.repo.resetAll();

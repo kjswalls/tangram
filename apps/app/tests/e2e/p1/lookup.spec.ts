@@ -25,7 +25,7 @@ interface TangramWindow {
 }
 
 async function openLookup(page: Page): Promise<void> {
-  await page.goto('/lookup');
+  await page.goto('/');
   await expect(page.getByTestId('lookup-input')).toBeVisible();
   await page.evaluate(async () => {
     await (window as unknown as TangramWindow).__tangram.repo.resetAll();

@@ -20,6 +20,15 @@ export async function readText(page: Page, body: string): Promise<void> {
     'data-state',
     'unknown',
   );
+  /**
+   * …and the **readings** land a beat after that (core.md C5b's
+   * `use-reader-readings.ts`), which reflows the whole passage: every plain run
+   * becomes a tree of `<ruby>` and the text roughly doubles in height. A spec
+   * that taps before that is measuring a passage that is about to move under
+   * it — which is what a learner never sees, because the readings arrive long
+   * before a finger does.
+   */
+  await expect(page.getByTestId('reader-text').locator('rt').first()).toBeAttached();
 }
 
 /** The first token whose text is exactly `text`. */

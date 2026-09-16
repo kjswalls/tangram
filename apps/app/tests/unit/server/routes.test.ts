@@ -17,7 +17,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { appRoot } from '@/lib/server/roots';
-import { NAV_ITEMS } from '@/components/shell/nav';
+import { TAB_PATHS } from '@/components/shell/nav';
 import { OUTPUT_FILE_TRACING_INCLUDES } from '@/tracing.config';
 import {
   discoverApiRoutes,
@@ -111,12 +111,15 @@ describe('smoke coverage', () => {
     expect(checkRouteCoverage(ROOT), 'add a case to SMOKE_CASES in scripts/smoke.ts').toEqual([]);
   });
 
-  it('also walks every nav route and the three files the PWA needs', () => {
+  it('also walks every page the tab shell owns and the three files the PWA needs', () => {
     const paths = PAGE_CASES.map((c) => c.url({}));
-    // Derived from the nav, not restated: `/stats` was added to the header in
+    // Derived from the shell, not restated: `/stats` was added to the header in
     // one Phase 8 worktree and to the smoke list in another, and a hand-copied
-    // list is what let those two disagree in the first place.
-    expect(paths).toEqual(expect.arrayContaining(NAV_ITEMS.map((item) => item.href)));
+    // list is what let those two disagree in the first place. `TAB_PATHS` since
+    // core.md C7, so the sub-paths inside a tab are smoked too.
+    expect(paths).toEqual(
+      expect.arrayContaining(Object.values(TAB_PATHS).filter((path) => !path.includes(':'))),
+    );
     expect(paths).toEqual(
       expect.arrayContaining(['/sw.js', '/manifest.webmanifest', '/offline.html']),
     );

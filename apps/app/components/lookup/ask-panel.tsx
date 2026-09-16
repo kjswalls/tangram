@@ -26,6 +26,15 @@ import type { AskRouteInfo, AskRouteResponse } from '@/app/api/ask/route';
 import { HanziWord } from '@/components/hanzi/hanzi-text';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Chip } from '@/components/ui/chip';
+import { EmptyState } from '@/components/ui/empty-state';
+import {
+  ASK_OFFLINE_CHIP,
+  ASK_UNGROUNDED_BODY,
+  ASK_UNGROUNDED_TITLE,
+  type AskStateName,
+  type AskUnavailableReason,
+} from '@/components/lookup/ask-state';
 import { askCacheKey } from '@/lib/ai/cache-key';
 import {
   entryLookup,
@@ -92,7 +101,62 @@ type AskState =
        */
       answered: { query: string; contextJson: string };
     }
-  | { status: 'error'; message: string };
+  | { status: 'error'; message: string; reason: AskUnavailableReason };
+
+/**
+ * The panel's own four internal statuses, mapped onto the five the rest of the
+ * app names (`ask-state.ts`, core.md C7).
+ *
+ * The two vocabularies are deliberately not merged. `status` is *what the fetch
+ * is doing* and several specs assert it; `AskStateName` is **what the learner is
+ * being told**, and it is the one C7's three fixtures and C1's gallery agree
+ * on. The interesting half is that one internal status splits in two: a `ready`
+ * answer with nothing left after grounding is `ungrounded`, not `answered`, and
+ * that distinction is the visible face of PLAN.md §3.4.
+ *
+ * `stale` folds into `thinking` because a debounce showing the previous word's
+ * answer is, to the learner, the next word's answer not being ready yet.
+ */
+export function askUiState(input: {
+  readonly status: AskState['status'];
+  /** The rendered answer belongs to a previous question. */
+  readonly stale?: boolean;
+  /** `ready` only: something survived grounding and is on screen. */
+  readonly grounded?: boolean;
+}): AskStateName {
+  if (input.stale) return 'thinking';
+  switch (input.status) {
+    case 'idle':
+      return 'idle';
+    case 'loading':
+      return 'thinking';
+    case 'error':
+      return 'unavailable';
+    case 'ready':
+      return input.grounded ? 'answered' : 'ungrounded';
+  }
+}
+
+/**
+ * Why no model could be reached. The chip does not show it — it is here so the
+ * state is a *reachability* fact rather than a shrug, and so a later phase can
+ * say "rate-limited" without re-deriving it from a message string.
+ */
+export function unavailableReason(error: unknown): AskUnavailableReason {
+  if (isTimeout(error)) return 'timeout';
+  // A fetch that never reached a server throws a TypeError, and the browser
+  // already knows the likeliest reason.
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return 'offline';
+  if (error instanceof TypeError) return 'offline';
+  return 'server';
+}
+
+/** The same, for a response that did arrive. */
+export function statusReason(status: number): AskUnavailableReason {
+  if (status === 429) return 'rate-limited';
+  if (status === 401 || status === 403) return 'no-key';
+  return 'server';
+}
 
 /**
  * Which provider is live and under which prompt version — two of the five parts
@@ -587,7 +651,7 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
             body?.error === 'dict-data-missing'
               ? 'Dictionary data is missing — run pnpm data.'
               : (body?.hint ?? `The ask service answered HTTP ${res.status}.`);
-          if (!cancelled) setState({ status: 'error', message });
+          if (!cancelled) setState({ status: 'error', message, reason: statusReason(res.status) });
           return;
         }
         const body = (await res.json()) as AskRouteResponse;
@@ -616,6 +680,7 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
           message: isTimeout(error)
             ? 'The ask took too long and was given up on.'
             : 'The ask panel could not answer that one.',
+          reason: unavailableReason(error),
         });
       }
     };
@@ -667,6 +732,19 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
     ready.response.interpretation.length === 0 &&
     ready.response.matches.length === 0 &&
     phrases.length === 0;
+
+  /**
+   * What the learner is being told, in the five names the rest of the app uses
+   * (`ask-state.ts`). `data-ask-state` below is what C7's three fixtures read,
+   * and it is deliberately a second attribute rather than a rename of
+   * `data-status`: the specs that assert `data-status` are asserting what the
+   * fetch is doing, which is a different and still-useful fact.
+   */
+  const uiState = askUiState({
+    status: state.status,
+    stale,
+    grounded: !empty,
+  });
 
   const addMatch = async (entry: Entry, senseIndex: number): Promise<'added' | 'existing'> => {
     // Snapshot the provenance the moment the button is pressed: an answer that
@@ -753,6 +831,7 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
     <section
       data-testid="ask-panel"
       data-status={stale ? 'loading' : state.status}
+      data-ask-state={uiState}
       data-provider={provider ?? 'unknown'}
       data-cached={ready?.cached ? 'true' : 'false'}
       className={cn('flex flex-col gap-3', className)}
@@ -775,27 +854,54 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
         </p>
       ) : null}
       {thinking ? (
-        <p data-testid="ask-status" className="text-sm text-muted">
-          Thinking about “{trimmed}”…
-        </p>
+        <div className="flex flex-col items-start gap-1">
+          <Chip tone="lookup" data-testid="ask-ai-chip">
+            AI
+          </Chip>
+          <p data-testid="ask-status" className="text-sm text-muted">
+            Thinking about “{trimmed}”…
+          </p>
+        </div>
       ) : null}
-      {state.status === 'error' ? (
-        <p data-testid="ask-status" className="text-sm text-warning">
-          {state.message} The dictionary result above is unaffected.
-        </p>
+      {uiState === 'unavailable' && state.status === 'error' ? (
+        <div className="flex flex-col items-start gap-1">
+          {/*
+            The whole visible face of "no AI is reachable" (product-decisions
+            §5): one quiet chip, and everything else on the page still works.
+            The reason lives on the state, not on the chip.
+          */}
+          <Chip tone="neutral" data-testid="ask-offline-chip">
+            {ASK_OFFLINE_CHIP}
+          </Chip>
+          <p data-testid="ask-status" className="text-sm text-muted">
+            {state.message} The dictionary result above is unaffected.
+          </p>
+        </div>
       ) : null}
 
       {ready ? (
         <>
           {empty ? (
-            <p data-testid="ask-empty" className="text-sm text-warning">
-              Nothing in that answer could be checked against the dictionary, so there is nothing to
-              show. The dictionary result above still stands.
-            </p>
+            /*
+              An `EmptyState`, not an empty answer body (product-decisions §5).
+              Saying "nothing could be checked" out loud is the difference
+              between grounding having rejected every proposal and the model
+              having said nothing — and the words the rejected phrases were
+              made of are still addable from the dictionary card above, which is
+              why this replaces only the answer.
+            */
+            <EmptyState data-testid="ask-ungrounded" title={ASK_UNGROUNDED_TITLE}>
+              {ASK_UNGROUNDED_BODY}
+            </EmptyState>
           ) : (
-            <p data-testid="ask-interpretation" className="text-sm">
-              {ready.response.interpretation}
-            </p>
+            <>
+              <Chip tone="lookup" data-testid="ask-ai-chip">
+                AI
+              </Chip>
+              <p data-testid="ask-interpretation" className="text-sm">
+                {ready.response.interpretation}
+              </p>
+            </>
           )}
 
           {ready.response.matches.length > 0 ? (

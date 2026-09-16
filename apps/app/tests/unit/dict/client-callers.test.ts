@@ -57,7 +57,7 @@ function code(path: string): string {
  *
  * `wholeApp` is criterion one's `.` — every production source file under
  * `apps/app`, `app/` and `vite-plugins/` included. It was `[components, lib,
- * src]`, which is what the review caught: `app/(today)/today-view.tsx` and
+ * src]`, which is what the review caught: `components/screens/today.tsx` and
  * `app/settings/settings-form.tsx` are real client components, and an import of
  * `lib/dict/client` added to either left this suite green while the criterion's
  * own grep reported two importers. `data.md` D6 is gated verbatim on this

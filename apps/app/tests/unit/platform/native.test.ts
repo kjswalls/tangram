@@ -125,7 +125,7 @@ describe('the seam is the only reader of the bridge', () => {
    * ios.md I0 criterion 3 states this as a grep over `src`, `lib` and
    * `components`. Those are three of the app's **four** source directories:
    * `apps/app/app/` survived the Vite move and still holds live view components
-   * (`app/(today)/today-view.tsx`, `app/settings/settings-form.tsx`, both
+   * (`components/screens/today.tsx`, `app/settings/settings-form.tsx`, both
    * imported by `src/routes/`) plus the API route contracts. So this walks
    * everything under `apps/app/` instead of a hand-written list, minus the
    * directories that are not app source — a fifth source directory cannot

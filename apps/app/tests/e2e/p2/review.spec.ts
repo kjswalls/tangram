@@ -19,7 +19,7 @@ const DAY_MS = 86_400_000;
  * (`components/shell/test-hooks.tsx`) — the app is local-first, so the database
  * is the fixture.
  */
-test.describe('/review', () => {
+test.describe('/practice', () => {
   test('walks the due queue: flip, four intervals, grade with 1–4, one review row', async ({
     page,
   }) => {

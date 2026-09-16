@@ -31,7 +31,7 @@ import {
 
 /** Throw the switch the way a person does, and wait for the row, not the box. */
 async function enableProduction(page: Page): Promise<void> {
-  await page.goto('/settings');
+  await page.goto('/library');
   await ready(page);
   const toggle = page.getByTestId('settings-production-direction');
   await expect(toggle).not.toBeChecked();
@@ -50,7 +50,7 @@ test.describe('/review, both directions', () => {
     // Nothing was created by the setting itself.
     expect(await page.evaluate(() => window.__tangram.repo.allCards())).toHaveLength(0);
 
-    await page.goto('/review');
+    await page.goto('/practice');
     await ready(page);
     const [recognitionId] = await seed(page, [
       { entry: DASUAN, context: readerContext(), gradedDaysAgo: 30 },
@@ -128,7 +128,7 @@ test.describe('/review, both directions', () => {
   test('accepts the other script, and counts the directions apart on Today', async ({ page }) => {
     await openReview(page);
     await enableProduction(page);
-    await page.goto('/review');
+    await page.goto('/practice');
     await ready(page);
 
     // Two words: one recognised, one to be produced. 看看 is written the same
@@ -183,7 +183,7 @@ test.describe('/review, both directions', () => {
       }
     });
 
-    await page.goto('/review');
+    await page.goto('/practice');
     await ready(page);
     await expect(page.getByTestId('review-card')).toHaveAttribute('data-direction', 'production');
 
@@ -234,13 +234,13 @@ test.describe('/lists, also study production', () => {
     );
 
     // Off in settings means the control is not there at all.
-    await page.goto(`/lists/${listId}`);
+    await page.goto(`/library/lists/${listId}`);
     await ready(page);
     await expect(page.getByTestId('list-members')).toBeVisible();
     await expect(page.getByTestId('list-production')).toHaveCount(0);
 
     await enableProduction(page);
-    await page.goto(`/lists/${listId}`);
+    await page.goto(`/library/lists/${listId}`);
     await ready(page);
 
     const toggle = page.getByTestId('list-production-toggle');

@@ -45,6 +45,7 @@ import { loadToday } from '@/lib/lists/today';
 import { spaceDirections } from '@/lib/srs/direction';
 import {
   deferredCardIds,
+  interleaveNew,
   nextDueAt,
   returningWithin,
   sessionQueue,
@@ -132,14 +133,26 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
       // name a card this session has stopped offering.
       const repeats = get().repeats;
       const deferred = deferredCardIds(repeats);
-      // Both Phase 8 queue rules, in the one order that keeps both true.
-      // `sessionQueue` drops the cards this session has set aside; only then is
-      // the order adjusted, because spacing a list and *then* removing rows from
-      // it can put a word's two directions back to back — the very thing the
-      // spacing exists to prevent. Recognition immediately followed by
-      // production of the same word is not a test of the second memory: the
-      // answer is sitting on the back of the card just graded.
-      const queue = spaceDirections(sessionQueue(summary.queue.cards, deferred));
+      /**
+       * **One session** (docs/plans/core.md C7; `wave-zero.md` §9).
+       *
+       * `summary.queue.cards` is `[...due, ...newCards]` — every review, then
+       * every new word — so a learner with fifteen reviews met a new word on
+       * card sixteen, if at all. `interleaveNew` spreads them through instead,
+       * which is what makes this *one* session rather than two behind one
+       * label. Nothing about FSRS changes: this is the order the session offers
+       * what the queue already contains.
+       *
+       * Then the two Phase 8 rules, in the one order that keeps both true.
+       * `sessionQueue` drops the cards this session has set aside; only then is
+       * the order adjusted, because spacing a list and *then* removing rows from
+       * it can put a word's two directions back to back — the very thing the
+       * spacing exists to prevent. Recognition immediately followed by
+       * production of the same word is not a test of the second memory: the
+       * answer is sitting on the back of the card just graded.
+       */
+      const merged = interleaveNew(summary.queue.due, summary.queue.newCards);
+      const queue = spaceDirections(sessionQueue(merged, deferred));
       set({
         queue,
         settings: summary.settings,

@@ -82,7 +82,10 @@ test.describe('/settings — fitting FSRS to this learner', () => {
   test('refuses below the floor, and says why in the learner’s own terms', async ({ page }) => {
     await resetApp(page);
     await seedLog(page, 10);
-    await page.reload();
+    // The optimizer panel is in **Library** since core.md C7, and `resetApp`
+    // wipes from `/read` — the one page that neither draws nor materialises
+    // anything — so this is a navigation rather than a reload.
+    await page.goto('/library');
     await ready(page);
 
     await expect(page.getByTestId('optimizer-panel')).toBeVisible({ timeout: 60_000 });
@@ -100,7 +103,10 @@ test.describe('/settings — fitting FSRS to this learner', () => {
     // Over `MIN_REVIEWS_FOR_FIT` (1,000 scorable since the Phase 8 review; the
     // first review of each card is replayed and not scored, so this is 1,250).
     await seedLog(page, 250);
-    await page.reload();
+    // The optimizer panel is in **Library** since core.md C7, and `resetApp`
+    // wipes from `/read` — the one page that neither draws nor materialises
+    // anything — so this is a navigation rather than a reload.
+    await page.goto('/library');
     await ready(page);
 
     const run = page.getByTestId('optimizer-run');
@@ -141,7 +147,10 @@ test.describe('/settings — fitting FSRS to this learner', () => {
         },
       });
     });
-    await page.reload();
+    // The optimizer panel is in **Library** since core.md C7, and `resetApp`
+    // wipes from `/read` — the one page that neither draws nor materialises
+    // anything — so this is a navigation rather than a reload.
+    await page.goto('/library');
     await ready(page);
 
     await expect(page.getByTestId('optimizer-source')).toContainText('Optimized from your 1,240', {

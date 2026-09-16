@@ -21,13 +21,11 @@ import { baseText, expectBaseText } from './hanzi';
 
 const DASUAN = '打算|打算[da3 suan4]';
 
-const ROUTES = [
-  { path: '/', label: 'Today', heading: 'Today' },
-  { path: '/lookup', label: 'Lookup', heading: 'Lookup' },
-  { path: '/review', label: 'Review', heading: 'Review' },
-  { path: '/read', label: 'Read', heading: 'Read' },
-  { path: '/lists', label: 'Lists', heading: 'Lists' },
-  { path: '/settings', label: 'Settings', heading: 'Settings' },
+/** The three tabs, in the bar's order (docs/plans/core.md C7). */
+const TABS = [
+  { path: '/', label: 'Look up', heading: 'Look up' },
+  { path: '/practice', label: 'Practice', heading: 'Practice' },
+  { path: '/library', label: 'Library', heading: 'Library' },
 ] as const;
 
 /** The layout mounts the test hook in an effect, so a fresh page waits for it. */
@@ -38,7 +36,7 @@ async function ready(page: Page): Promise<void> {
 test('the loop: look up 打算, add it, meet it on Today, review it, grade it', async ({ page }) => {
   // A clean database, from the one route that neither draws cards nor
   // materialises a list, so the wipe cannot race the page it happens on.
-  await page.goto('/settings');
+  await page.goto('/library');
   await ready(page);
   await page.evaluate(async () => {
     await window.__tangram.repo.resetAll();
@@ -46,7 +44,7 @@ test('the loop: look up 打算, add it, meet it on Today, review it, grade it', 
   });
 
   // --- look it up (P1) -----------------------------------------------------
-  await page.goto('/lookup');
+  await page.goto('/');
   await page.getByTestId('lookup-input').fill('dasuan');
   await expect(page.getByTestId('search-results')).toHaveAttribute('data-query', 'dasuan');
   const first = page.getByTestId('search-result').first();
@@ -82,7 +80,7 @@ test('the loop: look up 打算, add it, meet it on Today, review it, grade it', 
 
   // --- review it (P2) ------------------------------------------------------
   await page.getByTestId('start-review').click();
-  await expect(page).toHaveURL(/\/review$/);
+  await expect(page).toHaveURL(/\/practice$/);
   await expectBaseText(page.getByTestId('card-front'), '打算');
 
   await page.keyboard.press('Space');
@@ -104,16 +102,23 @@ test('the loop: look up 打算, add it, meet it on Today, review it, grade it', 
   expect(after[0].due).toBeGreaterThan(Date.now());
 });
 
-test('the nav reaches every route with the card in place', async ({ page }) => {
+test('the tab bar reaches every destination with the card in place', async ({ page }) => {
   await page.goto('/');
   await ready(page);
-  const nav = page.getByRole('navigation', { name: 'Main' });
-  for (const route of ROUTES.slice(1)) {
-    await nav.getByRole('link', { name: route.label, exact: true }).click();
-    await expect(page).toHaveURL(new RegExp(`${route.path}$`));
-    await expect(page.getByRole('heading', { level: 1, name: route.heading })).toBeVisible();
+  const bar = page.getByTestId('tab-bar');
+  for (const tab of TABS.slice(1)) {
+    await bar.getByRole('link', { name: tab.label, exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`${tab.path}$`));
+    await expect(page.getByRole('heading', { level: 1, name: tab.heading })).toBeVisible();
   }
-  await nav.getByRole('link', { name: 'Today', exact: true }).click();
+  // …and the pasted-texts view inside the Look up tab, which is not a fourth
+  // destination but is a place the learner reaches from one.
+  await bar.getByRole('link', { name: 'Look up', exact: true }).click();
+  await page.getByTestId('open-texts').click();
+  await expect(page).toHaveURL(/\/read$/);
+  await expect(page.getByRole('heading', { level: 1, name: 'Your own texts' })).toBeVisible();
+
+  await bar.getByRole('link', { name: 'Look up', exact: true }).click();
   await expect(page).toHaveURL(/\/$/);
 });
 
@@ -131,7 +136,7 @@ test('the nav reaches every route with the card in place', async ({ page }) => {
  *
  * Three merge seams fail this and nothing else: the demo's warm `ask_cache`
  * rows being keyed the way the panel keys them (`lib/ai/cache-key.ts`), the
- * phrase card the ask panel writes being a card `/review` can offer, and the
+ * phrase card the ask panel writes being a card `/practice` can offer, and the
  * reader's sentence surviving all the way onto a card back.
  */
 
@@ -191,18 +196,18 @@ test('the whole product: demo → ask → phrase card → read → mine → revi
   page,
 }) => {
   // --- the demo state (P3) -------------------------------------------------
-  await page.goto('/settings');
+  await page.goto('/library');
   await ready(page);
   await page.getByTestId('load-demo').click(); // arms the confirmation
   await page.getByTestId('load-demo').click(); // runs it
   await expect(page.getByTestId('settings-status')).toContainText('Demo', { timeout: 30_000 });
 
   // The spine is off for the rest of the walk: this spec is about the two cards
-  // it mines by hand, not about the ten HSK words `/review` would draw.
+  // it mines by hand, not about the ten HSK words `/practice` would draw.
   await page.evaluate(() => window.__tangram.repo.setSettings({ newPerDay: 0 }));
 
   // --- ask (P4) ------------------------------------------------------------
-  await page.goto('/lookup');
+  await page.goto('/');
   await page.getByTestId('lookup-input').fill(BROWSING);
 
   const ask = page.getByTestId('ask-panel');
@@ -293,7 +298,7 @@ test('the whole product: demo → ask → phrase card → read → mine → revi
   expect(sentence.slice(offset ?? -1, (offset ?? 0) + (length ?? 0))).toBe(MINED);
 
   // --- review both of them (P2) -------------------------------------------
-  await page.goto('/review');
+  await page.goto('/practice');
   await ready(page);
   await expect(page.getByTestId('review-session')).toBeVisible({ timeout: 20_000 });
 
@@ -339,5 +344,5 @@ test('the whole product: demo → ask → phrase card → read → mine → revi
   // off, so there is nothing left for today.
   await expect(page.getByTestId('today-due-count')).toHaveText('0');
   await expect(page.getByTestId('today-new-count')).toHaveText('0');
-  await expect(page.getByTestId('start-review').getByRole('button')).toBeDisabled();
+  await expect(page.getByTestId('start-review')).toBeDisabled();
 });

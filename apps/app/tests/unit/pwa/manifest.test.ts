@@ -20,7 +20,7 @@ import { describe, expect, it } from 'vitest';
 
 import { appRoot, workspaceRoot } from '@/lib/server/roots';
 
-import { NAV_ITEMS } from '@/components/shell/nav';
+import { TAB_PATHS } from '@/components/shell/nav';
 
 const root = appRoot(import.meta.dirname);
 const manifest = JSON.parse(readFileSync(resolve(root, 'public/manifest.webmanifest'), 'utf8'));
@@ -128,7 +128,7 @@ describe('sw.js', () => {
     expect(staticIndex).toBeGreaterThan(apiIndex);
   });
 
-  it('caches the hashed static chunks and precaches every nav route', () => {
+  it('caches the hashed static chunks and precaches every page the shell owns', () => {
     expect(sw).toContain('cacheFirst(event)');
     // Not a literal: the rule has to name the directory THIS BUILD emits. It
     // said '/_next/static/' through the whole of W1 and matched nothing, so the
@@ -136,10 +136,13 @@ describe('sw.js', () => {
     // rendered a blank page. Every gate stayed green. Read the prefix off the
     // build config so the two cannot drift again.
     expect(sw).toContain(`url.pathname.startsWith('${ASSET_DIR}')`);
-    // Read off the nav rather than listed here: `/stats` arrived in Phase 8 and
-    // a hand-copied list is how a nav destination quietly stops being offline.
-    for (const item of NAV_ITEMS) {
-      expect(sw).toContain(`'${item.href}'`);
+    // Read off the shell rather than listed here: `/stats` arrived in Phase 8
+    // and a hand-copied list is how a destination quietly stops being offline.
+    // `TAB_PATHS` since core.md C7, so `/read` — a sub-path inside the Look up
+    // tab — is precached alongside the three tab roots.
+    for (const path of Object.values(TAB_PATHS)) {
+      if (path.includes(':')) continue;
+      expect(sw, `the service worker does not precache ${path}`).toContain(`'${path}'`);
     }
   });
 

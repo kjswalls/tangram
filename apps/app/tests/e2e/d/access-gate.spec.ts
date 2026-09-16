@@ -105,7 +105,7 @@ test.describe('with TANGRAM_ACCESS_SECRET set', () => {
     // They cost CPU, not money, and the PWA has to install without a key.
     expect((await api.get('/api/dict/search?q=%E4%BD%A0%E5%A5%BD')).status()).toBe(200);
     expect((await api.get('/api/dict/hsk?band=1')).status()).toBe(200);
-    for (const page of ['/', '/lookup', '/review', '/settings', '/offline.html']) {
+    for (const page of ['/', '/', '/practice', '/library', '/offline.html']) {
       expect((await api.get(page)).status(), page).toBe(200);
     }
   });

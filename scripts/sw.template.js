@@ -49,8 +49,12 @@ const CACHE = `tangram-${VERSION}`;
 /** Served for a navigation we have never cached while the network is down. */
 const OFFLINE_URL = '/offline.html';
 
-/** The routes the app shell is made of — every nav destination (`NAV_ITEMS`). */
-const SHELL = ['/', '/lookup', '/review', '/read', '/lists', '/stats', '/settings', OFFLINE_URL];
+/** The pages the app shell is made of — every destination (`TAB_PATHS`). */
+// The three tabs and the two sub-paths inside them (docs/plans/core.md C7).
+// Kept in step with `components/shell/nav.ts`'s `TAB_PATHS` by
+// `tests/unit/pwa/manifest.test.ts`, which reads both: a destination that is
+// reachable and not precached is one that is quietly not offline.
+const SHELL = ['/', '/read', '/practice', '/library', OFFLINE_URL];
 
 /** Best-effort: one 404 must not fail the whole install. */
 async function precache() {

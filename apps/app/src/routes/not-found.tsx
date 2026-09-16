@@ -1,6 +1,6 @@
 import { isRouteErrorResponse, Link, useRouteError } from 'react-router';
 
-import { PageHeader } from '@/components/shell/page-header';
+import { PageHeader } from '@/components/ui/page-header';
 
 /**
  * The 404 and the error boundary, which a data-mode router has neither of by
@@ -31,7 +31,7 @@ export function NotFoundRoute() {
       </PageHeader>
       <p className="text-sm">
         <Link to="/" className="text-accent underline">
-          Go to Today
+          Go to Look up
         </Link>
       </p>
       {!is404 && error instanceof Error ? (

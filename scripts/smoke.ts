@@ -28,7 +28,7 @@
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { NAV_ITEMS } from '../apps/app/components/shell/nav';
+import { TAB_PATHS } from '../apps/app/components/shell/nav';
 import { ACCESS_COOKIE } from '../apps/app/lib/server/access';
 import { discoverApiRoutes, type HttpMethod } from '../apps/app/lib/server/route-inventory';
 import { dirOf, workspaceRoot } from '../apps/app/lib/server/roots';
@@ -193,15 +193,21 @@ export const SMOKE_CASES: SmokeCase[] = [
 ];
 
 /**
- * Every nav route plus the three files the PWA cannot install without.
+ * Every page the tab shell owns plus the three files the PWA cannot install
+ * without.
  *
- * The page list is **derived from `NAV_ITEMS`**, not copied from it. Phase 8
+ * The page list is **derived from `TAB_PATHS`**, not copied from it. Phase 8
  * added `/stats` to the nav in another worktree and this list did not know:
  * a route reachable from the header but never requested by the smoke run is
- * exactly the page that 500s in production. Add a nav entry and it is smoked.
+ * exactly the page that 500s in production. Add a destination and it is smoked.
+ *
+ * `TAB_PATHS` rather than `TABS` since core.md C7, because the sub-paths inside
+ * a tab — `/read` — are pages too, and a list that only knew about the three
+ * tab roots would have stopped smoking one of them. `:id` is dropped: there is
+ * no list to name on an empty database, and the SPA fallback answers it anyway.
  */
 export const PAGE_CASES: SmokeCase[] = [
-  ...NAV_ITEMS.map((item) => item.href),
+  ...Object.values(TAB_PATHS).filter((path) => !path.includes(':')),
   '/offline.html',
   '/manifest.webmanifest',
   '/sw.js',

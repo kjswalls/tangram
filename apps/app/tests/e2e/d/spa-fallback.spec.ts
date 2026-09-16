@@ -8,8 +8,8 @@
  *
  * The second assertion is the one with teeth. `base: '/'` is not a placeholder:
  * with a relative base Vite emits `./assets/<hash>.js` into index.html, and a
- * hard refresh of `/lists/<id>` returns that same document from the fallback,
- * whose script URL now resolves to `/lists/assets/<hash>.js` — which the
+ * hard refresh of `/library/lists/<id>` returns that same document from the fallback,
+ * whose script URL now resolves to `/library/lists/assets/<hash>.js` — which the
  * fallback answers with index.html again, so the deep route boots to a blank
  * page and every route that is not at the root is broken. Relative base and
  * history routing are mutually exclusive. This test is what would catch someone
@@ -19,11 +19,11 @@ import { expect, test } from '@playwright/test';
 
 test.describe('the SPA fallback', () => {
   test('a hard refresh of a deep route renders the app, not a 404', async ({ page }) => {
-    const response = await page.goto('/lists/does-not-exist-yet');
+    const response = await page.goto('/library/lists/does-not-exist-yet');
     expect(response?.status()).toBe(200);
     // The shell rendered, which means index.html was served AND its script ran.
     await expect(page.getByRole('navigation', { name: 'Main' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Lists' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Library' })).toBeVisible();
   });
 
   test("the deep route's asset URLs resolve from the root, not from its path", async ({ page }) => {
@@ -34,15 +34,15 @@ test.describe('the SPA fallback', () => {
       // Any asset path that is not rooted at /assets/ is the relative-base
       // failure. It has to be written this way round: with `base: './'` Vite
       // emits `./assets/<hash>.js`, which from the document at
-      // `/lists/does-not-exist-yet` resolves to `/lists/assets/<hash>.js` — no
-      // segment between `/lists/` and `/assets/`. A pattern expecting one
-      // (`/lists/.+/assets/`) matches nothing and the test passes while the app
+      // `/library/lists/does-not-exist-yet` resolves to `/library/lists/assets/<hash>.js` — no
+      // segment between `/library/lists/` and `/assets/`. A pattern expecting one
+      // (`/library/lists/.+/assets/`) matches nothing and the test passes while the app
       // is broken, which is the failure it exists to catch happening to itself.
       if (url.pathname.includes('/assets/') && !url.pathname.startsWith('/assets/')) {
         bad.push(url.pathname);
       }
     });
-    await page.goto('/lists/does-not-exist-yet');
+    await page.goto('/library/lists/does-not-exist-yet');
     await expect(page.getByRole('navigation', { name: 'Main' })).toBeVisible();
     expect(bad, 'assets must be requested from /assets/, not from under the route').toEqual([]);
 

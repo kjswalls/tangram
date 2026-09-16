@@ -182,7 +182,7 @@ test.describe('a production build has no gallery', () => {
   test('requesting /span-select renders the not-found surface', async ({ page }) => {
     await page.goto(`http://localhost:${PORT}/span-select`);
     await expect(page.getByTestId('span-select-harness')).toHaveCount(0);
-    await expect(page.getByRole('link', { name: 'Go to Today' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Go to Look up' })).toBeVisible();
   });
 
   test('requesting /gallery renders the not-found surface, not the gallery', async ({ page }) => {
@@ -197,11 +197,11 @@ test.describe('a production build has no gallery', () => {
     // rather than fixed here — asserting the wrong heading would freeze the
     // defect, and asserting the right one would fail for a reason that has
     // nothing to do with the gallery guard.
-    await expect(page.getByRole('link', { name: 'Go to Today' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Go to Look up' })).toBeVisible();
   });
 
   test('the same server still serves the app, so the build itself is sound', async ({ page }) => {
-    await page.goto(`http://localhost:${PORT}/lookup`);
-    await expect(page.getByRole('heading', { name: 'Lookup' })).toBeVisible();
+    await page.goto(`http://localhost:${PORT}/`);
+    await expect(page.getByRole('heading', { name: 'Look up' })).toBeVisible();
   });
 });

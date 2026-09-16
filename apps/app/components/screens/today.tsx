@@ -1,8 +1,8 @@
 'use client';
 
-import { Link } from 'react-router';
 import { useEffect, useState } from 'react';
 
+import { useScreenNavigate } from '@/components/screens/navigate';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -31,11 +31,22 @@ function front(card: CardRow): { simp: string; pinyin: string; gloss: string } {
 }
 
 /**
- * Today (PLAN.md §3.3). Opening this page is what *introduces* the day's new
- * words: `loadToday` draws them, creates their cards and charges the persisted
- * counter, so the number here and the cards `/review` offers cannot disagree.
+ * Today (PLAN.md §3.3), as a **region of the Look up tab** since C7.
+ *
+ * **It no longer introduces anything, and that is the point of the merge.**
+ * Opening this page used to draw the day's new words, create their cards and
+ * charge `settings.introduced[dayKey]` — so a learner who opened the app and
+ * closed it had spent the day's ten. `wave-zero.md` §9 makes **Practice the
+ * only place any of the three is reached**, so this passes `introduce: false`
+ * and reports what the session *will* offer: the new cards that already exist
+ * plus what today's cap still allows (`TodaySummary.newAvailable`). The number
+ * is the same number; what changed is that reading it costs nothing.
+ *
+ * C8 turns the two tiles below into one sentence. This phase moved the file and
+ * cut the introduction; the tiles are still the tiles.
  */
 export function TodayView() {
+  const go = useScreenNavigate();
   const [summary, setSummary] = useState<TodaySummary>();
   const [error, setError] = useState<string>();
   const [demo, setDemo] = useState(false);
@@ -59,7 +70,8 @@ export function TodayView() {
         return;
       }
       try {
-        const next = await loadToday({ repo: getRepository() });
+        // See the header: reporting, not introducing.
+        const next = await loadToday({ repo: getRepository(), introduce: false });
         if (!cancelled) setSummary(next);
       } catch (cause) {
         if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
@@ -83,7 +95,10 @@ export function TodayView() {
   }
 
   const due = summary?.dueCount ?? 0;
-  const fresh = summary?.newCount ?? 0;
+  // What Practice will offer, not what has already been created: with the
+  // introduction moved into the session, `newCount` alone reads 0 on a fresh
+  // database while the cap is holding ten words for the learner.
+  const fresh = summary?.newAvailable ?? 0;
   const ready = due + fresh > 0;
   // The two directions, counted apart (Phase 8). A learner who has turned
   // production on has signed up for a second card per word, and the one number
@@ -130,9 +145,13 @@ export function TodayView() {
         ) : null}
 
         <div className="mt-4 flex flex-wrap items-center gap-3">
-          <Link to="/review" data-testid="start-review">
-            <Button disabled={!ready}>Start review</Button>
-          </Link>
+          <Button
+            data-testid="start-review"
+            disabled={!ready}
+            onClick={() => go({ tab: 'practice' })}
+          >
+            Start practice
+          </Button>
           {summary ? (
             <span className="text-sm text-muted">
               {summary.introducedToday} of {summary.newPerDay} new words introduced today
@@ -143,9 +162,13 @@ export function TodayView() {
         {summary && !ready ? (
           <p className="mt-3 text-sm text-muted">
             Nothing waiting. Look a word up, or raise the daily new count in{' '}
-            <Link to="/settings" className="text-accent underline underline-offset-2">
-              settings
-            </Link>
+            <button
+              type="button"
+              className="text-accent underline underline-offset-2"
+              onClick={() => go({ tab: 'library' })}
+            >
+              Library
+            </button>
             .
           </p>
         ) : null}

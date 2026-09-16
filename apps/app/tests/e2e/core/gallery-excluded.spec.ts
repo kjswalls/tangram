@@ -37,6 +37,10 @@ import { expect, test } from '@playwright/test';
 
 import { GALLERY_MARKER } from '../../../components/gallery/gallery';
 import {
+  DICT_HARNESS_MARKER,
+  DICT_HARNESS_PATH,
+} from '../../../components/gallery/dict-wasm-harness';
+import {
   HARNESS_MARKER,
   HARNESS_PATH,
 } from '../../../components/gallery/span-select-harness';
@@ -177,6 +181,51 @@ test.describe('a production build has no gallery', () => {
     ).toEqual([]);
     // …and the route.
     expect(emitted.filter((path) => readFileSync(path, 'utf8').includes(HARNESS_PATH))).toEqual([]);
+  });
+
+  /**
+   * The OPFS dictionary harness goes with them (docs/plans/data.md D4).
+   *
+   * Same shape, same guard, and it matters more than the other two: the harness
+   * is the only thing in the tree that constructs the wasm store today, and the
+   * module behind it is `@sqlite.org/sqlite-wasm`. A leak here would put the
+   * whole dictionary layer in front of a learner who never opened it.
+   *
+   * **What this deliberately does NOT assert: that `sqlite3.wasm` is absent from
+   * `dist/`.** It is not, and asserting otherwise would encode a false fact.
+   * Vite compiles `new Worker(new URL('./wasm-worker.ts', import.meta.url))` at
+   * transform time and emits the worker as its own build input, so the worker
+   * chunk and the 869 KB binary land in `dist/` whether or not anything
+   * references the harness. They are separate assets, fetched only when a worker
+   * starts, so the cost is deploy size rather than first-load bytes — and
+   * `data.md` D6, which points the app at the wasm store for real, makes them
+   * load-bearing. Measured and recorded in HANDOFF.md under D4.
+   */
+  test('the control: an --mode e2e build DOES contain the dictionary harness', () => {
+    const emitted = emittedText(E2E_DIR);
+    expect(
+      emitted.filter((path) => readFileSync(path, 'utf8').includes(DICT_HARNESS_MARKER)).length,
+    ).toBeGreaterThan(0);
+    expect(
+      emitted.filter((path) => readFileSync(path, 'utf8').includes(DICT_HARNESS_PATH)).length,
+    ).toBeGreaterThan(0);
+  });
+
+  test('no dictionary-harness module reaches a production build', () => {
+    const emitted = emittedText(PROD_DIR);
+    expect(emitted.length).toBeGreaterThan(0);
+    expect(
+      emitted.filter((path) => readFileSync(path, 'utf8').includes(DICT_HARNESS_MARKER)),
+    ).toEqual([]);
+    expect(
+      emitted.filter((path) => readFileSync(path, 'utf8').includes(DICT_HARNESS_PATH)),
+    ).toEqual([]);
+  });
+
+  test('requesting /dict-wasm renders the not-found surface', async ({ page }) => {
+    await page.goto(`http://localhost:${PORT}${DICT_HARNESS_PATH}`);
+    await expect(page.getByTestId(DICT_HARNESS_MARKER)).toHaveCount(0);
+    await expect(page.getByRole('link', { name: 'Go to Today' })).toBeVisible();
   });
 
   test('requesting /span-select renders the not-found surface', async ({ page }) => {

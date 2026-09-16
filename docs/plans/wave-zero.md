@@ -466,6 +466,50 @@ survivors) would close the breach with **no ranking change at all**. It is unown
 obviously a win**: `glosses` is plausibly most of the payload, and if it is, pass 1 costs nearly what
 the single pass costs today. Measure it before believing it.
 
+## 10f. The non-CJK headwords `DictStore.search` cannot match — SETTLED 2026-09-16
+
+`data.md` D6 recorded that `readingsOf()` reaches "every row under this simplified headword" through
+`DictStore.search`, which routes on `hasCjk()`, so a headword with no CJK goes down the
+English/pinyin path and never matches itself exactly. It then did the right thing: closing it needs
+a `bySimp`-shaped question on `DictStore`, which `data.md` D1's first commit froze, so the need went
+into `HANDOFF.md` and the build continued without it. That routing is correct and stands.
+
+**Two corrections to the entry, and the second one is the finding.** Measured against the built
+artifact with the repository's own `CJK_PATTERN` from `lib/dict/rank.ts`, not a regex written for
+the occasion:
+
+- **It is 74 entries and 72 distinct headwords, not 274.** The figure does not reproduce under any
+  reading — 63 if you require both `simp` and `trad`, 156 if you count headwords merely *containing*
+  a non-CJK character. Cite 74.
+- **`OK` is not one of them.** CC-CEDICT has no bare `OK` headword; `卡拉OK` has CJK and resolves
+  fine, as D6 says. `ACG` and `3Q` are real examples and the entry is right about those.
+
+**What the 72 actually are**, which changes the disposition: acronyms (`ACG`, `VCR`, `PK`, `PUA`),
+numerals used as slang (`110`, `119`, `996`, `421`, `88`), Suzhou numerals (`〡`–`〩`), Japanese era
+marks (`㍻㍼㍽㍾`), bopomofo (`ㄅㄧㄤˋ`, `ㄏㄤ`), `□` placeholders — **and seven characters in CJK
+Unified Ideographs Extension G** (`𰦭` U+309AD, `𰻝` U+30EDD, `𱃲` U+310F2, `𱅒` U+31152, `𱇏` U+311CF,
+`𱉝` U+3125D, `𱌶` U+31336).
+
+**The ruling, in two parts.**
+
+1. **The acronyms, numerals and symbols are accepted as lost for v1.** 65-odd headwords out of
+   124,188, none of them a word an example sentence leans on, and `readingsOf`'s own doc comment
+   already says the `headwords` pool is lossy by design (it skips any headword with more than one
+   reading). Adding `headword(simp)` to `DictStore` would unfreeze a surface that two native runners
+   nobody has built yet must then implement. **The need stays recorded for whoever unfreezes
+   `DictStore` for another reason** — `entries_simp` already indexes it, so it is cheap when the
+   surface next opens. It is not worth opening the surface on its own.
+2. **The Extension G characters are a different defect and are not accepted.** They are Chinese, and
+   they are misrouted because `CJK_PATTERN` stops at U+2FA1F: it covers Ext A, Ext B
+   (U+20000–U+2A6DF), Ext C–F (U+2A700–U+2EBEF) and compat, and **has no range for Ext G
+   (U+30000–U+3134F)**, nor for Ext H or I. That is a one-line change to `lib/dict/rank.ts` plus a
+   test, and it is not a `DictStore` shape question at all — D6 filed it under a frozen surface it
+   does not belong to.
+
+**Owner for part 2: the next phase that touches `lib/dict/**`.** Not urgent and not blocking; a
+learner reaching an Ext G character is rare. But it is a correctness bug with a trivial fix, and it
+should not be re-derived from the same 274-shaped note a third time.
+
 ## 11. `ios.md`'s contested-surfaces table — DELETE IT (issue 4)
 
 `android.md` is correct on all three rows and `ios.md` misquotes it on all three. Verified at HEAD:

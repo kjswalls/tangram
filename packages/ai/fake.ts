@@ -28,7 +28,7 @@ import type {
   ParsedExampleSentences,
   ParsedGradeRecall,
   ProposedPhrases,
-} from '@/lib/ai/provider';
+} from './provider';
 import type { Entry, LearnerProfile } from '@/lib/types';
 
 /** How many entries the echo cites. */

@@ -4,9 +4,9 @@
  */
 import { beforeAll, describe, expect, it } from 'vitest';
 
-import { FakeProvider, retrievalEcho } from '@/lib/ai/fake';
-import { askResponseSchema } from '@/lib/ai/provider';
-import { ground } from '@/lib/ai/ground';
+import { FakeProvider, retrievalEcho } from '@tangram/ai/fake';
+import { askResponseSchema } from '@tangram/ai/provider';
+import { ground } from '@tangram/ai/ground';
 import type { LearnerProfile } from '@/lib/types';
 import { requireDictData } from '../dict/data-required';
 import { entriesFor, entryFor, groundContext, readingOf } from './helpers';

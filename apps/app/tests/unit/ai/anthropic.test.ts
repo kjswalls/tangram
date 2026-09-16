@@ -12,14 +12,14 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { AnthropicProvider, DEFAULT_MODEL } from '@/lib/ai/anthropic';
+import { AnthropicProvider, DEFAULT_MODEL } from '@tangram/ai/anthropic';
 import {
   ANSWER_TOOL_NAME,
   EXAMPLES_TOOL_NAME,
   PROPOSE_TOOL_NAME,
   RECALL_TOOL_NAME,
-} from '@/lib/ai/prompts';
-import { MAX_EXAMPLE_SENTENCES, ProviderError } from '@/lib/ai/provider';
+} from '@tangram/ai/prompts';
+import { MAX_EXAMPLE_SENTENCES, ProviderError } from '@tangram/ai/provider';
 import type { Entry, LearnerProfile } from '@/lib/types';
 
 const PROFILE: LearnerProfile = { estimatedBand: 3, knownSample: ['我', '看'] };

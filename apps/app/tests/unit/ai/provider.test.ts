@@ -7,9 +7,9 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { AnthropicProvider, DEFAULT_MODEL } from '@/lib/ai/anthropic';
-import { FakeProvider } from '@/lib/ai/fake';
-import { selectProvider } from '@/lib/ai/provider';
+import { AnthropicProvider, DEFAULT_MODEL } from '@tangram/ai/anthropic';
+import { FakeProvider } from '@tangram/ai/fake';
+import { selectProvider } from '@tangram/ai/provider';
 
 describe('selectProvider', () => {
   it('is the fake by default', () => {

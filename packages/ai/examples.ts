@@ -42,8 +42,8 @@ import {
   groundedAskResponseSchema,
   type GroundContext,
   type GroundedSayIt,
-} from '@/lib/ai/ground';
-import type { ParsedExampleSentences } from '@/lib/ai/provider';
+} from './ground';
+import type { ParsedExampleSentences } from './provider';
 import type { Repository } from '@/lib/db/repository';
 import {
   isPhraseSnapshot,

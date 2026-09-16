@@ -9332,3 +9332,217 @@ four that were real bugs come first.
   every word that touches time.
 
 **Gates.** `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm e2e` — all green.
+
+## Wave 0, deliverable 5 — `lib/ai/**` moves to `packages/ai/`, with its importers
+
+**What landed.** One commit. `git mv` of the eleven modules in `apps/app/lib/ai/` —
+`anthropic.ts`, `cache-key.ts`, `deadline.ts`, `examples.ts`, `fake.ts`, `ground.ts`, `index.ts`,
+`prompts.ts`, `provider.ts`, `recall.ts`, `retrieve.ts` — into `packages/ai/`, alongside the
+`schemas.ts` that was already there, plus every import that breaks. No refactors, no behaviour
+changes: the app bundle's content hash is byte-identical before and after
+(`dist/assets/index-B6aOKVM9.js`).
+
+`apps/app/lib/ai/` is gone. `backend.md` B2's `ask-client.ts` is the only thing that goes back into
+it, which is `wave-zero.md` §5's split exactly.
+
+### The number register V6 asked for, measured rather than guessed
+
+V6 says "wave 0's deliverable 5 names ten modules to move and zero importers", and gives 33 files
+with 74 import sites. Re-derived on this branch at `710738f`:
+
+| | V6's figure | Measured |
+|---|---|---|
+| Files carrying a `'@/lib/ai/…'` specifier | 33 | **38** |
+| Import sites | 74 | **84** |
+| …of those, inside the moved modules themselves | — | 18, in 8 files |
+| …of those, in files that stay where they are | — | **66, in 30 files** |
+
+The 30 external files are the three model routes, six components (`hanzi/context-gloss`,
+`hanzi/word-sheet`, `lookup/ask-panel`, `review/example-sentences`, `review/recall-input`,
+`review/review-session`), `lib/dev/seed.ts`, `lib/srs/direction.ts`, and nineteen files under
+`tests/unit/` (seventeen in `tests/unit/ai/`, plus `hanzi/context-gloss.test.tsx` and
+`lists/seed.test.ts`). The accounting closes: 66 `'@tangram/ai/…'` specifiers exist now where
+there were 66 `'@/lib/ai/…'` ones, and 18 became relative `'./…'` inside the package (19 counting
+`retrieve.ts`'s pre-existing `'./ground'`).
+
+Two of those 84 sites are the ones that would have stayed green while silently doing nothing:
+`vi.mock('@/lib/ai/provider')` in `tests/unit/ai/route-provider.test.ts` and
+`tests/unit/ai/examples-route.test.ts`. A `vi.mock` is matched by specifier; had they been left
+alone, the route under test would import `@tangram/ai/provider`, the mock would bind to a module
+nobody imports, and both files would still pass every assertion that does not depend on the stub.
+They are rewritten, and the rewrite is **proved** rather than assumed: putting the old specifier
+back while leaving the route's import at `@tangram/ai/provider` turns all five cases in
+`route-provider.test.ts` red. The mock is load-bearing, and it binds.
+
+**There is no barrel importer.** `lib/ai/index.ts` had zero consumers in the tree; it moved anyway,
+because §5 names it and because the package's `exports` map now points `"."` at it.
+
+### What the move could not be: a pure move
+
+`packages/ai/schemas.ts`'s own header states the rule this deliverable runs into — *"a package may
+not import from an app"* — and that is why `schemas.ts` restates `HskBand`, `EntryId` and the token
+shapes rather than importing them. Eight of the twelve modules now in `packages/ai` do import from
+the app:
+
+| Moved module | Reads from `apps/app` | Erased at emit? |
+|---|---|---|
+| `anthropic.ts`, `fake.ts`, `ground.ts`, `prompts.ts`, `provider.ts` | `@/lib/types` | yes — `import type` |
+| `cache-key.ts` | `@/lib/dev/sha1` → **`sha1Hex`** | **no** |
+| `retrieve.ts` | `@/lib/dict/store`, `@/lib/types`; `@/lib/dict/rank` → **`hasCjk`** | one runtime edge |
+| `examples.ts` | `@/lib/db/repository`, `@/lib/types`, `@/lib/db/schema` → **`isPhraseSnapshot`**, `@/lib/srs/profile` → **`KNOWN_SAMPLE_LIMIT`**, `@/lib/srs/states` → **`wordState`**, `@/lib/types` → **`parseEntryId`** | four runtime edges |
+
+Six runtime value imports, in three files. Everything else is `import type` and emits nothing.
+
+**The frozen surface this stops in front of.** Seven of the eleven modules need `Entry`, `EntryId`,
+`Token`, `LearnerProfile`, `HskBand` or `parseEntryId`, all of which live in `apps/app/lib/types.ts`
+— **frozen by Phase 0**, and `CLAUDE.md` additionally rules out the obvious dodge: *"`lib/types.ts`
+holds the dictionary `Entry` shape itself, not an import of it: freezing a shape only works if the
+definition sits inside the frozen file."* So the file can be neither moved nor turned into a
+re-export of a package copy. Per `CLAUDE.md`'s rule I stopped, wrote the need down, and continued
+without it:
+
+> **Need on a frozen surface.** `packages/ai/**` cannot become self-contained while the `Entry`
+> family is defined in `apps/app/lib/types.ts`. Either `lib/types.ts` moves into a package (a
+> cross-cutting rename of every `@/lib/types` importer, and a change to a Phase-0 frozen surface),
+> or `packages/ai` restates the shapes the way `schemas.ts` already does and something pins the two
+> together. Whoever unfreezes it decides; this session did not.
+
+**What "continue without it" looks like here.** `packages/ai/tsconfig.json` gains
+`paths: { "@/*": ["../../apps/app/*"] }`. That mapping points out of the package and into an app,
+which is backwards, and it is written into the file's own `//` note as a debt with the phase that
+removes it. It is what makes `pnpm -F @tangram/ai typecheck` pass; it is **not** what makes the app
+build, which resolves `@/…` through Vite's own program-wide alias and would work with or without it.
+
+The important property is that the failure is loud in the right place: `apps/server`'s tsconfig has
+no such mapping, so the first time `backend.md` B1 writes
+`import … from '@tangram/ai/provider'` into `apps/server/src/routes/ask.ts`, the server's typecheck
+fails naming `@/lib/types`. **Measured, not predicted** — with the package symlinked into
+`apps/server/node_modules` and a two-line probe module added to `src/`, `tsc --noEmit` reports
+exactly that, and one thing more:
+
+```
+../../packages/ai/provider.ts(30,35): error TS2835: Relative import paths need explicit file
+  extensions in ECMAScript imports when '--moduleResolution' is 'node16' or 'nodenext'.
+  Did you mean './anthropic.js'?
+../../packages/ai/provider.ts(32,44): error TS2307: Cannot find module '@/lib/types'…
+```
+
+The second wall is new with this commit and is named here so B1 does not rediscover it: the
+intra-package imports are extensionless (`'./anthropic'`), which `moduleResolution: bundler` accepts
+and `nodenext` does not. `apps/server` already carries the pair of flags that answers it —
+`allowImportingTsExtensions` and `rewriteRelativeImportExtensions` — so the fix is to spell them
+`'./anthropic.ts'`, in the same commit that resolves the `@/lib/**` edges and gives the package a
+real emit. It was left extensionless here on purpose: changing the spelling in isolation buys nothing
+while `@/lib/types` still blocks the same import, and this commit's value is that it reads as a move.
+(`apps/server` cannot reach the package at all today — it does not declare it, and
+`apps/server/tests/workspace.test.ts` pins its `dependencies` to `['@hono/node-server','hono']`, so
+B1 edits that assertion too.) That is B1's cue, and B1 already owns the fix — §B1 rules that
+`examples.ts`'s `lib/db` coupling is broken *there*, by injection, "so `packages/ai` depends on
+`zod`, the SDK and `lib/types.ts` and on nothing under `lib/db`". **That ruling is now too narrow
+and B1 should read it as covering all six runtime edges**, not just `examples.ts`'s four:
+`sha1Hex` and `hasCjk` are the same shape of problem in `cache-key.ts` and `retrieve.ts`. And B1's
+"and on `lib/types.ts`" is the part that is not a decision anyone has made — see the frozen-surface
+note above.
+
+### What else the move had to change, and why
+
+- **`packages/ai/package.json`.** `dependencies` gains `zod ^3.25.76` and `@anthropic-ai/sdk
+  0.124.0`, the app's own pins. Without them the moved files resolve neither under pnpm's isolated
+  `node_modules` nor in the app's bundle, because resolution is relative to the importing file and
+  the importing file is no longer inside `apps/app`. There is exactly one `zod` in the store
+  (`zod@3.25.76`) and both packages symlink the same realpath, so nothing crosses two `zod` copies.
+- **The `exports` map** becomes `{".": "./index.ts", "./*": "./*.ts"}`. `"."` used to be
+  `./schemas.ts` and had **no consumers** — `tests/unit/ai/contract.test.ts` imports
+  `@tangram/ai/schemas`, which the wildcard still answers. Pointing `"."` at the barrel is what lets
+  `tests/unit/deps.test.ts` prove the package loads with one specifier.
+- **`apps/app/package.json`:** `@tangram/ai` moves from `devDependencies` to `dependencies`. It is a
+  runtime dependency now — the ask panel and the card back import it in the browser — and
+  `tests/unit/deps.test.ts` asserts the loader table equals `dependencies` exactly, so the loader
+  entry comes with it. (The sort also pulled `@tangram/access` into alphabetical order; it was one
+  line out.)
+- **`packages/ai/eslint.config.mjs`** gains the app's `no-irregular-whitespace` configuration.
+  Without it `fake.ts` and `ground.ts` fail lint on the ideographic spaces inside their Chinese
+  string literals — the rule the app turns off in strings and comments on purpose.
+- **`packages/ai/tsconfig.json`** gains `lib: ["ES2023","DOM"]`, `types: ["node"]` and
+  `esModuleInterop` (the moved code uses `crypto.subtle`, `TextEncoder`, `setTimeout`,
+  `globalThis.fetch`, `process.env` and a default import of the SDK), and **loses
+  `noUncheckedIndexedAccess`**. That last one is a consequence of the `@/*` mapping and not a
+  preference: `apps/app` does not set it, the mapping pulls app source into this program, and
+  leaving it on reports 100+ errors in files this package does not own. It goes back on in the
+  commit that removes the mapping.
+- **Two comment corrections inside moved files**, because they asserted the move had not happened:
+  `retrieve.ts`'s "Path note" (D3 wrote the file at `packages/ai/retrieve.ts`; it had landed at the
+  pre-move spelling and said so) and `packages/ai/package.json`'s `//`.
+- **`tests/unit/ai/contract.test.ts`'s** "contains only the frozen contract — wave 0 deliverable 5
+  has not run" assertion, which was written to be the thing a later session edits. It is now two
+  cases asserting §5's split in both directions: the twelve files that must be in `packages/ai`, and
+  that `apps/app/lib/ai/` holds nothing but `ask-client.ts`. A half-done move compiles fine as long
+  as nothing imports the missing half; this is the check that does not.
+
+### What was judged rather than transcribed
+
+- **All eleven modules moved, including the three §5 does not obviously cover.** §5 names "the
+  provider contract, grounding, prompts, the cache key" and `retrieve.ts`. Read against the modules'
+  own headers, nothing here is browser-only: `cache-key.ts` says in its header that it runs in the
+  browser *and* that the demo seed calls it, and the server has to key the same rows; `recall.ts`
+  says it is "client-safe" but `/api/recall` imports `oneLine` and `RECALL_ANSWER_MAX_CHARS` from it
+  and B1 moves that route to the server; `deadline.ts` exists precisely because all three routes
+  need it. `index.ts` is the barrel over the rest. The one that came closest to staying was
+  `recall.ts` — `requestRecallGrade` is a browser fetch seam and is the natural neighbour of
+  `ask-client.ts` — but splitting it would mean splitting a file, which is a refactor and not a
+  move. **Nothing was left behind, so `apps/app/lib/ai/` is empty rather than holding a stated
+  exception.**
+- **`@anthropic-ai/sdk` stays in `apps/app`'s `dependencies`.** Nothing in `apps/app` imports it
+  directly any more — only `@tangram/ai/anthropic` does — but it is still in the app's runtime graph
+  through the dev/preview API adapter, and dropping it would also drop a loader assertion from
+  `deps.test.ts`. B1, which moves the three routes off the app entirely, is where it should go.
+- **The comments were not swept.** Seventeen prose references to `lib/ai/*.ts` survive in files
+  outside the package (`.env.example` ×2, the three route headers, four component comments,
+  `lib/dev/seed.ts`, `lib/types.ts`, two e2e spec headers, and two inside
+  `tests/unit/ai/contract.test.ts`'s older cases). Every one is a path that no longer exists. They
+  are deliberately untouched: a sweep across forty files maximises the conflict surface against the
+  `data.md` D6 session running in parallel, and this commit's value is that it is reviewable as a
+  move. `git grep -n "lib/ai" -- . ':!HANDOFF.md' ':!docs' ':!PLAN.md'` finds them; whoever lands
+  next in those files should fix the ones they touch.
+- **`react-hooks/rules-of-hooks` and `react-hooks/exhaustive-deps` stopped applying** to these
+  eleven files, and they are the only two rules that did (`eslint --print-config`, before against
+  after: 68 rules → 66). `packages/ai` has no React in it and must not acquire any — it is shared
+  with a Node server — so the rules are not reinstated. Naming it here rather than leaving it
+  silent, because a rule that quietly stops matching is this build's recurring failure
+  (`wave-zero.md` §10a).
+
+### What this unblocks, and what is now out of date
+
+- **`backend.md` B1 is unblocked.** Its §4 gate reads "wave 0's `packages/ai/` — B1 imports it and
+  does not create it", and B1's own text says "**This phase does not move it and must not re-move
+  it**". Both are now true statements about the tree. B1 still has to break the six runtime edges
+  above before `apps/server` can import anything here, and has to decide the type-stripping debt
+  (`packages/ai` emits nothing; `node dist/index.js` cannot load a `.ts` file from a real
+  `node_modules` directory).
+- **`CLAUDE.md`'s migration-state block, third bullet** — "*wave 0's move of the ten `lib/ai/**`
+  modules has not run, and `backend.md` B1 gates on it*" — stops being true with this commit. The
+  rest of that bullet (no accounts, no sync, no AI proxy; the three model-backed routes still run in
+  the app) is unchanged and still true. `CLAUDE.md` is not edited here; it is auto-loaded
+  instruction and the orchestrator merges the branches.
+- **`docs/plans/README.md` register V6** can be closed, with the corrected figures above. Its two
+  stale sub-points were already moot (the workspace exists; `package.json` is off the frozen list);
+  its live one — *"no document lists the importers, and they must change in the same commit as the
+  move"* — is discharged by this commit and by the table above.
+
+### Found wrong in the plan set
+
+- **`wave-zero.md` §5 says "ten modules"; there are eleven.** `data.md` D3 added `retrieve.ts` after
+  §5 was written, and D3 itself specifies the file at `packages/ai/retrieve.ts`. The count in §5 and
+  in V6 is a snapshot, not a list, which is V6's own complaint turned on itself.
+- **`backend.md` B1's `lib/db` ruling is scoped to `examples.ts` and needs to cover two more files.**
+  It says the goal is that "`packages/ai` depends on `zod`, the SDK and `lib/types.ts` and on nothing
+  under `lib/db`". Breaking only the `lib/db` edges leaves `sha1Hex` (`cache-key.ts`) and `hasCjk`
+  (`retrieve.ts`) resolving into `apps/app`, which fails the same way for the same reason.
+- **"and on `lib/types.ts`" in that same sentence is not a decision anybody has made.** A package
+  importing an app is exactly what `schemas.ts`'s header forbids, and `lib/types.ts` is frozen. B1
+  cannot satisfy its own Files list without either an unfreeze or a restatement.
+
+**Gates.** `pnpm lint`, `pnpm typecheck`, `pnpm build`, `pnpm test` (138 + 6 files, 1826 + 75 tests),
+`pnpm e2e` (271 passed) and `pnpm smoke` (27 ok, including the three model routes through the
+dev/preview adapter, which is what proves `@tangram/ai` resolves under `tsx` as well as under Vite)
+— all green, in that order, with `pnpm build` before `pnpm test`.

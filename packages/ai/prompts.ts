@@ -14,8 +14,8 @@
 
 import type { ZodTypeAny } from 'zod';
 
-import { ASK_PROMPT_VERSION, EXAMPLES_PROMPT_VERSION, RECALL_PROMPT_VERSION } from '@/lib/ai/cache-key';
-import type { AskContext } from '@/lib/ai/provider';
+import { ASK_PROMPT_VERSION, EXAMPLES_PROMPT_VERSION, RECALL_PROMPT_VERSION } from './cache-key';
+import type { AskContext } from './provider';
 import type { Entry, LearnerProfile } from '@/lib/types';
 
 /** The tool the model is forced to call, so the answer arrives as data. */

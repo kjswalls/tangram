@@ -53,15 +53,15 @@ import {
   type RetrievedEntry,
 } from '@tangram/ai/schemas';
 
-import type { ExampleSentence as GroundedExampleSentence } from '@/lib/ai/examples';
+import type { ExampleSentence as GroundedExampleSentence } from '@tangram/ai/examples';
 import {
   MAX_EXAMPLE_SENTENCES as PROVIDER_MAX_EXAMPLE_SENTENCES,
   MAX_PROPOSED_PHRASES as PROVIDER_MAX_PROPOSED,
   RECALL_GRADES,
   type AskContext as ProviderAskContext,
   type ProviderName as ProviderProviderName,
-} from '@/lib/ai/provider';
-import { RECALL_ANSWER_MAX_CHARS } from '@/lib/ai/recall';
+} from '@tangram/ai/provider';
+import { RECALL_ANSWER_MAX_CHARS } from '@tangram/ai/recall';
 import { GATED_PATHS, isGatedPath } from '@tangram/access';
 import type {
   AskMatch as AppAskMatch,
@@ -334,12 +334,41 @@ describe('packages/ai is wired into the workspace', () => {
     expect(() => read('packages/ai/eslint.config.mjs')).not.toThrow();
   });
 
-  it('contains only the frozen contract — wave 0 deliverable 5 has not run', () => {
-    // wave-zero.md §5 moves the ten lib/ai/** modules here. README.md V6 flags
-    // that move as not executable as written and this session was told not to
-    // attempt it. If a later session lands it, this assertion is the one that
-    // has to be edited, which is the moment to re-read this file's freeze note.
+  it('holds the frozen contract and the eleven modules wave 0 deliverable 5 moved', () => {
+    // wave-zero.md §5's split, asserted in both directions so that neither half
+    // can drift: everything shared lives here, and `apps/app/lib/ai/` holds only
+    // backend.md B2's browser-side ask-client.ts. A module that reappears in the
+    // app, or one that never arrived here, fails this — which is the check the
+    // move itself cannot provide, because a half-done move still compiles as
+    // long as nothing imports the missing half.
     const files = readdirSync(resolve(root, 'packages/ai')).filter((name) => name.endsWith('.ts'));
-    expect(files).toEqual(['schemas.ts']);
+    expect(files.sort()).toEqual([
+      'anthropic.ts',
+      'cache-key.ts',
+      'deadline.ts',
+      'examples.ts',
+      'fake.ts',
+      'ground.ts',
+      'index.ts',
+      'prompts.ts',
+      'provider.ts',
+      'recall.ts',
+      'retrieve.ts',
+      'schemas.ts',
+    ]);
+  });
+
+  it('leaves apps/app/lib/ai to ask-client.ts and nothing else', () => {
+    // The directory is empty until backend.md B2 writes ask-client.ts into it,
+    // and `readdirSync` on a path git does not track throws — so both states are
+    // a pass and a third module appearing is not. wave-zero.md §5: "apps/app/lib/ai/
+    // holds only ask-client.ts, which is browser-side and calls the server."
+    let left: string[];
+    try {
+      left = readdirSync(resolve(root, 'apps/app/lib/ai')).filter((name) => name.endsWith('.ts'));
+    } catch {
+      left = [];
+    }
+    expect(left.filter((name) => name !== 'ask-client.ts')).toEqual([]);
   });
 });

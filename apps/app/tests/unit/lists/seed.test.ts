@@ -12,7 +12,7 @@ import {
   resetAll,
   sentenceAround,
 } from '@/lib/dev/seed';
-import { askCacheKey } from '@/lib/ai/cache-key';
+import { askCacheKey } from '@tangram/ai/cache-key';
 import { readPrevious, rememberPrevious } from '@/lib/fsrs-optimize';
 import { DEFAULT_WEIGHTS } from '@/lib/srs/params';
 import { addPhraseCardChecked } from '@/lib/lists/looked-up';

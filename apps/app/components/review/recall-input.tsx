@@ -40,7 +40,7 @@ import {
   requestRecallGrade,
   type RecallRequest,
   type RecallSuggestion,
-} from '@/lib/ai/recall';
+} from '@tangram/ai/recall';
 import type { CardRow } from '@/lib/db/schema';
 import { RATING_LABELS } from '@/lib/srs/card';
 

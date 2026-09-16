@@ -14,7 +14,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { RecallInput } from '@/components/review/recall-input';
 import { closeDb, getDb, getRepository } from '@/lib/db/get-db';
-import type { RecallSuggestion } from '@/lib/ai/recall';
+import type { RecallSuggestion } from '@tangram/ai/recall';
 import type { CardRow } from '@/lib/db/schema';
 import { context, DASUAN, KANKAN } from '../db/fixtures';
 

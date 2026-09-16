@@ -20,17 +20,17 @@
  * returns something unparseable is a 502 with a message the panel can show.
  */
 
-import { withDeadline } from '@/lib/ai/deadline';
-import { ground, type GroundedAskResponse } from '@/lib/ai/ground';
-import { ASK_PROMPT_VERSION } from '@/lib/ai/cache-key';
-import { selectProvider, askResponseSchema, ProviderError, type AskContext, type ProviderName } from '@/lib/ai/provider';
-import { retrievalEcho } from '@/lib/ai/fake';
+import { withDeadline } from '@tangram/ai/deadline';
+import { ground, type GroundedAskResponse } from '@tangram/ai/ground';
+import { ASK_PROMPT_VERSION } from '@tangram/ai/cache-key';
+import { selectProvider, askResponseSchema, ProviderError, type AskContext, type ProviderName } from '@tangram/ai/provider';
+import { retrievalEcho } from '@tangram/ai/fake';
 import { getDictIndex, getEntry, readingCount } from '@/lib/dict/index';
 import { dictErrorResponse } from '@/lib/dict/load';
 import { search, hasCjk } from '@/lib/dict/search';
 import { segment } from '@/lib/dict/segment';
 import type { Entry, EntryId, HskBand, LearnerProfile } from '@/lib/types';
-import { DEFAULT_MODEL } from '@/lib/ai/anthropic';
+import { DEFAULT_MODEL } from '@tangram/ai/anthropic';
 import { requireAccess } from '@tangram/access';
 
 // The dictionary is read from disk per process; never prerender this at build time.

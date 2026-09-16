@@ -26,22 +26,22 @@
  * out or answers off-schema is a 502.
  */
 
-import { DEFAULT_MODEL } from '@/lib/ai/anthropic';
-import { EXAMPLES_PROMPT_VERSION } from '@/lib/ai/cache-key';
-import { withDeadline } from '@/lib/ai/deadline';
+import { DEFAULT_MODEL } from '@tangram/ai/anthropic';
+import { EXAMPLES_PROMPT_VERSION } from '@tangram/ai/cache-key';
+import { withDeadline } from '@tangram/ai/deadline';
 import {
   citedEntryIds,
   groundExamples,
   MAX_BAND_EXCEPTIONS,
   type ExampleSentence,
-} from '@/lib/ai/examples';
+} from '@tangram/ai/examples';
 import {
   exampleSentencesSchema,
   ProviderError,
   selectProvider,
   type LLMProvider,
   type ProviderName,
-} from '@/lib/ai/provider';
+} from '@tangram/ai/provider';
 import { getDictIndex, getEntry, readingCount } from '@/lib/dict/index';
 import { dictErrorResponse } from '@/lib/dict/load';
 import { segment } from '@/lib/dict/segment';

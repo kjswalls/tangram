@@ -6,17 +6,22 @@
   "engines": {
     "node": ">=22.22"
   },
-  "//": "docs/plans/wave-zero.md \u00a75 creates this package and moves the ten existing lib/ai/** modules into it. That move (wave 0 deliverable 5) has NOT run \u2014 README.md V6 flags it as not executable as written, because it names ten modules and none of the 33 files with 74 import sites that break. This package therefore contains exactly one file: schemas.ts, the frozen ask contract that is backend.md B2's first commit. Nothing has moved and nothing is re-exported. THE EXPORTS MAP POINTS AT TYPESCRIPT SOURCE AND THAT IS A DEBT, NOT A DESIGN: schemas.ts exports runtime values (the caps, the paths, toRetrieved) and apps/server emits plain JavaScript that plain `node` loads. It resolves today only because pnpm symlinks a workspace package and node's realpath lands outside node_modules, so Node's type stripping is permitted; against a deploy artifact where @tangram/ai is a real directory under node_modules the same emitted dist/index.js fails with ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING. Whoever runs deliverable 5 must add a build emitting dist/*.js + .d.ts and point exports at {types, import}. See HANDOFF.md.",
+  "//": "docs/plans/wave-zero.md §5's deliverable 5 — the provider contract, grounding, the prompts, the cache key and data.md D3's retrieve.ts, shared by apps/app and (from backend.md B1) apps/server. The eleven modules moved here from apps/app/lib/ai/** in one commit with their 66 import sites; `apps/app/lib/ai/` is now empty and backend.md B2's browser-side ask-client.ts is the only thing that goes back into it. TWO DEBTS, BOTH RECORDED IN HANDOFF.md AND NEITHER INTRODUCED BY THE MOVE. (1) THE EXPORTS MAP POINTS AT TYPESCRIPT SOURCE: these modules export runtime values and apps/server emits plain JavaScript that plain `node` loads. It resolves today only because pnpm symlinks a workspace package and node's realpath lands outside node_modules, so Node's type stripping is permitted; against a deploy artifact where @tangram/ai is a real directory under node_modules the same emitted dist/index.js fails with ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING. Whoever needs the server to load this package must add a build emitting dist/*.js + .d.ts and point exports at {types, import}. (2) THIS PACKAGE IS NOT YET SELF-CONTAINED: eight of its twelve modules read `@/lib/**` out of apps/app — anthropic, cache-key, examples, fake, ground, prompts, provider and retrieve, across eight app modules (lib/types, lib/dev/sha1, lib/db/repository, lib/db/schema, lib/srs/profile, lib/srs/states, lib/dict/rank, lib/dict/store). Most of those edges are `import type` and are erased at emit, but SIX are runtime values and are not: sha1Hex (cache-key.ts), hasCjk (retrieve.ts), and isPhraseSnapshot/KNOWN_SAMPLE_LIMIT/wordState/parseEntryId (examples.ts). backend.md B1 already owns breaking the lib/db coupling in examples.ts by injection; that ruling has to cover the other three files too before apps/server can import anything here. The `@/*` mapping in tsconfig.json is what makes the package typecheck in the meantime, and it is a debt, not a design.",
   "exports": {
-    ".": "./schemas.ts",
-    "./schemas": "./schemas.ts"
+    ".": "./index.ts",
+    "./*": "./*.ts"
   },
   "scripts": {
     "lint": "eslint .",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "@anthropic-ai/sdk": "0.124.0",
+    "zod": "^3.25.76"
+  },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
+    "@types/node": "^22.19.0",
     "eslint": "^9.39.5",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.70.0"

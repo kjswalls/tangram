@@ -8,8 +8,8 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
-import { answerTool, answerUserPrompt, entryLine, zodToJsonSchema } from '@/lib/ai/prompts';
-import { askResponseSchema } from '@/lib/ai/provider';
+import { answerTool, answerUserPrompt, entryLine, zodToJsonSchema } from '@tangram/ai/prompts';
+import { askResponseSchema } from '@tangram/ai/provider';
 import type { Entry, LearnerProfile } from '@/lib/types';
 
 const ENTRY: Entry = {

@@ -20,7 +20,7 @@ import {
   examplesCachePayload,
   recallCacheKey,
   recallCachePayload,
-} from '@/lib/ai/cache-key';
+} from '@tangram/ai/cache-key';
 import { sha1Hex } from '@/lib/dev/sha1';
 
 const BASE = { query: 'how do I say I am just browsing', estimatedBand: 2 };

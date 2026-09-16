@@ -36,7 +36,7 @@ import {
   proposeUserPrompt,
   recallTool,
   recallUserPrompt,
-} from '@/lib/ai/prompts';
+} from './prompts';
 import {
   MAX_EXAMPLE_SENTENCES,
   MAX_PROPOSED_PHRASES,
@@ -50,7 +50,7 @@ import {
   type ParsedExampleSentences,
   type ParsedGradeRecall,
   type ProposedPhrases,
-} from '@/lib/ai/provider';
+} from './provider';
 import type { Entry, LearnerProfile } from '@/lib/types';
 
 /**

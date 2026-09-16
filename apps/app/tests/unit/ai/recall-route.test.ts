@@ -12,8 +12,8 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 
 import { gradeRecallWith, parseRecallBody, POST, type RecallRouteResponse } from '@/app/api/recall/route';
-import { RECALL_ANSWER_MAX_CHARS, RECALL_GRADE_VALUES } from '@/lib/ai/recall';
-import { ProviderError, RECALL_GRADES, type LLMProvider } from '@/lib/ai/provider';
+import { RECALL_ANSWER_MAX_CHARS, RECALL_GRADE_VALUES } from '@tangram/ai/recall';
+import { ProviderError, RECALL_GRADES, type LLMProvider } from '@tangram/ai/provider';
 import type { Entry } from '@/lib/types';
 import { requireDictData } from '../dict/data-required';
 import { entryFor } from './helpers';

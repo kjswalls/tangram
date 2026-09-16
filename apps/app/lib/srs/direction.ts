@@ -37,7 +37,7 @@ import {
   type RecallGradeValue,
   type RecallRequest,
   type RecallSuggestion,
-} from '@/lib/ai/recall';
+} from '@tangram/ai/recall';
 import type { Repository } from '@/lib/db/repository';
 import type {
   CardDirection,

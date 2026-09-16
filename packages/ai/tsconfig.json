@@ -1,17 +1,21 @@
 {
-  "//": "Declarations only — `noEmit`, and nothing here is compiled by anyone. The app reads this package through Vite and the server through tsc; both resolve the `.ts` source named in `exports`. docs/plans/backend.md B2, first commit.",
+  "//": "`noEmit`, and nothing here is compiled by anyone: the app reads this package through Vite, the dev/preview adapter through tsx, and apps/server (from backend.md B1) through tsc; all of them resolve the `.ts` source named in `exports`. See package.json's note for the two debts that follow from that. The `@/*` mapping is the second of them — eight of this package's twelve modules still read `@/lib/**` out of apps/app, so the package cannot typecheck without it. It points OUT of this package and into an app, which is backwards, and backend.md B1's injection ruling is what removes it. Until then: `apps/server`'s own tsconfig has no such mapping, so the moment the server imports one of these modules its typecheck fails, loudly, which is the right failure. `noUncheckedIndexedAccess` is deliberately NOT set here, and that is a consequence of the same mapping rather than a preference: apps/app does not set it, the `@/*` mapping pulls apps/app source into this program, and turning it on reports 100+ errors in files this package does not own. It goes back on in the same commit that removes the mapping. docs/plans/backend.md B2 first commit (schemas.ts), docs/plans/wave-zero.md §5 (everything else).",
   "compilerOptions": {
     "target": "ES2023",
-    "lib": ["ES2023"],
+    "lib": ["ES2023", "DOM"],
     "module": "esnext",
     "moduleResolution": "bundler",
+    "esModuleInterop": true,
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
     "strict": true,
-    "noUncheckedIndexedAccess": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "incremental": true
+    "incremental": true,
+    "types": ["node"],
+    "paths": {
+      "@/*": ["../../apps/app/*"]
+    }
   },
   "include": ["*.ts"],
   "exclude": ["node_modules"]

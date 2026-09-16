@@ -17,7 +17,7 @@ import {
   stripPinyin,
   entryLookup,
   type RawAskResponse,
-} from '@/lib/ai/ground';
+} from '@tangram/ai/ground';
 import { requireDictData } from '../dict/data-required';
 import { entriesFor, entryFor, groundContext } from './helpers';
 

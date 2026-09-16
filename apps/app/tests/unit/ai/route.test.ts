@@ -14,7 +14,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { GET, POST, mergeRetrieved, needsProposals, RETRIEVED_CAP, SEARCH_HEAD } from '@/app/api/ask/route';
 import type { AskRouteInfo, AskRouteResponse } from '@/app/api/ask/route';
-import { ASK_PROMPT_VERSION } from '@/lib/ai/cache-key';
+import { ASK_PROMPT_VERSION } from '@tangram/ai/cache-key';
 import { resetDictCache } from '@/lib/dict/load';
 import { requireDictData } from '../dict/data-required';
 import { entriesFor, entryFor } from './helpers';

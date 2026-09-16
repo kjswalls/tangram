@@ -21,18 +21,18 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { candidateEntries as routeCandidateEntries, mergedSearch as routeMergedSearch } from '@/app/api/ask/route';
-import { ground } from '@/lib/ai/ground';
+import { ground } from '@tangram/ai/ground';
 import {
   candidateEntries,
   groundWithStore,
   mergeRetrieved,
   mergedSearch,
-} from '@/lib/ai/retrieve';
+} from '@tangram/ai/retrieve';
 import { getEntry, readingCount } from '@/lib/dict/index';
 import { nodeRunner } from '@/lib/dict/runners/node';
 import { segment } from '@/lib/dict/segment';
 import { SqliteDictStore } from '@/lib/dict/sqlite-store';
-import type { GroundContext, RawAskResponse } from '@/lib/ai/ground';
+import type { GroundContext, RawAskResponse } from '@tangram/ai/ground';
 import type { DictStore } from '@/lib/dict/store';
 import type { Entry } from '@/lib/types';
 import { dictArtifactPath, requireDictData } from '../dict/data-required';

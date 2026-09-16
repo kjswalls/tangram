@@ -74,6 +74,9 @@ importers:
       '@tangram/access':
         specifier: workspace:*
         version: link:../../packages/access
+      '@tangram/ai':
+        specifier: workspace:*
+        version: link:../../packages/ai
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
@@ -126,9 +129,6 @@ importers:
       '@tailwindcss/vite':
         specifier: 4.3.3
         version: 4.3.3(vite@8.3.0(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13))
-      '@tangram/ai':
-        specifier: workspace:*
-        version: link:../../packages/ai
       '@testing-library/jest-dom':
         specifier: ^7.0.1
         version: 7.0.1(@testing-library/dom@10.4.1)(vitest@4.1.11(@types/node@22.20.1)(jsdom@30.0.1)(vite@8.3.0(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13)))
@@ -237,10 +237,20 @@ importers:
         version: 8.70.0(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3)
 
   packages/ai:
+    dependencies:
+      '@anthropic-ai/sdk':
+        specifier: 0.124.0
+        version: 0.124.0(zod@3.25.76)
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
     devDependencies:
       '@eslint/js':
         specifier: ^9.39.5
         version: 9.39.5
+      '@types/node':
+        specifier: ^22.19.0
+        version: 22.20.1
       eslint:
         specifier: ^9.39.5
         version: 9.39.5(jiti@2.7.0)

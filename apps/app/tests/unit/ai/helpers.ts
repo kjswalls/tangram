@@ -5,7 +5,7 @@
  */
 import { getDictIndex, getEntry, readingCount } from '@/lib/dict/index';
 import { segment } from '@/lib/dict/segment';
-import type { GroundContext } from '@/lib/ai/ground';
+import type { GroundContext } from '@tangram/ai/ground';
 import type { Entry } from '@/lib/types';
 
 /** Every reading of each simplified headword, in the dictionary's own order. */

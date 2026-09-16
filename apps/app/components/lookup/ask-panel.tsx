@@ -35,7 +35,7 @@ import {
   type AskStateName,
   type AskUnavailableReason,
 } from '@/components/lookup/ask-state';
-import { askCacheKey } from '@/lib/ai/cache-key';
+import { askCacheKey } from '@tangram/ai/cache-key';
 import {
   entryLookup,
   groundedAskResponseSchema,
@@ -43,7 +43,7 @@ import {
   type PhraseScript,
   type GroundedAskResponse,
   type RenderedPhrase,
-} from '@/lib/ai/ground';
+} from '@tangram/ai/ground';
 import { cn } from '@/lib/cn';
 import type { PhraseToken } from '@/lib/db/schema';
 import { getRepository } from '@/lib/db/get-db';

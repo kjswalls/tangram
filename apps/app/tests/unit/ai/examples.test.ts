@@ -18,9 +18,9 @@ import {
   knownHeadwords,
   knownSet,
   type ExampleSentence,
-} from '@/lib/ai/examples';
-import { MAX_PHRASE_TOKENS, renderPhrase, entryLookup } from '@/lib/ai/ground';
-import type { ParsedExampleSentences } from '@/lib/ai/provider';
+} from '@tangram/ai/examples';
+import { MAX_PHRASE_TOKENS, renderPhrase, entryLookup } from '@tangram/ai/ground';
+import type { ParsedExampleSentences } from '@tangram/ai/provider';
 import type { CardRow } from '@/lib/db/schema';
 import { KNOWN_STABILITY_DAYS } from '@/lib/srs/states';
 import type { Entry } from '@/lib/types';

@@ -23,7 +23,7 @@
  */
 
 import { sha1Hex } from '@/lib/dev/sha1';
-import type { AskContext } from '@/lib/ai/provider';
+import type { AskContext } from './provider';
 
 /**
  * Bumped whenever the prompts change what an answer looks like — every cached

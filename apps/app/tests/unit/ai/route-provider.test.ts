@@ -9,15 +9,15 @@
  */
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import type { LLMProvider, ParsedAskResponse, ProposedPhrases } from '@/lib/ai/provider';
+import type { LLMProvider, ParsedAskResponse, ProposedPhrases } from '@tangram/ai/provider';
 import { requireDictData } from '../dict/data-required';
 import { entryFor } from './helpers';
 
 /** The provider the route selects, swappable per test. */
 let stub: LLMProvider | undefined;
 
-vi.mock('@/lib/ai/provider', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/lib/ai/provider')>();
+vi.mock('@tangram/ai/provider', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@tangram/ai/provider')>();
   return { ...actual, selectProvider: () => stub ?? actual.selectProvider() };
 });
 

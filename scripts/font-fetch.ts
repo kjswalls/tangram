@@ -20,6 +20,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { dirOf, workspaceRoot } from '../apps/app/lib/server/roots';
 import { FACES, VENDOR_DIR, type FontFace } from './fonts';
@@ -74,7 +75,15 @@ async function fetchFace(face: FontFace): Promise<{ changed: boolean; digest: st
   return { changed: true, digest };
 }
 
-async function main(): Promise<void> {
+/**
+ * Vendor every face, idempotently.
+ *
+ * Exported because `scripts/font-subset.ts` needs the binaries and there is no
+ * reason to make a builder run two commands in the right order — `pnpm build`
+ * runs `font:ensure`, which runs this first if a binary is missing, exactly the
+ * way `data:ensure` guards `pnpm data`.
+ */
+export async function fetchAll(): Promise<void> {
   process.stdout.write(`font:fetch → ${resolve(repoRoot, VENDOR_DIR)}\n`);
   const digests: string[] = [];
   for (const face of FACES) {
@@ -88,7 +97,18 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((error: unknown) => {
-  process.stderr.write(`font:fetch failed: ${error instanceof Error ? error.message : String(error)}\n`);
-  process.exitCode = 1;
-});
+/** True when every vendored binary the manifest names is on disk. */
+export function vendored(): boolean {
+  return FACES.every((face) => existsSync(resolve(repoRoot, VENDOR_DIR, face.dir, face.file)));
+}
+
+// `pnpm font:fetch` runs this module directly; `font-subset.ts` imports it, and
+// importing it must not start a download.
+if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  await fetchAll().catch((error: unknown) => {
+    process.stderr.write(
+      `font:fetch failed: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
+    process.exitCode = 1;
+  });
+}

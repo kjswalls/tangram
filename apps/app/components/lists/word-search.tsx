@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { HanziWord } from '@/components/hanzi/hanzi-text';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { isDictUnavailable } from '@/lib/dict/unavailable';
 import { getEntrySource } from '@/lib/lists/entry-source';
 import type { Entry } from '@/lib/types';
 
@@ -67,7 +68,22 @@ export function WordSearch({
         </Button>
       </form>
 
-      {error ? <p className="text-sm text-warning">{error}</p> : null}
+      {/*
+        **One error surface, and this box is not it** (docs/plans/web.md W6,
+        part 2). Searching for a word to add is a dictionary read, so "no
+        dictionary on this device" is the first thing it fails on — and it used
+        to render the raw `Error.message` here as a lowercase fragment with
+        nothing to press. But this box only ever appears inside
+        `components/lists/list-detail.tsx`, which mounts `<DictNotice>` for the
+        whole page, and two copies of the same card on one page is the defect
+        rather than the fix. So the dictionary's absence is said once, up there,
+        and everything else still says itself here.
+      */}
+      {error && !isDictUnavailable(error) ? (
+        <p role="status" className="text-sm text-warning">
+          {error}
+        </p>
+      ) : null}
 
       {searched && results.length === 0 && !pending ? (
         <p className="text-sm text-muted">Nothing matched that.</p>

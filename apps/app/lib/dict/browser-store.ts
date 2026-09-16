@@ -27,6 +27,7 @@
  */
 import { JsonDecompStore } from './decomp-json';
 import { createWasmDictStore, type WasmDictStoreHandle } from './wasm-store';
+import { DictUnavailableError } from './unavailable';
 import type { DecompStore } from './decomp-store';
 import type { DictStore } from './store';
 
@@ -170,7 +171,11 @@ export async function openDictStore(): Promise<DictStore> {
     await store.open();
   }
   if (store.status.state !== 'ready') {
-    throw new Error('the dictionary is not on this device yet');
+    // A named class, not a bare Error: the three screens that surface this have
+    // only a flattened `error.message` to go on by the time it reaches them, and
+    // `lib/dict/unavailable.ts` is what lets them recognise it and render the
+    // dictionary's own card instead of the string (docs/plans/web.md W6).
+    throw new DictUnavailableError();
   }
   return store;
 }

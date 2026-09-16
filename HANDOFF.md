@@ -11512,3 +11512,357 @@ is B2's to change.**
   `dictVersion`. Unchanged by B2 — a *fresh* answer cannot have a missing token, since every cited id
   survived grounding against rows from this same store — but `filterCachedSentences` documents the
   identical hazard for the other surface, and the panel is `core.md` C7's.
+
+## W6 — the fonts, the first-load budget, and one surface for a missing dictionary
+
+Commit: `web: the fonts, the first-load budget, and one surface for the missing dictionary (W6)`.
+
+Two halves. The first is `web.md` W6 as written: `unicode-range`-split subsets, self-hosted, through
+the module graph, with a coverage check that reads `cmap` tables and a budget stated in real bytes.
+The second is three copy defects the owner found by building the app and looking at it — two of them
+mine to fix, one of them his to word.
+
+### The budget, as one number, which is three numbers
+
+Real bytes out of `apps/app/dist/` after `pnpm build`, not estimates. `gz` is `gzip -9`, which is
+what a static host serves; `.woff2` is brotli inside already and goes over the wire as it is.
+
+| what | raw | over the wire |
+|---|---|---|
+| `index.html` | 2,521 | 2,521 |
+| entry chunk `assets/index-*.js` | 769,016 | **238,401** gz |
+| stylesheet `assets/index-*.css` | 102,068 | **34,166** gz |
+| — of which `src/styles/fonts.css` | 68,989 | 26,127 gz |
+| **DM Sans**, its one Latin slice | 52,272 | 52,272 |
+| **Noto Serif SC**, first slice | 71,164 | 71,164 |
+| `sqlite3-*.wasm` | 868,907 | 402,500 gz |
+| `wasm-worker-*.js` | 222,536 | 66,350 gz |
+| `esm-*.js` + `web-*.js` | 8,740 | 3,618 gz |
+| `decomp.json` | 916,604 | 192,216 gz |
+| the dictionary, brotli (`dict-*.sqlite.br`, quality 9) | — | **16,897,939** |
+| the dictionary, expanded into OPFS | 43,208,704 | — |
+| every font slice, if a learner renders every character in the dictionary | 6,536,168 | 6,536,168 |
+
+**First paint** — what must arrive before anything is on screen: document + stylesheet + entry chunk
+= **275,088 B, ≈ 269 KB**. No font is in it. Every face is `font-display: swap`, so the first frame
+is drawn in the system fallback and redrawn when the slices land.
+
+**First useful interaction** — the app drawn in its own type, the dictionary store's worker up, the
+OPFS probe answered and the "Get the dictionary" card on screen. Add the two font slices (123,436 B)
+and the sqlite-wasm the store loads on every route: **870,992 B, ≈ 851 KB**. Two font requests, not
+twenty-five — measured in Chromium at 390×844 on a fresh origin, identically on `/`, `/practice` and
+`/library`. What a page pulls is the slices its own text touches.
+
+**Fully offline-capable** — the above plus the dictionary's brotli transfer and `decomp.json`:
+**≈ 17.1 MB**, of which the dictionary is 94%. The fonts are 0.7% of it. That is the answer to
+STACK §2.1's question, and it is why the *split* matters more than the total: the shipped font bytes
+are 6.24 MB, and the transferred font bytes in a real session are 123 KB.
+
+Three things the table must not be read as saying:
+
+- **The dictionary's brotli figure is 16.1 MB, not `data.md` D1's 13.9 MB, and both are right.**
+  `scripts/copy-dict.ts` defaults to brotli quality 9 because 11 costs minutes on every build; D1
+  measured 11. What a visitor downloads today is the 16.1 MB one.
+  `TANGRAM_DICT_BROTLI_QUALITY=11` is the knob, and W2's deployment measurement is where it should
+  be decided. Every `web.md` figure quoting 13.9 MB is quoting the better of the two.
+- **sqlite-wasm and its worker are ~470 KB gzipped on every route**, dictionary or no dictionary,
+  because `<DictGate>`'s mount probes OPFS. That is nearly four times what a session's fonts cost,
+  and it is not W6's to change — it is named here because a first-load budget that counted fonts and
+  skipped it would be the wrong number.
+- **The hanzi face ships at one variable weight, not two static ones**, and the arithmetic is in
+  `scripts/font-shipping.ts`: variable `wght` 200–900 is 5.45 MB unsliced, a static 400 instance is
+  2.83 MB, and two static instances (400 and 500 — the two weights the app renders hanzi at) are
+  5.66 MB. The variable file is cheaper than the two statics *and* carries a real bold, which
+  STACK §2.1 requires because Android WebView 139–140 stopped synthesising it for CJK.
+
+**And a number the mobile plans want.** `cap sync` copies `dist/` wholesale, so Android and iOS
+inherit these files and A3's "Capacitor inherits the web's fonts and Android does nothing" holds.
+The package cost is **6.24 MB of font, not the 24 MB** the C0 section above quotes for the full
+variable face — the subsets are the whole face minus what no headword uses. 43 MB of dictionary plus
+6.24 MB of font is the figure to plan submission around.
+
+### The coverage result
+
+`pnpm font:check` (`scripts/font-coverage-check.ts`) — new, and what W6's second criterion is
+actually about.
+
+```
+  Noto Serif SC @ font-weight 200 900  [GATED]
+    21 file(s), 6.09 MB, 14,791 characters to cover, 0 uncovered beyond the reviewed residue
+  DM Sans @ font-weight 100 1000  [GATED]
+    2 file(s), 0.05 MB, 143 characters to cover, 0 uncovered beyond the reviewed residue
+  Newsreader @ font-weight 200 800  [GATED]
+    2 file(s), 0.09 MB, 143 characters to cover, 0 uncovered beyond the reviewed residue
+```
+
+**Uncovered: 77 characters, every one of them in C0's reviewed residue, none of them carrying a
+jieba frequency rank.** That residue is the same list `pnpm font:coverage` produced against the whole
+24 MB face (`scripts/font-residue.json`, unchanged): unranked CJK Extension B–E code points in the
+astral planes that no vendored face has a glyph for. **Cutting the face down to 6.24 MB of
+`unicode-range` slices lost nothing at all.** STACK register #9's and AUDIT 2's expectation — that
+slim subsets would fall short of 124k CC-CEDICT headwords — is answered, and the answer is that they
+do not, provided "slim" means 6.24 MB split twenty-one ways rather than the 0.7–1.4 MB those
+documents had in mind.
+
+What the check asserts, per family and per declared `font-weight`, all against `cmap` tables and
+never against a rendered width — a `.notdef` tofu box has a *non-zero* advance, so a `width > 0`
+assertion passes on exactly the failure it is written to catch:
+
+1. **Covered** — the union of the shipped files' cmaps contains every character the family is
+   responsible for, minus the reviewed residue, and no residue character carries a frequency rank.
+2. **Honest** — every code point a `unicode-range` *claims* is one its file actually has. CSS font
+   matching picks the first face in the family whose range contains the code point and then falls
+   through to the next **family**, not to the next `@font-face`, so an over-claim silently routes the
+   browser to a file that cannot answer.
+3. **Disjoint** — no two faces of one family and weight claim the same code point, so which file
+   answers is never decided by source order.
+4. **Reachable** — every shipped glyph is inside some declared range. A glyph nothing points at is
+   bytes shipped and a character still drawn by the fallback stack.
+
+It fails with the list of code points and their frequency ranks, never with a boolean.
+
+**Mutation-tested, because a guard nobody has seen fail is not a guard** — C0's rule. Five mutations,
+each caught, each naming the code points:
+
+| mutation | what fired |
+|---|---|
+| a slice's `unicode-range` truncated to 5 tokens | 763 uncovered, 763 ranked, 763 unreachable |
+| a slice claims `U+9FA6–9FB0`, which it has no glyph for | 11 over-claimed |
+| one `@font-face` block deleted | 768 uncovered, 648 of them ranked |
+| the donor face declares `font-weight: 400` instead of its family's range | a second weight group, 133 uncovered in it |
+| two slices claim the same code points | 95 over-claimed and 95 overlapping |
+
+`tests/unit/fonts/coverage.test.ts` runs the same function on every `pnpm test`, plus four of those
+mutations against the parser; CLAUDE.md is explicit that in a repository with no CI a rule that wants
+enforcement is a unit test.
+
+### The finding nobody had measured: DM Sans and Newsreader cannot write third-tone pinyin
+
+**Both lack U+01CD–U+01DC** — `Ǎ ǎ Ǐ ǐ Ǒ ǒ Ǔ ǔ Ǖ ǖ Ǘ ǘ Ǚ ǚ Ǜ ǜ`. In marked pinyin that is *every
+third tone on a, i, o and u*, plus every tone on ü. `ǎ` is the single most frequent of them and `ǒ`,
+`ǐ`, `ǔ`, `ǚ`, `ǜ` are all inside the first three hundred ranks. C0 measured the Latin faces against
+the *headword* character set, where they cover 0.3% and the number means nothing; nobody had measured
+them against the set they are actually for.
+
+It matters now and did not before, because until W6 nothing was self-hosted: the whole `--font-ui`
+stack was a system-font gamble and at least it was a consistent one. Self-hosting DM Sans without
+handling this would have made third-tone pinyin the one thing on the screen drawn by a different
+font — or tofu on a device whose system fonts carry no Latin Extended-B, which is the Android case
+STACK §2.1 bundles fonts for in the first place.
+
+**The fix is a donor slice**: `dm-sans-donor.woff2` (2,436 B, from Noto Sans SC) and
+`newsreader-donor.woff2` (2,784 B, from Noto Serif SC), declared under the *same* CSS family name and
+the *same* weight descriptor as their primary and claiming only the code points the primary lacks.
+Style is matched — a Noto sans donor for a sans, a Noto serif donor for a serif — and the two ranges
+are disjoint by construction, which is why assertion 3 above can insist on it. Screenshotted at 3× on
+the reader harness: the tone marks sit with their neighbours and nothing reads as spliced.
+
+`scripts/font-charset.ts` now carries `pinyinChars()` beside `headwordChars()`, and both Latin
+families are **gated** on it. So this cannot come back quietly: a face swap that drops those nine code
+points fails `pnpm test` with them listed.
+
+### The other measured finding: the wordmark cost 607 KB to draw
+
+The first build that shipped these fonts cut every slice by jieba frequency, which put 巧 and 板 —
+two of the three characters in 七巧板, the wordmark beside "Tangram" on **every** screen — in slices 3
+and 7. A first paint of any route therefore fetched **607 KB of hanzi to draw three characters of
+branding**, and nothing failed: the coverage check passed, the text rendered, the budget was five
+times what it should be.
+
+`APP_HANZI` in `scripts/font-charset.ts` pins them into the first slice with the rest of the app's
+own text, and `tests/unit/fonts/app-hanzi.test.ts` fails if `components/shell`, `components/ui` or
+`components/practice` grows a hanzi that list does not have. First paint went from 607 KB of font to
+123 KB.
+
+### Decisions W6 made that the plan left open
+
+- **The slice plan is two plans.** Frequency order is what makes `unicode-range` worth having — the
+  common characters are scattered across the whole CJK block, so a code-point cut would make every
+  page fetch nearly every slice. It is also what makes the stylesheet expensive to *write*: a slice
+  of 768 scattered code points coalesces into ~768 range tokens, and cutting all 14,712 that way
+  produced a **108 KB** stylesheet (40 KB gzipped) sitting in front of first paint, which is more
+  than the app's entire CSS. So the **head** — the 1,664 most frequent characters, in graduated
+  slices of 128/256/512/768 — is cut by frequency, and the **tail** by code point, which coalesces
+  into real ranges. Same coverage, 69 KB / 26 KB gzipped. Both halves of the trade are in
+  `scripts/font-shipping.ts`'s header.
+- **Slicing costs 0.8 MB.** 5.45 MB as one file, 6.24 MB as twenty-five: per-file table overhead, 15%.
+  It buys a first load of 123 KB instead of 5.45 MB, so it is not close.
+- **`src/styles/fonts.css` is generated and COMMITTED; the `.woff2` are generated and gitignored.**
+  The binaries follow `data/`'s rule — megabytes, reproducible from pinned inputs. The stylesheet is
+  text, and it is the manifest of what ships: every slice, its weight range and its exact
+  `unicode-range`, in a diff a reviewer can read. Ignoring it would also leave a fresh clone unable to
+  build, because `src/main.tsx` imports it.
+- **`pnpm build`, `pnpm build:e2e`, `pnpm test` and `pnpm dev` all run `pnpm font:ensure` first**,
+  which is `data:ensure`'s contract — do nothing if the outputs are there — and which vendors the
+  binaries if they are missing. A fresh clone builds with one command; the first one pays a 42 MB
+  fetch from `raw.githubusercontent.com` and a ~3 minute subset, once.
+- **Vite must not inline a font.** Two of the twenty-five slices are under the 4 KB
+  `assetsInlineLimit` default and were being emitted as `data:` URIs — 33% larger as base64, inside
+  the render-blocking stylesheet, and outside the service worker's `/assets/` rule. `vite.config.ts`
+  now returns `false` for `.woff2`, and a unit test keeps it there. The whole delivery mechanism is
+  "into the hashed asset directory the worker already caches", and a rule with a size hole in it is
+  not that.
+- **`font-display: swap`**, not `block` or `optional`. An offline-first app must paint its text before
+  a 71 KB slice lands, and after the first load the worker serves it from cache anyway.
+- **`scripts/font-coverage.ts` lost its private extractor.** C0's script and W6's two both need "the
+  dictionary's characters"; three copies of that is how a subset and its coverage check end up
+  agreeing with each other about the wrong set. It imports `scripts/font-charset.ts` now, and
+  `pnpm font:coverage` prints the same 14,677 / 99.462% / 79 it printed before.
+
+### The licence obligation W6 incurred, and what it cost
+
+**Before this phase the fonts were a measurement input; now they are shipped software.**
+`vendor/fonts` is gitignored binaries fetched so `pnpm font:coverage` can read their cmaps, and
+`vendor/` is not deployed. From W6 every visitor downloads a subset of four OFL families, and three
+clauses attach that did not attach to measuring:
+
+- **Clause 2** — each copy must carry the copyright notice *and* the licence. The notice rides inside
+  each `.woff2`'s `name` table (harfbuzz preserves it — checked, not assumed). The licence is now
+  reproduced **in full in `data/ATTRIBUTION.md`**, which the Library tab renders, rather than in a
+  `COPYING-*` file beside it: that file would stay in the repository, and the obligation attaches to
+  the copies people download.
+- **Clause 3** — a Modified Version may not use a Reserved Font Name, and a subset is a Modified
+  Version. Three of the four declare none; **Noto Sans SC's is `Source`**, and `Source` appears in
+  none of the shipped subsets' family, full or PostScript names. So nothing had to be renamed, which
+  is the outcome and not the assumption — a family rename would have meant renaming it in
+  `tokens.css` too.
+- **Clause 5** — everything stays under the OFL. Nothing is re-licensed.
+
+`tests/unit/fonts/licence.test.ts` reads all three off the shipped bytes and the shipped text.
+
+### Part 2 — the three copy defects
+
+**1. The Practice sentence is the owner's to write, and it is untouched.**
+
+> "All done — 10 new words are waiting, once the dictionary is back."
+
+**`apps/app/lib/srs/session.ts:404`**, in `emptyStateMessage()`, the `waiting > 0` branch. It is
+rendered by `components/review/review-session.tsx` as `review-empty`, and two tests pin the current
+wording verbatim: `tests/unit/srs/session.test.ts:299` and
+`tests/unit/srs/merged-session.test.ts:430`. Dropping new wording in means changing those three lines
+and nothing else.
+
+Two things are wrong with it and they are different faults: nothing has been *done* — the session has
+not started, and this is the state a fresh install lands in — and the dictionary was never on the
+device, so it cannot come *back*. The branch is only reachable when the day's draw failed, which
+today means the dictionary is absent, so it is **the first sentence a new learner reads on Practice**.
+
+**2 and 3. One surface for "the dictionary is not on this device yet".**
+
+It reached three tabs in three shapes, and 1,959 unit tests and 295 e2e specs passed with all three
+present, because they assert presence and not sense:
+
+| tab | what it said | where |
+|---|---|---|
+| Look up | a red line inside the Today card — *directly beneath* the "Get the dictionary" card that already explained it in better words | `components/screens/today.tsx` |
+| Practice | a red line under the empty state: "No new words could be drawn: the dictionary is not on this device yet" | `components/review/review-session.tsx` |
+| Library | a **bare lowercase fragment**, floating between the New list card and the lists, in no container, with nothing to press | `components/lists/lists-view.tsx` |
+
+All three now render the dictionary's own card — the one that names the size and carries **Get it** —
+once per tab and nothing else. On Look up that card is `<DictGate>`'s, already above the search box,
+and the duplicate underneath is gone: the card wins.
+
+How, so the next phase does not re-diverge:
+
+- **`lib/dict/unavailable.ts` names the fact once.** `openDictStore()` throws a
+  `DictUnavailableError` whose message *is* the exported constant, and `isDictUnavailable()`
+  recognises either the error or the flattened string — which is what a screen actually receives,
+  because `lib/stores/lists.ts`, `lib/stores/review.ts` and `lib/lists/today.ts` all reduce a caught
+  error to `error.message` before it gets there. That is why the three screens could not tell what
+  they were rendering.
+- **`components/dict/dict-gate.tsx` gains `<DictNotice>`** — `<DictGate>`'s card without the gate
+  around it, sharing one `useDictSurface()` hook so the two cannot drift. It renders `null` when the
+  dictionary is ready or the probe has not answered, so a screen can mount it beside its own content.
+  **It is a notice, not a gate**: `data.md` D4's and C4a's rule that practice, lists and stats are the
+  learner's own data and must never be gated is intact, and an e2e case asserts their content is
+  still there.
+- **Six call sites route through it**: `today.tsx` and `review-session.tsx` (both `error` and
+  `drawError`), `lists-view.tsx`, and — found by asking the reviewer's own question, *is there any
+  path where the learner is told the dictionary is missing and given no way to get it* —
+  `lists/list-detail.tsx` and `lists/word-search.tsx`, both below Library and both printing the same
+  raw fragment. A list's page has two failures at two moments (reading its entries on mount, and
+  searching for a word to add), so hanging the card off either one alone gives a page that says
+  nothing or says it twice: the page mounts `<DictNotice>` unconditionally and the search box says
+  nothing about the dictionary at all. Every non-dictionary error keeps its own line, and on Library
+  it now sits inside a card rather than loose on the page ground.
+
+**`tests/e2e/d/dict-missing-surface.spec.ts` is the durable half, and it is why this survived
+everything else.** Ten cases: the surface appears exactly once on each of the three tabs, it carries
+the size and the button, the raw `Error.message` reaches no screen, Look up has no second sentence
+beneath the card, Library's surface is a bordered `<section>` rather than loose between two, a list's
+page says it once before and after a search, and Practice and Library still render their own content.
+
+### What else W6 found
+
+- **Newsreader ships and no production screen uses it.** `--font-display` appears in exactly one
+  place, `components/gallery/gallery.tsx`, and `/gallery` is not in a production build. The 99 KB sits
+  in `dist/` and is never requested — `unicode-range` and family matching mean a face nothing renders
+  is a face nothing fetches — so the runtime cost is zero and the deploy cost is 99 KB. It ships
+  rather than being dropped because product-decisions §11 names it and the first display heading a
+  later phase writes should not have to redo this work. Worth a look from whoever owns the type scale.
+- **`public/offline.html` has no webfont and should not get one.** It is served by the service worker
+  with no app running and no access to the hashed asset graph, so it uses a system sans stack. It
+  carries no hanzi, so there is nothing for the bundled face to draw. Deliberate; recorded because
+  "the offline page with no font at all" is a reasonable thing to check and the answer is "on
+  purpose".
+- **Gloss text renders in `--font-ui` and contains 6,804 distinct non-ASCII code points** — Greek,
+  Cyrillic, Hebrew, kana, hanzi, hexagrams, card suits. No shipped face covers that and none should;
+  those characters fall back to the system stack, and on a device with no CJK system font a gloss
+  containing hanzi will tofu. `pnpm font:coverage` can report it; it is deliberately **not** gated,
+  because a gate over an unbounded set is a gate nobody can pass. If it turns out to matter the fix
+  is a CJK face in the `--font-ui` stack, which is a `tokens.css` decision and C0's.
+- **A C5a spec encoded the fallback font's metrics as a precondition, and W6 made it false.**
+  `tests/e2e/core/span-select-harness.spec.ts`'s "a press that lands on the pinyin above a character
+  still selects" asserted `band.bottom <= box.top + 2` — that the whole `<rt>` box clears the base
+  character's box. Noto Serif SC's ascent and descent are taller than whatever CJK face the container
+  had, so a `<ruby>`'s border box is now taller than the ink inside it and the annotation box's lower
+  edge sits ~7px within it at 24px. Screenshotted at 3×: the pinyin clears the hanzi with room to
+  spare, and Blink lays a ruby annotation over the base's *font* box by design. The precondition now
+  asserts what the test needs — that the **press point** is above the character — which is what its
+  own comment always said it was for. **Anything else that measures ruby geometry should expect
+  different numbers on this branch**, because the app now draws hanzi in a face it chose.
+- **`pnpm font:ensure` will not notice a new dictionary.** It is `data:ensure`'s contract: outputs
+  present, nothing to do. If CC-CEDICT gains a character the subsets go stale and `pnpm font:check`
+  fails in the unit suite naming it — which is the right alarm — but the fix is `pnpm font:subset`,
+  by hand, and nothing runs it for you.
+- **`data/ATTRIBUTION.md` still says its contents are shown in `/settings`.** C7 folded that route
+  into Library. Not W6's line to change, but it is wrong in a licence document.
+- **`tests/unit/platform/android-fonts.test.ts`'s note is now stale in the good direction.** A3 wrote
+  "A3 is additionally blocked on W6, which has not landed on any branch: there are no subset files to
+  measure." There are now: 25 of them, 6.24 MB, under `apps/app/src/fonts/`. A3's device checklist
+  (the Japanese-locale glyph check, the bold check, the screenshot diff and the package-size delta)
+  is unblocked on everything except the hardware.
+
+### Needs
+
+**None.** No frozen surface had to change. `lib/dict/store.ts`'s `DictStatus` union still has no
+`checking` state, and `<DictNotice>` works around it exactly as `<DictGate>` already did — with one
+boolean and no schema — so the need C4a recorded stands unchanged and un-worsened.
+
+### What this makes false in CLAUDE.md
+
+Not edited here, per the rule that a builder records rather than rewrites someone else's file:
+
+- **The commands block is missing five scripts and one step.** `pnpm font:fetch` and
+  `pnpm font:coverage` are C0's and were never listed; `pnpm font:subset`, `pnpm font:ensure` and
+  `pnpm font:check` are W6's. And `pnpm build` is no longer "`pnpm data:ensure` (root) && the app's
+  build" — it is `typecheck && data:ensure && font:ensure && the app's build && the server's`.
+  `pnpm test` and `pnpm dev` also run `font:ensure` now.
+- **"Data and licences" names three sources and now needs a fourth entry.** The app redistributes
+  four OFL typefaces; `data/ATTRIBUTION.md` carries the licence text and the modification notice, and
+  the per-family `OFL.txt` files under `vendor/fonts` cover the originals. The SQLCipher line in that
+  section is still pending and unaffected.
+- **The migration-state block's five bullets can gain a sixth: the fonts are proven in Chromium
+  only.** No Safari, no WebKit and no Android WebView has rendered these subsets. `unicode-range` and
+  variable `woff2` are old features everywhere, but "old everywhere" is not a measurement — and
+  register #4 (the reported 10 MB per-file OPFS cap in WKWebView) is still unanswered for the same
+  reason the container cannot answer this one: there is no Safari on it.
+- **`tests/unit/shell/tab-routes.test.ts`'s spec count moved to 52 / 44 / 45**, as that test asks
+  every phase that adds a spec to do.
+
+### Checks on this commit
+
+`pnpm lint`, `pnpm typecheck` (inside `pnpm build`), `pnpm build`, `pnpm test` (**1,959** app + **103**
+server), `pnpm e2e` (**295**), `pnpm smoke --no-api` (41 ok — 29 assets including all 25 font slices,
+6 paths, 6 API cases skipped and said so), and `apps/server`'s own smoke against a running
+`pnpm -F server dev` (**8/8**, with no `TANGRAM_DATA_DIR` and no `data/`).

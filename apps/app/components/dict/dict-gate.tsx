@@ -109,41 +109,90 @@ export interface DictGateProps {
 }
 
 export function DictGate({ children, source, store, opener, className }: DictGateProps) {
+  const surface = useDictSurface(store, opener);
+  if (surface.status.state === 'ready') return <>{children}</>;
+  return (
+    <div
+      data-testid="dict-gate"
+      data-state={surface.status.state}
+      {...(surface.undecided ? { 'data-checking': 'true' } : {})}
+      className={className}
+    >
+      <DictSurface surface={surface} {...(source === undefined ? {} : { source })} />
+    </div>
+  );
+}
+
+/**
+ * **The same surface, without the gate around it** (docs/plans/web.md W6).
+ *
+ * Practice and Library are the learner's own data and must never be gated
+ * (`data.md` D4, C4a) — but both of them *do* something that needs the
+ * dictionary, and when it is missing both used to say so in their own words and
+ * their own shape. On Library the result was a bare lowercase fragment floating
+ * between the New list card and the lists: no sentence around it, and no way to
+ * act on it.
+ *
+ * So the screens render **this**, which is `<DictGate>`'s own card — the one
+ * that names the size and carries the button — and nothing else. One fact, one
+ * surface, one shape, on all three tabs, and the learner is never told the
+ * dictionary is missing without being given the way to get it.
+ *
+ * It renders `null` when the dictionary is ready or the probe has not answered,
+ * so a screen can mount it unconditionally beside whatever it was going to say.
+ * A screen that is *already* inside a `<DictGate>` must not also mount one — on
+ * Look up the gate above the search box is the surface, and Today saying the
+ * same thing again underneath it is the duplicate W6 part 2 removes.
+ */
+export function DictNotice({ source, store, opener, className }: Omit<DictGateProps, 'children'>) {
+  const surface = useDictSurface(store, opener);
+  if (surface.status.state === 'ready' || surface.undecided) return null;
+  return (
+    <div data-testid="dict-notice" data-state={surface.status.state} className={className}>
+      <DictSurface surface={surface} {...(source === undefined ? {} : { source })} />
+    </div>
+  );
+}
+
+/**
+ * What both of the above subscribe to, so they cannot drift apart.
+ *
+ * `undecided` is the state `DictStatus` cannot hold — see `useDictStatus`: a
+ * probe reports nothing, so while it runs the status is still the `absent` it
+ * started in, which is the *ask*, and drawing it before the probe answers
+ * flashes a live button at a learner who already has the dictionary.
+ */
+interface DictSurfaceState {
+  status: DictStatus;
+  undecided: boolean;
+  start: () => void;
+}
+
+function useDictSurface(store?: DictStore, opener?: DictOpener): DictSurfaceState {
   const resolvedStore = store ?? getDictStore();
   const resolvedOpener = useMemo(
     () => opener ?? getDictOpener(resolvedStore),
     [opener, resolvedStore],
   );
   const { status, checking } = useDictStatus(resolvedStore, resolvedOpener);
+  return {
+    status,
+    undecided: checking && status.state === 'absent',
+    start: () => {
+      // The one affordance that downloads. `absent` → "Get it"; `failed` → "Try
+      // again", which is the same fetch of the same content-addressed file.
+      void resolvedOpener.download().catch(() => undefined);
+    },
+  };
+}
 
-  if (status.state === 'ready') return <>{children}</>;
-
-  // Still looking. `absent` here is the status the store has not left yet, not
-  // an answer — see `useDictStatus` — so the gate holds the space and says
-  // nothing rather than offering a download to someone who may already have
-  // one. Every other state during a check IS an answer (`preparing` is the
-  // download a press started, `failed` is a reason) and is drawn.
-  const undecided = checking && status.state === 'absent';
-
+function DictSurface({ surface, source }: { surface: DictSurfaceState; source?: DictSource }) {
+  if (surface.undecided) return null;
   return (
-    <div
-      data-testid="dict-gate"
-      data-state={status.state}
-      {...(undecided ? { 'data-checking': 'true' } : {})}
-      className={className}
-    >
-      {undecided ? null : (
-        <DictStatusView
-          status={status}
-          {...(source === undefined ? {} : { source })}
-          onStart={() => {
-            // The one affordance that downloads. `absent` → "Get it"; `failed` →
-            // "Try again", which is the same fetch of the same content-addressed
-            // file.
-            void resolvedOpener.download().catch(() => undefined);
-          }}
-        />
-      )}
-    </div>
+    <DictStatusView
+      status={surface.status}
+      {...(source === undefined ? {} : { source })}
+      onStart={surface.start}
+    />
   );
 }

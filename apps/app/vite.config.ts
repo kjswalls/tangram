@@ -85,6 +85,21 @@ export default defineConfig({
     outDir: 'dist',
     emptyOutDir: true,
     /**
+     * **Never inline a font** (docs/plans/web.md W6).
+     *
+     * Vite inlines any asset under 4 KB as a `data:` URI, and two of W6's
+     * twenty-five webfont slices are under it — the donor files carrying the
+     * nine pinyin tone vowels DM Sans and Newsreader have no glyph for. Inlined,
+     * they stop being files: they cost 33% more as base64, they sit inside the
+     * render-blocking stylesheet on every build, and they are outside the
+     * service worker's `/assets/` rule (which is fine for them and misleading
+     * about the policy). W6's whole delivery mechanism is "through the module
+     * graph into the content-hashed asset directory the worker already caches",
+     * and a rule that silently exempts the small ones is a rule with a hole in
+     * it. Everything else keeps Vite's default.
+     */
+    assetsInlineLimit: (filePath: string) => (filePath.endsWith('.woff2') ? false : undefined),
+    /**
      * `.vite/manifest.json` — on, and three things read it (docs/plans/web.md
      * W2 and W3). `scripts/smoke.ts` walks it to assert every hashed asset is
      * 200, which is the only falsifiable check left once the SPA fallback

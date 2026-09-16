@@ -7,7 +7,7 @@
     "node": ">=22.22"
   },
   "scripts": {
-    "dev": "pnpm -w run dict:copy:optional && vite",
+    "dev": "pnpm -w run dict:copy:optional && pnpm -w run font:ensure && vite",
     "build": "pnpm -w run dict:copy && vite build && pnpm -w run sw",
     "build:e2e": "pnpm -w run dict:copy && vite build --mode e2e && pnpm -w run sw",
     "preview": "pnpm -w run preview",

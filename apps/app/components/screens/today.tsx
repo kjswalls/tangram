@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { getRepository } from '@/lib/db/get-db';
 import { isPhraseSnapshot, type CardRow } from '@/lib/db/schema';
+import { isDictUnavailable } from '@/lib/dict/unavailable';
 import { loadDemo } from '@/lib/dev/seed';
 import { loadToday, type TodaySummary } from '@/lib/lists/today';
 import { todaySentence } from '@/lib/lists/today-sentence';
@@ -160,8 +161,18 @@ export function TodayView() {
           summary ? <Badge tone="neutral">{summary.newPerDay} new a day</Badge> : null
         }
       >
-        {error ? (
-          <p role="status" className="text-sm text-warning">
+        {/*
+          **Not the missing dictionary** (docs/plans/web.md W6, part 2). Today is
+          a region of the Look up tab, and that tab already renders `<DictGate>`
+          above this card — the "Get the dictionary" card, which says the same
+          thing in better words and carries the button. A red line underneath it
+          repeating the raw `Error.message` was the app stating one fact twice,
+          in two registers, the second of them a lowercase fragment.
+
+          Anything that is NOT the dictionary still has to be said, and is.
+        */}
+        {error && !isDictUnavailable(error) ? (
+          <p role="status" data-testid="today-error" className="text-sm text-warning">
             {error}
           </p>
         ) : null}
@@ -210,8 +221,10 @@ export function TodayView() {
           </p>
         ) : null}
 
-        {summary?.drawError ? (
-          <p className="mt-3 text-sm text-warning">
+        {/* Same rule as `error` above: the gate on this tab owns the missing
+            dictionary, and this line owns everything else that can stop a draw. */}
+        {summary?.drawError && !isDictUnavailable(summary.drawError) ? (
+          <p data-testid="today-draw-error" className="mt-3 text-sm text-warning">
             No new words could be drawn: {summary.drawError}
           </p>
         ) : null}

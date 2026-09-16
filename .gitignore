@@ -60,6 +60,14 @@ blob-report/
 !/vendor/fonts/**/
 !/vendor/fonts/**/*.txt
 
+# Cut by `pnpm font:subset` from the vendored binaries above (docs/plans/web.md
+# W6). Megabytes, reproducible from pinned inputs, so they follow `data/`'s rule
+# rather than being committed. What IS committed is the stylesheet that names
+# them, `apps/app/src/styles/fonts.css`: it is text, it is the manifest of every
+# slice and its unicode-range, and it is the one artifact of that phase a
+# reviewer should read.
+apps/app/src/fonts/*.woff2
+
 # A second, throwaway production build made by
 # apps/app/tests/e2e/core/gallery-excluded.spec.ts, which removes it again. A
 # crashed run leaves it behind; it is never something to commit.

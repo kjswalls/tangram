@@ -53,18 +53,11 @@ import { resolve } from 'node:path';
 
 import { create as createFont, type Font } from 'fontkit';
 
-import { dirOf, workspaceRoot } from '../apps/app/lib/server/roots';
+import { headwordChars, repoRoot } from './font-charset';
 import { FACES, STACKS, VENDOR_DIR, type FontFace } from './fonts';
 
-import type { DictFile } from '../apps/app/lib/types';
-
-const repoRoot = workspaceRoot(dirOf(import.meta.url));
-const dataDir = process.env.TANGRAM_DATA_DIR
-  ? resolve(repoRoot, process.env.TANGRAM_DATA_DIR)
-  : resolve(repoRoot, 'data');
-
 const SAMPLE = 24;
-const BASELINE_PATH = resolve(dirOf(import.meta.url), 'font-residue.json');
+const BASELINE_PATH = resolve(repoRoot, 'scripts', 'font-residue.json');
 const updateBaseline = process.argv.includes('--update-baseline');
 
 /**
@@ -86,43 +79,13 @@ function readBaseline(): Baseline {
 
 // ---------------------------------------------------------------------------
 // The character set to cover
-
-interface CharFacts {
-  /** Every distinct code point in a `simp` or `trad` headword. */
-  chars: string[];
-  /** char → the best (lowest) freqRank of any entry whose headword contains it. */
-  bestRank: Map<string, number>;
-  entries: number;
-}
-
-function headwordChars(): CharFacts {
-  const file = resolve(dataDir, 'dict.json');
-  if (!existsSync(file)) {
-    throw new Error(
-      `${file} is missing. Run \`pnpm data\` first — the coverage set is the dictionary's own headwords.`,
-    );
-  }
-  const dict = JSON.parse(readFileSync(file, 'utf8')) as DictFile;
-  const bestRank = new Map<string, number>();
-  const seen = new Set<string>();
-  for (const entry of dict.entries) {
-    // `freqRank` is jieba's rank, 1 = most frequent. An entry with no rank is
-    // ranked after every entry that has one rather than dropped, so a character
-    // that only ever appears in unranked entries still gets a number.
-    const rank = entry.freqRank ?? Number.MAX_SAFE_INTEGER;
-    for (const text of [entry.simp, entry.trad]) {
-      // Iterate by code point: CC-CEDICT headwords reach into the astral planes
-      // (CJK Ext B lives at U+20000) and a UTF-16 unit loop would measure
-      // surrogate halves, which no cmap has and every font would "fail".
-      for (const ch of text) {
-        seen.add(ch);
-        const best = bestRank.get(ch);
-        if (best === undefined || rank < best) bestRank.set(ch, rank);
-      }
-    }
-  }
-  return { chars: [...seen], bestRank, entries: dict.entries.length };
-}
+//
+// `scripts/font-charset.ts`, shared. It used to be a local extractor here, and
+// `web.md` W6 moved it out for the reason that module's header gives: this
+// script measures a CANDIDATE face, `font-subset.ts` cuts the shipped files and
+// `font-coverage-check.ts` asserts they cover the same set. Three copies of
+// "what the dictionary's characters are" is how a subset and its coverage check
+// end up agreeing with each other about the wrong set.
 
 // ---------------------------------------------------------------------------
 // The faces

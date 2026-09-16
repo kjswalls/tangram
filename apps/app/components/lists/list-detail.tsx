@@ -5,6 +5,7 @@ import { Link, useNavigate } from 'react-router';
 import { TAB_PATHS } from '@/components/shell/nav';
 import { useEffect, useState } from 'react';
 
+import { DictNotice } from '@/components/dict/dict-gate';
 import { ProductionListToggle } from '@/components/lists/production-list-toggle';
 import { WordSearch } from '@/components/lists/word-search';
 import { WordStateBadge } from '@/components/lists/word-state';
@@ -14,6 +15,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { getRepository } from '@/lib/db/get-db';
 import type { CardRow, ListRow } from '@/lib/db/schema';
+import { isDictUnavailable } from '@/lib/dict/unavailable';
 import { getEntrySource } from '@/lib/lists/entry-source';
 import { queueFromList } from '@/lib/lists/introduce';
 import { ensureMembers } from '@/lib/lists/members';
@@ -186,10 +188,29 @@ export function ListDetail({ listId }: { listId: string }) {
         </Link>
       </p>
 
-      {error ? (
-        <p role="status" className="text-sm text-warning">
-          {error}
-        </p>
+      {/*
+        **The page's one dictionary surface** (docs/plans/web.md W6, part 2).
+
+        Unconditional, because `<DictNotice>` is already "when the dictionary is
+        not ready, and never otherwise" — it renders `null` while the probe runs
+        and once the dictionary is there. Two things on this page fail on a
+        missing dictionary and they fail at different moments: reading the list's
+        entries, on mount, and searching for a word to add, when the learner
+        presses Find. Hanging the card off either one alone gives a page that
+        either says nothing or says it twice, so the page owns it and
+        `components/lists/word-search.tsx` says nothing about the dictionary at
+        all.
+      */}
+      <DictNotice />
+
+      {/* Everything that is NOT the dictionary, inside a card rather than loose
+          on the page ground — the shape half of the same fix. */}
+      {error && !isDictUnavailable(error) ? (
+        <Card>
+          <p role="status" className="text-sm text-warning">
+            {error}
+          </p>
+        </Card>
       ) : null}
 
       {list ? (

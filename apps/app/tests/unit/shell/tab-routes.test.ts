@@ -147,10 +147,16 @@ describe('the seven routes are gone', () => {
     // (the shared ask helper — a module, not a spec, which is why `specs` rises
     // by one and `files` by two) and `tests/e2e/d/dict-ask.spec.ts`, which owns
     // what a fresh origin and a returning learner each get.
+    //
+    // `web.md` W6 adds two, both specs and both navigating:
+    // `d/fonts.spec.ts` (self-hosted, and zero font requests on a second load)
+    // and `d/dict-missing-surface.spec.ts` (one error surface for the missing
+    // dictionary, on all three tabs — the spec that would have caught the three
+    // shapes the owner found by looking at the app).
     expect({ files: files.length, specs: specs.length, navigating: navigating.length }).toEqual({
-      files: 50,
-      specs: 42,
-      navigating: 43,
+      files: 52,
+      specs: 44,
+      navigating: 45,
     });
   });
 

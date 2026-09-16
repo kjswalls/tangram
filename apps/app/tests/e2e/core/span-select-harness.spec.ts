@@ -468,15 +468,29 @@ test.describe('the gesture, and the page it sits on', () => {
           to: Number(end.dataset.spanIndex),
           press: { x: band.x + band.width / 2, y: band.y + band.height / 2 },
           release: { x: endBox.x + endBox.width / 2, y: endBox.y + endBox.height * 0.75 },
-          // The band really is above the glyph box, which is what makes the
-          // press land outside every base character.
-          aboveGlyph: band.bottom <= box.top + 2,
+          /**
+           * The press really does land outside every base character, which is
+           * what makes this case the case it says it is.
+           *
+           * **It used to read `band.bottom <= box.top + 2` and `web.md` W6
+           * turned that false**, correctly. Until W6 nothing was self-hosted and
+           * `.hanzi` resolved to whatever CJK face the container had; Noto Serif
+           * SC's own ascent and descent are taller, so a `<ruby>`'s border box
+           * is now taller than the glyph ink inside it and the annotation box's
+           * lower edge sits ~7px inside it at 24px. Screenshotted: the pinyin
+           * still clears the hanzi with room to spare, and Blink lays a ruby
+           * annotation out over the base's *font* box by design. So the
+           * precondition asserts the thing this test needs — the pointer starts
+           * above the character — rather than a metric of the face that
+           * happened to be installed.
+           */
+          aboveGlyph: band.y + band.height / 2 < box.top,
         };
       }
       return null;
     });
     expect(pick, 'the passage has an annotated character with a later one on its line').not.toBeNull();
-    expect(pick!.aboveGlyph, 'the <rt> renders above the glyph box').toBe(true);
+    expect(pick!.aboveGlyph, 'the press point is above the base character\u2019s box').toBe(true);
 
     await page.mouse.move(pick!.press.x, pick!.press.y);
     await page.mouse.down();

@@ -10,10 +10,12 @@ import { GradeBar } from '@/components/review/grade-bar';
 import { RecallInput } from '@/components/review/recall-input';
 import { ProductionCard } from '@/components/review/production-card';
 import { ReviewCard } from '@/components/review/review-card';
+import { DictNotice } from '@/components/dict/dict-gate';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import type { RecallSuggestion } from '@tangram/ai/recall';
 import { DEFAULT_SETTINGS, type StoredRating } from '@/lib/db/schema';
+import { isDictUnavailable } from '@/lib/dict/unavailable';
 import { isProduction, productionRecallRequest } from '@/lib/srs/direction';
 import {
   emptyStateMessage,
@@ -183,6 +185,25 @@ export function ReviewSession() {
   }
 
   if (error) {
+    /*
+      **One error surface** (docs/plans/web.md W6, part 2). "No dictionary on
+      this device" is not a session failure and must not be dressed as one: it
+      gets the dictionary's own card — the one naming the size, with the button
+      — which is the same card Look up and Library show. Practice itself still
+      works without it, so the session card stays beside it.
+    */
+    if (isDictUnavailable(error)) {
+      return (
+        <div className="flex flex-col gap-4">
+          <DictNotice />
+          <Card title="Session">
+            <p data-testid="review-empty" className="text-base">
+              {emptyStateMessage({ next: nextDue, now, waiting, returning, deferred: deferred.length })}
+            </p>
+          </Card>
+        </div>
+      );
+    }
     return (
       <Card title="Session">
         <p data-testid="review-error" className="text-sm text-warning">
@@ -194,6 +215,21 @@ export function ReviewSession() {
 
   if (!card) {
     return (
+      <div className="flex flex-col gap-4">
+      {/*
+        **The one error surface** (docs/plans/web.md W6, part 2).
+
+        This is the branch a learner on a fresh origin actually lands in: the
+        day's new words could not be drawn because there is no dictionary, so
+        the empty state below says something about words that are "waiting", and
+        underneath it the raw `Error.message` used to appear as a second red
+        sentence. One fact, said twice, in two registers.
+
+        The card is the dictionary's own — the same one Look up and Library show
+        — so the three tabs now say this one way, and a learner who is told the
+        dictionary is missing is given the button that fetches it.
+      */}
+      {isDictUnavailable(drawError) ? <DictNotice /> : null}
       <Card
         title="Session"
         aside={graded > 0 ? <span className="text-sm text-muted">{graded} done</span> : null}
@@ -225,8 +261,12 @@ export function ReviewSession() {
         <p data-testid="review-empty" className="text-base">
           {emptyStateMessage({ next: nextDue, now, waiting, returning, deferred: deferred.length })}
         </p>
-        {drawError ? (
-          <p className="mt-2 text-sm text-warning">No new words could be drawn: {drawError}</p>
+        {/* Same rule: the dictionary's absence is the card below, not a red
+            line here. Everything else that can stop a draw still says so. */}
+        {drawError && !isDictUnavailable(drawError) ? (
+          <p data-testid="review-draw-error" className="mt-2 text-sm text-warning">
+            No new words could be drawn: {drawError}
+          </p>
         ) : null}
         {/* The timer above is armed, so the cards come back here on their own —
             and nothing on screen used to say so. Both links below unmount the
@@ -257,6 +297,7 @@ export function ReviewSession() {
           — what you add is in the next session.
         </p>
       </Card>
+      </div>
     );
   }
 

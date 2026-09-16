@@ -120,12 +120,24 @@ export function serverDictStore(): Promise<DictStore> {
   return tracked;
 }
 
-/** Tests and HMR teardown: close the connection and forget it. */
+/**
+ * Tests and HMR teardown: close the connection and forget it.
+ *
+ * **The in-flight open is awaited first, and then cleared again.** An open that
+ * is still running writes `held.store` when it resolves, so clearing the slot
+ * before awaiting it puts the connection straight back — and the caller, which
+ * is a test about to point `TANGRAM_DATA_DIR` at an empty directory, goes on
+ * with a live dictionary memoised on `globalThis` and proves nothing. Caught by
+ * an adversarial reviewer; the order below is the fix and the second read of
+ * `held.store` is the whole of it.
+ */
 export async function closeServerDictStore(): Promise<void> {
   const held = cache();
+  // Let a pending attempt finish so its `held.store = store` lands where this
+  // can see it. A rejected attempt has nothing to close.
+  await held.opening?.catch(() => undefined);
   const store = held.store;
   held.store = undefined;
-  await held.opening?.catch(() => undefined);
   held.opening = undefined;
   if (store) await store.close();
 }

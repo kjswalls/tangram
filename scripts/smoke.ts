@@ -68,15 +68,31 @@ export const VITE_MANIFEST = '.vite/manifest.json';
  *
  * So it is a constant, and the trade is stated rather than hidden. 你好 is the
  * most stable headword in the corpus, and if it ever does leave, the failure is
- * loud and specific: both routes answer 404 `entry-not-found`, and the `must`
- * below names this constant. It is **not** a hard-coded id standing in for a
- * check nobody runs. `backend.md` B2's contract puts retrieved entries on the
- * wire, at which point the smoke sends rows rather than an id and this goes.
+ * loud and specific **without any help from this file**: `runSmoke` reports a
+ * non-2xx as `POST <url> → 404 Not Found · <body>`, and the body is
+ * `{"error":"entry-not-found","hint":"no dictionary entry with id …"}` — the
+ * route names the id it could not find. The line to change is this one.
+ *
+ * (An earlier version of this comment promised a `must()` inside the two cases'
+ * `expect` callbacks. It could never have run: `runSmoke` pushes a failure and
+ * `continue`s on any non-2xx **before** `expect` is reached, so the guidance
+ * would have been unreachable by construction. An adversarial reviewer caught
+ * it; the guards are gone and this paragraph is what replaced them.)
+ *
+ * `backend.md` B2's contract puts retrieved entries on the wire, at which point
+ * the smoke sends rows rather than an id and this goes.
  */
 export const SMOKE_ENTRY_ID = '你好|你好[ni3 hao3]';
 
 /** Values one case hands to the next: real ids beat invented ones. */
 export interface SmokeContext {
+  /**
+   * An entry id one case found for the next. Unused since `data.md` D6 deleted
+   * the search case that filled it — see `SMOKE_ENTRY_ID` — and left in place
+   * because this file is `web.md` W2's and D6's licence there is to remove the
+   * dictionary entries, not to reshape its types.
+   */
+  entryId?: string;
   /** The module script `/` served, e.g. `/assets/index-<hash>.js`. */
   entryScript?: string;
 }
@@ -167,12 +183,7 @@ export const SMOKE_CASES: SmokeCase[] = [
       knownBand: 1,
     }),
     expect: (payload) => {
-      const result = payload as { sentences?: unknown[]; error?: string };
-      must(
-        result.error !== 'entry-not-found',
-        `examples did not find ${SMOKE_ENTRY_ID} — this dictionary build no longer has it, ` +
-          'so SMOKE_ENTRY_ID in scripts/smoke.ts needs a headword that it does',
-      );
+      const result = payload as { sentences?: unknown[] };
       must(Array.isArray(result.sentences), 'examples answered without a sentences array');
     },
   },
@@ -185,12 +196,7 @@ export const SMOKE_CASES: SmokeCase[] = [
     url: () => '/api/recall',
     body: () => ({ entryId: SMOKE_ENTRY_ID, answer: 'hello' }),
     expect: (payload) => {
-      const result = payload as { suggested?: number; error?: string };
-      must(
-        result.error !== 'unknown-entry',
-        `recall did not find ${SMOKE_ENTRY_ID} — this dictionary build no longer has it, ` +
-          'so SMOKE_ENTRY_ID in scripts/smoke.ts needs a headword that it does',
-      );
+      const result = payload as { suggested?: number };
       must(
         typeof result.suggested === 'number' && result.suggested >= 1 && result.suggested <= 4,
         'recall suggested something that is not a grade',

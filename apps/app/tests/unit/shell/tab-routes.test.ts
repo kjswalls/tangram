@@ -137,14 +137,15 @@ describe('the seven routes are gone', () => {
     const navigating = files.filter((path) => code(path).includes('page.goto('));
     // Raised when `web.md` W2–W4 and `data.md` D4 merged in alongside C8: they
     // brought routes.spec, access-gate, spa-fallback and dict-wasm with them.
-    // Lowered by one when `data.md` D6 deleted `p1/dict-api.spec.ts` with the
-    // five routes it exercised over HTTP — D4's `d/dict-wasm.spec.ts` is what
-    // replaced it, and it was already counted. The number is the repository's,
-    // not the plan's — see the note above.
+    // `data.md` D6 moved it twice and the two cancel: it deleted
+    // `p1/dict-api.spec.ts` with the five routes that spec exercised over HTTP,
+    // and added `d/dict-offline.spec.ts` for its own acceptance criterion 3 (the
+    // app works with the network down, from a cold start). The number is the
+    // repository's, not the plan's — see the note above.
     expect({ files: files.length, specs: specs.length, navigating: navigating.length }).toEqual({
-      files: 47,
-      specs: 40,
-      navigating: 40,
+      files: 48,
+      specs: 41,
+      navigating: 41,
     });
   });
 

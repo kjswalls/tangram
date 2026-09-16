@@ -37,6 +37,18 @@ export const DEFAULT_MANIFEST_URL = assetUrl(MANIFEST_FILE);
 export interface WasmRunnerOptions {
   /** The pointer at the artifact's content-addressed filename. Never immutable. */
   manifestUrl?: string;
+  /**
+   * Open only what this origin has already stored, and **fetch nothing**.
+   *
+   * The same path a lost network takes (see `fetchManifest`), reached on
+   * purpose: `components/dict/dict-status.tsx` says an `absent` dictionary is
+   * "an explicit ask, with the size in it … a silent 14 MB download on a
+   * metered connection is a hostile default", and `data.md` D6 is what made
+   * `<DictGate>`'s mount-time `open()` mean *download* rather than *probe*.
+   * With this set, the mount attempt costs nothing and either finds a
+   * dictionary or leaves the learner the ask.
+   */
+  storedOnly?: boolean;
   /** Overrides where the `.sqlite` itself is fetched from. Tests use it. */
   artifactUrl?: (manifest: DictManifest) => string;
   /** Download/import progress, so the banner can draw a determinate bar. */
@@ -191,17 +203,31 @@ class WorkerLink {
   }
 }
 
-async function fetchManifest(url: string): Promise<DictManifest> {
+/**
+ * The manifest, or `null` when the **network** could not deliver one.
+ *
+ * The distinction between `null` and a throw is the whole of D6's offline
+ * behaviour, so it is drawn here rather than sniffed at by the caller. `fetch`
+ * rejects only when the request never completed — offline, DNS, a refused
+ * connection — and resolves for every HTTP status. So:
+ *
+ * - **rejects → `null`**, and the worker opens whatever this origin already
+ *   imported. A learner on a plane has a dictionary.
+ * - **anything else → throw.** A 404, a body that is not JSON, JSON with no
+ *   `file`: those are a deployment that is wrong, and answering them from a
+ *   stale pooled artifact would hide exactly the mistake `data.md` D4 built the
+ *   four failure reasons to name. `web.md` W2's SPA fallback makes the 404 case
+ *   concrete — it answers a missing path with an HTML document and a 200.
+ */
+async function fetchManifest(url: string): Promise<DictManifest | null> {
   let response: Response;
   try {
     // `cache: 'no-cache'` mirrors the host rule (web.md W2 rule 5): the manifest
     // is the pointer at an immutable filename, so an immutably cached pointer is
     // a dictionary that can never be updated.
     response = await fetch(url, { credentials: 'same-origin', cache: 'no-cache' });
-  } catch (error) {
-    throw new DictOpenError('download', `the dictionary manifest could not be fetched`, {
-      cause: error,
-    });
+  } catch {
+    return null;
   }
   if (!response.ok) {
     throw new DictOpenError('download', `the dictionary manifest answered ${response.status}`);
@@ -227,8 +253,31 @@ async function fetchManifest(url: string): Promise<DictManifest> {
  * will re-fetch it".
  */
 export async function wasmRunner(options: WasmRunnerOptions = {}): Promise<WasmSqlRunner> {
-  const manifest = await fetchManifest(options.manifestUrl ?? DEFAULT_MANIFEST_URL);
-  const url = options.artifactUrl?.(manifest) ?? assetUrl(manifest.file);
+  /**
+   * The manifest, or `null` when the network could not give us one.
+   *
+   * **This is D6's acceptance criterion 3 in one branch.** The dictionary is
+   * 43 MB in OPFS and the manifest is two hundred bytes served `no-cache`; the
+   * only thing the manifest tells the worker is which file to import and what
+   * to check the import against. Before this, an offline cold start threw here
+   * and the learner had no dictionary at all — with the dictionary sitting in
+   * their own browser, imported, verified and unreachable. Now the worker is
+   * asked to open what the pool already holds, and only an origin that has
+   * never imported one comes back `failed`.
+   *
+   * A **bad** manifest is still fatal, and the distinction is the point: a
+   * `fetch` that rejects is the network, and every other failure — a 404, a
+   * body that is not JSON, a JSON object with no `file` — is a deploy that is
+   * wrong. Falling back to a stale pooled artifact on those would hide exactly
+   * the mistake `data.md` D4 built the four failure reasons to name.
+   */
+  const manifest = options.storedOnly
+    ? null
+    : await fetchManifest(options.manifestUrl ?? DEFAULT_MANIFEST_URL);
+  if (manifest === null && !options.storedOnly) {
+    options.onUnavailable?.('the dictionary manifest could not be fetched; trying stored bytes');
+  }
+  const url = manifest === null ? null : options.artifactUrl?.(manifest) ?? assetUrl(manifest.file);
   const link = new WorkerLink(options);
   let report: OpenReport;
   try {

@@ -283,8 +283,13 @@ describe('the 200-query differential corpus', () => {
         // 50-group page the comparison is confounded: a wider candidate set
         // pushes groups off the end of the page, which looks like a loss and is
         // not one.
+        const answer = goldenSearch.gloss[query];
+        // Without this, a query with no frozen answer reads as an empty set —
+        // nothing lost, nothing to explain — and the case passes by having no
+        // oracle at all, which is the exact failure D6's freeze exists to stop.
+        expect(answer, `${query} has no frozen answer in golden/search.json`).toBeDefined();
         const mine = new Set(keysOf(await store.search(query, WHOLE), 'english'));
-        const theirs = new Set(goldenSearch.gloss[query]);
+        const theirs = new Set(answer);
         const lost = [...theirs].filter((key) => !mine.has(key));
         if (lost.length === 0 && mine.size === theirs.size) identical.push(query);
         else if (lost.length === 0) wider.push(query);
@@ -312,7 +317,7 @@ describe('the 200-query differential corpus', () => {
       for (const query of [...wider].slice(0, 8)) {
         const queryWords = lemmas(query);
         const mine = sectionGroups(await store.search(query, WHOLE), 'english');
-        const theirs = new Set(goldenSearch.gloss[query]);
+        const theirs = new Set(goldenSearch.gloss[query] ?? []);
         for (const group of mine) {
           if (theirs.has(group.key)) continue;
           const tier = Math.min(

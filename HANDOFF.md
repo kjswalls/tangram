@@ -9332,3 +9332,339 @@ four that were real bugs come first.
   every word that touches time.
 
 **Gates.** `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm e2e` — all green.
+
+---
+
+## `data.md` D6 — the server dictionary is gone, and the app looks words up on the device
+
+Three commits on `claude/build-data-3`, cut from `claude/integration` at `710738f`.
+
+`CLAUDE.md`'s migration-state block opens with five things a green gate must not be read as having
+finished. **The first one stops being true here.** It said:
+
+> **The app still looks words up through the server.** `data.md` D4 built the browser store, but
+> **D6** is what points the app at it: `lib/dict/http-store.ts` and the five `app/api/dict/*` routes
+> are still the live path. Until D6, the SPA is not actually offline for lookup.
+
+`lib/dict/browser-store.ts` now builds `createWasmDictStore()` and `new JsonDecompStore()`. There is
+no `app/api/dict/` directory, no `lib/dict/client.ts`, no `lib/dict/http-store.ts`, and
+`grep -rln "api/dict" apps/app --include=*.ts --include=*.tsx` returns **nothing** —
+`tests/unit/dict/client-callers.test.ts` is the test that keeps it that way, and it assembles the
+literal (`` `api/${'dict'}` ``) rather than writing it, so the enforcement is not itself the thing
+it is looking for. The other four bullets are unchanged and still true. **I have not
+edited `CLAUDE.md`**; it is auto-loaded instruction and the orchestrator merges the branches.
+
+### What D6 turned out to be, beyond the deletion
+
+The phase reads as "delete five routes". Two things made it larger, and both are worth knowing
+before reading the diff.
+
+**1. `pnpm data` is built on the JSON index.** `scripts/build-data.ts` walks `getDictIndex()` to
+write `entries`, `words`, `gloss_fts`, `chars` and `char_words`, and calls `headwordFreq` and
+`headwordTotals` rather than re-implementing them — deliberately, per `data.md` §6, because SQL
+`MAX(freq)` and replaying `compareEntries` disagree wherever a jieba frequency is 0 or absent.
+`scripts/verify-data.ts` proves the artifact against the same parse. So deleting `lib/dict/load.ts`
+and `lib/dict/index.ts` outright would have broken the build step that produces the artifact D6
+exists to serve.
+
+They are therefore **moved, not deleted**: `scripts/dict-json.ts` is `load.ts` + `index.ts` +
+`segment.ts`'s three index-shaped helpers (`headwordFreq`, `headwordTotals`, `detectScript`) + the
+JSON `segment()`. Out of the application they are gone — nothing the app ships parses 35 MB of JSON,
+and D6's acceptance criterion 2 holds — and into `scripts/`, which is where the input to a build step
+belongs. The JSON dictionary was never really a runtime; D6's real content is that it stopped *also*
+being one.
+
+`dataDir()` moved too, to `lib/server/roots.ts`, beside `appRoot()` and `workspaceRoot()`. It was the
+half of `load.ts` that was never about JSON. **`CLAUDE.md`'s "Commands" section names the pair that
+decides where `data/` is as `scripts/build-data.ts` and `lib/dict/load.ts`; the second is now
+`lib/server/roots.ts`.** `tests/unit/workspace.test.ts` is the guard and is re-pointed.
+
+**2. Three routes still read the dictionary in this app, and they are not D6's to move.**
+`/api/ask`, `/api/examples` and `/api/recall` go to `apps/server` in `backend.md` B1, and B2's frozen
+contract is what takes retrieval off the server entirely. Until then they need a dictionary, and the
+only one left is the artifact. `lib/server/dict.ts` opens it through `lib/dict/runners/node.ts` and
+hands the three routes a `DictStore`; `lib/ai/retrieve.ts`'s `mergedSearch`, `candidateEntries`,
+`mergeRetrieved` and `groundWithStore` — D3's ports — replace the route's own copies, which are
+deleted. The upshot is worth stating plainly: **there is now exactly one dictionary implementation in
+the repository**, and a grounding bug that only the server could have had is no longer possible.
+
+### The oracle freeze, and where I read D6's instruction as a purpose rather than a recipe
+
+D6's first instruction is not a deletion — it is that D2's and D3's differential comparisons be
+frozen into golden fixtures before anything goes, because "a build session that deletes
+`LazyDictIndex` first will find the tests pass because there is nothing left to disagree with". That
+is exactly right and the first commit on this branch does it.
+
+**It is split, and the split is a decision the plan did not make.** Two kinds of fact were being
+compared:
+
+- **What the deleted *algorithms* decided** — `search()`'s router, its section allocation and its
+  group ordering; the DP in `segment()`; `app/api/ask/route.ts`'s retrieval. Re-deriving those in the
+  test tree means a second implementation that could be wrong in the same way, which is the thing
+  D3's criterion 9 was written to avoid. **Frozen**, in
+  `apps/app/tests/unit/dict/golden/search.json` and `apps/app/tests/unit/ai/golden/retrieve.json`.
+- **The primitives underneath** — entries by id, a whole HSK band in order, the readings of a
+  headword, the five index groupings. Those are restatements of `data/dict.json`, and `dict.json`
+  goes on being emitted (D6: "keep it as an intermediate"). **Not frozen.**
+  `tests/unit/dict/json-oracle.ts` re-exports `scripts/dict-json.ts`, so those comparisons stay
+  *live*.
+
+The reason to prefer live where it is available: `pnpm data` reads CC-CEDICT from a pinned npm
+package but pulls the HSK list, the jieba frequencies and Make Me a Hanzi from `master` branches. A
+fixture of 11,028 ids goes stale on the first upstream change and can then only be re-blessed by
+hand. A re-derivation cannot. Freezing everything would have bought nothing and cost that.
+
+Read the honesty of the live half precisely, because it is the thing to check: `json-oracle.ts` is
+not an independent implementation and does not pretend to be — it is the same six loops
+`LazyDictIndex` ran. What makes it an oracle is that **the thing under test is the artifact**, whose
+tables and indexes `scripts/build-data.ts` writes in SQL from the same JSON by different code. What
+it cannot catch is `lib/dict/rank.ts` being wrong — but nothing ever could, because `rank.ts` is
+shared by both sides. `store.test.ts` says so where it checks a group's HSK band against the raw
+JSON instead, and D6 gave that observation a second use: the per-group field comparison that used to
+run store-against-index is now `expectGroupContent`, asserted against `dict.json` directly. It is
+strictly stronger — it can see a `materialise` bug, which the old comparison could not.
+
+**Large lists are frozen as `{count, head, sha256}`.** The digest is over the list in order, so a
+lost key, a reordered pair or a silently lowered cap changes it; the first twenty keys are there so
+the failure is readable. The gloss corpus and the two paging walks are frozen in full, because their
+assertion is set containment and a digest cannot answer that. 857 KB in total.
+
+**The generator is kept beside the fixtures as text.** `data.md` says "the generator script kept
+beside them and marked unrunnable after this phase". It imported five modules the same phase deletes,
+so keeping the `.ts` on disk would only mean a tree that does not typecheck. It is in
+`apps/app/tests/unit/dict/golden/README.md`, verbatim, with the command that ran it.
+
+**The provenance stamp is over `dict.json`'s entries, not over the file, and the first version of it
+was wrong.** `dict.json` carries `meta.builtAt`, so a whole-file digest reports every `pnpm data`
+run as a data change; the staleness alarm would have been noise within a day. It is
+`sha256(JSON.stringify(entries))` now, which is stable across rebuilds of the same sources — the
+artifact's own sha256 is too, and that is `data.md` D1's reproducibility criterion and the evidence
+that this holds. Caught by `tests/unit/dict/golden.test.ts`, which is the alarm's own test file and
+exists so that an upstream data change reports as one named failure rather than thirty.
+
+### Decisions the plan did not settle
+
+- **`browser-store.ts` memoises the handle *and* the store, and gains two test-only members.**
+  `getDictHandle()` is D4's "hold the handle, not the store" rule — `WasmDictStoreHandle.close()` is
+  the teardown API because `store.close()` alone lets an eviction in the same tick spawn a worker for
+  a store its owner believes is shut. `setDictStore()` installs a stand-in and `resetDictStores()`
+  closes and clears; both are tests-only and say so. The alternative for the jsdom suites was
+  threading a `store` prop through every component that reads one, which is the restructuring
+  `core.md` C4a deliberately did not do and D6 is not the phase to do either. `setDictStore` throws
+  if a real handle is open, rather than leaking its worker.
+- **`openDictStore()` exists, and finding out why it had to is the most useful thing in this
+  section.** `SqliteDictStore` refuses a query before `open()` — "the dictionary is not open" — and
+  that is correct: a SQLite connection is a thing you have or do not have. `HttpDictStore` had no
+  such state, so before D6 every consumer could simply query. **Two consumers are not behind
+  `<DictGate>`, deliberately**: `lib/lists/entry-source.ts` (the Practice queue's draw, the lists
+  page, the demo seed) and `components/review/example-sentences.tsx` (the cited words on a card
+  back). PLAN.md's rule is that the learner's own data keeps working without a dictionary, so gating
+  Practice to open one would be the wrong fix. They open it where they use it. Without this, a
+  learner who went straight to Practice got "the dictionary is not open" on every card back — and the
+  first `pnpm e2e` run of this phase failed exactly there, which is how it was found.
+- **`dict-gate.tsx` swallows `open()`'s rejection, in two places, and nowhere else does.**
+  `SqliteDictStore.open()` rejects on failure; the HTTP bridge it replaced did not. `void
+  store.open()` on a rejecting promise is an unhandled rejection, which fails a Playwright run on a
+  page error. Nothing is lost: the failure is already on `status`, with its reason, which is what the
+  component renders.
+- **`window.__tangram` gained `dict` and `decomp`.** Two e2e specs read an entry's HSK band to decide
+  whether the learner should already know it, and they did it by fetching the entries route. They ask
+  the store now. Both are getters, so nothing is constructed — and no 43 MB import started — unless a
+  spec asks.
+- **`examplesFor` and `supportEntries` take a `DictStore` and are asynchronous.** `supportEntries`
+  needed one thing a `DictStore` does not offer: "every row under this simplified headword", which
+  was `index.bySimp.get(word)`. The frozen interface asks questions a learner asks and an index is
+  not one, so `readingsOf()` takes them from the exact-match groups of a hanzi search, across groups
+  rather than from one — 后 is 后|后 *and* 後|后, and the caller's rule reads the count across both.
+  No expected value in `examples-route.test.ts` changed.
+- **`lib/ai/retrieve.ts` gained `withStoreContext`, and `groundWithStore` is now three lines over
+  it.** `app/api/examples/route.ts` calls `groundExamples()`, which takes the same synchronous
+  `GroundContext` and applies the card-back rules on top, so D6 needed the fixed point twice.
+  Copying it into the route would have meant two loops that have to agree about convergence.
+  The seam is still entirely on `retrieve.ts`'s side, which is D3's rule and the reason
+  `tests/unit/ai/` did not move.
+
+  **A note for whoever merges this against `wave-zero.md` §5's `packages/ai/` move.** The brief
+  named three files as being in both sets — `components/lookup/ask-panel.tsx`,
+  `components/review/example-sentences.tsx` and `lib/ai/examples.ts` — and in those three D6 changed
+  only the dictionary call sites and no `@/lib/ai/` import path. D6 also touched three more
+  `lib/ai/**` modules that the move will relocate: `retrieve.ts` (the `withStoreContext` extraction
+  above) and a one-line stale-comment fix each in `ground.ts` and `examples.ts`. All of it is
+  content inside the file, none of it is an import path or a file location, so a rename-aware merge
+  carries it; flagged here because it is three files more than the brief expected.
+- **`lib/server/dict.ts` imports the Node runner lazily.** A static import puts `node:sqlite` in the
+  module graph of anything that names a route handler, and `tests/unit/server/access.test.ts` runs in
+  **jsdom** — it is about the browser's half of the gate — and imports all three routes to prove they
+  refuse a request without the header. Vite refuses to bundle a Node built-in for a browser
+  environment, so the static form failed that suite at import time, before an assertion ran.
+- **`scripts/smoke.ts` has a hard-coded `SMOKE_ENTRY_ID`, and the trade is stated at the constant.**
+  The deleted search case ran first and stashed a real id from *this* build, which is better than a
+  constant a CC-CEDICT snapshot could stop containing. There is no HTTP endpoint left that can answer
+  "give me an id" — the dictionary is on the client. So: `你好|你好[ni3 hao3]`, the most stable
+  headword in the corpus, and both routes' `entry-not-found` is checked by name so the failure says
+  which constant to change rather than looking like a broken route.
+- **`lib/dict/search.ts` and `lib/dict/segment.ts` survive as vocabulary and as the shared DP.**
+  `store.ts` is a frozen surface and types `DictStore.search` against `SearchResult` and
+  `SearchOptions` from `search.ts`, so the file cannot move: the freeze is on the shape and the shape
+  lives at that path. `segment.ts` keeps `planSegments`/`attachIds`/`segmentWith` — D3 inverted them
+  and `lib/dict/sqlite-store.ts` drives them on every platform.
+- **`tests/unit/dict/index.test.ts` stayed.** Its subject is now a build-side module, and a wrong
+  index there is a wrong artifact on every platform, so it is worth more than it was.
+  `tests/unit/dict/routes.test.ts` went with its routes; `parseIdList`'s cases moved to a new
+  `rank.test.ts`, which is what D6's disposition table asks for.
+  `tests/unit/server/cold-start.test.ts` went — but **not for the reason D6 gives**, and two of its
+  three describe blocks came back as `tests/unit/dict/fast-paths.test.ts`. See "What I found wrong".
+- **`vite-plugins/dict-assets.ts` stayed.** D4 said it "can be deleted in the same commit" as
+  `web.md` W2, and W2 has landed, so it already stands down — it checks `public/` and calls `next()`.
+  Its one edit here is the `dataDir` import. Deleting it is W2's or D4's call, not D6's, and it is
+  still doing something useful: `pnpm data` run against a live dev server is served from `data/`
+  without a restart.
+
+- **The `absent` screen is still unreachable, the machinery to reach it is built and unused, and
+  that is a product question I am handing over rather than answering.** `<DictGate>`'s mount calls
+  `store.open()`. Before D6 that was one HSK query against a route; after D6 the same line means a
+  **14 MB brotli download, started without asking**. The repository holds three intentions and they
+  do not agree: `components/dict/dict-status.tsx` was drawn with an `absent` state carrying the
+  size and a button, which reads as an explicit ask; `data.md` D4 specifies a determinate progress
+  bar in front of "a 43 MB first load", which reads as automatic; and
+  `tests/e2e/smoke.spec.ts`'s "no gate when the dictionary answers" pins that a learner who has it
+  sees no gate at all. Choosing between them is not a builder's call mid-phase, so D6 kept the
+  behaviour the code already had. **What D6 did build is the one line that would change it**:
+  `WasmDictStoreHandle.openStored()` opens only if this origin already has the artifact and
+  fetches nothing (resolving to `absent` when there is nothing stored — that is a state, not an
+  error), and `download()` is the full open. Wiring the ask is `openStored()` at the mount and
+  `download()` in the button's `onStart`. The headers of `components/dict/dict-gate.tsx` and
+  `lib/dict/browser-store.ts` both point here. It is dead code until somebody spends that line,
+  deliberately and with the reason written down, rather than a half-built feature nobody documented.
+- **`supportEntries` loses the 274 CC-CEDICT headwords that contain no CJK, and this is a frozen
+  surface I am not touching.** `readingsOf()` reaches "every row under this simplified headword"
+  through `DictStore.search`, which routes on whether the query contains CJK; `OK`, `3Q`, `ACG`,
+  `110` and `%` therefore go down the English/pinyin path and never match themselves exactly.
+  Measured against the built artifact, not reasoned about: `X光` and `卡拉OK` resolve fine, `OK` and
+  `ACG` resolve to nothing. Closing it needs a `bySimp`-shaped question on `DictStore`, which
+  `data.md` D1's first commit froze, so per CLAUDE.md the need is written here and the build
+  continued without it. **The need, stated for whoever unfreezes it:** a `headword(simp)` that
+  answers every entry under one simplified form, which `entries_simp` already indexes. The cost of
+  not having it is bounded and stated at `readingsOf`'s doc comment: the `headwords` pool is lossy
+  by design already (it skips any headword with more than one reading), and none of the 274 is a
+  word an example sentence leans on.
+
+### What I found wrong
+
+- **D6's acceptance criterion 1 cannot hold as written, and the reason is that the repository grew a
+  second and third deployable after the criterion was.** It says
+  `grep -r "api/dict" --include=*.ts --include=*.tsx` returns nothing outside history.
+  `packages/ai/schemas.ts` — a **frozen** surface — cites the deletion in its header, and
+  `apps/server/src/routes/table.ts` and two of its tests assert that asking the server for one of
+  those paths is a 404 rather than a 401, which `wave-zero.md` §10a requires and which cannot be
+  written without the string. The criterion's substance is enforced over `apps/app`, by
+  `tests/unit/dict/client-callers.test.ts`, with the scope written into its header. Comments count,
+  which is the right reading: a comment pointing at a route that does not exist is how the next
+  session learns something false.
+- **D6's criterion 2 names four exemptions for `node:fs` and the tree needs five.** `scripts/`,
+  `tests/`, `lib/server/` and `lib/dict/runners/node.ts` are the four; `vite-plugins/**` is the
+  fifth, and it is the build itself, which runs in Node by definition. (`lib/dict/runners/node.ts`
+  does not actually import `node:fs` at all — it imports `node:sqlite`. The exemption list was
+  written against a runner that did.) The test asserts them and says why. No root `*.config.ts`
+  needs one, which was checked rather than assumed.
+- **D6's disposition table says `lib/dict/load.ts` and `lib/dict/index.ts` are "deleted with the
+  routes".** They cannot be, because `pnpm data` is built on them — see above. The disposition that
+  is actually available is "moved out of the application", and the table should say so.
+- **D6's "the `/api/dict/*` entries in `scripts/smoke.ts`" is not a pure subtraction.** Removing the
+  search case removes the only producer of `SmokeContext.entryId`, which two surviving cases consume.
+  Somebody following the table literally gets two 400s.
+- **`data.md` D4's Files list is still wrong about `lib/dict/decomp-store.ts`** — D4's own HANDOFF
+  section records it, and it is worth repeating only because D6 is the phase that made
+  `lib/dict/decomp-json.ts` live.
+- **`docs/deploy.md` documents a Next app**, as STACK §5.8 already says. Nothing in it names the
+  dictionary routes, so D6 leaves it alone; the rewrite is `web.md` W2's.
+
+### What the adversarial review caught
+
+Two reviewers read the diff cold and in parallel — one against D6's five acceptance criteria one at
+a time, one asking only "what breaks that no test covers". Each finding below was reproduced before
+it was acted on; several others did not survive that check and are not listed. Two of these were
+real bugs in shipped behaviour and one was a test that could not fail.
+
+- **The dictionary could not open offline from a cold start, which is acceptance criterion 3, and
+  nothing asserted it.** `wasmRunner` fetched `dict-manifest.json` *before* touching OPFS, so with
+  the network down the fetch rejected and the run never reached the file already sitting in the
+  pool. D4 measured "a reload re-opens with zero network bytes" — but online, with a manifest the
+  network was there to serve. Fixed: `fetchManifest` returns `DictManifest | null` (null on a
+  network reject; it still throws on a bad status or bad JSON, which are different failures), and
+  with a null manifest `wasm-worker.ts` opens the single file matching `ARTIFACT_PATTERN` already
+  in the pool, skips the `dict_version` cross-check it has nothing to check against, synthesises
+  the manifest from the pooled name, and **refuses the in-memory rung** — an empty in-memory
+  database that reports `ready` is worse than saying there is no dictionary.
+  `tests/e2e/d/dict-offline.spec.ts` is the criterion, written before the fix and failing on it:
+  three cases, each reloading with the network already down, covering the four things criterion 3
+  names, the no-re-fetch claim, and the nothing-stored-and-no-network case — which is CLAUDE.md's
+  *missing data is a banner, not a crash*, asserted on the screen.
+- **`tests/unit/server/cold-start.test.ts` was deleted on a false premise, and D6 supplies the
+  premise.** The disposition table permits the deletion "**only** because D1 already carries its
+  two load-bearing properties … re-asserted against the artifact". It does not.
+  `scripts/verify-data.ts` computes what it expects from the artifact's `py_toneless`/`py_toned`
+  columns and its `gloss_fts` posting lists with `readingKeys(…) ?? normalizePinyin(…)` and
+  `glossTokens(gloss)` — the *same expressions* `scripts/build-data.ts` wrote them with. Both sides
+  are the function under test, so it can catch a SQL or insert bug and can never catch a wrong
+  `readingKeys`. Deleting those two cases would have left a change to either function green through
+  `pnpm test`, green through `pnpm data:verify`, and wrong in the artifact on every platform.
+  Restored as `tests/unit/dict/fast-paths.test.ts`, beside the functions they are about rather than
+  beside a cold start they have nothing to do with, and still live differentials over the whole
+  124k-entry dictionary via `json-oracle.ts`. Mutation-tested twice to prove they can fail. The
+  third describe block did die with `LazyDictIndex`, exactly as D6 says.
+- **A golden fixture had been weakened into a test that could not fail.** The pinyin-key assertion
+  checked containment against the twenty *head* keys of the frozen list — which the frozen `head`
+  field supplies — so a store that lost 90% of its pinyin index would still have passed. Replaced
+  with the full `expectFrozenList` (count, head and the ordered digest) that the hanzi side already
+  used; mutation-tested by reversing the scan order, which now produces five failures.
+- **A second fixture lookup fell through to "nothing lost".** `gloss.test.ts`'s 200-query
+  differential read `goldenSearch.gloss[query]`, and a query with no frozen answer became an empty
+  expected set — nothing lost, nothing to explain, case green with no oracle at all, which is the
+  exact failure D6's freeze exists to stop. It now asserts the answer is defined, naming the query.
+- **`scripts/smoke.ts` carried guidance that could never run.** The doc comment promised a `must()`
+  inside the two model cases' `expect` callbacks to say which constant to change. `runSmoke` pushes
+  a failure and `continue`s on any non-2xx **before** `expect` is reached, so those guards were
+  unreachable by construction. Removed, and the comment now says what actually happens: the route
+  names the id it could not find in its own `entry-not-found` body.
+- **`closeServerDictStore()` had a race that could leak a `DatabaseSync` handle.** It cleared
+  `held.store` and *then* awaited the in-flight open, whose own `held.store = store` then landed
+  after the clear — an open connection with nothing holding it. Reordered: await the pending
+  attempt first (catching its rejection, since a failed attempt has nothing to close), then take
+  and clear.
+- **`tests/e2e/core/one-session.spec.ts` was flaky on this branch and green on the base, and the
+  branch was not at fault.** `answer()` returned before the card back unmounted, so the next
+  `currentCard()` could read the card just graded. It only started failing here because the
+  device-side store answers faster than the HTTP bridge did and closed the window the test had been
+  winning by accident. Fixed by making `answer()` wait for the card back to leave (`card-back`
+  count 0) and bounding `currentCard()`. An unrelated `sed` had also flipped that file's *second*
+  test's deliberate rating of 4 to 3; restored.
+- **Two comments named routes that no longer exist**, in files this phase itself wrote or edited:
+  `scripts/dict-json.ts` explained its laziness in the present tense as a per-route serverless cold
+  start, and `lib/lists/entry-source.ts` told the next reader that its HSK-band scan is the fallback
+  "for the case the store cannot answer (no dictionary on device)". The second was the more
+  expensive: with one dictionary implementation left, the scan reads the *same* store the search
+  just failed on, so it cannot rescue that case at all — `search` rejects, and
+  `components/lists/word-search.tsx` catches it and shows the reason. That is the better answer
+  ("the dictionary is not on this device yet" is actionable where an empty box reads as "no such
+  word"), so the behaviour stands and the comment now says what the scan does still cover: a store
+  that opens and then fails this one query.
+
+### Gates
+
+`pnpm lint`, `pnpm typecheck`, `pnpm build`, `pnpm test`, `PORT=3000 pnpm preview` + `pnpm smoke`
+and `PORT=3000 pnpm e2e` — all green, 265 Playwright tests. Two ordering facts, both learned by
+getting them wrong:
+
+- **Run `pnpm build` before `pnpm test`.** Several guards assert the bytes in `apps/app/public/`.
+- **Stop the preview server before running `pnpm e2e`.** `playwright.config.ts` sets
+  `reuseExistingServer: true`, and its own `webServer` command is `build:e2e && preview` — the
+  `--mode e2e` build is the only one that puts `/gallery` in the bundle. A plain `pnpm preview`
+  left listening on `$PORT` from the smoke step is reused as-is, and every gallery-driven spec then
+  fails against a route that is not in that build. It reads exactly like a regression in the gate
+  component and is not one.
+
+`pnpm data` and `pnpm data:verify` were re-run from an empty `data/` after the move, and the
+artifact's sha256 is unchanged — `685ecf4c5be76933e3fdbe8a5abaae6db9774147d29e7a1b0e910f55d8a65f58`,
+byte for byte what D1 built. That is the evidence that moving the index out of the app changed
+nothing about the data, and it is also D1's reproducibility criterion holding across a refactor.

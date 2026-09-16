@@ -304,6 +304,17 @@ export async function supportEntries(
  * both. The limit is 200 because the exact matches lead the page and no
  * headword has anything near that many readings; prefix matches are dropped by
  * the `simp === word` filter.
+ *
+ * **One thing `bySimp` answered that this cannot**, measured rather than
+ * assumed: `DictStore.search` routes on whether the query contains CJK, so the
+ * 274 CC-CEDICT headwords that contain **none** — `OK`, `3Q`, `ACG`, `110`, `%`
+ * — go down the English/pinyin path and never match themselves exactly. A
+ * mixed headword (`X光`, `卡拉OK`) is fine; a wholly Latin one resolves to
+ * nothing and is skipped. Reaching them would need a `bySimp`-shaped question
+ * on the frozen `DictStore` interface, which CLAUDE.md says a builder does not
+ * add mid-phase, so the need is recorded in HANDOFF.md under D6 and the gap is
+ * taken: it costs one Latin abbreviation out of a support pool that is already
+ * lossy by design, and none of the 274 is a word an example sentence leans on.
  */
 async function readingsOf(store: DictStore, word: string): Promise<Entry[]> {
   const result = await store.search(word, { limit: 200 });

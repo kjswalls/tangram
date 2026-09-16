@@ -161,14 +161,17 @@ function toSorted(groups: Map<string, EntryId[]>): SortedIndex {
 /**
  * The indexes, each built the first time something asks for it.
  *
- * Laziness is here for one reason: on Vercel every route is its own function
- * with its own process, so each one pays its own cold start, and the eager
- * build made all of them pay for all seven indexes. `/api/dict/hsk` — the very
- * first request the app makes, behind the Today page — was building the
- * 47,000-key English inverted index it will never read. Measured on the build
- * box: 3.9 s eager for every route; 1.0 s for `hsk` and `entries`, 1.3 s for
- * `segment`, 2.1 s for `search`, now that each pays only for what it touches
- * (docs/deploy.md carries the table).
+ * Laziness arrived for a reason that has since gone away, and it is kept for a
+ * smaller one. **Then:** every dictionary route was its own serverless function
+ * with its own process, each paying its own cold start, and an eager build made
+ * all of them pay for all seven indexes — the band request behind the Today
+ * page was building a 47,000-key English inverted index it would never read
+ * (3.9 s eager per route; 1.0–2.4 s once each paid only for what it touched;
+ * docs/deploy.md carries the table). **Now:** `data.md` D6 deleted those routes
+ * and this file's only callers are `scripts/build-data.ts`,
+ * `scripts/verify-data.ts` and the unit oracle, all of which run once in one
+ * process. The laziness stays because the oracle reads two indexes out of
+ * seven and building the other five would be ten seconds of every unit run.
  *
  * The getters are the whole mechanism, and they are why nothing above this file
  * changed: `index.byGloss` still reads like a field. `#ordered` is shared
@@ -177,11 +180,19 @@ function toSorted(groups: Map<string, EntryId[]>): SortedIndex {
  * It is memoised per process by `dictCache()`, so within one warm process this
  * is paid at most once per index.
  */
-export const DICT_INDEX_PARTS = ['sorted', 'entries', 'hanzi', 'pinyin', 'gloss', 'hsk'] as const;
-
-/** One lazily-built piece of `DictIndex`. See `builtIndexParts()`. */
-export type DictIndexPart = (typeof DICT_INDEX_PARTS)[number];
-
+/**
+ * The index is still built lazily, and that is no longer a *measured* property.
+ *
+ * `DICT_INDEX_PARTS` and `builtIndexParts()` existed so that
+ * `tests/unit/server/cold-start.test.ts` could walk a fresh cache through one
+ * route's work at a time and check that nothing else was built — laziness
+ * mattered because a server paid it on every cold start. `data.md` D6 deleted
+ * that suite with the routes it was about, and this module is build-side now:
+ * `pnpm data` builds every part it needs in one run, and nothing measures the
+ * order. The getters stay lazy because `tests/unit/dict/json-oracle.ts` reaches
+ * for `bySimp` in jsdom suites that have no use for `byGloss`, and building
+ * 47,125 posting lists for them would be seconds per file.
+ */
 class LazyDictIndex implements DictIndex {
   #ordered?: DictEntry[];
   #entries?: Map<EntryId, DictEntry>;
@@ -191,25 +202,6 @@ class LazyDictIndex implements DictIndex {
   #byPinyinToned?: SortedIndex;
   #byGloss?: Map<string, EntryId[]>;
   #byHsk?: Map<HskBand, EntryId[]>;
-
-  /**
-   * Which parts have actually been built, in `DICT_INDEX_PARTS` order.
-   *
-   * Diagnostics, and the only way laziness can be *tested* rather than
-   * asserted: `tests/unit/server/cold-start.test.ts` walks a fresh cache
-   * through one route's work at a time and checks that nothing else was built.
-   * A property nobody can observe is a property that quietly stops holding.
-   */
-  builtParts(): DictIndexPart[] {
-    return [
-      ...(this.#ordered ? (['sorted'] as const) : []),
-      ...(this.#entries ? (['entries'] as const) : []),
-      ...(this.#bySimp ? (['hanzi'] as const) : []),
-      ...(this.#byPinyinToneless ? (['pinyin'] as const) : []),
-      ...(this.#byGloss ? (['gloss'] as const) : []),
-      ...(this.#byHsk ? (['hsk'] as const) : []),
-    ];
-  }
 
   /** Every entry in the order every index wants: frequency first. */
   get #sorted(): DictEntry[] {
@@ -336,15 +328,6 @@ export function getDictIndex(): DictIndex {
   const cache = dictCache();
   cache.index ??= new LazyDictIndex();
   return cache.index as DictIndex;
-}
-
-/**
- * Which index parts this process has built so far — `[]` before anything has
- * asked for one. Diagnostic only; nothing in the app branches on it.
- */
-export function builtIndexParts(): DictIndexPart[] {
-  const cached = dictCache().index;
-  return cached instanceof LazyDictIndex ? cached.builtParts() : [];
 }
 
 /** `meta.version` of the loaded snapshot — what a card records as its `dictVersion`. */

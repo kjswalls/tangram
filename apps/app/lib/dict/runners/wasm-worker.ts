@@ -154,7 +154,7 @@ function narrow(key: string, value: WasmSqlValue): SqlValue {
  * of the `SELECT` and lands here as `corrupt`, which is what a foreign database
  * is.
  */
-function validate(connection: Database, manifest: DictManifest): void {
+function validate(connection: Database, manifest: DictManifest | null): void {
   /**
    * Read and check one value at a time, in cheapest-first order.
    *
@@ -188,9 +188,19 @@ function validate(connection: Database, manifest: DictManifest): void {
     "SELECT value FROM meta WHERE key = 'dict_version'",
     'meta.dict_version',
   );
-  if (dictVersion !== manifest.dictVersion) {
+  // The third check needs something to check against. With no manifest — the
+  // offline re-open — the row is still read, because reading it is what proves
+  // there is a `meta` table at all, but there is nothing to compare it to: the
+  // file came out of this origin's own pool under a name only a successful
+  // import writes. `application_id` and `user_version` above still hold.
+  if (manifest && dictVersion !== manifest.dictVersion) {
     fail(`meta.dict_version is ${String(dictVersion)}, the manifest says ${manifest.dictVersion}`);
   }
+}
+
+/** The `dict_version` this connection reports, for a synthesised manifest. */
+function readDictVersion(connection: Database): string {
+  return String(connection.selectValue("SELECT value FROM meta WHERE key = 'dict_version'") ?? '');
 }
 
 /** `SQLite format 3\0` — the first sixteen bytes of every SQLite database. */
@@ -351,8 +361,8 @@ async function installWithRetry(runtime: Sqlite3Static): Promise<SAHPoolUtil> {
 
 /** The OPFS rung. Returns `undefined` when the pool itself is unavailable. */
 async function openOnOpfs(
-  manifest: DictManifest,
-  url: string,
+  manifest: DictManifest | null,
+  url: string | null,
 ): Promise<
   { db: Database; downloaded: number; imported: boolean; transfer: TransferTiming | null } | undefined
 > {
@@ -367,6 +377,24 @@ async function openOnOpfs(
     return undefined;
   }
 
+  if (!manifest) {
+    // No manifest, so no name to look for and nothing to import: open the one
+    // artifact this origin already has. More than one cannot normally exist —
+    // the sweep below unlinks the others on a version bump — and if somehow two
+    // do, guessing between them is worse than saying so.
+    const pooled = pool.getFileNames().filter((file) => ARTIFACT_PATTERN.test(file));
+    if (pooled.length !== 1) {
+      releasePool();
+      throw new WorkerOpenError(
+        'download',
+        pooled.length === 0
+          ? 'the dictionary manifest could not be fetched and there is no dictionary in this browser yet'
+          : `the dictionary manifest could not be fetched and this browser holds ${pooled.length} dictionaries`,
+      );
+    }
+    return openPooled(pooled[0]);
+  }
+
   const name = `/${manifest.file}`;
   const present = pool.getFileNames().includes(name);
   let downloaded = 0;
@@ -378,7 +406,7 @@ async function openOnOpfs(
       if (existing !== name && ARTIFACT_PATTERN.test(existing)) pool.unlink(existing);
     }
     try {
-      ({ downloaded, transfer } = await importArtifact(pool, name, url, manifest));
+      ({ downloaded, transfer } = await importArtifact(pool, name, url as string, manifest));
     } catch (error) {
       // Whatever the reason, this worker is done with the pool: either the
       // caller falls to the in-memory rung or the open fails outright. Holding
@@ -410,6 +438,41 @@ async function openOnOpfs(
     throw error;
   }
   return { db: connection, downloaded, imported: !present, transfer };
+}
+
+/**
+ * Open a file the pool already holds, with no manifest to check it against.
+ *
+ * Separate from the branch above rather than folded into it, because the two
+ * differ in what happens when the file is bad: an imported file that fails
+ * `validate` is unlinked, so the next load re-downloads it; this one is
+ * unlinked too, and the difference is that there is nothing to re-download
+ * from until the network is back. Both say `corrupt`, which is the honest
+ * answer either way.
+ */
+async function openPooled(
+  name: string,
+): Promise<{ db: Database; downloaded: number; imported: boolean; transfer: TransferTiming | null }> {
+  const held = pool as SAHPoolUtil;
+  let connection: Database;
+  try {
+    connection = new held.OpfsSAHPoolDb(name);
+  } catch (error) {
+    held.unlink(name);
+    releasePool();
+    throw new WorkerOpenError('corrupt', `the stored dictionary would not open: ${String(error)}`, {
+      cause: error,
+    });
+  }
+  try {
+    validate(connection, null);
+  } catch (error) {
+    connection.close();
+    held.unlink(name);
+    releasePool();
+    throw error;
+  }
+  return { db: connection, downloaded: 0, imported: false, transfer: null };
 }
 
 /**
@@ -534,7 +597,11 @@ async function openInMemory(
   return { db: connection, downloaded: received, imported: true, transfer };
 }
 
-async function open(manifest: DictManifest, url: string, forceMemory: boolean): Promise<OpenReport> {
+async function open(
+  manifest: DictManifest | null,
+  url: string | null,
+  forceMemory: boolean,
+): Promise<OpenReport> {
   const runtime = await boot();
   let result:
     | { db: Database; downloaded: number; imported: boolean; transfer: TransferTiming | null }
@@ -542,8 +609,9 @@ async function open(manifest: DictManifest, url: string, forceMemory: boolean): 
   let mode: 'opfs' | 'memory' = 'opfs';
 
   if (forceMemory) {
+    if (!manifest) throw new WorkerOpenError('download', 'the in-memory rung needs a manifest to fetch');
     mode = 'memory';
-    result = await openInMemory(manifest, url);
+    result = await openInMemory(manifest, url as string);
   } else {
     try {
       result = await openOnOpfs(manifest, url);
@@ -563,13 +631,31 @@ async function open(manifest: DictManifest, url: string, forceMemory: boolean): 
       // Whatever went wrong, this worker is not going to use the pool, and
       // holding its handles is what stops the *next* tab getting the OPFS rung.
       releasePool();
+      if (!manifest) {
+        // Rung (a) fetches 43 MB. With no manifest there is no network to fetch
+        // it from, and "opfs-sahpool is unavailable" offline is simply no
+        // dictionary — said plainly rather than after a failed download.
+        throw new WorkerOpenError(
+          'download',
+          'the dictionary manifest could not be fetched and this browser has no storage to read one from',
+        );
+      }
       mode = 'memory';
-      result = await openInMemory(manifest, url);
+      result = await openInMemory(manifest, url as string);
     }
   }
 
   db = result.db;
-  opened = { manifest, name: `/${manifest.file}` };
+  // With no manifest the file is its own description: the name it is stored
+  // under is `dict-<schema>-<cedict>.sqlite`, and the version is in `meta`.
+  const resolved: DictManifest = manifest ?? {
+    file: (pool as SAHPoolUtil).getFileNames().filter((f) => ARTIFACT_PATTERN.test(f))[0].slice(1),
+    bytes: 0,
+    sha256: '',
+    schemaVersion: SCHEMA_VERSION,
+    dictVersion: readDictVersion(result.db),
+  };
+  opened = { manifest: resolved, name: `/${resolved.file}` };
   evicted = false;
   return {
     mode,

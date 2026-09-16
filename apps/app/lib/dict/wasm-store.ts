@@ -32,6 +32,24 @@ export interface WasmDictStoreOptions
 
 export interface WasmDictStoreHandle {
   store: SqliteDictStore;
+  /**
+   * Open **only if this origin already has the dictionary**, fetching nothing.
+   *
+   * The two-phase open `components/dict/dict-status.tsx` was drawn for: a
+   * learner who has the artifact gets it back silently on every later visit,
+   * and a learner who does not is left in `absent` — the screen with the size
+   * on it and a button — rather than having 14 MB pulled down for them. It
+   * resolves either way and never rejects: "there is nothing stored" is a
+   * state, not an error.
+   *
+   * `data.md` D6 is why this exists. Before it, `<DictGate>`'s mount-time
+   * `open()` was one HSK query against a route; after it, the same line meant
+   * the whole artifact, which made `absent` unreachable and the silent download
+   * the default the component's own header calls hostile.
+   */
+  openStored(): Promise<void>;
+  /** The full open: fetch the manifest, import, and report progress. */
+  download(): Promise<void>;
   /** The runner behind the current open — `integrityCheck()`, `evict()`, `report`. */
   runner(): WasmSqlRunner | undefined;
   /** Resolves once a recovery started by an eviction has finished. */
@@ -54,11 +72,24 @@ export function createWasmDictStore(options: WasmDictStoreOptions = {}): WasmDic
   let current: WasmSqlRunner | undefined;
   let recovery: Promise<void> | undefined;
   let disposed = false;
+  /**
+   * Which kind of open the next `connect` is for.
+   *
+   * A flag rather than a second store, because `SqliteDictStore` memoises one
+   * connection and one status and the learner has one dictionary. `openStored`
+   * sets it and clears it again in its own `finally`, so **every other open is
+   * a full one** — including the eviction recovery below, deliberately:
+   * re-downloading after an eviction is what `data.md` D4's recovery is for,
+   * and asking again would be asking twice for something the learner has
+   * already said yes to.
+   */
+  let storedOnly = false;
 
   const store = new SqliteDictStore({
     ...(options.cacheSize === undefined ? {} : { cacheSize: options.cacheSize }),
     connect: async (context) => {
       const runner = await wasmRunner({
+        storedOnly,
         ...(options.manifestUrl === undefined ? {} : { manifestUrl: options.manifestUrl }),
         ...(options.artifactUrl === undefined ? {} : { artifactUrl: options.artifactUrl }),
         ...(options.forceMemory === undefined ? {} : { forceMemory: options.forceMemory }),
@@ -108,6 +139,24 @@ export function createWasmDictStore(options: WasmDictStoreOptions = {}): WasmDic
 
   return {
     store,
+    async openStored() {
+      if (store.status.state === 'ready') return;
+      storedOnly = true;
+      try {
+        await store.open();
+      } catch {
+        // Nothing stored, so nothing is wrong: put the store back to `absent`,
+        // which is the screen that asks. `close()` is what sets it, and it also
+        // releases whatever the failed attempt held.
+        await store.close().catch(() => undefined);
+      } finally {
+        storedOnly = false;
+      }
+    },
+    async download() {
+      storedOnly = false;
+      await store.open();
+    },
     runner: () => current,
     settled: async () => {
       await recovery;

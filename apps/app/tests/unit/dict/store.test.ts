@@ -609,7 +609,6 @@ describe('pinyin search — the section matches the JSON one', () => {
     expect(fromStore.route).toBe(frozen.route);
     const mine = sectionOf(fromStore, 'pinyin');
     const mineKeys = mine.map((group) => group.key);
-    const theirKeys = frozen.pinyinKeys.head;
 
     // The store's pinyin CANDIDATE set is fully determined — the exact tiers plus
     // the 600 lowest-rowid prefix matches — but the pinyin SECTION is not the
@@ -639,13 +638,18 @@ describe('pinyin search — the section matches the JSON one', () => {
       return;
     }
 
-    // Containment against the frozen answer. This is the assertion the LIMIT-1
-    // mutation fails immediately. `frozen.pinyinKeys.head` is the first twenty
-    // keys the JSON router returned, in its order; under the cap the store must
-    // still hold all of them, in the same relative order.
-    const missing = theirKeys.filter((key) => !mineKeys.includes(key));
-    expect(missing, `${query}: the store lost groups the JSON index found`).toEqual([]);
-    expect(mineKeys.filter((key) => theirKeys.includes(key))).toEqual(theirKeys);
+    // Under the cap the store must answer exactly what the JSON router
+    // answered — every key, in its order, digested over the whole list.
+    //
+    // The old assertion here was **containment plus relative order**, because
+    // the JSON side ran an English section alongside the pinyin one and
+    // `dedupe` gave a headword to whichever ranked it higher, making the JSON's
+    // pinyin section a subset of the store's. Since D3 both sides run both
+    // sections, so the two are equal and the stronger claim is available; an
+    // adversarial reviewer caught this file asserting containment against the
+    // frozen list's first twenty keys and never reading its count or digest,
+    // which is a weaker test than the one it replaced.
+    expectFrozenList(mineKeys, frozen.pinyinKeys, `pinyin ${query}`);
   });
 
   it('orders a group’s readings by frequency where the JSON index orders them by key', async () => {

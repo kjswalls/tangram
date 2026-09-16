@@ -66,21 +66,49 @@ async function statesAtStart(page: Page): Promise<Record<string, number>> {
   });
 }
 
-async function currentCard(page: Page, atStart: Record<string, number>): Promise<Seen> {
+async function currentCard(page: Page, atStart: Record<string, number>): Promise<Seen | null> {
   const card = page.getByTestId('review-card');
-  await expect(card).toBeVisible({ timeout: 30_000 });
-  const id = (await card.getAttribute('data-card-id'))!;
-  const direction = (await card.getAttribute('data-direction')) as 'recognition' | 'production';
-  // A new word is new whichever way round it is asked, so `New` wins over the
-  // direction attribute.
-  return { kind: atStart[id] === 0 ? 'new' : direction, id, state: atStart[id] };
+  // **Bounded, and `null` rather than a throw when the card is gone.**
+  // `hasCard()` and this are two reads of a moving screen: grading the last card
+  // swaps the card for the completion state, so between the two the element can
+  // detach. `getAttribute` then waits for it to come back — which it never does
+  // — and the failure is a 180-second timeout pointing at line 72 instead of the
+  // assertion below saying which kind was missing. The walk treats a vanished
+  // card the way it already treats a vanished grade control: it ends.
+  try {
+    await expect(card).toBeVisible({ timeout: 15_000 });
+    const id = await card.getAttribute('data-card-id', { timeout: 5_000 });
+    const direction = await card.getAttribute('data-direction', { timeout: 5_000 });
+    if (id === null || direction === null) return null;
+    // A new word is new whichever way round it is asked, so `New` wins over the
+    // direction attribute.
+    return {
+      kind: atStart[id] === 0 ? 'new' : (direction as 'recognition' | 'production'),
+      id,
+      state: atStart[id],
+    };
+  } catch {
+    return null;
+  }
 }
 
-/** Reveal and grade, whichever of the two card shapes is on screen. */
+/**
+ * Reveal and grade, whichever of the two card shapes is on screen — and **do not
+ * return until the screen has moved on**.
+ *
+ * The last line is the load-bearing one. Clicking a grade starts a write and a
+ * re-render; until the card back is gone, the next read of `review-card` can
+ * still see the card just graded. The walk then records the same card twice,
+ * burns a step, and ends having met two kinds — a failure that reads as "the
+ * session never offered a new word" and is nothing of the sort. A step is over
+ * when the back is gone, and the screen then shows either the next card's front
+ * or the completion state, which are the only two things the walk understands.
+ */
 async function answer(page: Page, rating: 3 | 4): Promise<void> {
   await page.getByTestId('reveal').click({ timeout: 10_000 });
   await expect(page.getByTestId('card-back')).toBeVisible();
   await page.getByTestId(`grade-${rating}`).click();
+  await expect(page.getByTestId('card-back')).toHaveCount(0, { timeout: 30_000 });
 }
 
 /** Is the session still offering a card? */
@@ -153,7 +181,9 @@ test.describe('the Practice tab is one session', () => {
     for (let step = 0; step < 40 && kinds().size < 3; step += 1) {
       urls.add(new URL(page.url()).pathname);
       if (!(await hasCard(page))) break;
-      seen.push(await currentCard(page, atStart));
+      const card = await currentCard(page, atStart);
+      if (!card) break;
+      seen.push(card);
       if (kinds().size === 3) break;
       // The session can end under the loop — grading the last card swaps the
       // card for the completion state — so a vanished control ends the walk

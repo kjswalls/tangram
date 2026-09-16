@@ -29,8 +29,32 @@ import type { DictStatus, DictStore } from '@/lib/dict/store';
  * The store's status, live.
  *
  * Subscribes before reading, so a status that changes between the two is not
- * lost — `open()` resolves in a microtask and a read-then-subscribe would miss
+ * lost — the open resolves in a microtask and a read-then-subscribe would miss
  * a store that was already warm.
+ *
+ * **A silent 14 MB download is what the mount now means, and that is an open
+ * question rather than a decision.** Until `data.md` D6 this call was
+ * `HttpDictStore.open()` — one HSK query against a route, the cheap successor to
+ * the old `HEAD` banner probe. D6 pointed the app at the OPFS store, so the same
+ * line came to mean *download the artifact*, and the `absent` screen below —
+ * the one with the size on it and a start button, which
+ * `components/dict/dict-status.tsx` says exists because "a silent 14 MB download
+ * on a metered connection is a hostile default" — stopped being reachable on the
+ * web: the effect moves the store to `preparing` on the first render.
+ *
+ * D6 did **not** change it, and the reason is that the repository contains both
+ * intentions and resolving them is not a builder's call. `dict-status.tsx` and
+ * `tests/e2e/core/dict-states.spec.ts` say `absent` is an explicit ask; D4 built
+ * a determinate progress bar *for a 43 MB first load*, which reads as a download
+ * that starts on its own; and `tests/e2e/smoke.spec.ts`'s "no gate when the
+ * dictionary answers" asserts a first visit shows no gate at all. The `absent`
+ * screen may also be aimed at the native first-launch copy (`asset-absent`,
+ * `ios.md` register #18), where a start affordance is unambiguous.
+ *
+ * The machinery to implement the ask exists and is one line:
+ * `getDictHandle().openStored()` here instead of `store.open()`, with the
+ * button's `onStart` calling `download()`. HANDOFF.md under D6 carries this,
+ * and whoever owns the product decision can spend that line.
  */
 export function useDictStatus(store: DictStore = getDictStore()): DictStatus {
   const [status, setStatus] = useState<DictStatus>(() => store.status);
@@ -38,15 +62,11 @@ export function useDictStatus(store: DictStore = getDictStore()): DictStatus {
   useEffect(() => {
     const unsubscribe = store.subscribe(setStatus);
     setStatus(store.status);
-    // Idempotent and safe on every mount — the interface promises it, and the
-    // implementation shares one in-flight probe across every caller.
-    //
-    // The rejection is swallowed **here and nowhere else**: `open()` rejects on
-    // failure (`SqliteDictStore` does; the HTTP bridge `data.md` D6 replaced did
-    // not), and a `void` on a rejecting promise is an unhandled rejection that
-    // fails a Playwright run on a page error. There is nothing lost — the
-    // failure is already on `status`, with its reason, which is what this
-    // component renders.
+    // The rejection is swallowed **here and nowhere else**: an open rejects on
+    // failure (`SqliteDictStore` does; the HTTP bridge D6 replaced did not), and
+    // a `void` on a rejecting promise is an unhandled rejection that fails a
+    // Playwright run on a page error. Nothing is lost — the failure is already
+    // on `status`, with its reason, which is what this component renders.
     void store.open().catch(() => undefined);
     return unsubscribe;
   }, [store]);

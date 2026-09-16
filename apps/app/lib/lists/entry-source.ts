@@ -193,9 +193,21 @@ export function createHttpEntrySource(options: HttpEntrySourceOptions = {}): Ent
     /**
      * `DictStore.search` is P1's router and ranker — the same one `/lookup` uses —
      * so "add a word to this list" and the lookup box agree on what a query means.
-     * The HSK-band scan below stays as the fallback for the case the store cannot
-     * answer (no dictionary on device): 11k words is every word a list is
-     * plausibly built from, and it is better than an empty box.
+     *
+     * **What the HSK-band scan below still covers, after `data.md` D6.** It was
+     * written for "the store cannot answer (no dictionary on device)", and while
+     * the bands came from a *different* route than the search that was a real
+     * second chance. It is not one any more: both halves now read the same
+     * on-device store, so a store that cannot open fails the scan exactly as it
+     * failed the search, and this method rejects. That is deliberate and it is
+     * the better answer — `components/lists/word-search.tsx` catches and shows
+     * the reason, and "the dictionary is not on this device yet" is something a
+     * learner can act on, where an empty result box reads as "no such word".
+     *
+     * What the scan does still cover is a store that opens and then fails *this
+     * query* — an aborted read, an FTS error, a query shape the router has no
+     * plan for. There the bands are readable, 11k words is every word a list is
+     * plausibly built from, and it beats an empty box.
      */
     async search(query, limit = SEARCH_LIMIT) {
       const viaRoute = await searchRoute(query, limit, store, (seen) => {
@@ -223,8 +235,9 @@ export function createHttpEntrySource(options: HttpEntrySourceOptions = {}): Ent
 }
 
 /**
- * `null` when the store could not answer (no dictionary on device, a network
- * failure), so the caller falls back to scanning the bands.
+ * `null` when the store could not answer this query, so the caller falls back to
+ * scanning the bands. A store that cannot **open** also lands here, but the
+ * fallback cannot rescue that case — it reads the same store. See `search`.
  *
  * The store answers in *groups* — one per headword, carrying every reading — and
  * a list holds entries, so the groups are flattened in display order. Each
@@ -238,8 +251,6 @@ async function searchRoute(
   noteVersion: (version: string) => void,
 ): Promise<Entry[] | null> {
   try {
-    // A store that cannot be opened lands here too, which is the point: the
-    // caller falls back to scanning the bands rather than showing an empty box.
     const result = await (await store()).search(query, { limit });
     if (result.dictVersion) noteVersion(result.dictVersion);
     // An empty answer is still an answer: the router looked and there is nothing

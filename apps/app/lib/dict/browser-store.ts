@@ -70,7 +70,7 @@ export function getDictStore(): DictStore {
 }
 
 /**
- * The app's store, **open**.
+ * The app's store, opened **from storage only**.
  *
  * `SqliteDictStore` refuses a query before `open()` — "the dictionary is not
  * open" — and that is right: a SQLite connection is a thing you have or do not
@@ -83,6 +83,13 @@ export function getDictStore(): DictStore {
  * (the cited words on a card back). PLAN.md's rule is that the learner's own
  * data keeps working without a dictionary, so gating Practice to open one would
  * be the wrong fix; opening it where it is used is the right one.
+ *
+ * It is the **full** open — the same one `<DictGate>` does — and whether that is
+ * right is the open question recorded in `dict-gate.tsx` and in HANDOFF.md: on
+ * the web it means these two can start a 14 MB download that nobody asked for.
+ * `getDictHandle().openStored()` is the one-line alternative, and it is not
+ * taken here because a card back that silently has no dictionary while the
+ * lookup tab downloads one would be a third behaviour nobody chose.
  *
  * `open()` is idempotent and shares one in-flight attempt across every caller,
  * so this costs a resolved promise once the dictionary is up. It **rejects**

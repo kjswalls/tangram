@@ -16,8 +16,8 @@
  * the client.
  */
 
-export * from './provider';
-export * from './prompts';
+export * from './provider.js';
+export * from './prompts.js';
 export {
   FakeProvider,
   retrievalEcho,
@@ -27,7 +27,7 @@ export {
   findDemo,
   ECHO_MATCHES,
   EXAMPLE_SENTENCE_COUNT,
-} from './fake';
-export { AnthropicProvider, DEFAULT_MODEL, MAX_TOKENS, REQUEST_TIMEOUT_MS } from './anthropic';
-export * from './ground';
-export * from './cache-key';
+} from './fake.js';
+export { AnthropicProvider, DEFAULT_MODEL, MAX_TOKENS, REQUEST_TIMEOUT_MS } from './anthropic.js';
+export * from './ground.js';
+export * from './cache-key.js';

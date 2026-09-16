@@ -36,7 +36,7 @@ import {
   proposeUserPrompt,
   recallTool,
   recallUserPrompt,
-} from './prompts';
+} from './prompts.js';
 import {
   MAX_EXAMPLE_SENTENCES,
   MAX_PROPOSED_PHRASES,
@@ -50,7 +50,7 @@ import {
   type ParsedExampleSentences,
   type ParsedGradeRecall,
   type ProposedPhrases,
-} from './provider';
+} from './provider.js';
 import type { Entry, LearnerProfile } from '@/lib/types';
 
 /**

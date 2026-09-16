@@ -9546,3 +9546,135 @@ note above.
 `pnpm e2e` (271 passed) and `pnpm smoke` (27 ok, including the three model routes through the
 dev/preview adapter, which is what proves `@tangram/ai` resolves under `tsx` as well as under Vite)
 — all green, in that order, with `pnpm build` before `pnpm test`.
+
+## Wave 0 deliverable 5, second pass — what four adversarial lenses found
+
+Four reviewers read the committed move cold and in parallel (completeness of the move and the
+boundary; what breaks that no test covers; is it actually a pure move; does the tree still tell the
+truth). Everything below was reproduced here before it was acted on — the repro commands are in the
+findings and each one was run against this tree, which is why several of the reviewers' own numbers
+are corrected rather than copied.
+
+**Four things the first pass got wrong, and they are corrected in the tree rather than only here.**
+
+- **A second `RETRIEVED_CAP` now lived inside one package, and the frozen file forbids exactly
+  that.** `packages/ai/schemas.ts:187` says, in the frozen ask contract's own words: *"**Declared
+  here and nowhere else.** … It must `import { RETRIEVED_CAP } from './schemas.ts'` rather than
+  redeclare it: two constants of the same name in one package is a value the edge validator and the
+  client's own `mergeRetrieved()` can disagree about with nothing failing to compile."* While
+  `retrieve.ts` sat in `apps/app/lib/ai/` the two were in different packages and the warning did not
+  bite; **this move is the event that makes it bite**, and the first pass carried the duplicate
+  across without noticing. `retrieve.ts` now imports the constant from `./schemas.js` and re-exports
+  it. `SEARCH_HEAD` stays declared there, as the same paragraph says it should. (The third copy, in
+  `apps/app/app/api/ask/route.ts:40`, is the pre-D6 original that `retrieve.test.ts` pins against;
+  `data.md` D6 owns it and it is untouched.)
+- **The intra-package imports were extensionless, which is the one spelling that can never reach the
+  server.** `'./provider'` resolves under `moduleResolution: bundler` and under nothing else. Probed
+  rather than argued: symlink `packages/ai` into `apps/server/node_modules` and add a two-line module
+  importing `@tangram/ai/provider`, and `tsc` reports `TS2835: Relative import paths need explicit
+  file extensions … Did you mean './anthropic.js'?` **before** it reaches the `@/lib/**` wall. Every
+  intra-package import is now `'./x.js'`, which TypeScript resolves to the `.ts` under both
+  `bundler` and `nodenext`, which Vite, Vitest and tsx all take unchanged (the bundle hash is still
+  `index-B6aOKVM9.js`), and which is what a real emit will need. Re-probed: the only errors left are
+  the `@/lib/**` ones, which is the wall this deliverable is allowed to leave standing.
+- **`exports["."]` had been repointed from the frozen contract onto the barrel.** The first pass
+  argued this was free because `"."` had no consumers. True, and beside the point: `index.ts` does
+  not re-export `schemas.ts`, and `provider.ts` publishes four names `schemas.ts` also publishes
+  (`MAX_EXAMPLE_SENTENCES`, `MAX_PROPOSED_PHRASES`, `AskContext`, `ProviderName`), so a future
+  `import { MAX_EXAMPLE_SENTENCES } from '@tangram/ai'` would silently have meant the app-side
+  duplicate instead of the wire contract. `"."` is back at `./schemas.ts`, unchanged from B2's
+  commit; the move's only edit to the map is the added `"./*"` wildcard. `deps.test.ts` imports
+  `@tangram/ai/index` instead, which is the specifier that actually proves the package loads.
+- **`noUncheckedIndexedAccess` was dropped with a false reason attached.** The note said it reports
+  "100+ errors in files this package does not own". Measured: 92 errors, and **23 of them are in the
+  modules just moved** — `ground.ts` 18, `fake.ts` 3, `prompts.ts` 2, `schemas.ts` 0. So the flag is
+  not off because of borrowed code; it is off because the moved code has never been checked under it
+  (`apps/app` does not set it either) and fixing 23 sites is not a move. The note now says that, and
+  says who is on the hook: **`apps/server/tsconfig.json` sets the flag**, so `backend.md` B1 has to
+  clear those 23 before the server can compile this package, and B1 is the commit that turns it back
+  on here.
+
+**Three guards had quietly stopped covering eleven production modules.** This is W0's own lesson — a
+file that leaves a scope is a file nothing checks — and the move caused it three times. Each fix was
+verified by writing a violation into `packages/ai/deadline.ts` and watching the guard go red, then
+reverting:
+
+| Guard | What it stopped seeing | Now |
+|---|---|---|
+| `tests/unit/dict/client-callers.test.ts` | `retrieve.ts`, which **is** the `DictStore` consumer the criterion is about, and which `data.md` D6 is gated verbatim on | both root lists gain `packages/ai` |
+| `tests/unit/platform/native.test.ts` | five browser-bundled modules that may not read the `Capacitor` global — and must not, because `apps/server` compiles them | walks `[APP, SHARED_AI]`, with `packages/ai/ground.ts` named in the vacuity case |
+| `tests/unit/source-style.test.ts` | the single-quote convention over 150 KB of source, `fake.ts` and `ground.ts` included, with no lint rule behind it | the `git ls-files` globs gain `packages/*`, and `packages/ai/fake.ts` and `packages/access/index.ts` are named |
+
+`packages/access/index.ts` was already outside the last of those before this commit. It is in scope
+now too.
+
+**The two new `contract.test.ts` cases were weaker than they read, and are now stronger.** The
+"leaves `apps/app/lib/ai` to `ask-client.ts`" case caught *every* error rather than `ENOENT`, so a
+wrong `root` — five `..` from the test file — would have turned it into a permanent vacuous pass;
+and it listed one flat directory of `.ts`, so `lib/ai/legacy/ground.ts` or `lib/ai/panel.tsx` would
+both have walked straight past it. It now asserts the error code, walks recursively and takes
+`.tsx`; both evasions were constructed and both now fail. The sibling case was exact equality on
+twelve filenames, which turns red on a *legitimate* addition — B1 and B2's remainder both write
+modules into this package — with a message blaming the wrong thing; it is a superset check now,
+with a third case that proves the root resolves and the listing is not empty.
+
+**Two stale paths that were not comments, so the no-sweep rule did not cover them.**
+`packages/ai/retrieve.ts` threw `'grounding did not converge; see lib/ai/retrieve.ts'` — the string a
+maintainer reads in a log or a 502 body, pointing at a path this commit deleted. And `.env.example`
+lines 5 and 7 name `lib/ai/provider.ts` and `lib/ai/anthropic.ts` to an operator wiring
+`TANGRAM_LLM_PROVIDER` and `TANGRAM_MODEL` with the file open. Both are corrected. The ~18 remaining
+`lib/ai/*.ts` references are prose in code comments and stay untouched for the reason the first pass
+gave.
+
+**`lib: ["ES2023", "DOM"]` became `["ES2023"]`.** The first pass justified DOM with the globals the
+moved code uses; every one of them (`crypto.subtle`, `TextEncoder`, `setTimeout`, `globalThis.fetch`,
+`AbortSignal`, `process.env`) comes from `types: node`, and `tsc --lib ES2023` exits 0. What DOM
+bought instead was letting `document`, `window` and `localStorage` typecheck clean inside the package
+`apps/server` compiles with no DOM — an invitation to the exact failure this deliverable exists to
+prevent. The package's `lib` now matches its strictest consumer.
+
+### Corrections to the section above this one
+
+`HANDOFF.md` is append-only, so the first-pass section stands as written and is wrong in four places
+that this pass changed under it. For anyone reading it as a brief:
+
+- the `exports` map is `{".": "./schemas.ts", "./*": "./*.ts"}`, not `{".": "./index.ts", …}`, and
+  `deps.test.ts` loads `@tangram/ai/index`;
+- the intra-package imports are `'./x.js'`, not `'./x'`;
+- `lib` is `["ES2023"]`, not `["ES2023", "DOM"]`;
+- the `noUncheckedIndexedAccess` bullet's "100+ errors in files this package does not own" is 92
+  errors, 23 of them in files it does own.
+
+The counts the first pass reports (38 files / 84 sites / 66 external) were re-derived and stand. One
+omission: its list of surviving stale prose references misses `tests/unit/ai/retrieve.test.ts:3`.
+
+### Raised and deliberately not acted on
+
+- **`requestRecallGrade` (`packages/ai/recall.ts:148`) calls a bare same-origin `/api/recall`**, with
+  no `apiUrl()` and no access header, while every other app-to-model-route call site goes through
+  `apiFetch` from `@/src/access/client`. It is the recall twin of `ask-client.ts` and by §5's
+  reasoning it is the module with the best claim to have stayed in `apps/app`. **This is
+  pre-existing** — the file is byte-identical to its `apps/app/lib/ai/` copy apart from import
+  specifiers — so fixing it is a behaviour change and not a move. It belongs to whoever finishes
+  `web.md` W4's client half or to `backend.md` B2, and it is the one call site that will still be
+  same-origin when the server moves to `api.<domain>`.
+- **`@anthropic-ai/sdk` and `zod` stay declared in `apps/app`'s `dependencies`** although nothing
+  under `apps/app/**` imports either any more (one test file each). Harmless while both packages pin
+  the identical `0.124.0` / `^3.25.76` — verified one `zod@3.25.76` in the store, same realpath from
+  both packages — and it becomes real the day the specifiers drift, because two `zod` instances
+  across the boundary break schema identity in the `.parse()` calls the grounding contract rests on.
+  B1 moves the three routes off the app and is where both entries should go.
+- **`CLAUDE.md`'s migration-state block still says the move has not run.** Named in the first pass
+  and still not edited here: it is auto-loaded instruction and the orchestrator merges the branches.
+  It is the most authoritative file in the repo and it currently asserts the opposite of the tree, so
+  it wants editing sooner than the next merge.
+- **`react-hooks/rules-of-hooks` and `react-hooks/exhaustive-deps` do not apply to `packages/ai`**
+  (66 rules where the app applied 68 — the only two that changed). Not reinstated: the package is
+  compiled by a Node server and must never contain React, so the guard is the absence of the
+  dependency. Written into `packages/ai/eslint.config.mjs` so it is a decision rather than a loss.
+
+**Gates, re-run after every change above.** `pnpm lint`, `pnpm typecheck`, `pnpm build`, `pnpm test`
+(138 + 6 files, 1827 + 75 tests), `pnpm e2e` (271) and `pnpm smoke` (27) — all green by exit code,
+which is worth saying: an intermediate run of this pass was reported green off a grepped log while
+`packages/ai/package.json` was in fact unparseable JSON, because `ERR_PNPM_JSON_PARSE` matches
+neither `error` nor `✖`. Check the exit code.

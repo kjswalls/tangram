@@ -24,7 +24,7 @@
  * second one.
  */
 import { readdirSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
@@ -334,41 +334,73 @@ describe('packages/ai is wired into the workspace', () => {
     expect(() => read('packages/ai/eslint.config.mjs')).not.toThrow();
   });
 
+  /**
+   * wave-zero.md §5's split, asserted in both directions, because a half-done
+   * move still compiles for as long as nothing imports the missing half.
+   *
+   * Deliberately a **superset** check on this side rather than exact equality:
+   * `backend.md` B1 and B2's remainder both write new modules into this package
+   * (B1 owes injection seams for the six runtime `@/lib/**` edges), and an
+   * exact list turns red on a legitimate addition with a message pointing at
+   * the wrong cause. What must not drift is that each named module is here and
+   * is not simultaneously back in the app — which the second case covers.
+   */
+  const MOVED = [
+    'anthropic.ts',
+    'cache-key.ts',
+    'deadline.ts',
+    'examples.ts',
+    'fake.ts',
+    'ground.ts',
+    'index.ts',
+    'prompts.ts',
+    'provider.ts',
+    'recall.ts',
+    'retrieve.ts',
+  ];
+
   it('holds the frozen contract and the eleven modules wave 0 deliverable 5 moved', () => {
-    // wave-zero.md §5's split, asserted in both directions so that neither half
-    // can drift: everything shared lives here, and `apps/app/lib/ai/` holds only
-    // backend.md B2's browser-side ask-client.ts. A module that reappears in the
-    // app, or one that never arrived here, fails this — which is the check the
-    // move itself cannot provide, because a half-done move still compiles as
-    // long as nothing imports the missing half.
     const files = readdirSync(resolve(root, 'packages/ai')).filter((name) => name.endsWith('.ts'));
-    expect(files.sort()).toEqual([
-      'anthropic.ts',
-      'cache-key.ts',
-      'deadline.ts',
-      'examples.ts',
-      'fake.ts',
-      'ground.ts',
-      'index.ts',
-      'prompts.ts',
-      'provider.ts',
-      'recall.ts',
-      'retrieve.ts',
-      'schemas.ts',
-    ]);
+    expect(files.sort()).toEqual(expect.arrayContaining([...MOVED, 'schemas.ts'].sort()));
   });
 
   it('leaves apps/app/lib/ai to ask-client.ts and nothing else', () => {
-    // The directory is empty until backend.md B2 writes ask-client.ts into it,
-    // and `readdirSync` on a path git does not track throws — so both states are
-    // a pass and a third module appearing is not. wave-zero.md §5: "apps/app/lib/ai/
-    // holds only ask-client.ts, which is browser-side and calls the server."
+    // The directory does not exist until `backend.md` B2 writes ask-client.ts
+    // into it, so ENOENT is a pass — but ONLY ENOENT. An earlier draft caught
+    // every error, which would have turned a wrong `root` (five `..` from this
+    // file) into a permanent vacuous pass: exactly the shape of test this build
+    // has been bitten by twice (`wave-zero.md` §10a). The walk is recursive and
+    // takes `.tsx` as well, because "put it back in a subdirectory" and "put it
+    // back as a component" are the two ways round a flat `.ts` listing.
+    // wave-zero.md §5: "apps/app/lib/ai/ holds only ask-client.ts, which is
+    // browser-side and calls the server."
+    const dir = resolve(root, 'apps/app/lib/ai');
+    const walk = (at: string): string[] =>
+      readdirSync(at, { withFileTypes: true }).flatMap((entry) =>
+        entry.isDirectory()
+          ? walk(join(at, entry.name))
+          : /\.tsx?$/.test(entry.name)
+            ? [relative(dir, join(at, entry.name))]
+            : [],
+      );
+
     let left: string[];
     try {
-      left = readdirSync(resolve(root, 'apps/app/lib/ai')).filter((name) => name.endsWith('.ts'));
-    } catch {
+      left = walk(dir);
+    } catch (error) {
+      expect((error as NodeJS.ErrnoException).code, String(error)).toBe('ENOENT');
       left = [];
     }
     expect(left.filter((name) => name !== 'ask-client.ts')).toEqual([]);
+  });
+
+  it('…and that pair of cases would actually catch a module in the wrong place', () => {
+    // Otherwise both pass just as well against a resolver that resolves nothing.
+    // Proves the root is right and the listings are non-empty, without writing
+    // to the tree: `packages/ai` must contain every moved name, and the app's
+    // `lib/` must contain none of them at the old spelling.
+    const here = readdirSync(resolve(root, 'packages/ai'));
+    for (const name of MOVED) expect(here, `${name} must live in packages/ai`).toContain(name);
+    expect(() => readdirSync(resolve(root, 'packages/ai/no-such-dir'))).toThrow();
   });
 });

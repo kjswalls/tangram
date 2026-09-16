@@ -27,8 +27,8 @@
 
 import { z } from 'zod';
 
-import { AnthropicProvider } from './anthropic';
-import { FakeProvider } from './fake';
+import { AnthropicProvider } from './anthropic.js';
+import { FakeProvider } from './fake.js';
 import type { Entry, LearnerProfile } from '@/lib/types';
 
 /**

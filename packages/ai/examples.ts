@@ -42,8 +42,8 @@ import {
   groundedAskResponseSchema,
   type GroundContext,
   type GroundedSayIt,
-} from './ground';
-import type { ParsedExampleSentences } from './provider';
+} from './ground.js';
+import type { ParsedExampleSentences } from './provider.js';
 import type { Repository } from '@/lib/db/repository';
 import {
   isPhraseSnapshot,

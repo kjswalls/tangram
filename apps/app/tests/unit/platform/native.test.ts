@@ -137,8 +137,18 @@ describe('the seam is the only reader of the bridge', () => {
    * (`convertFileSrc`, `registerPlugin`) stays legal — `data.md` D5a needs it —
    * and the rule those callers are still held to is that the platform question
    * is answered here.
+   *
+   * **It also walks `packages/ai/`.** Wave 0's deliverable 5 moved eleven
+   * modules out of `apps/app/lib/ai/` into that package, five of which
+   * (`ground`, `cache-key`, `recall`, `examples`, `retrieve`) ship inside the
+   * browser bundle. A walk rooted at the app alone stopped seeing them the day
+   * they moved — W0's lesson, that a file leaving a scope is a file nothing
+   * checks, applied to a rule that is about what runs in the WebView rather
+   * than about which directory it sits in. The package must never read the
+   * global for a second reason too: `apps/server` compiles it.
    */
   const APP = appRoot(import.meta.dirname);
+  const SHARED_AI = resolve(APP, '..', '..', 'packages', 'ai');
   const SEAM = resolve(APP, 'lib/platform/native.ts');
   const NOT_APP_SOURCE = new Set(['node_modules', 'dist', 'tests', 'ios', 'android', 'public', '.git']);
   // `window.Capacitor`, `globalThis.Capacitor`, `(window as any).Capacitor`,
@@ -160,16 +170,19 @@ describe('the seam is the only reader of the bridge', () => {
     // The guard is worth exactly what its file list covers, so assert the list
     // is not quietly empty and that it reaches the directory the criterion's
     // own grep misses.
-    const files = sourceFiles(APP).map((file) => relative(APP, file));
+    const files = [APP, SHARED_AI].flatMap(sourceFiles).map((file) => relative(APP, file));
     expect(files.length).toBeGreaterThan(100);
     expect(files).toContain('app/settings/settings-form.tsx');
     expect(files).toContain('src/routes.tsx');
     expect(files).toContain('lib/platform/native.ts');
+    // The shared package, named so the widening cannot be undone by accident.
+    expect(files).toContain(join('..', '..', 'packages', 'ai', 'ground.ts'));
     expect(files.some((file) => file.startsWith('node_modules/'))).toBe(false);
   });
 
   it('finds no other module reading window.Capacitor', () => {
-    const offenders = sourceFiles(APP)
+    const offenders = [APP, SHARED_AI]
+      .flatMap(sourceFiles)
       .filter((file) => file !== SEAM)
       .filter((file) => READS_THE_GLOBAL.test(readFileSync(file, 'utf8')))
       .map((file) => relative(APP, file));

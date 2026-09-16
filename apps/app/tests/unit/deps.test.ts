@@ -40,15 +40,15 @@ const loaders: Record<string, () => Promise<Record<string, unknown>>> = {
   // deliverable 5 moved the eleven `lib/ai/**` modules into it: the ask panel,
   // the card back and the three model routes all import it now, so it moved out
   // of devDependencies and has to prove it loads. The specifier is the package
-  // root, which its `exports` map points at `index.ts` — the barrel, so this one
-  // import evaluates provider, fake, anthropic, prompts, ground and cache-key,
-  // which is the half of the package with the SDK and the module cycle in it.
-  // It does NOT reach deadline, examples, recall, retrieve or schemas: the
-  // barrel does not re-export them and this table takes one specifier per
-  // package. Those five are covered by the suites that import them directly
-  // (tests/unit/ai/**), which is where a broken subpath in the `exports` map
-  // would surface.
-  '@tangram/ai': () => import('@tangram/ai'),
+  // barrel rather than the package root: `exports["."]` still points at the
+  // frozen `schemas.ts`, which has no imports and so proves almost nothing,
+  // while `index.ts` evaluates provider, fake, anthropic, prompts, ground and
+  // cache-key — the half of the package with the SDK and the module cycle in
+  // it. It does NOT reach deadline, examples, recall, retrieve or schemas: the
+  // barrel does not re-export them and this table takes one entry per package.
+  // Those are covered by the suites that import them directly under
+  // tests/unit/ai/**, which is where a broken subpath in `exports` surfaces.
+  '@tangram/ai': () => import('@tangram/ai/index'),
   // The OPFS dictionary's wasm (docs/plans/data.md D4). The module factory is
   // all that is imported here — initialising it would fetch and instantiate
   // 869 KB of wasm, which is the worker's job and not a dependency check's.

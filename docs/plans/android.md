@@ -254,8 +254,11 @@ a whole cluster at once. Read and record, with the URL and the date:
 - The **local scheme and origin** Capacitor's Android WebView serves from, and the config key that
   sets it. `backend.md` needs that exact string for CORS and `web.md` W4's gate needs it too, so it
   goes in `HANDOFF.md` as a literal.
-- `@capacitor-community/safe-area`'s current version — STACK §6 records the row as "version not
-  recorded by the audit".
+- ~~`@capacitor-community/safe-area`'s current version~~ — **closed, and the answer is that the
+  package is not installed.** A2 read both packages' shipped source: the community plugin publishes
+  no insets (it is a Chromium-below-140 polyfill), and Capacitor 8.5's built-in `SystemBars` carries
+  the same threshold, the same CSS-variable injection and the #8432 keyboard workaround. `STACK.md`
+  §2.1 and §6 are corrected. Nothing here needs a version.
 - Chromium issue **40468168** (no `speechSynthesis` in the Android WebView), **446078849** (the CJK
   synthetic-bold regression in WebView 139–140, reported fixed in 143) and Capacitor issues
   **#8432** (keyboard bottom inset) and **#4884** (no built-in WebView version gate). All four ids

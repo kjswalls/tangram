@@ -35,7 +35,8 @@ One React codebase. It is built by **Vite 8** as a plain SPA, routed by **React 
 mode**. It ships to three places from that one build:
 
 - **iOS and Android** — wrapped by **Capacitor 8.5.x**, with native plugins for SQLite and
-  text-to-speech (and safe-area handling on Android). The web view is WebKit on iOS and Chromium on
+  text-to-speech. (Safe-area handling on Android needs no plugin: Capacitor 8.5's built-in
+  `SystemBars` does it — see §2.1's correction.) The web view is WebKit on iOS and Chromium on
   Android, and that is the point: both engines already do ruby layout that wraps and
   character-precise hit-testing in flowing text, which is the app's hardest UI requirement and which
   every non-web option requires you to build from scratch.
@@ -102,10 +103,22 @@ none of them and runs in the existing Linux container. §4 opens with what that 
 
 ### 2.1 Mobile wrapper: Capacitor 8.5.x
 
-**Decision.** Ship iOS and Android as Capacitor 8.5.x apps wrapping the Vite build, with three
-native plugins: SQLite (`@capacitor-community/sqlite`), text-to-speech
-(`@capacitor-community/text-to-speech`), and safe-area handling on Android
-(`@capacitor-community/safe-area`).
+**Decision.** Ship iOS and Android as Capacitor 8.5.x apps wrapping the Vite build, with **two**
+native plugins: SQLite (`@capacitor-community/sqlite`) and text-to-speech
+(`@capacitor-community/text-to-speech`).
+
+> **Correction, 2026-09-16, from `android.md` A2 — this said three, and the third must not be
+> installed.** The third was `@capacitor-community/safe-area`, and A2 read both packages' shipped
+> source rather than their READMEs. The community plugin publishes no insets at all: its entire JS
+> API at 8.0.1 is `setSystemBarsStyle` / `showSystemBars` / `hideSystemBars`. It is a polyfill for
+> Chromium below 140. **Capacitor 8.5 ships the same thing in core** —
+> `@capacitor/android@8.5.2`'s `SystemBars` is a built-in plugin, registered unconditionally by
+> `Bridge.registerAllPlugins()`, with the same version threshold, the same `injectSafeAreaCSS()`,
+> and the keyboard workaround for Capacitor #8432 that this section expected to have to live with.
+> Installing both is two owners of one window; the community plugin's own README tells you to set
+> `SystemBars.insetsHandling: 'disable'` first. A2 configures the built-in one
+> (`plugins.SystemBars`: `insetsHandling: 'css'`) and a unit test refuses the community plugin and
+> three other safe-area plugins by name. See `HANDOFF.md` under A2.
 
 **The single strongest reason.** The two hardest requirements in the product — *per-character ruby
 pinyin that wraps correctly* and *character-precise tap and drag selection inside flowing text* —
@@ -1139,7 +1152,7 @@ before work starts** — these are a starting point for a `pnpm add`, not a lock
 | `@capacitor/core` | 8.5.2 | 2026-09-11 | **iOS 15+ and the UIScene adoption are now verified** against the shipped artifacts, not a search snippet — podspec, both Xcode templates, the SPM `Package.swift` and the CLI's own `minVersion`, plus `UIApplicationSceneManifest` + `SceneDelegate.swift` in the generated project (`ios.md` I0, HANDOFF.md). **Xcode 26+ is still *(search)*** and `capacitorjs.com` is still egress-blocked. minSdk 24, compile/target 36. Stay on 8.5.x; 9 is at alpha.6. |
 | `@capacitor-community/sqlite` | 8.1.1 | Aug 2026 | `copyFromAssets`, read-only connections; bundles SQLCipher (`sqlcipher-android` 4.17.0, `SQLCipher` pod) — reproduce its BSD notice. Original author retired at 6.x; community-maintained. |
 | `@capacitor-community/text-to-speech` | 8.0.2 | June 2026 | MIT. `onRangeStart` over `AVSpeechSynthesizer` / `UtteranceProgressListener`. |
-| `@capacitor-community/safe-area` | — | — | Version not recorded by the audit. Needed for API 36 edge-to-edge; keyboard bottom inset fixed in Chromium 144 (Capacitor #8432). |
+| ~~`@capacitor-community/safe-area`~~ | **not installed** | — | **Superseded by Capacitor core, 2026-09-16.** `@capacitor/android@8.5.2`'s built-in `SystemBars` plugin carries the same 140 threshold, the same CSS-variable injection and the Capacitor #8432 keyboard workaround. The community plugin publishes no insets — it is a polyfill, and installing both is two owners of one window. `android.md` A2 configures the built-in one; a unit test refuses this package by name. See §2.1. |
 | `@sqlite.org/sqlite-wasm` | 3.53.4-build1 | 2026-09-08 | Apache-2.0; wraps SQLite 3.53.4 (2026-07-24). FTS5 on, `SQLITE_OMIT_LOAD_EXTENSION`. Use the `oo1` API in your own worker — Worker1/Promiser deprecated 2026-04-15. |
 | SQLite (upstream) | 3.53.4 stable; 3.54.0 draft targeted 2026-10-15 | 2026-07-24 | The audit's own measurements used Python's SQLite 3.45. |
 | `vite` | 8.3.0 | 2026-09-10 | Rolldown became the bundler in 8.0 (2026-03-12). |

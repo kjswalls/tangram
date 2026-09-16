@@ -70,9 +70,14 @@ Node **>= 22.22** (React Router 8's floor); pnpm 10. Playwright uses the contain
 >
 > Five things a builder must not read a green gate as having finished:
 >
-> - **The app still looks words up through the server.** `data.md` D4 built the browser store, but
->   **D6** is what points the app at it: `lib/dict/http-store.ts` and the five `app/api/dict/*`
->   routes are still the live path. Until D6, the SPA is not actually offline for lookup.
+> - **The first dictionary download is never asked for.** D6 landed, so lookup is on-device:
+>   `http-store.ts` and the five `app/api/dict/*` routes are gone. But `<DictGate>`'s mount calls
+>   `store.open()`, which used to mean a one-query probe and now means *fetch 43 MB* — and
+>   `entry-source.ts` and `example-sentences.tsx` sit outside the gate deliberately, so opening
+>   **Library** on a fresh install starts it with no progress bar and no cancel. `dict-status.tsx`'s
+>   own header calls that "a hostile default", and `dict-start` has no production path that reaches
+>   it. Pinned by `tests/unit/dict/dict-gate.test.tsx`; the fix is `openStored()` at the gate and
+>   `download()` behind the button, plus the ~120 specs that must then start the download themselves.
 > - **The native dictionary stores are unproven**, and so is the web one on Apple platforms. D5a and
 >   D5b need an Android phone and a Mac with a physical iOS 26 device; register #4 (the reported
 >   10 MB per-file OPFS cap in WKWebView) is unanswered because the container has no Safari.

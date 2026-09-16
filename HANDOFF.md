@@ -10435,10 +10435,15 @@ None was needed. Two came close and both were resolved without asking:
 
 ### Gate
 
-`pnpm build`, `pnpm lint`, `pnpm typecheck`, `pnpm test` (1,819 app + 95 server), `pnpm e2e`
-(268 specs) and `pnpm smoke --base-url … --api-base …` all green, plus
-`pnpm -F server smoke --gate off` (6/6) and `--gate on` (11/11, the 401/keyed pair on every gated
-route), which is B1's first acceptance criterion executed rather than described.
+Final, after the review fixes below: `pnpm build`, `pnpm lint`, `pnpm typecheck`, `pnpm test`
+(**1,824** app + **102** server), `pnpm e2e` (**268** specs, 5.6 min) and
+`pnpm smoke --base-url … --api-base …` (21 ok) all green, plus
+`pnpm -F server smoke --gate off` (**7/7**) and `--gate on` (**11/11**, the unkeyed-401 / keyed pair
+on every gated route), which is B1's first acceptance criterion executed rather than described.
+
+The server smoke's seventh case is the one the review added, and it is worth knowing it fails
+loudly: against an instance with `TANGRAM_DATA_DIR` pointed at an empty directory the same command
+reports **6/7** with `FAIL POST /api/examples → 503 (expected 404)`.
 
 ### The reviews, and what they changed
 

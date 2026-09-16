@@ -30,6 +30,7 @@
 
 import { scrubProse } from './ground.js';
 import type { ParsedGradeRecall, ProviderName } from './provider.js';
+import { toRetrieved, type RetrievedEntry } from './schemas.js';
 
 /**
  * The 1–4 vocabulary, by value. `RECALL_GRADES` in `lib/ai/provider.ts` and
@@ -103,8 +104,23 @@ export function asRecallSuggestion(body: unknown): RecallSuggestion | null {
   return { suggested: value.suggested, why, ...(provider === undefined ? {} : { provider }) };
 }
 
+/**
+ * What the box submits.
+ *
+ * **`entry`, not `entryId` (`backend.md` B2's contract flip).** The server no
+ * longer holds a dictionary, so it cannot turn an id into the glosses the
+ * grading prompt is built from — the client sends them. That is not a widening
+ * of what leaves the browser: `RecallGradeRequest` in the frozen contract is
+ * `{ entry, senseIndex?, answer }`, and the six fields it carries are exactly
+ * what `recallUserPrompt`'s THE WORD block already rendered.
+ *
+ * The caller has them without a dictionary on the device: a review card carries
+ * an `EntrySnapshot` (`lib/db/schema.ts`), which is where `recall-input.tsx`
+ * reads it from. Free recall therefore keeps working on a device that has never
+ * downloaded the dictionary, which is the property Practice must not lose.
+ */
 export interface RecallRequestInput {
-  entryId: string;
+  entry: RetrievedEntry;
   senseIndex?: number;
   answer: string;
 }
@@ -133,7 +149,7 @@ export type RecallRequest = (
  */
 export const requestRecallGrade: RecallRequest = async (input, options = {}) => {
   const answer = input.answer.trim();
-  if (!answer || !input.entryId) return null;
+  if (!answer || !input.entry?.id) return null;
 
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   if (typeof fetchImpl !== 'function') return null;
@@ -150,7 +166,10 @@ export const requestRecallGrade: RecallRequest = async (input, options = {}) => 
       signal: controller.signal,
       headers: { 'content-type': 'application/json', accept: 'application/json' },
       body: JSON.stringify({
-        entryId: input.entryId,
+        // `toRetrieved`, not the entry itself: assignability is a compile-time
+        // fact and `JSON.stringify` is not, so a caller that hands this a whole
+        // `Entry` would otherwise put all fourteen fields on the wire.
+        entry: toRetrieved(input.entry),
         ...(input.senseIndex === undefined ? {} : { senseIndex: input.senseIndex }),
         answer: answer.slice(0, RECALL_ANSWER_MAX_CHARS),
       }),

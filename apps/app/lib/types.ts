@@ -94,7 +94,14 @@ export function hskBandLabel(band: HskBand): string {
 export function parseEntryId(id: string): { trad: string; simp: string; pinyinNum: string } | null {
   const match = /^([^|]+)\|([^[]+)\[(.*)\]$/.exec(id);
   if (!match) return null;
-  return { trad: match[1], simp: match[2], pinyinNum: match[3] };
+  // Destructured with an explicit guard rather than indexed: three groups that
+  // matched are three strings, but `noUncheckedIndexedAccess` cannot know that,
+  // and `apps/server` sets the flag and reaches this file through
+  // `packages/ai` (`backend.md` B2). Behaviour is unchanged — the guard is
+  // unreachable for any `id` this regex accepts.
+  const [, trad, simp, pinyinNum] = match;
+  if (trad === undefined || simp === undefined || pinyinNum === undefined) return null;
+  return { trad, simp, pinyinNum };
 }
 
 /**

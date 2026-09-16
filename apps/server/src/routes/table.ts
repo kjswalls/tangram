@@ -19,15 +19,35 @@
  * broken PWA.
  */
 
+import { RETRIEVED_CAP } from '@tangram/ai/schemas';
+
 /**
- * An entry id shaped like a real one and belonging to no dictionary build.
+ * A `retrieved` array one row over `RETRIEVED_CAP`, for the smoke.
  *
- * `trad|simp[pinyin]` is the shape (PLAN.md §3.1). It has to parse far enough
- * to be looked up and it must never resolve, on any CC-CEDICT snapshot — so it
- * is deliberately not a rare word that might one day be added, but a string no
- * lexicographer will ever produce.
+ * **This is what replaced `backend.md` B1's seventh smoke case, and the
+ * replacement is a demotion on purpose.** B1's extra case sent a well-formed
+ * body naming an entry id no dictionary contains: it got past validation,
+ * opened the 43 MB artifact, and answered 404 — so a deployment that had
+ * shipped the code without the data answered 503 there and the smoke failed
+ * naming the line. `backend.md` B2 removes that hazard at its root rather than
+ * detecting it: **this server has no dictionary**, so a dictionary-less server
+ * is now the correct one and there is nothing left for that case to catch.
+ *
+ * What is left worth proving is that the **edge validator** runs, not merely
+ * that the route is mounted. An empty `{}` is refused by the first field it
+ * looks at; this body is well formed all the way down and is refused by the one
+ * rule that exists for cost control. Both answer 400, so the smoke cannot tell
+ * them apart by status — which is the honest limit of an after-deploy check
+ * that must never reach a paid provider, and is recorded as such in
+ * `HANDOFF.md`.
  */
-export const NO_SUCH_ENTRY_ID = 'smoke-no-such-entry|smoke-no-such-entry[nothing]';
+const OVER_CAP_RETRIEVED = Array.from({ length: RETRIEVED_CAP + 1 }, (_unused, index) => ({
+  id: `smoke|smoke[smoke${index}]`,
+  simp: 'X',
+  trad: 'X',
+  pinyinMarked: 'X',
+  glosses: [],
+}));
 
 export const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'] as const;
 export type HttpMethod = (typeof HTTP_METHODS)[number];
@@ -71,44 +91,58 @@ export const ROUTES: readonly ServerRoute[] = [
     smoke: [{ method: 'GET', expect: 200 }],
   },
   /**
-   * The three model routes (`backend.md` B1), at the paths they have always
-   * had. The paths are preserved verbatim because `GATED_PATHS` in
-   * `@tangram/access` names them literally and B0 settled that they stay that
-   * way.
+   * The ask endpoints, as `backend.md` B2's contract flip leaves them
+   * (`packages/ai/schemas.ts`, the frozen paths). `/api/ask` is the handshake
+   * and answers **GET only** now: the single `POST /api/ask` became two calls,
+   * because the model's phrase proposals are an input to a retrieval step that
+   * happens in the browser.
    *
-   * **The POST cases send a body the route rejects, on purpose.** A smoke run
-   * is an after-deploy habit (`docs/deploy.md`) and these three routes cost
-   * money on every successful call, so a case that answered 200 would bill the
-   * owner every time anyone checked a deploy. An empty object exercises
-   * everything this file is for — the route is mounted, the method is
-   * routed, the gate ran, the handler parsed — and stops one step short of the
-   * provider. 400 is therefore the healthy status, and `expect` exists on
-   * `SmokeCase` precisely so a route whose healthy answer is not a 2xx can say
-   * so rather than have the smoke quietly accept any 4xx.
+   * Both new paths sit **under** `/api/ask`, which is why the gate matches by
+   * prefix (`wave-zero.md` §10a) — an exact-string gate would leave the two
+   * routes that actually spend money open while `TANGRAM_ACCESS_SECRET` is set.
+   * `gated: true` on each is the other half of that, and `tests/routes.test.ts`
+   * checks this column against `GATED_PATHS` in both directions.
    *
-   * **`/api/examples` gets a second case, and it is the one that proves there
-   * is a dictionary.** An adversarial reviewer ran the smoke against a deploy
-   * artifact with no `data/` and got a perfect 6/6 while every real request
-   * answered `{"error":"dict-data-missing"}` — because `parseBody` rejects `{}`
-   * *before* `serverDictStore()` is reached, and both handshakes are pure. So
-   * one case sends a well-formed body naming an entry id no dictionary
-   * contains: it gets past validation, opens the artifact, looks the id up, and
-   * answers **404 `entry-not-found`** — still without going near a provider. A
-   * server with no dictionary answers 503 there and the smoke fails, which is
-   * the whole point. `backend.md` B1 keeps the dictionary on this server "on
-   * purpose and temporarily"; until B2 removes it, this is what says it is
-   * actually present.
+   * **The POST cases send a body the route rejects, on purpose.** A smoke run is
+   * an after-deploy habit (`docs/deploy.md`) and these routes cost money on
+   * every successful call, so a case that answered 200 would bill the owner
+   * every time anyone checked a deploy. 400 is therefore the healthy status,
+   * and `expect` exists on `SmokeCase` precisely so a route whose healthy answer
+   * is not a 2xx can say so rather than have the smoke quietly accept any 4xx.
    *
    * With `--gate on` each of these runs twice: unkeyed expecting 401, keyed
-   * expecting the status below. That pair is B1's first acceptance criterion.
+   * expecting the status below. That pair is B1's first acceptance criterion and
+   * it now covers five paths rather than three.
    */
   {
     path: '/api/ask',
-    methods: ['GET', 'POST'],
+    methods: ['GET'],
+    gated: true,
+    smoke: [{ method: 'GET', expect: 200 }],
+  },
+  {
+    path: '/api/ask/propose',
+    methods: ['POST'],
+    gated: true,
+    smoke: [{ method: 'POST', body: {}, expect: 400 }],
+  },
+  {
+    path: '/api/ask/answer',
+    methods: ['POST'],
     gated: true,
     smoke: [
-      { method: 'GET', expect: 200 },
       { method: 'POST', body: {}, expect: 400 },
+      {
+        // Well formed all the way down, and over the one cap that exists for
+        // cost control. See `OVER_CAP_RETRIEVED`.
+        method: 'POST',
+        body: {
+          query: 'smoke',
+          profile: { estimatedBand: 1, knownSample: [] },
+          retrieved: OVER_CAP_RETRIEVED,
+        },
+        expect: 400,
+      },
     ],
   },
   {
@@ -118,11 +152,6 @@ export const ROUTES: readonly ServerRoute[] = [
     smoke: [
       { method: 'GET', expect: 200 },
       { method: 'POST', body: {}, expect: 400 },
-      {
-        method: 'POST',
-        body: { entryId: NO_SUCH_ENTRY_ID, profile: { estimatedBand: 1, knownSample: [] } },
-        expect: 404,
-      },
     ],
   },
   {

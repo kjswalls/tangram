@@ -16,7 +16,15 @@ import type { ZodTypeAny } from 'zod';
 
 import { ASK_PROMPT_VERSION, EXAMPLES_PROMPT_VERSION, RECALL_PROMPT_VERSION } from './cache-key.js';
 import type { AskContext } from './provider.js';
-import type { Entry, LearnerProfile } from '@/lib/types';
+/**
+ * `RetrievedEntry` is the six fields `entryLine()` below renders and the six
+ * the wire carries (`backend.md` B2). Nothing in this file ever read more than
+ * those, so the narrowing is a statement of what was always true rather than a
+ * change: a prompt built from a full `Entry` is byte-identical to one built
+ * from its projection.
+ */
+import type { RetrievedEntry } from './schemas.js';
+import type { LearnerProfile } from '@/lib/types';
 
 /** The tool the model is forced to call, so the answer arrives as data. */
 export const ANSWER_TOOL_NAME = 'answer_with_citations';
@@ -96,7 +104,7 @@ export const RECALL_SYSTEM_PROMPT = [
 ].join('\n');
 
 /** One retrieved entry as the model sees it: id, both scripts, reading, glosses. */
-export function entryLine(entry: Entry): string {
+export function entryLine(entry: RetrievedEntry): string {
   const glosses = entry.glosses.map((gloss, index) => `${index}: ${gloss}`).join(' | ');
   const band = entry.hskBand ? ` HSK${entry.hskBand}` : '';
   return `${entry.id}\t${entry.simp}\t${entry.trad}\t${entry.pinyinMarked}${band}\t${glosses}`;
@@ -124,7 +132,7 @@ function profileBlock(profile: LearnerProfile): string {
 
 /** The user turn for `answer`. Stable ordering: it is also a cache prefix. */
 export function answerUserPrompt(
-  retrieved: readonly Entry[],
+  retrieved: readonly RetrievedEntry[],
   profile: LearnerProfile,
   query: string,
   context?: AskContext,
@@ -148,7 +156,7 @@ export function proposeUserPrompt(query: string, context?: AskContext): string {
 }
 
 /** Which gloss the card is about, spelled out so `senseIndex` means something. */
-function senseBlock(entry: Entry, senseIndex?: number): string {
+function senseBlock(entry: RetrievedEntry, senseIndex?: number): string {
   if (
     senseIndex === undefined ||
     !Number.isInteger(senseIndex) ||
@@ -162,10 +170,10 @@ function senseBlock(entry: Entry, senseIndex?: number): string {
 
 /** The user turn for `exampleSentences`. */
 export function examplesUserPrompt(
-  entry: Entry,
+  entry: RetrievedEntry,
   profile: LearnerProfile,
   senseIndex?: number,
-  support: readonly Entry[] = [],
+  support: readonly RetrievedEntry[] = [],
   count = 3,
 ): string {
   return [
@@ -185,7 +193,7 @@ export function examplesUserPrompt(
 }
 
 /** The user turn for `gradeRecall`. */
-export function recallUserPrompt(entry: Entry, answer: string, senseIndex?: number): string {
+export function recallUserPrompt(entry: RetrievedEntry, answer: string, senseIndex?: number): string {
   return [
     `PROMPT VERSION: ${RECALL_PROMPT_VERSION}`,
     'THE WORD (id, simplified, traditional, reading, numbered glosses):',
@@ -301,14 +309,15 @@ export function zodToJsonSchema(schema: ZodTypeAny): JsonSchema {
       // than four one-member anyOf branches. Unions of anything else — the
       // `{entryId} | {text}` token — stay as they are.
       const literals = options.map((option) => defOf(option));
+      const head = literals[0];
       if (
-        literals.length > 0 &&
+        head !== undefined &&
         literals.every(
           (literal) =>
-            literal.typeName === 'ZodLiteral' && literalType(literal.value) === literalType(literals[0].value),
+            literal.typeName === 'ZodLiteral' && literalType(literal.value) === literalType(head.value),
         )
       ) {
-        return described({ type: literalType(literals[0].value), enum: literals.map((literal) => literal.value) });
+        return described({ type: literalType(head.value), enum: literals.map((literal) => literal.value) });
       }
       return described({ anyOf: options.map(zodToJsonSchema) });
     }

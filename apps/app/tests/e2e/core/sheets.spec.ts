@@ -250,7 +250,11 @@ test.describe('the in-context gloss line', () => {
   });
 
   test('is ABSENT when the module is unavailable, and nothing else moves', async ({ page }) => {
-    await page.route('**/api/ask', (route) =>
+    // A regex rather than `'**/api/ask'`: `backend.md` B2 split the POST into
+    // `/api/ask/propose` and `/api/ask/answer`, and a glob on the parent path
+    // matches neither — which would have left this spec asserting nothing while
+    // the line rendered perfectly well.
+    await page.route(/\/api\/ask(\/|$)/, (route) =>
       route.fulfill({ status: 503, body: JSON.stringify({ error: 'unavailable' }) }),
     );
     await openWord(page);

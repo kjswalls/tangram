@@ -34,11 +34,13 @@
  * caps. This module imports two of them and adds nothing to them.
  */
 import { keepSentence, MAX_BAND_EXCEPTIONS, type ExampleSentence } from '@tangram/ai/examples';
+import { SUPPORT_CAP } from '@tangram/ai/schemas';
 import type { Repository } from '@/lib/db/repository';
+import type { DictStore } from '@/lib/dict/store';
 import { isPhraseSnapshot, type CardRow, type KnownBand, type SettingsRow } from '@/lib/db/schema';
 import { KNOWN_SAMPLE_LIMIT } from '@/lib/srs/profile';
 import { wordState } from '@/lib/srs/states';
-import { parseEntryId, type Entry, type EntryId, type HskBand } from '@/lib/types';
+import { HSK_BANDS, parseEntryId, type Entry, type EntryId, type HskBand } from '@/lib/types';
 
 export interface KnownSetInput {
   settings: Pick<SettingsRow, 'knownBand'>;
@@ -244,4 +246,143 @@ export function filterCachedSentences(
         (token) => token.entryId !== undefined && resolved.has(token.entryId),
       ) && keepSentence(sentence, { targetId: options.targetId, allowed }),
   );
+}
+
+// ---------------------------------------------------------------------------
+// The support pool — `backend.md` B2's contract flip
+// ---------------------------------------------------------------------------
+
+/**
+ * The dictionary rows the learner knows, most frequent first — the **support**
+ * pool, which is both what the examples prompt may build from and (after the
+ * cap) what a sentence may cite.
+ *
+ * **It ran on the server until `backend.md` B2.** It could, because the server
+ * held the dictionary; after the flip it is the client that resolves ids and
+ * bands into rows, so the pool is assembled here and sent. Nothing about the
+ * rules changed and this is deliberately the same function, moved: it is
+ * assembled from ids and bands, never from characters, and that is the whole
+ * point. A headword is not a word: 看 is `看|看[kan4]` "to see" (HSK 1) *and*
+ * `看|看[kan1]` "to look after" (HSK 6); 会 is huì and kuài; 还 is hái, huán and
+ * the surname Huán. Expanding a known headword into every entry that shares its
+ * characters puts readings the learner has never met into the whitelist, and
+ * the card back then shows them under the heading "Sentences from words you
+ * know". The tone is the whole difference in meaning, and a learner cannot
+ * check it — that is why they are here.
+ *
+ * The three sources:
+ *
+ *  1. **`ids`** — exact, and the only one that needs no judgement.
+ *  2. **`knownBand`** — the "Assume known through HSK N" control. `hskBand` is a
+ *     property of an *entry*, so the expansion is per reading and stays exact:
+ *     看[kan4] is band 1, 看[kan1] is band 6. `excludeIds` carries `wordState`'s
+ *     rule that a card outranks the band.
+ *  3. **`headwords`** — the fallback for a caller with no ids, and deliberately
+ *     lossy: a headword with more than one entry is **skipped**, because "the
+ *     learner knows 看" does not say which 看. Variants, proper nouns and
+ *     surnames are dropped too; none of them is a word somebody learned.
+ */
+export interface SupportPool {
+  /** Exact entry ids: a `known_words` row, or a card mature enough to count. */
+  ids?: readonly EntryId[];
+  /**
+   * `settings.knownBand` — every entry at or below it is assumed known.
+   *
+   * `KnownBand`, not `HskBand`: **0 is a real value** and means "assume
+   * nothing", which is the default. The band loop below adds nothing for it
+   * because no `HskBand` is ≤ 0, which is the same answer the route's old
+   * `parseBody` reached by dropping an out-of-range band to `undefined`.
+   */
+  knownBand?: KnownBand;
+  /** Entries inside those bands the learner is still learning. */
+  excludeIds?: readonly EntryId[];
+  /** Simplified headwords, for a caller that has no ids. See above. */
+  headwords?: readonly string[];
+}
+
+export async function supportEntries(
+  store: DictStore,
+  pool: SupportPool,
+  exclude: EntryId,
+): Promise<Entry[]> {
+  const excluded = new Set<string>(pool.excludeIds ?? []);
+  const seen = new Set<EntryId>([exclude]);
+  const out: Entry[] = [];
+
+  const add = (entry: Entry | undefined): void => {
+    if (!entry || seen.has(entry.id) || excluded.has(entry.id)) return;
+    seen.add(entry.id);
+    out.push(entry);
+  };
+
+  for (const entry of await store.entries(pool.ids ?? [])) add(entry);
+
+  if (pool.knownBand !== undefined) {
+    for (const band of HSK_BANDS) {
+      if (band > pool.knownBand) continue;
+      for (const entry of await store.hskBand(band)) add(entry);
+    }
+  }
+
+  for (const word of pool.headwords ?? []) {
+    const bucket = await readingsOf(store, word);
+    if (bucket.length !== 1) continue;
+    const [entry] = bucket;
+    if (!entry || entry.properNoun || entry.isVariant || entry.surname) continue;
+    add(entry);
+  }
+
+  return out.sort(
+    (a, b) =>
+      (a.freqRank ?? Number.MAX_SAFE_INTEGER) - (b.freqRank ?? Number.MAX_SAFE_INTEGER) ||
+      (a.id < b.id ? -1 : 1),
+  );
+}
+
+/**
+ * The support pool the wire carries: frequency-ordered and cut to `SUPPORT_CAP`.
+ *
+ * The cut is here rather than at the call site because the cap is the contract's
+ * (`packages/ai/schemas.ts`) and the server rejects anything over it — a client
+ * that assembled the pool and forgot to cut it would 400 on the learner's most
+ * ordinary review. The pool is ordered *before* it is cut, so what survives is
+ * the vocabulary a natural sentence reaches for first.
+ */
+export async function offeredSupport(
+  store: DictStore,
+  pool: SupportPool,
+  exclude: EntryId,
+): Promise<Entry[]> {
+  return (await supportEntries(store, pool, exclude)).slice(0, SUPPORT_CAP);
+}
+
+/**
+ * Every entry whose **simplified** headword is exactly `word` — what
+ * `lib/dict/index.ts`'s `bySimp.get(word)` answered before `data.md` D6 deleted
+ * it.
+ *
+ * A `DictStore` has no `bySimp`, deliberately: the frozen interface asks
+ * questions a learner asks, and "every row under this simplified form" is an
+ * index, not a question. The exact-match section of a hanzi search is the same
+ * set, so the rows are taken from there and filtered to the simplified side.
+ *
+ * It spans **groups**, not one group: a group is one `trad|simp` pair, while
+ * CC-CEDICT keeps a row per traditional variant, so 后 is 后|后 *and* 後|后 and
+ * the caller's rule ("skip a headword with more than one entry") reads the count
+ * across both. The limit is 200 because the exact matches lead the page and no
+ * headword has anything near that many readings; prefix matches are dropped by
+ * the `simp === word` filter.
+ *
+ * **One thing `bySimp` answered that this cannot**, measured against the built
+ * artifact rather than assumed (`wave-zero.md` §10f corrects the figure D6
+ * recorded): `DictStore.search` routes on whether the query contains CJK, so the
+ * **74** CC-CEDICT headwords that contain none — `ACG`, `3Q`, `110`, the Suzhou
+ * numerals — go down the English/pinyin path and never match themselves exactly.
+ * A mixed headword (`X光`, `卡拉OK`) is fine. Reaching them would need a
+ * `bySimp`-shaped question on the frozen `DictStore` interface, and §10f rules
+ * that not worth unfreezing the surface for on its own.
+ */
+async function readingsOf(store: DictStore, word: string): Promise<Entry[]> {
+  const result = await store.search(word, { limit: 200 });
+  return result.groups.filter((group) => group.simp === word).flatMap((group) => group.entries);
 }

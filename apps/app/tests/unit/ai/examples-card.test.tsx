@@ -7,16 +7,24 @@
  * a sentence for "to begin" is not a sentence for the other gloss. Both are
  * asserted by counting `POST`s, not by reading the key — a key that is right
  * for the wrong reason still has to spare the request.
+ *
+ * **What `backend.md` B2's contract flip changed here.** The route returned
+ * grounded, filtered sentences plus the rows to draw them; it now returns the
+ * model's own tokens, ungrounded and unfiltered, and this component grounds and
+ * filters them against the dictionary on this device. So the fixture body below
+ * is `{ provider, promptVersion, sentences }` and the i+1 promise is asserted
+ * from this side — which is where `examples-route.test.ts`'s three
+ * "a provider that breaks the rules" cases went.
  */
 import { render, screen, waitFor } from '../render';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ExamplesRouteResponse } from '@/lib/api/contract';
+import type { ExamplesResponse, RawExampleSentence } from '@tangram/ai/schemas';
 import { ExampleSentences, resetExamplesInfo } from '@/components/review/example-sentences';
 import { closeDb, getDb, getRepository } from '@/lib/db/get-db';
 import { resetDictStores, setDictStore } from '@/lib/dict/browser-store';
-import type { DictStore } from '@/lib/dict/store';
 import type { Entry } from '@/lib/types';
+import { memoryStore, type MemoryStore } from './memory-store';
 
 const WO: Entry = {
   id: '我|我[wo3]',
@@ -64,26 +72,17 @@ const KAISHI: Entry = {
   freqRank: 300,
 };
 
-function answer(sentences: ExamplesRouteResponse['sentences']): ExamplesRouteResponse {
-  return {
-    provider: 'fake',
-    promptVersion: 'v1',
-    entryId: KAISHI.id,
-    dictVersion: '2026-01-01',
-    sentences,
-    entries: [WO, KAISHI],
-    support: 1,
-    cacheable: sentences.length > 0,
-  };
+/**
+ * The body after the flip: the model's tokens, **ungrounded and unfiltered**.
+ * No `entries`, no `dictVersion`, no `cacheable` — the client has the rows and
+ * is the only party that can decide any of the three.
+ */
+function answer(sentences: RawExampleSentence[]): ExamplesResponse {
+  return { provider: 'fake', promptVersion: 'v1', sentences };
 }
 
-const ONE_SENTENCE: ExamplesRouteResponse['sentences'] = [
-  {
-    tokens: [{ entryId: WO.id }, { entryId: KAISHI.id }],
-    en: 'I am starting.',
-    register: '',
-    unverified: false,
-  },
+const ONE_SENTENCE: RawExampleSentence[] = [
+  { tokens: [{ entryId: WO.id }, { entryId: KAISHI.id }], en: 'I am starting.' },
 ];
 
 interface Calls {
@@ -93,9 +92,10 @@ interface Calls {
 }
 
 let calls: Calls;
-let body: ExamplesRouteResponse;
+let body: ExamplesResponse;
 /** What the dictionary still resolves. A rebuilt dictionary drops rows. */
 let dictEntries: Entry[];
+let store: MemoryStore;
 /** The last body the card back POSTed, so the known set it sends can be read. */
 let posted: Record<string, unknown> | undefined;
 
@@ -103,7 +103,7 @@ function json(value: unknown): Response {
   return { ok: true, status: 200, json: async () => value } as Response;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   resetExamplesInfo();
   calls = { info: 0, post: 0, entries: 0 };
   body = answer(ONE_SENTENCE);
@@ -113,7 +113,8 @@ beforeEach(() => {
   // `data.md` D6 that was a `fetch` of the entries route and this file stubbed
   // it; the browser's store is `sqlite-wasm` on OPFS now, so a jsdom test
   // installs a stand-in instead. Same rows, same counting.
-  setDictStore(dictStandIn());
+  store = memoryStore(dictEntries, { onEntries: () => { calls.entries += 1; } });
+  setDictStore(store);
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -130,6 +131,12 @@ beforeEach(() => {
       throw new Error(`unexpected fetch: ${url}`);
     }),
   );
+  // **`backend.md` B2 makes the known set part of every fixture.** Before the
+  // flip the route filtered, so a test could return a sentence citing 我 and
+  // draw it whether or not this learner knew 我. The filter runs here now, so a
+  // learner who knows nothing gets the empty line — correctly — and a fixture
+  // that wants a sentence on screen has to say who the learner is.
+  await getRepository().markKnown([WO.id]);
 });
 
 afterEach(async () => {
@@ -138,32 +145,6 @@ afterEach(async () => {
   await getDb().delete();
   await closeDb();
 });
-
-/**
- * The dictionary the card back reads cited ids through. Only `entries` and
- * `status` are exercised; everything else on the frozen interface throws, so a
- * component that started calling one would say so rather than quietly get `[]`.
- */
-function dictStandIn(): DictStore {
-  const refuse = () => {
-    throw new Error('the card back should not reach this method');
-  };
-  return {
-    status: { state: 'ready', version: '2026-01-01' },
-    subscribe: () => () => {},
-    open: async () => {},
-    async entries(ids) {
-      calls.entries += 1;
-      const wanted = new Set(ids);
-      return dictEntries.filter((entry) => wanted.has(entry.id));
-    },
-    search: refuse,
-    segment: refuse,
-    hskBand: refuse,
-    readingCount: refuse,
-    wordsContaining: refuse,
-  };
-}
 
 describe('the example sentences on a card back', () => {
   it('draws the hanzi and the reading of every cited entry, and says it is offline', async () => {
@@ -197,14 +178,19 @@ describe('the example sentences on a card back', () => {
     });
 
     view.unmount();
+    // Counted from here: the first render retrieves a support pool and grounds
+    // an answer, which are several dictionary reads. What this case is about is
+    // the second one.
+    const before = calls.entries;
     render(<ExampleSentences entryId={KAISHI.id} />);
     const section = await screen.findByTestId('examples-list');
     expect(section).toBeInTheDocument();
 
     // No second ask, and the words came back from the dictionary store: the row
-    // holds ids, so the dictionary text is resolved rather than stored.
+    // holds ids, so the dictionary text is resolved rather than stored. One
+    // read, for the ids the row cites.
     expect(calls.post).toBe(1);
-    expect(calls.entries).toBe(1);
+    expect(calls.entries - before).toBe(1);
     expect(screen.getAllByTestId('example-token')[1]).toHaveTextContent('开始');
     expect(screen.getByTestId('example-sentences')).toHaveAttribute('data-cached', 'true');
   });
@@ -251,21 +237,114 @@ describe('the example sentences on a card back', () => {
     expect(screen.queryByTestId('examples-list')).toBeNull();
   });
 
-  it('sends the known set as ids and a band, not as characters', async () => {
+  it('sends the target row and the support pool, resolved on this device', async () => {
+    // `backend.md` B2: the known set no longer crosses the wire as three shapes
+    // for the server to expand. It is expanded HERE — ids and bands into
+    // dictionary rows, frequency-ordered and cut to SUPPORT_CAP — and what the
+    // prompt gets is the rows. The band assumption is under test, stated rather
+    // than inherited.
     const repo = getRepository();
-    // The band assumption under test, stated rather than inherited.
     await repo.setSettings({ knownBand: 2 });
     await repo.markKnown([FUJIN.id]);
     render(<ExampleSentences entryId={KAISHI.id} />);
     await screen.findByTestId('examples-list');
 
-    // Three shapes of one answer: the headwords the prompt reads, the exact
-    // entries the filter is built from, and the band assumption with its
-    // exceptions. Without the ids the route can only guess which 看 is meant.
-    expect(posted?.known).toEqual([FUJIN.simp]);
-    expect(posted?.knownIds).toEqual([FUJIN.id]);
-    expect(posted?.knownBand).toBe(2);
-    expect(posted?.excludeIds).toEqual([]);
+    const entry = posted?.entry as Record<string, unknown>;
+    expect(entry.id).toBe(KAISHI.id);
+    // Six fields, and `hskBand` is one of them: `entryLine` renders it, so a
+    // five-field projection would silently change the prompt.
+    expect(Object.keys(entry).sort()).toEqual([
+      'glosses',
+      'hskBand',
+      'id',
+      'pinyinMarked',
+      'simp',
+      'trad',
+    ]);
+    expect(entry).not.toHaveProperty('pinyinNum');
+
+    const support = posted?.support as { id: string }[];
+    // 附近 is declared known by id; 我 is band 1 and reached through the band
+    // assumption. The target itself is never in its own support pool.
+    expect(support.map((row) => row.id)).toContain(FUJIN.id);
+    expect(support.map((row) => row.id)).toContain(WO.id);
+    expect(support.map((row) => row.id)).not.toContain(KAISHI.id);
+    // Nothing that used to travel does any more.
+    expect(posted).not.toHaveProperty('known');
+    expect(posted).not.toHaveProperty('knownIds');
+    expect(posted).not.toHaveProperty('entryId');
+  });
+
+  it('drops a sentence citing a word the learner does not know', async () => {
+    // Moved from `examples-route.test.ts`, where the route ran the filter. The
+    // server now returns this sentence intact; the promise on the card back —
+    // *every word in this sentence is one you already know* — is kept here.
+    const repo = getRepository();
+    await repo.markKnown([WO.id]);
+    body = answer([
+      { tokens: [{ entryId: FUJIN.id }, { entryId: KAISHI.id }], en: 'It starts nearby.' },
+    ]);
+
+    render(<ExampleSentences entryId={KAISHI.id} />);
+    await screen.findByTestId('examples-empty');
+    expect(screen.queryByTestId('examples-list')).toBeNull();
+    // …and an empty answer is never written into the cache, because the known
+    // set it reflects is the one thing about this learner that will change.
+    expect(await getDb().table('ask_cache').count()).toBe(0);
+  });
+
+  it('drops a sentence carrying characters the model wrote itself', async () => {
+    // Also moved from `examples-route.test.ts`. A `{text}` token has no
+    // dictionary row behind it, so its reading is unknowable — and the sentence
+    // is dropped whole rather than trimmed.
+    const repo = getRepository();
+    await repo.markKnown([WO.id]);
+    body = answer([
+      {
+        tokens: [{ entryId: WO.id }, { text: '绝绝子' }, { entryId: KAISHI.id }],
+        en: 'Made up.',
+      },
+      { tokens: [{ entryId: WO.id }, { entryId: KAISHI.id }], en: 'A real one.' },
+    ]);
+
+    render(<ExampleSentences entryId={KAISHI.id} />);
+    await screen.findByTestId('examples-list');
+    expect(screen.getAllByTestId('example-sentence')).toHaveLength(1);
+    expect(screen.getByTestId('example-en')).toHaveTextContent('A real one.');
+    expect(document.body.textContent).not.toContain('绝绝子');
+  });
+
+  it('says so quietly when this device has no dictionary to ground with', async () => {
+    // **A consequence of `backend.md` B2's contract flip, and a real one.**
+    // Before it the route retrieved, grounded, filtered and returned the rows,
+    // so this block worked on a device that had never downloaded the
+    // dictionary. Every one of those is this component's now and each needs the
+    // dictionary — there is no way to render a cited id as hanzi without the row
+    // behind it. So a device with no dictionary gets the quiet failure line, and
+    // **not** the "not enough known words yet" empty state, whose stated reason
+    // would be false. The four grade buttons were live the whole time.
+    await resetDictStores();
+    render(<ExampleSentences entryId={KAISHI.id} />);
+    await waitFor(() =>
+      expect(screen.getByTestId('examples-status')).toHaveTextContent('No example sentences'),
+    );
+    expect(screen.queryByTestId('examples-list')).toBeNull();
+    expect(screen.queryByTestId('examples-empty')).toBeNull();
+  });
+
+  it('drops a sentence citing an entry nobody offered', async () => {
+    // The strongest form of the rule: an id the client never put in `support`
+    // cannot be rendered at all, because `ground()` drops the citation and the
+    // phrase with it. This is `PLAN.md` §3.4 on the card back.
+    const repo = getRepository();
+    await repo.markKnown([WO.id]);
+    body = answer([
+      { tokens: [{ entryId: 'never|never[n1]' }, { entryId: KAISHI.id }], en: 'Invented.' },
+    ]);
+
+    render(<ExampleSentences entryId={KAISHI.id} />);
+    await screen.findByTestId('examples-empty');
+    expect(screen.queryByTestId('examples-list')).toBeNull();
   });
 
   it('re-checks a cached row against today’s known set and replaces a stale one', async () => {
@@ -276,17 +355,9 @@ describe('the example sentences on a card back', () => {
     // a sentence headed "Sentences from words you know".
     const repo = getRepository();
     await repo.markKnown([FUJIN.id]);
-    body = {
-      ...answer([
-        {
-          tokens: [{ entryId: FUJIN.id }, { entryId: KAISHI.id }],
-          en: 'It starts nearby.',
-          register: '',
-          unverified: false,
-        },
-      ]),
-      entries: [FUJIN, KAISHI],
-    };
+    body = answer([
+      { tokens: [{ entryId: FUJIN.id }, { entryId: KAISHI.id }], en: 'It starts nearby.' },
+    ]);
 
     const view = render(<ExampleSentences entryId={KAISHI.id} />);
     await screen.findByTestId('examples-list');
@@ -319,7 +390,7 @@ describe('the example sentences on a card back', () => {
     });
     view.unmount();
 
-    dictEntries = [KAISHI];
+    store.setEntries([KAISHI]);
     body = answer([]);
     render(<ExampleSentences entryId={KAISHI.id} />);
 
@@ -341,14 +412,13 @@ describe('the example sentences on a card back', () => {
   });
 
   it('flags a polyphone the way the ask panel does', async () => {
-    body = answer([
-      {
-        tokens: [{ entryId: WO.id, polyphone: true }, { entryId: KAISHI.id }],
-        en: 'I am starting.',
-        register: '',
-        unverified: false,
-      },
-    ]);
+    // The flag is `ground()`'s, not the model's: a token is a polyphone when the
+    // dictionary has more than one reading of its simplified headword. The
+    // second 我 row below is what makes `readingCount('我')` answer 2.
+    const repo = getRepository();
+    await repo.markKnown([WO.id]);
+    store.setEntries([...dictEntries, { ...WO, id: '我|我[wo2]', pinyinNum: 'wo2', pinyinMarked: 'wó' }]);
+    body = answer(ONE_SENTENCE);
     render(<ExampleSentences entryId={KAISHI.id} />);
     await screen.findByTestId('examples-list');
 

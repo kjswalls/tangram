@@ -316,7 +316,7 @@ function isSyllableRun(word: string): boolean {
       if (PINYIN_SYLLABLES.has(text.slice(at, at + take))) reachable[at + take] = true;
     }
   }
-  return reachable[text.length];
+  return reachable[text.length] === true;
 }
 
 /**
@@ -351,8 +351,10 @@ export function stripPinyin(text: string): string {
   const cuts: { start: number; end: number }[] = [];
   let run: typeof words = [];
   const close = (): void => {
-    if (run.length > 0 && run.some((word) => word.toned)) {
-      cuts.push({ start: run[0].start, end: run[run.length - 1].end });
+    const first = run[0];
+    const last = run[run.length - 1];
+    if (first !== undefined && last !== undefined && run.some((word) => word.toned)) {
+      cuts.push({ start: first.start, end: last.end });
     }
     run = [];
   };
@@ -473,15 +475,20 @@ export interface Span {
 
 /** AA (看看) and A一A (看一看) are how Chinese reduplicates a verb, not invention. */
 function isReduplication(run: readonly Token[]): boolean {
-  if (run.length === 2 && run[0].text === run[1].text) return true;
-  return run.length === 3 && run[1].text === '一' && run[0].text === run[2].text;
+  const [a, b, c] = run;
+  if (a === undefined || b === undefined) return false;
+  if (run.length === 2) return a.text === b.text;
+  return run.length === 3 && c !== undefined && b.text === '一' && a.text === c.text;
 }
 
 /** A character that comes back within two positions: 绝绝子, 随看随买. */
 function hasNearRepeat(run: readonly Token[]): boolean {
   for (let i = 0; i < run.length; i += 1) {
+    const left = run[i];
+    if (left === undefined) continue;
     for (let j = i + 1; j <= i + 2 && j < run.length; j += 1) {
-      if (run[i].text === run[j].text) return true;
+      const right = run[j];
+      if (right !== undefined && left.text === right.text) return true;
     }
   }
   return false;
@@ -506,16 +513,20 @@ export function unverifiedSpans(
   const isSingle = (token: Token): boolean => [...token.text].length === 1;
   const isCited = (token: Token): boolean =>
     cited.some((span) => span.start === token.start && span.end === token.end);
-  const firstEntry = (token: Token): Entry | undefined =>
-    token.entryIds.length > 0 ? lookup(token.entryIds[0]) : undefined;
+  const firstEntry = (token: Token): Entry | undefined => {
+    const first = token.entryIds[0];
+    return first === undefined ? undefined : lookup(first);
+  };
 
   let run: Token[] = [];
   let runCited = false;
   const closeRun = (): void => {
-    if (run.length >= 2) {
+    const first = run[0];
+    const last = run[run.length - 1];
+    if (run.length >= 2 && first !== undefined && last !== undefined) {
       if (runCited) {
         if (hasNearRepeat(run) && !isReduplication(run)) {
-          spans.push({ start: run[0].start, end: run[run.length - 1].end });
+          spans.push({ start: first.start, end: last.end });
         }
       } else {
         const allCommon = run.every((token) => {
@@ -524,7 +535,7 @@ export function unverifiedSpans(
             entry !== undefined && (entry.freqRank ?? Number.MAX_SAFE_INTEGER) <= COMMON_SINGLE_RANK
           );
         });
-        if (!allCommon) spans.push({ start: run[0].start, end: run[run.length - 1].end });
+        if (!allCommon) spans.push({ start: first.start, end: last.end });
       }
     }
     run = [];
@@ -550,12 +561,8 @@ export function unverifiedSpans(
     }
 
     const entry = firstEntry(token);
-    if (
-      isSingle(token) &&
-      entry &&
-      entry.glosses.length === 1 &&
-      NOT_A_WORD_GLOSS.test(entry.glosses[0])
-    ) {
+    const onlyGloss = entry?.glosses.length === 1 ? entry.glosses[0] : undefined;
+    if (isSingle(token) && onlyGloss !== undefined && NOT_A_WORD_GLOSS.test(onlyGloss)) {
       spans.push({ start: token.start, end: token.end });
     }
 
@@ -654,7 +661,7 @@ export function ground(response: RawAskResponse, context: GroundContext): Ground
     const cited: Span[] = [];
     let at = 0;
     for (const [i, token] of tokens.entries()) {
-      const end = at + rendered.tokens[i].text.length;
+      const end = at + (rendered.tokens[i]?.text.length ?? 0);
       if (token.entryId !== undefined && end > at) cited.push({ start: at, end });
       at = end;
     }
@@ -664,7 +671,7 @@ export function ground(response: RawAskResponse, context: GroundContext): Ground
       let cursor = 0;
       for (const [i, token] of tokens.entries()) {
         const start = cursor;
-        const end = start + rendered.tokens[i].text.length;
+        const end = start + (rendered.tokens[i]?.text.length ?? 0);
         cursor = end;
         if (end === start) continue;
         if (spans.some((span) => span.start < end && span.end > start)) token.unverified = true;

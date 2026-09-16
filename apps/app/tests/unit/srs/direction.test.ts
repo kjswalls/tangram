@@ -327,7 +327,18 @@ describe('the twin itself', () => {
 });
 
 describe('productionRecallRequest', () => {
-  const input = { entryId: '打算|打算[da3 suan4]', answer: '打算' };
+  // `entry`, not `entryId` (`backend.md` B2's contract flip): the recall
+  // request carries the row now, read off the card's own snapshot.
+  const input = {
+    entry: {
+      id: '打算|打算[da3 suan4]',
+      simp: '打算',
+      trad: '打算',
+      pinyinMarked: 'dǎsuàn',
+      glosses: ['to plan', 'to intend'],
+    },
+    answer: '打算',
+  };
 
   it('grades an exact answer without touching the provider', async () => {
     const provider = vi.fn(async () => {

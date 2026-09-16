@@ -29,7 +29,19 @@ import type {
   ParsedGradeRecall,
   ProposedPhrases,
 } from './provider.js';
-import type { Entry, LearnerProfile } from '@/lib/types';
+/**
+ * **`RetrievedEntry`, not `Entry` (`backend.md` B2's contract flip).** The fake
+ * is an `LLMProvider`, so its parameters are the interface's, and after the
+ * flip a provider sees the six fields the wire carries and nothing else.
+ *
+ * Three of the four things this file used to read off a whole `Entry` are
+ * recoverable from those six without inventing anything — see `pinyinNumOf`,
+ * `looksLikeVariant` and `looksLikeProperNoun` below, each of which reproduces
+ * `scripts/build-data.ts`'s own derivation rather than approximating it. The
+ * fourth, `freqRank`, is not, and `supportRank` says what happens instead.
+ */
+import type { RetrievedEntry } from './schemas.js';
+import type { LearnerProfile } from '@/lib/types';
 
 /** How many entries the echo cites. */
 export const ECHO_MATCHES = 5;
@@ -260,20 +272,61 @@ const DEMOS: readonly Demo[] = [
 
 // ---------------------------------------------------------------------------
 
-function citeFrom(retrieved: readonly Entry[]): Cite {
+/**
+ * The numbered pinyin of an entry, read out of its own id.
+ *
+ * `EntryId` is `trad|simp[pinyinNum]` (PLAN.md §3.1), so the reading is not
+ * missing from a `RetrievedEntry` — it is spelled inside the one field that is
+ * guaranteed to be there. This is a parse of the contract's own key, not a
+ * reconstruction of a field the wire dropped.
+ */
+function pinyinNumOf(entry: RetrievedEntry): string {
+  const open = entry.id.indexOf('[');
+  return open === -1 || !entry.id.endsWith(']') ? '' : entry.id.slice(open + 1, -1);
+}
+
+/**
+ * CC-CEDICT's own conventions, applied to the glosses and the reading the wire
+ * carries. `scripts/build-data.ts` derives `isVariant`, `properNoun` and
+ * `surname` from exactly these, by exactly these rules (`build-data.ts:224-226`),
+ * so reading them here is the same computation in a second place rather than a
+ * guess at a dropped field. They are used for one thing — preferring a real
+ * word over a variant or a surname when several entries share a headword — so
+ * a disagreement costs a slightly worse offline citation, never a wrong one.
+ */
+const VARIANT_GLOSS = /^(?:\([^)]*\)\s*)?(?:[A-Za-z]+\s+){0,2}variant of\s+(.+)$/;
+
+function looksLikeVariant(entry: RetrievedEntry): boolean {
+  return entry.glosses.length > 0 && entry.glosses.every((gloss) => VARIANT_GLOSS.test(gloss));
+}
+
+function looksLikeProperNoun(entry: RetrievedEntry): boolean {
+  return pinyinNumOf(entry)
+    .split(/\s+/)
+    .some((syllable) => /^[A-Z][a-zü:]*[1-5]$/.test(syllable));
+}
+
+function looksLikeSurname(entry: RetrievedEntry): boolean {
+  return entry.glosses.some((gloss) => gloss.startsWith('surname '));
+}
+
+function citeFrom(retrieved: readonly RetrievedEntry[]): Cite {
   return (simp, pinyinNum) => {
     const candidates = retrieved.filter((entry) => entry.simp === simp);
     if (candidates.length === 0) return undefined;
     if (pinyinNum) {
-      const exact = candidates.find((entry) => entry.pinyinNum.replace(/\s+/g, '') === pinyinNum.replace(/\s+/g, ''));
+      const exact = candidates.find(
+        (entry) => pinyinNumOf(entry).replace(/\s+/g, '') === pinyinNum.replace(/\s+/g, ''),
+      );
       if (exact) return exact.id;
       return undefined;
     }
     // Retrieval order is already frequency-first; prefer a real word over a
     // variant or a proper noun so a citation never lands on "surname Sui".
     const best =
-      candidates.find((entry) => !entry.isVariant && !entry.properNoun) ?? candidates[0];
-    return best.id;
+      candidates.find((entry) => !looksLikeVariant(entry) && !looksLikeProperNoun(entry)) ??
+      candidates[0];
+    return best?.id;
   };
 }
 
@@ -289,7 +342,7 @@ function citeFrom(retrieved: readonly Entry[]): Cite {
  * never dictionary text. An echo that recited its glosses made every non-demo
  * query a cache row full of CC-CEDICT.
  */
-export function retrievalEcho(retrieved: readonly Entry[]): ParsedAskResponse {
+export function retrievalEcho(retrieved: readonly RetrievedEntry[]): ParsedAskResponse {
   const top = retrieved.slice(0, ECHO_MATCHES);
   if (top.length === 0) {
     return {
@@ -327,7 +380,7 @@ export class FakeProvider implements LLMProvider {
   }
 
   async answer(
-    retrieved: readonly Entry[],
+    retrieved: readonly RetrievedEntry[],
     _profile: LearnerProfile,
     query: string,
     context?: AskContext,
@@ -338,17 +391,17 @@ export class FakeProvider implements LLMProvider {
   }
 
   async exampleSentences(
-    entry: Entry,
+    entry: RetrievedEntry,
     profile: LearnerProfile,
     _senseIndex?: number,
-    support?: readonly Entry[],
+    support?: readonly RetrievedEntry[],
   ): Promise<ParsedExampleSentences> {
     // The sense does not change which words the echo can cite; a live provider
     // is what makes a sentence about one gloss rather than another.
     return exampleEcho(entry, profile, support ?? []);
   }
 
-  async gradeRecall(entry: Entry, answer: string, senseIndex?: number): Promise<ParsedGradeRecall> {
+  async gradeRecall(entry: RetrievedEntry, answer: string, senseIndex?: number): Promise<ParsedGradeRecall> {
     return recallEcho(entry, answer, senseIndex);
   }
 }
@@ -375,10 +428,21 @@ const EXAMPLE_LINES: readonly string[] = [
 const EXAMPLE_ALONE =
   'Offline: nothing was retrieved to build a sentence from, so this is the word on its own.';
 
-/** Known words lead, then the most frequent; the id breaks the last tie. */
-function supportRank(entry: Entry, known: ReadonlySet<string>): number {
-  const frequency = entry.freqRank ?? 500_000;
-  return (known.has(entry.simp) ? 0 : 1_000_000) + frequency;
+/**
+ * Known words lead; everything else keeps the order the caller sent.
+ *
+ * This used to add `entry.freqRank`, which `RetrievedEntry` does not carry —
+ * and it is the one field of the four this file lost that cannot be recovered
+ * from the six. It also does not need to be: the support pool is
+ * **frequency-ordered before it is capped** by whoever assembles it
+ * (`supportEntries`, `apps/app/lib/srs/known-set.ts`), which is the same
+ * ordering this rank was re-deriving. So the caller's order is the frequency
+ * order, and a stable sort on the known/unknown split preserves it — see the
+ * decorated sort in `exampleEcho`, which is what makes "stable" a property of
+ * this code rather than of the engine.
+ */
+function supportRank(entry: RetrievedEntry, known: ReadonlySet<string>): number {
+  return known.has(entry.simp) ? 0 : 1;
 }
 
 /**
@@ -393,18 +457,26 @@ function supportRank(entry: Entry, known: ReadonlySet<string>): number {
  * still comes back as one single-token sentence.
  */
 export function exampleEcho(
-  entry: Entry,
+  entry: RetrievedEntry,
   profile: LearnerProfile,
-  support: readonly Entry[] = [],
+  support: readonly RetrievedEntry[] = [],
 ): ParsedExampleSentences {
   const known = new Set(profile.knownSample);
   const seen = new Set<string>([entry.simp]);
-  const pool: Entry[] = [];
-  for (const candidate of [...support].sort(
-    (a, b) => supportRank(a, known) - supportRank(b, known) || (a.id < b.id ? -1 : 1),
-  )) {
+  const pool: RetrievedEntry[] = [];
+  // Decorated with the caller's index and undecorated after, so the tie-break
+  // is the order the pool arrived in rather than a property of `Array.sort`.
+  const ordered = support
+    .map((candidate, index) => ({ candidate, index }))
+    .sort(
+      (a, b) =>
+        supportRank(a.candidate, known) - supportRank(b.candidate, known) || a.index - b.index,
+    )
+    .map(({ candidate }) => candidate);
+  for (const candidate of ordered) {
     if (candidate.id === entry.id || seen.has(candidate.simp)) continue;
-    if (candidate.properNoun || candidate.isVariant || candidate.surname) continue;
+    if (looksLikeProperNoun(candidate) || looksLikeVariant(candidate) || looksLikeSurname(candidate))
+      continue;
     seen.add(candidate.simp);
     pool.push(candidate);
     if (pool.length >= EXAMPLE_SENTENCE_COUNT) break;
@@ -417,7 +489,7 @@ export function exampleEcho(
   return {
     sentences: pool.map((word, index) => ({
       tokens: [{ entryId: word.id }, { entryId: entry.id }],
-      en: EXAMPLE_LINES[index % EXAMPLE_LINES.length],
+      en: EXAMPLE_LINES[index % EXAMPLE_LINES.length] ?? EXAMPLE_ALONE,
     })),
   };
 }
@@ -477,14 +549,15 @@ function synonyms(gloss: string): string[] {
 }
 
 /** The glosses a grade is judged against: the chosen sense, or all of them. */
-function gradedGlosses(entry: Entry, senseIndex?: number): string[] {
+function gradedGlosses(entry: RetrievedEntry, senseIndex?: number): string[] {
   if (
     senseIndex !== undefined &&
     Number.isInteger(senseIndex) &&
     senseIndex >= 0 &&
     senseIndex < entry.glosses.length
   ) {
-    return [entry.glosses[senseIndex]];
+    const gloss = entry.glosses[senseIndex];
+    if (gloss !== undefined) return [gloss];
   }
   return [...entry.glosses];
 }
@@ -500,7 +573,11 @@ function gradedGlosses(entry: Entry, senseIndex?: number): string[] {
  * carries dictionary text, and it is plain ASCII prose, so the no-CJK rule
  * holds by construction.
  */
-export function recallEcho(entry: Entry, answer: string, senseIndex?: number): ParsedGradeRecall {
+export function recallEcho(
+  entry: RetrievedEntry,
+  answer: string,
+  senseIndex?: number,
+): ParsedGradeRecall {
   const said = new Set(recallWords(answer));
   const glosses = gradedGlosses(entry, senseIndex);
 

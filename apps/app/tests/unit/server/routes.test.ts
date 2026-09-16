@@ -90,19 +90,21 @@ describe('the API this app calls', () => {
     expect(existsSync(resolve(ROOT, 'app/api'))).toBe(false);
   });
 
-  it('is declared by apps/server, and today that is exactly three paths', () => {
+  it('is declared by apps/server, and today that is exactly five paths', () => {
     // Exact, not `arrayContaining`: `data.md` D6 deleted the five dictionary
-    // routes and B1 moved these three, so a fourth appearing is something
-    // nobody decided — and `backend.md` B2 IS going to add two, at which point
-    // this line is the deliberate edit that records it. What must not need an
-    // edit is the coverage check itself: `appCalledRoutes()` derives the set
-    // from the table's `gated` column rather than from a literal, so B2's
-    // `/api/ask/propose` and `/api/ask/answer` are covered the moment they are
-    // declared. `GATED_PATHS` in `@tangram/access` is the same set from the
-    // gate's side and `apps/server/tests/routes.test.ts` holds the two
-    // together.
+    // routes and B1 moved three here, so a sixth appearing is something nobody
+    // decided. **This is `backend.md` B2's deliberate edit**, which the previous
+    // version of this comment predicted: the single `POST /api/ask` became
+    // `/api/ask/propose` and `/api/ask/answer`, and `/api/ask` is the handshake
+    // alone. What did NOT need an edit is the coverage check: `appCalledRoutes()`
+    // derives the set from the table's `gated` column rather than from a
+    // literal, so the two new routes were covered the moment they were declared.
+    // `GATED_PATHS` in `@tangram/access` is the same set from the gate's side
+    // and `apps/server/tests/routes.test.ts` holds the two together.
     expect(appCalledRoutes().map((route) => route.path).sort()).toEqual([
       '/api/ask',
+      '/api/ask/answer',
+      '/api/ask/propose',
       '/api/examples',
       '/api/recall',
     ]);

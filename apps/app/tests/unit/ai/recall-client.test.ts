@@ -25,7 +25,21 @@ import { ACCESS_HEADER } from '@tangram/access';
 import { appRecallRequest } from '@/lib/api/recall-client';
 import { initAccess, revokeAccess, API_BASE } from '@/src/access/client';
 
-const INPUT = { entryId: '你好|你好[ni3 hao3]', answer: 'hello' };
+/**
+ * `entry`, not `entryId` (`backend.md` B2's contract flip): the server holds no
+ * dictionary, so the glosses travel with the question. The caller reads them off
+ * the card's own `EntrySnapshot`.
+ */
+const INPUT = {
+  entry: {
+    id: '你好|你好[ni3 hao3]',
+    simp: '你好',
+    trad: '你好',
+    pinyinMarked: 'nǐhǎo',
+    glosses: ['hello'],
+  },
+  answer: 'hello',
+};
 
 /** A `fetch` that records the call and answers a valid suggestion. */
 function recorder(): { calls: { url: string; headers: Headers }[]; fetch: typeof fetch } {

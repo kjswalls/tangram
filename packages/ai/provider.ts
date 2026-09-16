@@ -29,7 +29,18 @@ import { z } from 'zod';
 
 import { AnthropicProvider } from './anthropic.js';
 import { FakeProvider } from './fake.js';
-import type { Entry, LearnerProfile } from '@/lib/types';
+/**
+ * **`RetrievedEntry`, not `Entry` (`backend.md` B2).** Until the contract flip
+ * the server held the dictionary and handed whole `Entry` rows to a provider;
+ * now the *client* retrieves and sends the six fields `prompts.ts` actually
+ * reads. The change is deliberately in the interface rather than behind an
+ * adapter: `Entry` is structurally assignable to `RetrievedEntry`, so every
+ * caller passing a real dictionary row keeps compiling, and what stops
+ * compiling is code that assumed it had the other eleven fields — which is the
+ * whole point of the flip.
+ */
+import type { RetrievedEntry } from './schemas.js';
+import type { LearnerProfile } from '@/lib/types';
 
 /**
  * The provenance an ask carries. Structurally a `CardContext` minus the
@@ -149,7 +160,7 @@ export interface LLMProvider {
   proposePhrases(query: string, context?: AskContext): Promise<ProposedPhrases>;
   /** The answer itself, over entries the caller retrieved. */
   answer(
-    retrieved: readonly Entry[],
+    retrieved: readonly RetrievedEntry[],
     profile: LearnerProfile,
     query: string,
     context?: AskContext,
@@ -166,17 +177,17 @@ export interface LLMProvider {
    * can still cite the target entry, so an empty result is never the answer.
    */
   exampleSentences(
-    entry: Entry,
+    entry: RetrievedEntry,
     profile: LearnerProfile,
     senseIndex?: number,
-    support?: readonly Entry[],
+    support?: readonly RetrievedEntry[],
   ): Promise<ParsedExampleSentences>;
   /**
    * Read a typed free-recall answer against an entry and suggest a grade
    * (Phase 6 item 2). The answer is the learner's own words in English; the
    * provider judges it against the entry's glosses and says why in prose.
    */
-  gradeRecall(entry: Entry, answer: string, senseIndex?: number): Promise<ParsedGradeRecall>;
+  gradeRecall(entry: RetrievedEntry, answer: string, senseIndex?: number): Promise<ParsedGradeRecall>;
 }
 
 /** A provider failure that the route turns into a 502 rather than a crash. */

@@ -1,19 +1,32 @@
 // @vitest-environment node
 /**
- * `/api/examples` (PLAN.md §4, Phase 6 item 1), called the way the Phase 0
- * route tests call a handler: with a `Request`.
+ * `/api/examples` after `backend.md` B2's contract flip — the **server** half.
  *
- * The point of most of these cases is the one thing the fake provider cannot
- * demonstrate — that a **misbehaving** provider gets nothing onto a card back.
- * "The prompt asks, the filter enforces" is only a claim worth making if
- * something has actually broken the rules and been stopped, so `selectProvider`
- * is mocked and a stub is handed answers that cite a word the learner has never
- * met, write their own characters, throw, hang, or answer off-schema.
+ * **What this file used to be.** It exercised the whole i+1 pipeline through the
+ * handler, because the handler held the dictionary: it resolved the target,
+ * expanded the learner's known set into rows, asked the provider, grounded the
+ * sentences and *filtered* them. After the flip the server does one of those
+ * five. The other four are the client's and their assertions moved with them:
+ *
+ *  - the filter cases (a sentence citing an unknown word, a sentence carrying
+ *    characters the model wrote itself, a sentence citing the other reading of a
+ *    known headword) → `tests/unit/ai/examples.test.ts`, which already owns
+ *    `keepSentence` and `groundExamples`, plus an end-to-end case in
+ *    `tests/unit/ai/examples-card.test.tsx` proving the card back runs them;
+ *  - the support-pool cases (frequency order, a headword is not a word, the band
+ *    expansion, a card outranking the band) → `tests/unit/srs/support-pool.test.ts`,
+ *    over `supportEntries` in `lib/srs/known-set.ts`, which is where the pool is
+ *    assembled now;
+ *  - "is a 404 for an id this dictionary does not have" → the client cannot send
+ *    an id it does not have a row for, so the case becomes "the card names an
+ *    entry this build dropped" in `examples-card.test.tsx`;
+ *  - "answers 503 when `data/` has not been built" → **deleted**. This server has
+ *    no dictionary, so it cannot have a missing one.
+ *
+ * What is left is what a server can still be wrong about: the handshake, the
+ * edge validator, and a provider that throws, hangs or answers off-schema.
  */
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type {
   LLMProvider,
@@ -21,10 +34,14 @@ import type {
   ParsedGradeRecall,
 } from '@tangram/ai/provider';
 import { EXAMPLES_PROMPT_VERSION } from '@tangram/ai/cache-key';
-import { closeServerDictStore, serverDictStore } from '@/lib/server/dict';
-import type { Entry, LearnerProfile } from '@/lib/types';
-import { requireDictData } from '../dict/data-required';
-import { entriesFor, entryFor, readingOf } from './helpers';
+import {
+  MAX_EXAMPLE_SENTENCES,
+  SUPPORT_CAP,
+  type AskInfoResponse,
+  type ExamplesResponse,
+  type LearnerProfile,
+  type RetrievedEntry,
+} from '@tangram/ai/schemas';
 
 /** What `selectProvider` hands the route, when a case wants to choose. */
 const stubbed = vi.hoisted(() => ({ provider: undefined as LLMProvider | undefined }));
@@ -38,26 +55,32 @@ vi.mock('@tangram/ai/provider', async (importOriginal) => {
   };
 });
 
-const { GET, POST, SUPPORT_CAP, supportEntries } = await import('@server/routes/examples.ts');
-type ExamplesRouteResponse = import('@/lib/api/contract').ExamplesRouteResponse;
-type ExamplesRouteInfo = import('@/lib/api/contract').ExamplesRouteInfo;
+const { GET, POST } = await import('@server/routes/examples.ts');
 
-beforeAll(requireDictData);
 afterEach(() => {
   stubbed.provider = undefined;
+  delete process.env.TANGRAM_EXAMPLES_TIMEOUT_MS;
 });
 
-/** HSK 1–2 words, the way a demo learner's known set arrives. */
-const KNOWN = ['我', '是', '的', '很', '好', '你', '天', '看', '书', '学习'];
-const PROFILE: LearnerProfile = { estimatedBand: 2, knownSample: KNOWN };
+const PROFILE: LearnerProfile = { estimatedBand: 2, knownSample: ['我', '是'] };
 
-/**
- * The same learner as entry ids — which is what the filter is built from. A
- * headword is not a word: 看 alone is `看|看[kan4]` "to see" and
- * `看|看[kan1]` "to look after", and knowing one of them says nothing about
- * the other.
- */
-const KNOWN_IDS = KNOWN.map((word) => entriesFor(word)[0].id);
+const KAISHI: RetrievedEntry = {
+  id: '開始|开始[kai1 shi3]',
+  simp: '开始',
+  trad: '開始',
+  pinyinMarked: 'kāishǐ',
+  hskBand: 2,
+  glosses: ['to begin', 'to start'],
+};
+
+const WO: RetrievedEntry = {
+  id: '我|我[wo3]',
+  simp: '我',
+  trad: '我',
+  pinyinMarked: 'wǒ',
+  hskBand: 1,
+  glosses: ['I', 'me'],
+};
 
 function request(body: unknown): Request {
   return new Request('http://localhost/api/examples', {
@@ -67,9 +90,9 @@ function request(body: unknown): Request {
   });
 }
 
-async function post(body: unknown): Promise<{ status: number; body: ExamplesRouteResponse }> {
+async function post(body: unknown): Promise<{ status: number; body: ExamplesResponse }> {
   const res = await POST(request(body));
-  return { status: res.status, body: (await res.json()) as ExamplesRouteResponse };
+  return { status: res.status, body: (await res.json()) as ExamplesResponse };
 }
 
 /** A provider that answers whatever the case wants, and nothing else. */
@@ -83,189 +106,111 @@ function stub(answer: () => ParsedExampleSentences | Promise<ParsedExampleSenten
   };
 }
 
-const target = (): Entry => entryFor('开始');
-
 describe('GET /api/examples', () => {
   it('reports the provider and the prompt version the card back keys its cache on', async () => {
-    const info = (await GET(new Request('http://localhost/api/examples')).json()) as ExamplesRouteInfo;
+    const info = (await GET(new Request('http://localhost/api/examples')).json()) as AskInfoResponse;
     expect(info).toEqual({ provider: 'fake', promptVersion: EXAMPLES_PROMPT_VERSION });
   });
 });
 
 describe('the request', () => {
   it('rejects a body with no entry', async () => {
-    const res = await POST(request({ profile: PROFILE }));
-    expect(res.status).toBe(400);
+    expect((await POST(request({ profile: PROFILE }))).status).toBe(400);
   });
 
   it('rejects a nonsense senseIndex rather than guessing one', async () => {
-    const res = await POST(request({ entryId: target().id, senseIndex: -1, profile: PROFILE }));
+    expect((await POST(request({ entry: KAISHI, senseIndex: -1, profile: PROFILE }))).status).toBe(400);
+  });
+
+  it('rejects an entry that is not a dictionary row', async () => {
+    // After the flip the caller supplies the row, so "is this a row" is a thing
+    // the edge has to decide. An id alone — which is what this route used to
+    // take — is now a 400 rather than a lookup.
+    expect((await POST(request({ entry: KAISHI.id, profile: PROFILE }))).status).toBe(400);
+    expect(
+      (await POST(request({ entry: { id: KAISHI.id }, profile: PROFILE }))).status,
+    ).toBe(400);
+  });
+
+  it('refuses a support pool over the cap', async () => {
+    const many = Array.from({ length: SUPPORT_CAP + 1 }, (_unused, index) => ({
+      ...WO,
+      id: `x|x[x${index}]`,
+    }));
+    const res = await POST(request({ entry: KAISHI, profile: PROFILE, support: many }));
     expect(res.status).toBe(400);
+    expect(((await res.json()) as { hint: string }).hint).toContain(String(SUPPORT_CAP));
   });
 
-  it('is a 404 for an id this dictionary does not have', async () => {
-    const res = await POST(request({ entryId: 'bogus|bogus[bo1 gus4]', profile: PROFILE }));
-    expect(res.status).toBe(404);
-    expect((await res.json()).error).toBe('entry-not-found');
+  it('takes a bare request with no support at all', async () => {
+    // "Declares nothing when the body declares nothing" — the learner three days
+    // in, with no known words. It is legal and the answer is the word by itself.
+    const { status, body } = await post({ entry: KAISHI, profile: PROFILE });
+    expect(status).toBe(200);
+    expect(body.sentences).toHaveLength(1);
+    expect(body.sentences[0]?.tokens).toEqual([{ entryId: KAISHI.id }]);
   });
 });
 
-describe('the offline provider', () => {
-  it('answers with sentences that cite only the target and words the learner knows', async () => {
-    const entry = target();
-    const { status, body } = await post({
-      entryId: entry.id,
-      profile: PROFILE,
-      known: KNOWN,
-      knownIds: KNOWN_IDS,
-    });
-
+describe('what comes back', () => {
+  it('is ungrounded and unfiltered, and the client is what fixes that', async () => {
+    // The flip in one assertion. The provider cites an entry the caller never
+    // offered; the server passes it through, because it has no dictionary to
+    // judge it with. `examples-card.test.tsx` is where it is dropped.
+    stubbed.provider = stub(() => ({
+      sentences: [
+        { tokens: [{ entryId: 'stranger|stranger[x]' }, { entryId: KAISHI.id }], en: 'Unknown.' },
+      ],
+    }));
+    const { status, body } = await post({ entry: KAISHI, profile: PROFILE, support: [WO] });
     expect(status).toBe(200);
-    expect(body.provider).toBe('fake');
-    expect(body.sentences.length).toBeGreaterThan(0);
-    expect(body.sentences.length).toBeLessThanOrEqual(2);
-
-    // The ids the learner declared, and nothing derived from the route's own
-    // expansion of them — a whitelist checked against itself proves nothing.
-    const allowed = new Set(KNOWN_IDS);
-    for (const sentence of body.sentences) {
-      expect(sentence.tokens.length).toBeGreaterThan(0);
-      for (const token of sentence.tokens) {
-        expect(token.entryId).toBeDefined();
-        expect(token.entryId === entry.id || allowed.has(token.entryId as string)).toBe(true);
-      }
-      // Every sentence is about the card's own word.
-      expect(sentence.tokens.some((token) => token.entryId === entry.id)).toBe(true);
-    }
-
-    // Every entry needed to draw the sentence travels with it: the card back
-    // renders hanzi and pinyin from these rows and from nothing else.
-    const returned = new Set(body.entries.map((row) => row.id));
-    for (const sentence of body.sentences) {
-      for (const token of sentence.tokens) expect(returned.has(token.entryId as string)).toBe(true);
-    }
-    expect(body.dictVersion).toMatch(/\d/);
-    expect(body.cacheable).toBe(true);
-  });
-
-  it('declares nothing when the body declares nothing, rather than borrowing the profile', async () => {
-    // `profile.knownSample` counts words the learner is still *learning*
-    // (`buildLearnerProfile`), and this route's one promise is that it does not.
-    // A body with no known set is legal and gets the target by itself.
-    const entry = target();
-    const { status, body } = await post({ entryId: entry.id, profile: PROFILE });
-    expect(status).toBe(200);
-    expect(body.support).toBe(0);
-    expect(body.sentences).toEqual([{ tokens: [{ entryId: entry.id }], en: expect.any(String), register: '', unverified: false }]);
-  });
-
-  it('expands the band assumption server-side, where the dictionary is', async () => {
-    // "Assume known through HSK 2" is a real answer to "what do you know", and
-    // it is the only one a learner who never pressed "Mark known" has. Before
-    // this it contributed nothing and they got the empty line forever.
-    const entry = target();
-    const { body } = await post({
-      entryId: entry.id,
-      profile: PROFILE,
-      knownBand: 2,
-    });
-    expect(body.support).toBeGreaterThan(0);
-    expect(body.sentences.length).toBeGreaterThan(0);
-    for (const sentence of body.sentences) {
-      for (const token of sentence.tokens) {
-        if (token.entryId === entry.id) continue;
-        const cited = body.entries.find((row) => row.id === token.entryId);
-        expect(cited?.hskBand).toBeLessThanOrEqual(2);
-      }
-    }
-  });
-
-  it('still answers a learner who knows nothing yet, with the word by itself', async () => {
-    const entry = target();
-    const { body } = await post({
-      entryId: entry.id,
-      profile: { estimatedBand: 1, knownSample: [] },
-      known: [],
-      knownIds: [],
-    });
-    expect(body.support).toBe(0);
     expect(body.sentences).toHaveLength(1);
-    expect(body.sentences[0].tokens).toEqual([{ entryId: entry.id }]);
+    expect(body.sentences[0]?.tokens[0]).toEqual({ entryId: 'stranger|stranger[x]' });
+    // Nothing that used to travel back does any more.
+    expect(body).not.toHaveProperty('entries');
+    expect(body).not.toHaveProperty('dictVersion');
+    expect(body).not.toHaveProperty('cacheable');
+    expect(body).not.toHaveProperty('support');
+  });
+
+  it('caps how many sentences one call may return', async () => {
+    stubbed.provider = stub(() => ({
+      sentences: Array.from({ length: MAX_EXAMPLE_SENTENCES + 3 }, (_unused, index) => ({
+        tokens: [{ entryId: KAISHI.id }],
+        en: `sentence ${index}`,
+      })),
+    }));
+    const { body } = await post({ entry: KAISHI, profile: PROFILE });
+    expect(body.sentences).toHaveLength(MAX_EXAMPLE_SENTENCES);
+  });
+
+  it('hands the provider the target and the support pool as the caller sent them', async () => {
+    let seen: { entry: RetrievedEntry; support: readonly RetrievedEntry[] } | undefined;
+    stubbed.provider = {
+      name: 'fake',
+      proposePhrases: async () => ({ candidates: [] }),
+      answer: async () => ({ interpretation: '', matches: [], sayIt: [], notes: [] }),
+      exampleSentences: async (entry, _profile, _senseIndex, support) => {
+        seen = { entry, support: support ?? [] };
+        return { sentences: [] };
+      },
+      gradeRecall: async (): Promise<ParsedGradeRecall> => ({ suggested: 3, why: '' }),
+    };
+    await post({ entry: KAISHI, profile: PROFILE, support: [WO] });
+    expect(seen?.entry).toEqual(KAISHI);
+    expect(seen?.support).toEqual([WO]);
+    // `hskBand` survives the wire, because `entryLine` renders it. A prompt that
+    // lost it would be a model-behaviour change smuggled in as transport.
+    expect(seen?.entry.hskBand).toBe(2);
   });
 });
 
-describe('a provider that breaks the rules', () => {
-  it('drops a sentence citing a word the learner does not know', async () => {
-    const entry = target();
-    const stranger = entryFor('图书馆');
-    stubbed.provider = stub(() => ({
-      sentences: [
-        { tokens: [{ entryId: stranger.id }, { entryId: entry.id }], en: 'At the library.' },
-      ],
-    }));
-
-    const { status, body } = await post({
-      entryId: entry.id,
-      profile: PROFILE,
-      known: KNOWN,
-      knownIds: KNOWN_IDS,
-    });
-    expect(status).toBe(200);
-    // Nothing reached the client: the filter runs here, not in the browser.
-    expect(body.sentences).toEqual([]);
-    expect(body.entries).toEqual([]);
-    // …and an empty answer is never written into the cache, because the known
-    // set it reflects is the one thing about this learner that will change.
-    expect(body.cacheable).toBe(false);
-  });
-
-  it('drops a sentence carrying characters it wrote itself', async () => {
-    const entry = target();
-    const wo = entryFor('我');
-    stubbed.provider = stub(() => ({
-      sentences: [
-        { tokens: [{ entryId: wo.id }, { text: '绝绝子' }, { entryId: entry.id }], en: 'Made up.' },
-        { tokens: [{ entryId: wo.id }, { entryId: entry.id }], en: 'A real one.' },
-      ],
-    }));
-
-    const { body } = await post({
-      entryId: entry.id,
-      profile: PROFILE,
-      known: KNOWN,
-      knownIds: KNOWN_IDS,
-    });
-    expect(body.sentences).toHaveLength(1);
-    expect(body.sentences[0].tokens.every((token) => token.entryId !== undefined)).toBe(true);
-  });
-
-  it('drops a sentence citing another reading of a headword the learner knows', async () => {
-    // The learner knows 看 kàn (HSK 1). The provider cites 看 kān (HSK 6) — the
-    // same two characters, a word they have never met, and a reading they
-    // cannot check. This is the case a headword-keyed whitelist waved through.
-    const entry = target();
-    const kan = readingOf('看', 'kan4');
-    const kanOther = readingOf('看', 'kan1');
-    stubbed.provider = stub(() => ({
-      sentences: [{ tokens: [{ entryId: kanOther.id }, { entryId: entry.id }], en: 'Look after it.' }],
-    }));
-
-    const { body } = await post({
-      entryId: entry.id,
-      profile: PROFILE,
-      known: ['看'],
-      knownIds: [kan.id],
-    });
-    expect(body.sentences).toEqual([]);
-    expect(body.entries).toEqual([]);
-    expect(body.cacheable).toBe(false);
-  });
-
+describe('a provider that misbehaves', () => {
   it('is a 502 when the provider throws', async () => {
     stubbed.provider = stub(() => {
       throw new Error('upstream is on fire');
     });
-    const res = await POST(request({ entryId: target().id, profile: PROFILE }));
+    const res = await POST(request({ entry: KAISHI, profile: PROFILE }));
     expect(res.status).toBe(502);
     const body = (await res.json()) as { error: string; hint: string };
     expect(body.error).toBe('provider-failed');
@@ -274,95 +219,16 @@ describe('a provider that breaks the rules', () => {
 
   it('is a 502 when the provider answers off-schema', async () => {
     stubbed.provider = stub(() => ({ sentences: [{ tokens: [], en: 42 }] }) as never);
-    const res = await POST(request({ entryId: target().id, profile: PROFILE }));
+    const res = await POST(request({ entry: KAISHI, profile: PROFILE }));
     expect(res.status).toBe(502);
-    expect((await res.json()).error).toBe('provider-invalid');
+    expect(((await res.json()) as { error: string }).error).toBe('provider-invalid');
   });
 
   it('is a 502 when the provider never comes back, rather than a card that hangs', async () => {
-    const previous = process.env.TANGRAM_EXAMPLES_TIMEOUT_MS;
     process.env.TANGRAM_EXAMPLES_TIMEOUT_MS = '5';
     stubbed.provider = stub(() => new Promise<ParsedExampleSentences>(() => {}));
-    try {
-      const res = await POST(request({ entryId: target().id, profile: PROFILE }));
-      expect(res.status).toBe(502);
-      expect((await res.json()).hint).toContain('longer than');
-    } finally {
-      if (previous === undefined) delete process.env.TANGRAM_EXAMPLES_TIMEOUT_MS;
-      else process.env.TANGRAM_EXAMPLES_TIMEOUT_MS = previous;
-    }
-  });
-});
-
-describe('the support pool', () => {
-  // `supportEntries` takes the store now and is asynchronous with it
-  // (docs/plans/data.md D6); every expected value below is unchanged.
-  const pool = async (known: Parameters<typeof supportEntries>[1], exclude: string) =>
-    supportEntries(await serverDictStore(), known, exclude);
-
-  it('is frequency-ordered, excludes the target, and is bounded', async () => {
-    const entry = entryFor('我');
-    const support = await pool({ ids: KNOWN_IDS }, entry.id);
-    expect(support.some((row) => row.id === entry.id)).toBe(false);
-    const ranks = support.map((row) => row.freqRank ?? Number.MAX_SAFE_INTEGER);
-    expect([...ranks].sort((a, b) => a - b)).toEqual(ranks);
-    expect(SUPPORT_CAP).toBeGreaterThan(0);
-  });
-
-  it('never turns a known headword into every reading of it', async () => {
-    const kan = readingOf('看', 'kan4');
-    const kanOther = readingOf('看', 'kan1');
-    const ids = (await pool({ ids: [kan.id] }, '')).map((row) => row.id);
-    expect(ids).toEqual([kan.id]);
-    expect(ids).not.toContain(kanOther.id);
-  });
-
-  it('takes a headword only when it has one reading, for a caller with no ids', async () => {
-    // The fallback is deliberately lossy: "the learner knows 看" does not say
-    // which 看, and guessing is what put an unmet reading on a card back.
-    const ambiguous = await pool({ headwords: ['看'] }, '');
-    expect(ambiguous).toEqual([]);
-
-    const unambiguous = await pool({ headwords: ['学习'] }, '');
-    expect(unambiguous.map((row) => row.simp)).toEqual(['学习']);
-  });
-
-  it('expands a band per entry, and lets a card outrank it', async () => {
-    const wo = entryFor('我');
-    const banded = await pool({ knownBand: 1 }, '');
-    expect(banded.length).toBeGreaterThan(50);
-    for (const row of banded) expect(row.hskBand).toBe(1);
-    expect(banded.some((row) => row.id === wo.id)).toBe(true);
-
-    // 看 kān is band 6: a band-1 expansion cannot reach it however common the
-    // characters are.
-    expect(banded.some((row) => row.id === readingOf('看', 'kan1').id)).toBe(false);
-
-    const excluded = await pool({ knownBand: 1, excludeIds: [wo.id] }, '');
-    expect(excluded.some((row) => row.id === wo.id)).toBe(false);
-  });
-});
-
-describe('when data/ has not been built', () => {
-  const previous = process.env.TANGRAM_DATA_DIR;
-
-  beforeAll(async () => {
-    process.env.TANGRAM_DATA_DIR = mkdtempSync(join(tmpdir(), 'tangram-examples-nodata-'));
-    // The route memoises its connection, so the cases above have already opened
-    // one; without this the 503 case would pass through a live dictionary and
-    // prove nothing (docs/plans/data.md D6).
-    await closeServerDictStore();
-  });
-
-  afterAll(async () => {
-    if (previous === undefined) delete process.env.TANGRAM_DATA_DIR;
-    else process.env.TANGRAM_DATA_DIR = previous;
-    await closeServerDictStore();
-  });
-
-  it('answers 503 with the command that fixes it, like the dictionary routes', async () => {
-    const res = await POST(request({ entryId: '开始|开始[kai1 shi3]', profile: PROFILE }));
-    expect(res.status).toBe(503);
-    expect(await res.json()).toEqual({ error: 'dict-data-missing', hint: 'run pnpm data' });
+    const res = await POST(request({ entry: KAISHI, profile: PROFILE }));
+    expect(res.status).toBe(502);
+    expect(((await res.json()) as { hint: string }).hint).toContain('longer than');
   });
 });

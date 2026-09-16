@@ -46,6 +46,11 @@ import {
 import { appRecallRequest } from '@/lib/api/recall-client';
 import type { CardRow } from '@/lib/db/schema';
 import { RATING_LABELS } from '@/lib/srs/card';
+// `backend.md` B2's contract flip: the server has no dictionary, so the entry's
+// glosses travel with the question. The card already carries them in its own
+// snapshot, which is why free recall keeps working on a device that has never
+// downloaded the dictionary.
+import { entryFromSnapshot, wordSnapshot } from '@/lib/srs/direction';
 
 const OFFLINE_NOTE = 'Offline grader — set ANTHROPIC_API_KEY for a real reading of your answer.';
 
@@ -144,9 +149,20 @@ export function RecallInput({
         onSuggestion?.(card.id, suggestion);
       }
     };
+
+    // A phrase card has no headword and no `EntrySnapshot`, so there is nothing
+    // to grade an answer against. It settles with no suggestion rather than
+    // sending a request nobody can answer — which is what the old `entryId ??
+    // ''` amounted to, one layer further down.
+    const snapshot = wordSnapshot(card.snapshot);
+    if (!snapshot || !card.entryId) {
+      settle(null);
+      return;
+    }
+
     void request(
       {
-        entryId: card.entryId ?? '',
+        entry: entryFromSnapshot(card.entryId, snapshot),
         ...(card.senseIndex === undefined ? {} : { senseIndex: card.senseIndex }),
         answer: typed,
       },
@@ -156,6 +172,7 @@ export function RecallInput({
     card.entryId,
     card.id,
     card.senseIndex,
+    card.snapshot,
     onReveal,
     onSuggestion,
     request,

@@ -347,8 +347,14 @@ describe('the routes', () => {
         body: JSON.stringify({}),
       });
 
+    // `backend.md` B2 split `POST /api/ask` into `/api/ask/propose` and
+    // `/api/ask/answer`. Both are named here rather than only their parent,
+    // because `wave-zero.md` §10a ruling 4 says so in as many words: "a test
+    // that only proves the parents are gated is the test that would have passed
+    // while both children were open", and these two are the ones with a bill.
     for (const [path, handler] of [
-      ['/api/ask', ask.POST],
+      ['/api/ask/propose', ask.PROPOSE],
+      ['/api/ask/answer', ask.ANSWER],
       ['/api/examples', examples.POST],
       ['/api/recall', recall.POST],
     ] as const) {

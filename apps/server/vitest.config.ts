@@ -11,11 +11,11 @@ export default defineConfig({
      * `@/*` → `apps/app/*`, the same mapping `tsconfig.json` declares and
      * `scripts/build.ts` implements for the bundle.
      *
-     * It is here because `backend.md` B1's three model routes read
-     * `lib/server/dict.ts` and `packages/ai/**` reads `@/lib/types` — "the
-     * dictionary comes with them, on purpose and temporarily". Without it the
-     * suite cannot so much as import `src/app.ts`. B2 removes it along with the
-     * mapping in the tsconfig.
+     * `backend.md` B2 removed every `@/lib/**` import from `src/**` — the
+     * dictionary is gone from this server — but the alias stays, because
+     * `packages/ai/cache-key.ts` still imports `sha1Hex` from `@/lib/dev/sha1`
+     * at run time and this suite imports `src/app.ts`, which reaches it through
+     * `@tangram/ai`. It is `packages/ai`'s edge now, not this package's.
      */
     alias: { '@': resolve(here, '..', 'app') },
   },

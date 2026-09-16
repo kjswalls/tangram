@@ -37,18 +37,40 @@ function fetchReturning(body: unknown, init: { ok?: boolean; status?: number } =
   );
 }
 
+/**
+ * The row the caller sends, `backend.md` B2's contract flip: `entry`, not
+ * `entryId`. The server holds no dictionary, so the glosses travel with the
+ * question — off the card's own `EntrySnapshot`, which is why free recall keeps
+ * working on a device that never downloaded the dictionary.
+ */
+const ROW = {
+  id: 'x|x[x]',
+  simp: 'x',
+  trad: 'x',
+  pinyinMarked: 'x',
+  glosses: ['a gloss'],
+};
+
+const DASUAN_ROW = {
+  id: '打算|打算[da3 suan4]',
+  simp: '打算',
+  trad: '打算',
+  pinyinMarked: 'dǎsuàn',
+  glosses: ['to plan', 'to intend'],
+};
+
 describe('the answer that is never asked about', () => {
   it('does not call the provider for an empty answer', async () => {
     const fetchImpl = fetchReturning({ suggested: 1, why: 'blank' });
 
-    expect(await requestRecallGrade({ entryId: 'x', answer: '' }, { fetchImpl })).toBeNull();
-    expect(await requestRecallGrade({ entryId: 'x', answer: '   ' }, { fetchImpl })).toBeNull();
+    expect(await requestRecallGrade({ entry: ROW, answer: '' }, { fetchImpl })).toBeNull();
+    expect(await requestRecallGrade({ entry: ROW, answer: '   ' }, { fetchImpl })).toBeNull();
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it('does not call the provider without an entry to judge against', async () => {
     const fetchImpl = fetchReturning({ suggested: 3, why: 'ok' });
-    expect(await requestRecallGrade({ entryId: '', answer: 'to plan' }, { fetchImpl })).toBeNull();
+    expect(await requestRecallGrade({ entry: { ...ROW, id: '' }, answer: 'to plan' }, { fetchImpl })).toBeNull();
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
@@ -57,7 +79,7 @@ describe('the answer that is never asked about', () => {
     const controller = new AbortController();
     controller.abort();
     const result = await requestRecallGrade(
-      { entryId: 'x', answer: 'to plan' },
+      { entry: ROW, answer: 'to plan' },
       { fetchImpl, signal: controller.signal },
     );
     expect(result).toBeNull();
@@ -69,7 +91,7 @@ describe('requesting a grade', () => {
   it('sends the trimmed answer, the entry and the sense, and believes a good answer', async () => {
     const fetchImpl = fetchReturning({ suggested: 3, why: 'The gist is there.' });
     const result = await requestRecallGrade(
-      { entryId: '打算|打算[da3 suan4]', senseIndex: 1, answer: '  to intend  ' },
+      { entry: DASUAN_ROW, senseIndex: 1, answer: '  to intend  ' },
       { fetchImpl },
     );
 
@@ -78,7 +100,10 @@ describe('requesting a grade', () => {
     expect(url).toBe('/api/recall');
     expect(options?.method).toBe('POST');
     expect(JSON.parse(String(options?.body))).toEqual({
-      entryId: '打算|打算[da3 suan4]',
+      // Projected through `toRetrieved`: assignability is a compile-time fact
+      // and `JSON.stringify` is not, so a caller that hands this a whole `Entry`
+      // still puts exactly six fields on the wire.
+      entry: DASUAN_ROW,
       senseIndex: 1,
       answer: 'to intend',
     });
@@ -86,14 +111,14 @@ describe('requesting a grade', () => {
 
   it('caps the answer it sends at the same length the route accepts', async () => {
     const fetchImpl = fetchReturning({ suggested: 1, why: '' });
-    await requestRecallGrade({ entryId: 'x', answer: 'a '.repeat(600) }, { fetchImpl });
+    await requestRecallGrade({ entry: ROW, answer: 'a '.repeat(600) }, { fetchImpl });
     const body = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body)) as { answer: string };
     expect(body.answer.length).toBe(RECALL_ANSWER_MAX_CHARS);
   });
 
   it('omits senseIndex when the card is about the whole entry', async () => {
     const fetchImpl = fetchReturning({ suggested: 4, why: '' });
-    await requestRecallGrade({ entryId: 'x', answer: 'to plan' }, { fetchImpl });
+    await requestRecallGrade({ entry: ROW, answer: 'to plan' }, { fetchImpl });
     expect(JSON.parse(String(fetchImpl.mock.calls[0][1]?.body))).not.toHaveProperty('senseIndex');
   });
 });
@@ -101,7 +126,7 @@ describe('requesting a grade', () => {
 describe('a failure is silence', () => {
   it('is null for an HTTP error', async () => {
     const fetchImpl = fetchReturning({ error: 'provider-failed' }, { ok: false, status: 502 });
-    expect(await requestRecallGrade({ entryId: 'x', answer: 'to plan' }, { fetchImpl })).toBeNull();
+    expect(await requestRecallGrade({ entry: ROW, answer: 'to plan' }, { fetchImpl })).toBeNull();
   });
 
   it('is null when the network throws, rather than a rejected promise', async () => {
@@ -109,7 +134,7 @@ describe('a failure is silence', () => {
       throw new TypeError('Failed to fetch');
     });
     await expect(
-      requestRecallGrade({ entryId: 'x', answer: 'to plan' }, { fetchImpl: fetchImpl as never }),
+      requestRecallGrade({ entry: ROW, answer: 'to plan' }, { fetchImpl: fetchImpl as never }),
     ).resolves.toBeNull();
   });
 
@@ -117,7 +142,7 @@ describe('a failure is silence', () => {
     for (const body of [null, {}, { suggested: 0, why: '' }, { suggested: 5, why: '' }, { suggested: '3' }]) {
       const fetchImpl = fetchReturning(body);
       expect(
-        await requestRecallGrade({ entryId: 'x', answer: 'to plan' }, { fetchImpl }),
+        await requestRecallGrade({ entry: ROW, answer: 'to plan' }, { fetchImpl }),
       ).toBeNull();
     }
   });
@@ -133,7 +158,7 @@ describe('a failure is silence', () => {
     );
     const started = Date.now();
     const result = await requestRecallGrade(
-      { entryId: 'x', answer: 'to plan' },
+      { entry: ROW, answer: 'to plan' },
       { fetchImpl: fetchImpl as never, timeoutMs: 10 },
     );
     expect(result).toBeNull();
@@ -147,7 +172,7 @@ describe('what reaches the card front', () => {
       suggested: 4,
       why: 'You said 打算 which is dǎsuàn, the planning sense.',
     });
-    const result = await requestRecallGrade({ entryId: 'x', answer: 'to plan' }, { fetchImpl });
+    const result = await requestRecallGrade({ entry: ROW, answer: 'to plan' }, { fetchImpl });
 
     expect(result?.suggested).toBe(4);
     expect(result?.why).not.toMatch(/[一-鿿]/);

@@ -63,37 +63,35 @@ const REPO_ROOT = resolve(workspaceRoot(dirOf(import.meta.url)), 'apps/app');
 export const VITE_MANIFEST = '.vite/manifest.json';
 
 /**
- * The entry id the two model-backed POSTs are exercised with.
+ * The dictionary row the model-backed POSTs are exercised with.
  *
- * It used to come from the search case: `/api/dict/search?q=你好` ran first and
- * stashed a real id from *this* dictionary build, which is better than a
- * constant a CC-CEDICT snapshot could quietly stop containing. `data.md` D6
- * deleted that route, and there is no longer any HTTP endpoint that can answer
- * "give me an id" — the dictionary is on the client now.
+ * **`backend.md` B2 turned this from an id into a row, which is the flip in one
+ * constant.** It used to be `'你好|你好[ni3 hao3]'` and the server looked it up;
+ * the server has no dictionary now, so the caller sends the six fields
+ * `entryLine()` renders. The previous version of this comment predicted exactly
+ * that ("at which point the smoke sends rows rather than an id and this goes"),
+ * and it is also why the last reason to worry about it went away: a row the
+ * smoke supplies cannot fall out of a CC-CEDICT snapshot, because nothing looks
+ * it up.
  *
- * So it is a constant, and the trade is stated rather than hidden. 你好 is the
- * most stable headword in the corpus, and if it ever does leave, the failure is
- * loud and specific **without any help from this file**: `runSmoke` reports a
- * non-2xx as `POST <url> → 404 Not Found · <body>`, and the body is
- * `{"error":"entry-not-found","hint":"no dictionary entry with id …"}` — the
- * route names the id it could not find. The line to change is this one.
- *
- * (An earlier version of this comment promised a `must()` inside the two cases'
- * `expect` callbacks. It could never have run: `runSmoke` pushes a failure and
- * `continue`s on any non-2xx **before** `expect` is reached, so the guidance
- * would have been unreachable by construction. An adversarial reviewer caught
- * it; the guards are gone and this paragraph is what replaced them.)
- *
- * `backend.md` B2's contract puts retrieved entries on the wire, at which point
- * the smoke sends rows rather than an id and this goes.
+ * It is still 你好 because a *live* provider is asked to say something about it,
+ * and an answer about a word nobody uses is a worse smoke than an answer about
+ * hello.
  */
-export const SMOKE_ENTRY_ID = '你好|你好[ni3 hao3]';
+export const SMOKE_ENTRY = {
+  id: '你好|你好[ni3 hao3]',
+  simp: '你好',
+  trad: '你好',
+  pinyinMarked: 'nǐhǎo',
+  hskBand: 1,
+  glosses: ['hello', 'hi'],
+} as const;
 
 /** Values one case hands to the next: real ids beat invented ones. */
 export interface SmokeContext {
   /**
    * An entry id one case found for the next. Unused since `data.md` D6 deleted
-   * the search case that filled it — see `SMOKE_ENTRY_ID` — and left in place
+   * the search case that filled it — see `SMOKE_ENTRY` — and left in place
    * because this file is `web.md` W2's and D6's licence there is to remove the
    * dictionary entries, not to reshape its types.
    */
@@ -134,7 +132,7 @@ function must(condition: unknown, message: string): asserts condition {
  *
  * `data.md` D6 removed the five dictionary cases with the routes they exercised;
  * `web.md` W2 owns this file and its final shape (wave-zero §3). The id the two
- * POSTs need is now `SMOKE_ENTRY_ID` rather than something an earlier case
+ * POSTs need is now the `SMOKE_ENTRY` row rather than something an earlier case
  * stashed — see that constant for why, and for what happens when it goes stale.
  */
 export const SMOKE_CASES: SmokeCase[] = [
@@ -151,17 +149,40 @@ export const SMOKE_CASES: SmokeCase[] = [
     },
   },
   {
-    name: 'a grounded ask',
+    // `backend.md` B2: the single `POST /api/ask` is two calls now, because the
+    // model's phrase proposals are an input to a retrieval step that happens in
+    // the browser. Both are probed, because both spend money and the smoke is
+    // what proves a deploy answers.
+    name: 'phrase proposals',
     method: 'POST',
-    route: '/api/ask',
+    route: '/api/ask/propose',
     api: true,
     gated: true,
-    url: () => '/api/ask',
-    body: () => ({ query: '你好', profile: { estimatedBand: 1, knownSample: [] } }),
+    url: () => '/api/ask/propose',
+    body: () => ({ query: 'how do I say hello' }),
     expect: (payload) => {
-      const result = payload as { response?: unknown; dictVersion?: string };
+      const result = payload as { candidates?: unknown };
+      must(Array.isArray(result.candidates), 'propose answered without a candidates array');
+    },
+  },
+  {
+    name: 'an ask over entries the client retrieved',
+    method: 'POST',
+    route: '/api/ask/answer',
+    api: true,
+    gated: true,
+    url: () => '/api/ask/answer',
+    body: () => ({
+      query: '你好',
+      profile: { estimatedBand: 1, knownSample: [] },
+      retrieved: [SMOKE_ENTRY],
+    }),
+    expect: (payload) => {
+      const result = payload as { response?: unknown; dictVersion?: unknown };
       must(Boolean(result.response), 'the ask answered without a response');
-      must(Boolean(result.dictVersion), 'the ask answered without a dictionary version');
+      // `dictVersion` is deliberately NOT expected any more: the response
+      // carries no dictionary rows, so there is no snapshot for it to name.
+      must(result.dictVersion === undefined, 'the ask answered with a dictVersion it cannot know');
     },
   },
   {
@@ -184,9 +205,11 @@ export const SMOKE_CASES: SmokeCase[] = [
     gated: true,
     url: () => '/api/examples',
     body: () => ({
-      entryId: SMOKE_ENTRY_ID,
+      entry: SMOKE_ENTRY,
       profile: { estimatedBand: 1, knownSample: [] },
-      knownBand: 1,
+      // The support pool is resolved on the client now and sent as rows; an
+      // empty one is legal and means "cite nothing but the target".
+      support: [],
     }),
     expect: (payload) => {
       const result = payload as { sentences?: unknown[] };
@@ -200,7 +223,7 @@ export const SMOKE_CASES: SmokeCase[] = [
     api: true,
     gated: true,
     url: () => '/api/recall',
-    body: () => ({ entryId: SMOKE_ENTRY_ID, answer: 'hello' }),
+    body: () => ({ entry: SMOKE_ENTRY, answer: 'hello' }),
     expect: (payload) => {
       const result = payload as { suggested?: number };
       must(

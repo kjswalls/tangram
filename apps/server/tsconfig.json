@@ -1,5 +1,5 @@
 {
-  "//": "The whole package — src, tests and the build scripts — for `pnpm -F server typecheck`. There is no separate emitting project any more: `backend.md` B1 replaced tsc's emit with an esbuild bundle (scripts/build.ts), because from B1 this server's program contains apps/app source — `lib/server/dict.ts` and `lib/dict/**`, whose relative imports are extensionless — which plain `node` cannot resolve and tsc does not rewrite. So this file is `noEmit` throughout and `moduleResolution` is `bundler`, which is what the bundle actually does. TWO CONSEQUENCES ARE B2's TO REVERSE. (1) `noUncheckedIndexedAccess` is OFF. It was on while this package compiled nothing but its own src/; B1's temporary dictionary (backend.md B1: 'the dictionary comes with them, on purpose and temporarily') puts 40-odd apps/app modules and eleven packages/ai modules into the program, neither of which sets the flag — 71 errors, most in lib/dict/** and lib/types.ts, which this phase does not own. B2 deletes the server's dictionary; turn it back on in the same commit. (2) The `@/*` mapping points OUT of this package and into an app, which is backwards, and it is here for the same reason: B2's contract flip is what removes every `@/lib/**` import from apps/server/src/**. `apps/server/tests/workspace.test.ts` counts those imports so B2 has a number to drive to zero.",
+  "//": "The whole package — src, tests and the build scripts — for `pnpm -F server typecheck`. There is no separate emitting project: `backend.md` B1 replaced tsc's emit with an esbuild bundle (scripts/build.ts), because `packages/ai` and `packages/access` export TypeScript source and `packages/ai/cache-key.ts` still reaches an app module at RUN TIME (`sha1Hex` from `@/lib/dev/sha1`). So this file is `noEmit` throughout and `moduleResolution` is `bundler`, which is what the bundle actually does. `backend.md` B2 turned `noUncheckedIndexedAccess` BACK ON — B1 disabled it because its temporary dictionary pulled 40-odd apps/app modules into this program, and B2's contract flip removed every one of them; `apps/server/tests/workspace.test.ts` ties the two facts together so the strictness could not be lost quietly. The `@/*` mapping STAYS, and the reason changed: no file under `src/` uses it any more (the same test asserts that), but `packages/ai/**` is compiled as part of this program and reaches `@/lib/types`, `@/lib/dev/sha1` and friends of its own. Removing it is `packages/ai`'s to earn, not this package's to force.",
   "compilerOptions": {
     "target": "ES2023",
     "lib": ["ES2023"],
@@ -14,6 +14,7 @@
     "noImplicitOverride": true,
     "noFallthroughCasesInSwitch": true,
     "skipLibCheck": true,
+    "noUncheckedIndexedAccess": true,
     "noEmit": true,
     "incremental": true,
     "types": ["node"],

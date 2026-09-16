@@ -9,7 +9,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { GATED_PATHS } from '@tangram/access';
+import { GATED_PATHS, isGatedPath } from '@tangram/access';
 
 import { buildApp } from '../src/app.ts';
 import { gatedPaths, HTTP_METHODS, ROUTES } from '../src/routes/table.ts';
@@ -76,13 +76,28 @@ describe('routes/table.ts', () => {
     }
   });
 
-  it('gates exactly the three paths the access package gates, in both directions', () => {
+  it('gates every path the access package gates, and gates nothing it does not cover', () => {
     // The two lists are written by different plans — `GATED_PATHS` is
     // `web.md` W4's in `packages/access`, this table is `backend.md` B1's — and
     // a disagreement either way is a bill. A path the gate covers and the table
     // calls open is a route answering for free; a path the table calls gated
     // and the gate does not cover is a claim of protection and none.
-    expect(gatedPaths().sort()).toEqual([...GATED_PATHS].sort());
+    //
+    // **It is no longer an equality, and `backend.md` B2 is why.** B2 adds
+    // `/api/ask/propose` and `/api/ask/answer`, which sit UNDER `/api/ask` and
+    // are covered by the same entry because `isGatedPath` matches a **prefix**
+    // (`wave-zero.md` §10a) — an exact-string gate would leave the only two
+    // routes with a bill attached wide open while `TANGRAM_ACCESS_SECRET` was
+    // set. So the check is the one that still bites in both directions: every
+    // `GATED_PATHS` entry is a gated route here, and every gated route here is
+    // actually covered by the matcher.
+    for (const path of GATED_PATHS) expect(gatedPaths(), path).toContain(path);
+    for (const path of gatedPaths()) expect(isGatedPath(path), path).toBe(true);
+    // And the two money-spending children are named explicitly, per §10a
+    // ruling 4: a test that only proves the parents are gated is the test that
+    // would have passed while both children were open.
+    expect(gatedPaths()).toContain('/api/ask/propose');
+    expect(gatedPaths()).toContain('/api/ask/answer');
   });
 
   it('declares GET only where a handler answers GET', () => {
@@ -103,8 +118,7 @@ describe('routes/table.ts', () => {
 
   it('throws at boot if the table declares a METHOD app.ts has no handler for', () => {
     // The dimension B1 added. Until B1 every route answered one verb, so "the
-    // path is mounted" was the whole question; `/api/ask` and `/api/examples`
-    // answer two each. A table that declared `DELETE /api/ask` would otherwise
+    // path is mounted" was the whole question; `/api/examples` answers two. A table that declared `DELETE /api/ask` would otherwise
     // register a handler-less verb and 404 in the deployment.
     expect(() =>
       buildApp({
@@ -116,10 +130,13 @@ describe('routes/table.ts', () => {
   });
 
   it('throws at boot if app.ts answers a METHOD the table does not declare', () => {
+    // `/api/examples` is the two-verb route after `backend.md` B2 — `/api/ask`
+    // is the handshake alone now — so it is the one that can lose a declared
+    // method while keeping a handler.
     expect(() =>
       buildApp({
         routes: ROUTES.map((route) =>
-          route.path === '/api/ask' ? { ...route, methods: ['POST' as const] } : route,
+          route.path === '/api/examples' ? { ...route, methods: ['POST' as const] } : route,
         ),
       }),
     ).toThrow(/does not declare that method/);

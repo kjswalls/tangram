@@ -76,15 +76,20 @@ describe('apps/server in the workspace', () => {
     ]);
   });
 
-  it('ships no dictionary of its own, and counts the app modules B2 must remove', () => {
+  it('ships no dictionary of its own, and no app module is left to remove', () => {
     // The original of this test asserted "no dictionary" through the
     // dependency list, on the premise that a server-side dictionary would
-    // arrive as a package. `backend.md` B1 makes it arrive another way and says
+    // arrive as a package. `backend.md` B1 made it arrive another way and said
     // so in as many words — "the dictionary comes with them, on purpose and
     // temporarily" — through `@/lib/server/dict` and `packages/ai`'s `@/lib/**`
-    // mapping, which the esbuild bundle inlines. So the guard is re-aimed at
-    // what B2 actually promises ("no `lib/dict/**` import remains in
-    // apps/server") and made countable: the number below may only go DOWN.
+    // mapping, which the esbuild bundle inlines. B1 re-aimed the guard at what
+    // B2 promises ("no `lib/dict/**` import remains in apps/server") and made
+    // it countable, with the note that "the number below may only go DOWN".
+    //
+    // **`backend.md` B2 drove it to zero**, which is the phase's headline: no
+    // file under `src/` reaches into the app at all, so this server needs no
+    // dictionary, no `TANGRAM_DATA_DIR` and no 43 MB artifact beside its bundle.
+    // The case below ties the strictness flag to the same fact.
     //
     // No dependency may be a dictionary or a database either. That half is
     // unchanged and is what stops a second copy arriving the old way.
@@ -101,11 +106,29 @@ describe('apps/server in the workspace', () => {
     const reaching = sources
       .filter(([, source]) => /from '@\/lib\//.test(source))
       .map(([file]) => file);
-    // The three model routes, and nothing else. `health.ts`, `table.ts`,
-    // `app.ts`, `config.ts`, `cors.ts`, `log.ts`, `build-info.ts`, `index.ts`
-    // and `smoke.ts` reach nothing in the app, which is what keeps B2's
-    // deletion a deletion rather than an untangling.
-    expect(reaching.sort()).toEqual(['routes/ask.ts', 'routes/examples.ts', 'routes/recall.ts']);
+    // Nothing. Not "the three model routes", which is what B1 left: the three
+    // reached `@/lib/server/dict` and `@/lib/types`, and B2's contract flip
+    // removed the last of both. A file that reappears here is a server reaching
+    // into an app, which is the coupling the two-deployable split exists to
+    // avoid — and, for `@/lib/dict/**` in particular, the dictionary walking
+    // back in.
+    expect(reaching.sort()).toEqual([]);
+  });
+
+  it('reads no TANGRAM_DATA_DIR, because it has no dictionary to point at', () => {
+    // **`backend.md` B2's payoff, as a guard rather than a paragraph.** Until
+    // the contract flip a deployment of this server had to ship `data/` beside
+    // `dist/` and name it, and getting that wrong was silent: `/health`
+    // answered 200 and every real request answered 503. The client retrieves
+    // and grounds now and sends the rows, so the variable is not this server's
+    // at all — `docs/deploy.md` §5a and `.env.example` both say so, and this is
+    // what fails if a later phase quietly reaches for it again.
+    for (const [file, source] of sourceFiles(resolve(PACKAGE, 'src'))) {
+      expect(source, `${file} reads TANGRAM_DATA_DIR`).not.toContain('TANGRAM_DATA_DIR');
+    }
+    // And the same for the environment names `config.ts` actually declares.
+    const config = readFileSync(resolve(PACKAGE, 'src', 'config.ts'), 'utf8');
+    expect(config).not.toContain('DATA_DIR');
   });
 
   it('turns noUncheckedIndexedAccess back on the moment the app source leaves', () => {

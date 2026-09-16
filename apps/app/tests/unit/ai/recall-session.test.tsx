@@ -252,8 +252,19 @@ describe('free recall in a review session', () => {
 
     type('to intend');
     const options = fetcher.impl.mock.calls[0][1];
+    // `entry`, not `entryId` (`backend.md` B2's contract flip): the server holds
+    // no dictionary, so the six fields the grading prompt reads travel with the
+    // question — off the card's own `EntrySnapshot`, which is why free recall
+    // still works on a device that never downloaded the dictionary.
     expect(JSON.parse(String(options?.body))).toEqual({
-      entryId: DASUAN.id,
+      entry: {
+        id: DASUAN.id,
+        simp: DASUAN.simp,
+        trad: DASUAN.trad,
+        pinyinMarked: DASUAN.pinyinMarked,
+        ...(DASUAN.hskBand === undefined ? {} : { hskBand: DASUAN.hskBand }),
+        glosses: DASUAN.glosses,
+      },
       senseIndex: 1,
       answer: 'to intend',
     });

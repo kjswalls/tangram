@@ -104,7 +104,12 @@ export function buildApp(options: AppOptions = {}): Hono {
 
   const handlers: RouteHandlers = {
     '/health': { GET: () => health(startedAt) },
-    '/api/ask': { GET: ask.GET, POST: ask.POST },
+    // `/api/ask` answers GET only after `backend.md` B2: the single POST became
+    // `/api/ask/propose` and `/api/ask/answer`, both of which sit under it and
+    // are therefore covered by the same prefix gate.
+    '/api/ask': { GET: ask.GET },
+    '/api/ask/propose': { POST: ask.PROPOSE },
+    '/api/ask/answer': { POST: ask.ANSWER },
     '/api/examples': { GET: examples.GET, POST: examples.POST },
     '/api/recall': { POST: recall.POST },
   };

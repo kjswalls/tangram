@@ -51,7 +51,8 @@ import {
   type ParsedGradeRecall,
   type ProposedPhrases,
 } from './provider.js';
-import type { Entry, LearnerProfile } from '@/lib/types';
+import type { RetrievedEntry } from './schemas.js';
+import type { LearnerProfile } from '@/lib/types';
 
 /**
  * Recorded in `.env.example` as the default for `TANGRAM_MODEL`. Opus 5 is the
@@ -153,7 +154,7 @@ export class AnthropicProvider implements LLMProvider {
   }
 
   async answer(
-    retrieved: readonly Entry[],
+    retrieved: readonly RetrievedEntry[],
     profile: LearnerProfile,
     query: string,
     context?: AskContext,
@@ -188,10 +189,10 @@ export class AnthropicProvider implements LLMProvider {
   }
 
   async exampleSentences(
-    entry: Entry,
+    entry: RetrievedEntry,
     profile: LearnerProfile,
     senseIndex?: number,
-    support: readonly Entry[] = [],
+    support: readonly RetrievedEntry[] = [],
   ): Promise<ParsedExampleSentences> {
     const message = await this.call({
       system: EXAMPLES_SYSTEM_PROMPT,
@@ -209,7 +210,7 @@ export class AnthropicProvider implements LLMProvider {
     return { sentences: parsed.sentences.slice(0, MAX_EXAMPLE_SENTENCES) };
   }
 
-  async gradeRecall(entry: Entry, answer: string, senseIndex?: number): Promise<ParsedGradeRecall> {
+  async gradeRecall(entry: RetrievedEntry, answer: string, senseIndex?: number): Promise<ParsedGradeRecall> {
     const message = await this.call({
       system: RECALL_SYSTEM_PROMPT,
       prompt: recallUserPrompt(entry, answer, senseIndex),

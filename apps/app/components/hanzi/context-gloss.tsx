@@ -27,18 +27,13 @@
  */
 import { useEffect, useState } from 'react';
 
-import type { AskRouteResponse } from '@/lib/api/contract';
 import { scrubProse } from '@tangram/ai/ground';
 import type { GroundedMatch } from '@tangram/ai/ground';
-import { getRepository } from '@/lib/db/get-db';
-import { getLearnerProfile } from '@/lib/srs/profile';
+// The ask module (`backend.md` B2). This hook used to POST `/api/ask` itself;
+// after the contract flip an ask is two round trips, a local retrieval and a
+// local `ground()`, and none of that may exist twice.
+import { ask } from '@/lib/ai/ask-client';
 import type { CardContext, Entry } from '@/lib/types';
-
-// `apiFetch`, not `fetch` (docs/plans/web.md W4). It applies the configured
-// API base and attaches `X-Tangram-Access`; without it this call 401s on any
-// deployment with `TANGRAM_ACCESS_SECRET` set, and goes to the wrong origin
-// once `backend.md` moves the route off this one.
-import { apiFetch } from '@/src/access/client';
 
 export interface ContextGlossProps {
   /** The entry the sheet is showing. The line may only name one of its senses. */
@@ -82,17 +77,22 @@ export function ContextGloss({ entry, match }: ContextGlossProps) {
 /**
  * Ask the module what this word means in this sentence.
  *
- * A thin call, not a second ask client: it posts the same `/api/ask` body the
- * panel posts — `{ query, context, profile }` — and keeps the one `match` that
- * cites the entry on screen. It deliberately does **not** write `ask_cache`:
- * the panel owns that key and its trustworthiness rules (`cacheable`, the
- * handshake, the provider), and a second writer with a simpler idea of when an
- * answer is worth keeping is how a cache starts lying. **C7 owns the ask
- * module's state; when it lands, this hook is what it replaces.**
+ * A thin call, not a second ask client — and after `backend.md` B2 that is
+ * enforced rather than intended: it calls `ask()` and keeps the one `match`
+ * that cites the entry on screen. It passes `cache: false`, because the panel
+ * owns that key and its trustworthiness rules, and a second writer with a
+ * simpler idea of when an answer is worth keeping is how a cache starts lying.
+ * It still *reads* the cache, which is free and is the same answer.
  *
- * Every failure is `unavailable`, which renders nothing. The line is a bonus on
- * top of a dictionary entry that is already on screen, and the senses and the
- * Add never wait on it.
+ * **What it gets for free by going through the module.** The match it keeps is
+ * grounded: its `entryId` was in a retrieved set this device built and its
+ * `senseIndex` is in range, so `citedSense` below is checking a second time
+ * rather than for the first time. Before the flip that grounding happened on
+ * the server; a hook that kept posting its own body would have been reading an
+ * **ungrounded** answer and rendering a sense index off a model's word.
+ *
+ * Every failure renders nothing. The line is a bonus on top of a dictionary
+ * entry that is already on screen, and the senses and the Add never wait on it.
  */
 export function useContextGloss(
   query: string,
@@ -111,17 +111,15 @@ export function useContextGloss(
 
     void (async () => {
       try {
-        const profile = await getLearnerProfile(getRepository());
-        const res = await apiFetch('/api/ask', {
-          method: 'POST',
-          signal: controller.signal,
-          headers: { 'content-type': 'application/json', accept: 'application/json' },
-          body: JSON.stringify({ query, context, profile }),
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const body = (await res.json()) as AskRouteResponse;
+        const outcome = await ask(
+          { query, ...(context ? { context } : {}) },
+          { signal: controller.signal, cache: false },
+        );
         if (cancelled) return;
-        setAnswer({ key, ...pickMatch(body.response.matches) });
+        setAnswer({
+          key,
+          ...(outcome.state === 'answered' ? pickMatch(outcome.response.matches) : {}),
+        });
       } catch {
         if (!cancelled) setAnswer({ key });
       }

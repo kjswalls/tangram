@@ -3,10 +3,11 @@
  *
  * **Why a bundler, when B0 emitted with `tsc`.** B0's server imported nothing
  * but Hono, so `tsc` could emit `dist/*.js` that plain `node` loaded. From
- * `backend.md` B1 the three model routes live here, and B1 says the dictionary
- * comes with them — "on purpose and temporarily", until B2's contract flip. So
- * this package's module graph now reaches three places `tsc`'s emit cannot make
- * loadable:
+ * `backend.md` B1 the three model routes live here, and this package's module
+ * graph reaches places `tsc`'s emit cannot make loadable. `backend.md` B2's
+ * contract flip removed the dictionary and every `apps/app` import from `src/`,
+ * which closed the second of the three below — but not the first or the third,
+ * so the bundler stays:
  *
  *  1. **`packages/ai/**` and `packages/access/**` export TypeScript source.**
  *     Both package.jsons record the debt: against a deploy artifact where
@@ -16,11 +17,14 @@
  *     "whoever needs the server to load this package must add a build emitting
  *     `dist/*.js`". Bundling is that, and it settles it for both packages at
  *     once without either having to grow a build of its own.
- *  2. **`apps/app/lib/dict/**` and `lib/server/dict.ts` use extensionless
- *     relative imports** (`from '../artifact'`). Node's ESM resolver requires an
- *     extension and `tsc` does not add one, so no emit of that graph is
- *     loadable. A bundler resolves them the way Vite and vitest already do.
+ *  2. ~~`apps/app/lib/dict/**` and `lib/server/dict.ts` use extensionless
+ *     relative imports.~~ **Closed by B2**: no file under `src/` imports an app
+ *     module any more, and `tests/workspace.test.ts` asserts it.
  *  3. **`@/*`**, which is a tsconfig path mapping and not a runtime concept.
+ *     Still live, and `packages/ai/cache-key.ts` is why: it imports `sha1Hex`
+ *     from `@/lib/dev/sha1` at run time, and this server imports `cache-key.ts`
+ *     for the two prompt versions. One edge, in a package this server does not
+ *     own; `packages/ai/tsconfig.json` records it.
  *
  * The bundle is also the better deploy artifact, and that is not incidental:
  * `dist/index.js` plus the four real `dependencies` is the whole of the
@@ -28,15 +32,19 @@
  * gets a server that starts, with no workspace symlinks and no type stripping
  * anywhere.
  *
- * **It is not the whole of the deployment, and an earlier version of this
- * paragraph said it was.** Until `backend.md` B2's contract flip this server
- * opens the dictionary itself, and `data/dict-<schema>-<cedict>.sqlite` is not
- * in the bundle — it is found through `TANGRAM_DATA_DIR`, or by walking up for
- * `pnpm-workspace.yaml`, which a deploy tree does not have. A deployment that
- * ships only `dist/` starts, answers `/health` with 200, and returns
- * `503 {"error":"dict-data-missing"}` to every real request. An adversarial
- * reviewer of B1 did exactly that; `docs/deploy.md` §5a is now the instruction,
- * and `routes/table.ts`'s third smoke case is what fails when it is ignored.
+ * **It IS the whole of the deployment now, and the history is worth keeping.**
+ * B0's version of this paragraph claimed as much and was wrong: until
+ * `backend.md` B2's contract flip this server opened the dictionary itself, and
+ * `data/dict-<schema>-<cedict>.sqlite` was not in the bundle — it was found
+ * through `TANGRAM_DATA_DIR`, or by walking up for `pnpm-workspace.yaml`, which
+ * a deploy tree does not have. A deployment that shipped only `dist/` started,
+ * answered `/health` with 200, and returned `503 {"error":"dict-data-missing"}`
+ * to every real request; an adversarial reviewer of B1 did exactly that.
+ *
+ * B2 removed the dictionary rather than documenting around it. The client
+ * retrieves and grounds and sends the rows, `src/**` imports nothing from
+ * `apps/app`, and `pnpm -F server smoke` answers 8/8 against a tree with no
+ * `data/` in it. `docs/deploy.md` §5a is the deployer's version of this.
  *
  * **What stays external, and why those four.** `dependencies` — Hono, its Node
  * adapter, the Anthropic SDK and zod. They are real, published, versioned

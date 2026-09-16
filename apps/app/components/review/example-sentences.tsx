@@ -12,17 +12,19 @@
  *    after, or do not arrive, and either way the four grade buttons were live
  *    the whole time.
  *  - **It renders nothing the dictionary did not supply.** Hanzi and pinyin
- *    come from entries the route returned (or, on a cache hit, from
- *    the dictionary store) through `renderPhrase` — the ask panel's renderer,
- *    not a second copy of it.
- *  - **The filtering already happened — and a cached row is checked again.**
- *    Every sentence was filtered server-side against the learner's known set
- *    (`lib/ai/examples.ts`), which is where the promise is kept for a fresh
- *    answer. A row out of `ask_cache` is different: its key holds no known set,
- *    and the set shrinks on the most ordinary action in the app (an Add
- *    un-marks the word it was built from). So a cache hit runs the same filter
- *    over the same ids before drawing anything, and a row that no longer passes
- *    is replaced rather than shown.
+ *    come from entries this device's own dictionary resolved, through
+ *    `renderPhrase` — the ask panel's renderer, not a second copy of it.
+ *  - **The filtering happens HERE, and a cached row is checked again.** Until
+ *    `backend.md` B2 the route filtered: it held the dictionary, so it could.
+ *    After the contract flip the server returns the model's sentences
+ *    ungrounded and unfiltered, and this component grounds them
+ *    (`groundExamples`) and drops every one that cites anything but the target
+ *    and the known set. Nothing unfiltered is ever *drawn*, which is what the
+ *    promise was always about — and the learner is not an adversary to their
+ *    own flashcards. A row out of `ask_cache` is checked a second time on top:
+ *    its key holds no known set, and the set shrinks on the most ordinary
+ *    action in the app (an Add un-marks the word it was built from), so a row
+ *    that no longer passes is replaced rather than shown.
  *  - **An empty answer is a normal answer.** A learner three days in knows too
  *    few words for a sentence to be buildable out of them. That is one quiet
  *    line, not an error — and it is deliberately not cached, so it fixes itself
@@ -32,42 +34,35 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import { HanziWord } from '@/components/hanzi/hanzi-text';
-import type { ExamplesRouteInfo, ExamplesRouteResponse } from '@/lib/api/contract';
 import { examplesCacheKey } from '@tangram/ai/cache-key';
 import {
   citedEntryIds,
+  groundExamples,
   groundedExamplesSchema,
   type ExampleSentence,
 } from '@tangram/ai/examples';
+import { withStoreContext } from '@tangram/ai/retrieve';
+import {
+  EXAMPLES_PATH,
+  toRetrieved,
+  type AskInfoResponse,
+  type ExamplesResponse,
+} from '@tangram/ai/schemas';
 // The learner's known set is browser-side and left `packages/ai` in
-// `backend.md` B1 — see `lib/srs/known-set.ts`.
-import { filterCachedSentences, knownSet } from '@/lib/srs/known-set';
+// `backend.md` B1 — see `lib/srs/known-set.ts`. `offeredSupport` joined it in
+// B2: resolving the known set into dictionary rows is the client's now.
+import {
+  allowedEntryIds,
+  filterCachedSentences,
+  knownSet,
+  offeredSupport,
+} from '@/lib/srs/known-set';
 import { entryLookup, renderPhrase, type PhraseScript } from '@tangram/ai/ground';
 import { cn } from '@/lib/cn';
 import { getRepository } from '@/lib/db/get-db';
 import { openDictStore } from '@/lib/dict/browser-store';
 import { buildLearnerProfile } from '@/lib/srs/profile';
 
-/**
- * Entries by id, through `DictStore` (core.md C4a), in the
- * `{ meta: { version }, entries }` shape the cache path already reads.
- *
- * `DictStore.entries` returns rows and no version — the version is the store's
- * own `status`, not a property of a query — so it is read from there. The
- * `AbortSignal` the old fetch took has no equivalent on the frozen interface;
- * the caller's `cancelled` flag already drops a stale answer, so nothing that
- * reaches the screen depends on it. Recorded in HANDOFF.md.
- */
-async function resolveEntries(ids: readonly string[]) {
-  // `openDictStore`, not `getDictStore` (docs/plans/data.md D6): the card back
-  // is not behind `<DictGate>` — Practice is the learner's own data and must
-  // work without a dictionary — so this is one of the two places that has to
-  // open it itself. Idempotent, and shared with every other caller.
-  const store = await openDictStore();
-  const entries = await store.entries(ids);
-  const version = store.status.state === 'ready' ? store.status.version : '';
-  return { meta: { version }, entries };
-}
 import type { Entry } from '@/lib/types';
 
 // `apiFetch`, not `fetch` (docs/plans/web.md W4). It applies the configured
@@ -99,7 +94,7 @@ type State =
       answered: string;
       sentences: ExampleSentence[];
       entries: Entry[];
-      provider?: ExamplesRouteInfo['provider'];
+      provider?: AskInfoResponse['provider'];
       cached: boolean;
     }
   | { status: 'error'; answered: string; message: string };
@@ -115,14 +110,14 @@ function requestKey(entryId: string | null, senseIndex?: number): string {
  * cache. Memoised per page load; a *failed* handshake is never memoised, or one
  * transient error would key every later row under a guessed provider.
  */
-let infoRequest: Promise<ExamplesRouteInfo> | undefined;
+let infoRequest: Promise<AskInfoResponse> | undefined;
 
-const FALLBACK_INFO: ExamplesRouteInfo = { provider: 'fake', promptVersion: 'v1' };
+const FALLBACK_INFO: AskInfoResponse = { provider: 'fake', promptVersion: 'v1' };
 
-function examplesInfo(): Promise<ExamplesRouteInfo> {
-  infoRequest ??= apiFetch('/api/examples', { headers: { accept: 'application/json' } })
+function examplesInfo(): Promise<AskInfoResponse> {
+  infoRequest ??= apiFetch(EXAMPLES_PATH, { headers: { accept: 'application/json' } })
     .then((res) => {
-      if (res.ok) return res.json() as Promise<ExamplesRouteInfo>;
+      if (res.ok) return res.json() as Promise<AskInfoResponse>;
       infoRequest = undefined;
       return FALLBACK_INFO;
     })
@@ -205,43 +200,64 @@ export function ExampleSentences({
           promptVersion: info.promptVersion,
         });
 
+        // The dictionary, opened here rather than assumed.
+        //
+        // `openDictStore`, not `getDictStore` (`data.md` D6): the card back is
+        // not behind `<DictGate>` — Practice is the learner's own data and must
+        // work without a dictionary — so this is one of the two places that has
+        // to open it itself.
+        //
+        // **What `backend.md` B2 changed, and it is a real consequence rather
+        // than a detail.** Before the flip this whole feature worked on a device
+        // with no dictionary, because the server retrieved, grounded, filtered
+        // and returned the rows to draw. After the flip every one of those is
+        // this component's, and each needs the dictionary: there is no way to
+        // render a cited id as hanzi without the row behind it. So a device that
+        // has not downloaded the dictionary gets the quiet "not enough known
+        // words yet" line rather than sentences. That is inherent to grounding
+        // on the client and is recorded in `HANDOFF.md`; it is deliberately not
+        // an error state, because nothing is broken and the four grade buttons
+        // were live the whole time.
+        const store = await openDictStore().catch(() => undefined);
+        if (cancelled) return;
+        if (!store) {
+          // The quiet failure line, not the "not enough known words yet" one.
+          // The empty state names a *reason* — the learner's vocabulary — and
+          // that reason would be false here: the words may well be there and
+          // this device simply cannot check them. "No example sentences for
+          // this one right now" claims nothing it cannot stand behind.
+          setState({
+            status: 'error',
+            answered: requested,
+            message: 'No example sentences for this one right now.',
+          });
+          return;
+        }
+
         const row = await repo.askCache.get(key).catch(() => undefined);
         const cached = row ? groundedExamplesSchema.safeParse(row.response) : undefined;
         if (cached?.success) {
           // Ids and indexes are all the cache holds, so the dictionary text is
-          // fetched fresh rather than redistributed out of IndexedDB.
+          // read fresh rather than redistributed out of IndexedDB.
           const ids = citedEntryIds(cached.data.sentences);
-          // `.catch`, and the dictionary's two-phase open is what makes it
-          // necessary: `openDictStore()` **rejects** on a device that has not
-          // downloaded the dictionary, where before it silently downloaded one.
-          // Letting that escape would abandon the request below — which the
-          // server answers, with its own `entries`, and which needs no
-          // dictionary on this device at all — and settle the card on "no
-          // example sentences" when there are some. A cached row that cannot be
-          // resolved is simply not used; the request rewrites it.
-          const resolved =
-            ids.length > 0
-              ? await resolveEntries(ids).catch(() => undefined)
-              : { meta: { version: '' }, entries: [] };
+          const entries = ids.length > 0 ? await store.entries(ids) : [];
           if (cancelled) return;
           // The row is a statement about a known set the key does not hold, so
           // it is re-checked against *today's* — the filter, run again on what
           // is about to be drawn (`filterCachedSentences`). A row that no
           // longer passes is not shown and not repaired: the request below
           // writes a fresh one over it.
-          const kept = resolved
-            ? filterCachedSentences(cached.data.sentences, {
-                targetId: entryId,
-                entries: resolved.entries,
-                set: known,
-              })
-            : [];
-          if (resolved && kept.length > 0) {
+          const kept = filterCachedSentences(cached.data.sentences, {
+            targetId: entryId,
+            entries,
+            set: known,
+          });
+          if (kept.length > 0) {
             setState({
               status: 'ready',
               answered: requested,
               sentences: kept,
-              entries: resolved.entries,
+              entries,
               provider: info.provider,
               cached: true,
             });
@@ -249,52 +265,102 @@ export function ExampleSentences({
           }
         }
 
-        const res = await apiFetch('/api/examples', {
+        // Retrieval, on this device (`backend.md` B2). The target row and the
+        // support pool — the learner's known words as dictionary rows,
+        // frequency-ordered and cut to `SUPPORT_CAP` — are what the prompt is
+        // built from, and after the flip the client is the party that has them.
+        const [target] = await store.entries([entryId]);
+        if (cancelled) return;
+        if (!target) {
+          // The card names an entry this dictionary build does not have — a
+          // CC-CEDICT rebuild retires a content-derived id. It is the same
+          // outcome the route's old 404 produced on the client, and for the
+          // same reason it is the failure line rather than the empty state: the
+          // learner's known set is not why. The card itself renders from its
+          // own snapshot and is unaffected.
+          setState({
+            status: 'error',
+            answered: requested,
+            message: 'No example sentences for this one right now.',
+          });
+          return;
+        }
+        const offered = await offeredSupport(
+          store,
+          {
+            headwords: known.headwords,
+            ids: known.ids,
+            knownBand: known.knownBand,
+            excludeIds: known.excludeIds,
+          },
+          target.id,
+        );
+        if (cancelled) return;
+
+        const res = await apiFetch(EXAMPLES_PATH, {
           method: 'POST',
           signal: controller.signal,
           headers: { 'content-type': 'application/json', accept: 'application/json' },
           body: JSON.stringify({
-            entryId,
+            // `toRetrieved`, not the rows themselves: assignability is a
+            // compile-time fact and `JSON.stringify` is not, so without it every
+            // one of the fourteen `Entry` fields would go on the wire.
+            entry: toRetrieved(target),
             ...(senseIndex === undefined ? {} : { senseIndex }),
             profile,
-            // Three shapes of one answer to "what does this learner know":
-            // headwords for the prompt, ids for the filter, and the band
-            // assumption with the cards that outrank it (`knownSet`).
-            known: known.headwords,
-            knownIds: known.ids,
-            knownBand: known.knownBand,
-            excludeIds: known.excludeIds,
+            support: offered.map(toRetrieved),
           }),
         });
         if (!res.ok) {
-          const body = (await res.json().catch(() => null)) as {
-            error?: string;
-            hint?: string;
-          } | null;
-          const message =
-            body?.error === 'dict-data-missing'
-              ? 'Dictionary data is missing — run pnpm data.'
-              : 'No example sentences for this one right now.';
-          if (!cancelled) setState({ status: 'error', answered: requested, message });
+          if (!cancelled) {
+            setState({
+              status: 'error',
+              answered: requested,
+              message: 'No example sentences for this one right now.',
+            });
+          }
           return;
         }
 
-        const body = (await res.json()) as ExamplesRouteResponse;
-        // The same three conditions the ask panel writes a row under: the route
-        // says this answer is worth keeping, the handshake was real rather than
-        // the offline guess, and the provider that answered is the one the key
-        // was derived for.
+        const body = (await res.json()) as ExamplesResponse;
+
+        // Grounding and the i+1 filter, both here now. `groundExamples` is
+        // `packages/ai/examples.ts` unchanged — the same function the route ran
+        // — and `withStoreContext` is the seam that drives a pure synchronous
+        // `ground()` over an asynchronous `DictStore`. `retrieved` is the target
+        // plus the pool, so a citation the client never offered is dropped
+        // before anything is drawn; `allowed` is the narrower set a sentence may
+        // be *shown* citing, and the two are enforced separately for the reason
+        // the route stated: the day a wider pool is offered, the promise on the
+        // card back must not quietly widen with it.
+        const sentences = await withStoreContext(store, [target, ...offered], (context) =>
+          groundExamples(
+            { sentences: body.sentences },
+            context,
+            { targetId: target.id, allowed: allowedEntryIds(offered, known) },
+          ),
+        );
+        if (cancelled) return;
+
+        const entries = await store.entries(citedEntryIds(sentences));
+
+        // The same three conditions the ask panel writes a row under, with the
+        // first one now computed here: an empty result is never cached (it is a
+        // statement about how many words the learner knew today, and only this
+        // side knows that), the handshake was real rather than the offline
+        // guess, and the provider that answered is the one the key was derived
+        // for.
         const trustworthy =
-          body.cacheable !== false && info !== FALLBACK_INFO && body.provider === info.provider;
+          sentences.length > 0 && info !== FALLBACK_INFO && body.provider === info.provider;
         if (trustworthy) {
-          await repo.askCache.set(key, { sentences: body.sentences }).catch(() => undefined);
+          await repo.askCache.set(key, { sentences }).catch(() => undefined);
         }
         if (cancelled) return;
         setState({
           status: 'ready',
           answered: requested,
-          sentences: body.sentences,
-          entries: body.entries,
+          sentences,
+          entries,
           provider: body.provider,
           cached: false,
         });

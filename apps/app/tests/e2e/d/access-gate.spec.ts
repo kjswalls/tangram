@@ -164,12 +164,13 @@ test.describe('with TANGRAM_ACCESS_SECRET set', () => {
     expect((await api.get('/api/examples')).status()).toBe(401);
   });
 
-  test('refuses the two paths B2 adds under /api/ask, because the match is a prefix', async () => {
+  test('refuses the two paths under /api/ask, because the match is a prefix', async () => {
     // `wave-zero.md` §10a: `/api/ask/propose` and `/api/ask/answer` are the two
     // routes that actually spend the money, and an exact-string gate leaves
-    // both open with every existing test green. They do not exist yet, so what
-    // proves the gate reaches them is that an unkeyed request gets 401 rather
-    // than the 404 an ungated unknown path gets.
+    // both open with every existing test green. `backend.md` B2 has since
+    // mounted them; an unkeyed request gets 401 rather than the 404 an ungated
+    // unknown path gets, and — now that they exist — rather than the 400 the
+    // handler itself would answer.
     for (const path of ['/api/ask/propose', '/api/ask/answer']) {
       expect((await api.post(path, { data: {} })).status(), path).toBe(401);
     }
@@ -178,7 +179,11 @@ test.describe('with TANGRAM_ACCESS_SECRET set', () => {
   test('admits the paid routes once the header is sent', async () => {
     // The gate is out of the way; the empty body is the route's own complaint,
     // which is the proof the request got past it.
-    const response = await api.post('/api/ask', {
+    //
+    // `/api/ask/answer`, not `/api/ask`: `backend.md` B2 left the parent as the
+    // GET handshake alone, so a POST to it is a 405 from the router rather than
+    // a 400 from a handler — which would prove nothing about the gate.
+    const response = await api.post('/api/ask/answer', {
       data: {},
       headers: { [ACCESS_HEADER]: SECRET },
     });
@@ -318,7 +323,11 @@ test.describe('across origins, which is where the header earns its keep', () => 
     //      preflight happened AND that the browser accepted the answer: a
     //      `fetch` carrying a non-safelisted header cross-origin cannot reach
     //      the handler any other way. Take (a) away and (b) rejects.
-    const preflight = await api.fetch('/api/ask', {
+    // `/api/ask/answer` is the path the browser actually preflights after
+    // `backend.md` B2 — `/api/ask` answers GET only now, so its preflight names
+    // `GET, OPTIONS` and would fail the `POST` assertion below for a reason that
+    // has nothing to do with CORS.
+    const preflight = await api.fetch('/api/ask/answer', {
       method: 'OPTIONS',
       headers: {
         origin: BASE,
@@ -342,7 +351,7 @@ test.describe('across origins, which is where the header earns its keep', () => 
     const result = await page.evaluate(async (base) => {
       const stored = localStorage.getItem('tangram.access.secret');
       try {
-        const response = await fetch(`${base}/api/ask`, {
+        const response = await fetch(`${base}/api/ask/answer`, {
           method: 'POST',
           headers: {
             'content-type': 'application/json',
@@ -370,7 +379,7 @@ test.describe('across origins, which is where the header earns its keep', () => 
   test('the same call without the header is 401', async ({ page }) => {
     await page.goto('/');
     const status = await page.evaluate(async (base) => {
-      const response = await fetch(`${base}/api/ask`, {
+      const response = await fetch(`${base}/api/ask/answer`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({}),

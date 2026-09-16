@@ -137,20 +137,28 @@ test.describe('/read', () => {
     await resetApp(page, { knownBand: 2, newPerDay: 0 });
     await readText(page, DEMO_PARAGRAPH);
 
-    // Count the segmentations from here on: the recolour must not cause one.
-    // It used to be a request count; since `data.md` D6 segmentation is a call
-    // on the on-device store, so the store's own method is counted instead —
-    // which is strictly closer to the claim, because the old count would also
-    // have missed a re-segmentation served from the store's result cache.
+    // Record the segmentations from here on: the recolour must not cause one of
+    // the passage. It used to be a request count; since `data.md` D6
+    // segmentation is a call on the on-device store, so the store's own method
+    // is recorded instead — which is strictly closer to the claim, because the
+    // old count would also have missed a re-segmentation served from the
+    // store's result cache.
+    //
+    // **The TEXTS are recorded rather than counted, and `backend.md` B2 is
+    // why.** Opening the word sheet now runs the ask module on the device, and
+    // `needsProposals` segments the **word** the sheet is about — one short
+    // call, caused by the tap, that used to happen inside the route. A bare
+    // count would read that as a re-segmentation; what the claim is about is the
+    // passage, so the assertion below is about length.
     await page.evaluate(() => {
       const store = window.__tangram.dict as unknown as {
         segment: (text: string, options?: unknown) => Promise<unknown>;
       };
       const original = store.segment.bind(store);
-      const counter = window as unknown as { __segmentCalls: number };
-      counter.__segmentCalls = 0;
+      const counter = window as unknown as { __segmented: string[] };
+      counter.__segmented = [];
       store.segment = (text, options) => {
-        counter.__segmentCalls += 1;
+        counter.__segmented.push(text);
         return original(text, options);
       };
     });
@@ -163,9 +171,13 @@ test.describe('/read', () => {
     await expect(target).toHaveAttribute('data-state', 'known');
     await expect(target).toHaveClass(/token-known/);
     await expect(page.getByTestId('mark-known')).toHaveText('Marked known');
-    expect(
-      await page.evaluate(() => (window as unknown as { __segmentCalls: number }).__segmentCalls),
-    ).toBe(0);
+    const segmented = await page.evaluate(
+      () => (window as unknown as { __segmented: string[] }).__segmented,
+    );
+    // Nothing longer than the word the sheet is about: the passage was not
+    // re-segmented, which is the whole claim. The ask module's own call is
+    // `NEW_WORD` itself and is allowed.
+    expect(segmented.filter((text) => text.length > NEW_WORD.length)).toEqual([]);
 
     const known = await page.evaluate(() => window.__tangram.repo.knownEntryIds());
     expect(known.some((id) => id.startsWith(`${NEW_WORD}|`) || id.includes(`|${NEW_WORD}[`))).toBe(

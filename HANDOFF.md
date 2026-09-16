@@ -11091,3 +11091,358 @@ The unit suite was run three times end to end after the `BroadcastChannel` flake
   (`expect(undefined).not.toBeNull()` passes), the atomicity case (its fixture was caught by the
   validator, so it never reached the transaction), the guard replacement, and the prototype case.
   Every claim in this section was checked by breaking the code and watching the test go red.
+
+## `backend.md` B2 — the contract flip: the client retrieves, the server stops holding the dictionary
+
+Commits on `claude/build-backend-2`, cut from `claude/integration` at `675d577`.
+
+**B2 is done as far as this container can take it.** Every container-runnable criterion passes;
+what is outstanding is the same five artefacts `backend.md` §4 item 4 says the owner brings, listed
+below. **B3, B4, B5, B6 and B7 did not run and were not started.**
+
+B2's **first commit** — `packages/ai/schemas.ts`, the frozen ask contract — had already landed and
+is **byte-unchanged by this phase**, including the two constants "A frozen surface I did not
+change" below says should move.
+
+### What landed
+
+**The server answers five paths instead of three, and holds no dictionary.**
+
+```
+GET  /api/ask          → { provider, promptVersion, model? }      (unchanged handshake)
+POST /api/ask/propose  → { candidates, …ProviderInfo }            (new)
+POST /api/ask/answer   → { response, …ProviderInfo }              (new; response NOT grounded)
+GET  /api/examples     → { provider, promptVersion, model? }      (unchanged)
+POST /api/examples     → { sentences: RawExampleSentence[], … }   (ungrounded, unfiltered)
+POST /api/recall       → { suggested, why, provider }             ({entry} in, not {entryId})
+```
+
+`apps/server/src/**` imports **nothing** from `apps/app` — the number B1's
+`tests/workspace.test.ts` called "B2's number to drive to zero" is zero, and the same test now
+asserts `[]` rather than the three route files. `dist/index.js` is **68.0 KB, down from 131 KB**,
+and contains no `node:sqlite`, no `SqliteDictStore`, no `dict-manifest` and no
+`dict-data-missing` (checked by string search on the bundle). `TANGRAM_DATA_DIR` is not read by
+this server at all, and `tests/workspace.test.ts` refuses a `src/**` file that mentions it.
+
+**`apps/app/lib/ai/ask-client.ts` is the whole of the browser half**, and it is the only file
+`wave-zero.md` §5 allows in that directory. It does the cache read, retrieval over this device's
+`DictStore`, the `needsProposals` skip, the two round trips, `ground()`, the empty-answer fallback
+and the cache write. `ask-panel.tsx`, `context-gloss.tsx` and `example-sentences.tsx` are call
+sites; **no state of the panel changed** (`core.md` C7 owns those and `ask-state.ts` is untouched).
+
+**The edge validator is `apps/server/src/wire.ts`** (new). `schemas.ts` deliberately holds no zod
+— "a validator is implementation" — so this is it: the body-byte cap, the entry-count caps, the
+query and answer caps, the truncating `knownSample` and context strings, and the one rule that is
+not a bound, **the model id is chosen by the server and never read from a request**.
+
+**`apps/app/lib/api/contract.ts` is deleted**, as its own header said it would be.
+
+### Outstanding *(deploy)* criteria
+
+Per `backend.md` §4, a phase whose deploy-only criteria have not run is committed and flagged. This
+is the flag. **B0's five and B1's three are still outstanding too** and are not repeated here.
+
+| Criterion | Blocked on |
+|---|---|
+| B2's sixth: RSS after boot and after the first ask, **against the deployment**, compared with B1's | a host account with billing; a registered domain |
+
+That is the only *(deploy)* criterion B2 has. **Nothing in this phase reinterpreted a deploy-only
+criterion as container-runnable**; the container numbers below are recorded as container numbers and
+`docs/deploy.md` §5a says in as many words that the deployed measurement is outstanding.
+
+### The numbers B2 asks for, measured in the container
+
+Fake provider, `node apps/server/dist/index.js`, `/proc/<pid>/status` for RSS — the same method B1
+used, so these are comparable with its figures.
+
+| | B1 | B2 |
+|---|---|---|
+| RSS after boot, before any request | 78.4 MB | **78.1 MB** |
+| RSS after the first `POST /api/ask` → `/api/ask/answer` | 97.3 MB | **79.6 MB** |
+| Second ask, warm | 10 ms | **4 ms** |
+| `dist/index.js` | 131 KB | **68.0 KB** |
+
+**Read the first row honestly: the boot figure did not fall, and B2's own text ("this is the
+phase's headline result and it should be a large fall") is about the wrong row.** Node's own
+baseline is ~78 MB in this container and always was; what the dictionary cost was the **19 MB the
+first ask used to add**, and that is gone. A reviewer measured the same thing independently. The
+deployed version of this table is the outstanding criterion above, and on a host that scales to
+zero the boot figure is what gets paid per cold instance — so it is the row that matters there, and
+it is the row B2 does not improve.
+
+**The serialized `retrieved` payload, which nobody had measured.** Projected through
+`toRetrieved`, against the built 124,188-entry artifact:
+
+| query | entries | body | whole-`Entry` body |
+|---|---|---|---|
+| `how do I say I'm just browsing` | 21 | **4.2 KB** | 6.8 KB |
+| `how do I ask for the bill` | 27 | 4.7 KB | 7.9 KB |
+| `how do I say I am just browsing and will come back later to buy something` | 30 | 5.9 KB | — |
+| `看` | 22 | 3.6 KB | 6.3 KB |
+| `打算` | 2 | 0.5 KB | 0.7 KB |
+
+The **absolute worst legal body** — the forty largest entries in the dictionary, a 400-character
+query, a 400-character context on all three fields and a full 200-word `knownSample` — is
+**27.5 KB** against the contract's 256 KB cap. So the payload is not the lever B2 worried about
+("if the payload is large enough to matter the lever is sending fewer glosses per entry"), and the
+six-field projection is already saving ~40%.
+
+**The two-round-trip latency.** Against a local server, fake provider, median of five:
+`/api/ask/propose` **5.3 ms**, `/api/ask/answer` **2.7 ms**. **The throttled-mobile measurement was
+not taken** and is outstanding: this container has no device profile and no live provider, and with
+a real model on the other end the two HTTP round trips are noise beside the 8 s and 30 s deadlines.
+**The number that actually surprised me is on the other side of the wire**: client-side retrieval
+for an English question costs **18–209 ms** in Node against the real artifact, and the slow end is
+`mergedSearch`'s per-word gloss search hitting `the` and `for` — the same degenerate postings
+`wave-zero.md` §10e exempts at a 200 ms ceiling. In wasm it will be worse. Nobody has measured it on
+a phone, and it is a better target for a future phase than the payload is.
+
+### What becomes of B1's seventh smoke case
+
+B1's review found that `pnpm -F server smoke` reported a perfect 6/6 against a server that could not
+answer a single real request, because every POST case sent `{}` and was refused by body validation
+before the dictionary was opened. B1 patched it with a seventh case: `POST /api/examples` with an
+entry id no build contains, which got past validation, opened the 43 MB artifact and answered **404**
+— a dictionary-less server answered 503 there and the smoke failed naming the line.
+
+**It is retired, because the hazard it detected is now the correct state.** This server has no
+dictionary; a deployment without `data/` is right rather than broken, and `ContractErrorCode` does
+not contain `dict-data-missing`. What replaced it is weaker and worth knowing:
+
+- a `POST /api/ask/answer` case whose body is **well formed all the way down** and one row over
+  `RETRIEVED_CAP`, so it is refused by the cost-control cap rather than by the first field the
+  validator looks at. It proves the edge validator runs, not merely that the route is mounted.
+- **It answers 400, exactly like the `{}` cases, so the smoke cannot tell them apart by status.**
+  That is the honest limit of an after-deploy check that must never reach a paid provider, and it is
+  the assertive power B1's case had that B2 does not replace. A reviewer raised it independently.
+  Closing it properly wants either an `expect`-the-error-code field on `SmokeCase` or an opt-in
+  flag that spends one model call; both are `backend.md` B7's operational surface, not B2's.
+
+`pnpm -F server smoke --base-url …` is **8/8** with no `data/` and no `TANGRAM_DATA_DIR` anywhere,
+and **15/15** with `--gate on` (unkeyed 401 / keyed pair on all five gated paths). A reviewer
+repeated the first against a staged tree containing only `dist/` and `package.json`, with no
+`pnpm-workspace.yaml` above it.
+
+### What I decided that the plan did not settle
+
+**1. Where the assertions from the four route tests went.** The commit message names every one. The
+shape of it: the server keeps the handshake, the edge validator and the model call; everything about
+retrieval, grounding and filtering moved to the side that now does it.
+
+| from | to |
+|---|---|
+| `route.test.ts` — the demo query, the hanzi-in-context pair, "never renders an empty panel", the CJK-free interpretation | `tests/unit/ai/ask-client.test.ts` |
+| `route.test.ts` — `needsProposals`, `mergeRetrieved`'s cap and dedupe | `tests/unit/ai/retrieve.test.ts` (D3's, untouched) and `ask-client.test.ts`'s two propose-skip cases |
+| `route.test.ts` — the 503 when `data/` is unbuilt | **deleted.** The server has no dictionary and the contract's closed error list does not contain that code. Replaced by "answers with `data/` absent, because it never looks for it" |
+| `route-provider.test.ts` — the fallback, the empty-but-valid answer, "keeps a real answer cacheable", propose-fails | `ask-client.test.ts` (all four) |
+| `route-provider.test.ts` — the `answer` deadline | `route.test.ts` (server) |
+| `examples-route.test.ts` — the three filter cases | `tests/unit/ai/examples.test.ts` (pre-existing; owns `keepSentence`) and three new cases in `examples-card.test.tsx` that prove the **card back** runs them |
+| `examples-route.test.ts` — the support pool's four cases | `tests/unit/srs/support-pool.test.ts` (new), over `supportEntries` in `lib/srs/known-set.ts` |
+| `examples-route.test.ts` — "cites only the target and words the learner knows", end to end on the offline provider | `tests/e2e/a/examples.spec.ts`, which runs the real fake provider, the real filter and the real dictionary and asserts every cited id is known or the target. That spec predates this phase and is the honest home for the claim now that the filter is client-side |
+| `examples-route.test.ts` — the 404 for an id the dictionary lacks | `examples-card.test.tsx`, "says so quietly when this device has no dictionary" and the missing-target branch |
+| `recall-route.test.ts` — everything | kept, with `{entryId}` → `{entry}`. The 404 is deleted (no dictionary) and `parseRecallBody`'s unit case is absorbed into `POST`, because the parser is a zod schema in `wire.ts` now |
+
+**2. Two caps in the frozen contract are NOT enforced, and the measurement is why.**
+`MAX_GLOSSES_PER_ENTRY` (12) and `MAX_GLOSS_CHARS` (200) are **below what CC-CEDICT produces**:
+38 of 124,188 entries carry more than twelve glosses — `白|白[bai2]` carries **21** — and the longest
+single gloss is **496** characters. Enforcing either as a reject would answer 400 to a lookup of 白;
+truncating instead would silently shorten the prompt for those entries, which is the same class of
+change B2 forbids for `hskBand`. So gloss volume is bounded by `MAX_BODY_BYTES` instead, which was
+always the cap doing the real work (27.5 KB worst case against 256 KB). **See "A frozen surface I
+did not change" for the need this creates.** `MAX_HEADWORD_CHARS` and `MAX_ENTRY_ID_CHARS` were
+measured the same way (19 against 24, 145 against 160) and **are** enforced; I verified that **zero**
+of the 124,188 rows fails the validator.
+
+**3. `pinyinMarked` has no cap in the contract**, and it is the only `RetrievedEntry` field without
+one. `wire.ts` sets a local `MAX_PINYIN_CHARS = MAX_HEADWORD_CHARS * 8` (192) from the same
+measurement: the longest `pinyinMarked` in the artifact is 75. It is a local bound, not a contract
+value, and it is named in the need below.
+
+**4. `/api/ask/propose` reports a provider failure as a 502 and the client carries on.** The merged
+route swallowed a failed `proposePhrases` inside one request (`catch { candidates = [] }`); the split
+has to keep doing that across two. It does — but the *server* still says 502, because "the model
+suggested nothing" and "the model could not be reached" are different facts and only the caller can
+decide what to do with the second. `ask-client.ts` decides to carry on, and a test proves it.
+
+**5. `senseIndex` is rejected by `/api/examples` and dropped by `/api/recall`.** That asymmetry is
+not mine — it is what the two routes did before the flip — and I kept it deliberately rather than
+tidying it: a free-recall answer with a bad sense index is still an answer worth grading against
+every gloss, while an examples request with one is a caller that has lost track of which card it is
+on, and sentences about the wrong gloss are worse than a 400. `wire.ts` says so where it is written.
+
+**6. The support pool is assembled and capped on the client.** `supportEntries` moved from
+`apps/server/src/routes/examples.ts` to `apps/app/lib/srs/known-set.ts`, beside the known-set
+functions B1 put there, and `offeredSupport` is the capped version. It is **not** in
+`apps/app/lib/ai/`, because `wave-zero.md` §5 reserves that directory for `ask-client.ts` and
+`tests/unit/ai/contract.test.ts` enforces it — the same reasoning B1 recorded.
+
+**7. The example sentences now need a dictionary on the device, and that is a real loss.** Before the
+flip the route retrieved, grounded, filtered and returned the rows, so the card back worked on a
+device that had never downloaded the dictionary — `example-sentences.tsx` said so in a comment. Every
+one of those four is the client's now and each needs the rows: there is no way to render a cited id
+as hanzi without the row behind it. So a device with no dictionary gets the quiet failure line
+("No example sentences for this one right now"), and deliberately **not** the "not enough known
+words yet" empty state, whose stated reason would be false. A test pins it. **Free recall is
+unaffected** — `recall-input.tsx` builds the `RetrievedEntry` from the card's own `EntrySnapshot`,
+so Practice still works with no dictionary at all, which is the property that mattered most.
+
+**8. The fake provider re-derives four fields it used to read off an `Entry`, and this is the one
+place the phase's "single variable" claim leaks.** `LLMProvider` takes `RetrievedEntry` now, so
+`fake.ts` lost `pinyinNum`, `isVariant`, `properNoun`, `surname` and `freqRank`. Three are recovered
+exactly — `scripts/build-data.ts:224-226` derives `properNoun`, `isVariant` and `surname` from the
+pinyin and the glosses by rules `fake.ts` now repeats, and `pinyinNum` is spelled inside the
+`EntryId` itself (`trad|simp[pinyinNum]`), so reading it back is a parse of the contract's own key.
+**`freqRank` is not recoverable**, and `supportRank` drops it: the ranking is now "known words
+first, then the order the caller sent". That is the same ordering in practice, because
+`offeredSupport` sorts by `freqRank` before it cuts — but it is a behaviour change in the offline
+provider, it is not covered by `fake.test.ts` (which passes unchanged), and a caller that sent an
+unsorted pool would get a different offline sentence than it used to. A reviewer raised it
+independently and was right to.
+
+**9. `ungrounded` is unreachable through the ask module, and B2 made that visible rather than
+causing it.** `core.md` C7's fifth state is "the answer arrived and nothing in it could be checked".
+The panel enters it when the grounded answer has an empty interpretation, no renderable match and no
+phrase — and `ask-client` substitutes `retrievalEcho` on exactly that condition, whose interpretation
+is never empty. So the state cannot happen. **It could not happen before the flip either**, for the
+same reason one process further out: the route substituted the echo. What changed is that
+`tests/e2e/core/ask-states.spec.ts` used to reach it by intercepting the route and thereby skipping
+the echo, and an intercepted response cannot skip it now that it lives on the same side as the
+panel. That case is rewritten to assert what actually happens — the dictionary answers in its own
+voice, no invented id is drawn, and the echo is not cached. **The `ungrounded` rendering is still
+covered** by `core/gallery.spec.ts` and `tests/unit/lookup/ask-state.test.ts`.
+**This is `core.md` C7's to settle, not B2's**: either the panel should key `ungrounded` off the
+fallback (`AskOutcome.fallback` is already on the module's return for that purpose), or the state
+should be retired in favour of the echo. B2 changed no state of the panel, per its own scope.
+
+**10. `apps/app/lib/server/dict.ts` is kept as a test fixture, not deleted.** No production code
+reaches it any more. It stays because `tests/unit/ai/ask-client.test.ts` and
+`tests/unit/srs/support-pool.test.ts` run the real retrieval-and-grounding pipeline against the real
+124k-entry artifact through it, and those are claims about Chinese words that a fixture dictionary
+could agree with a bug about. Its header says what it now is. `dictErrorResponse` went with the
+routes.
+
+**11. `noUncheckedIndexedAccess` is back on in `apps/server`, which cost 35 fixes.** B1 turned it off
+and `tests/workspace.test.ts` was written to demand it back in the commit that removed the last
+`@/lib/**` import. That is this commit. The 35: 18 in `packages/ai/ground.ts`, 3 in `fake.ts`, 2 in
+`prompts.ts` (the 23 `packages/ai/tsconfig.json` assigned to this phase), 9 in
+`apps/app/lib/dev/sha1.ts` and 3 in `apps/app/lib/types.ts` (both reached through
+`packages/ai/cache-key.ts`). Every edit is a guard or a local `const`; `ground.test.ts` and
+`attacks.test.ts` are **byte-unchanged** and green, which is the check.
+**The flag is still off in `packages/ai` itself**, and the measured reason is 36 errors in
+`apps/app/lib/dict/**` (entries.ts 22, segment.ts 9, rank.ts 5) reached through `retrieve.ts` —
+`data.md`'s code, not B2's to churn. Consequence worth knowing: **`retrieve.ts` is the one module of
+`packages/ai` that no gate now checks under the flag**, because the flip took it out of the server's
+program.
+
+### A frozen surface I did not change, and the three needs that creates
+
+`packages/ai/schemas.ts` is untouched. Three things in it are wrong or missing and were worked
+around rather than edited, per `CLAUDE.md`:
+
+1. **`MAX_GLOSSES_PER_ENTRY` should be at least 21 and `MAX_GLOSS_CHARS` at least 512.** As written
+   they are below what the dictionary produces (decision 2 above) and cannot be enforced as the
+   contract says they are ("the counts and the byte caps REJECT with a 400"). Whoever unfreezes the
+   file should raise them and then `wire.ts` can enforce them; until then `MAX_BODY_BYTES` is the
+   bound and `wire.ts`'s header says so.
+2. **There is no cap for `pinyinMarked`**, the only `RetrievedEntry` field without one.
+   `wire.ts`'s `MAX_PINYIN_CHARS` is a local stand-in.
+3. **`AskAnswerResponse` carries no way to say "this answer grounded to nothing"**, which is what
+   `ungrounded` (decision 9) would need if C7 decides the panel should key off it. It does not need
+   to be on the wire — the client computes it — but it is worth knowing the contract does not carry
+   it and does not have to.
+
+`lib/db/repository.ts`, `lib/db/schema.ts` and `lib/srs/params.ts` were not touched.
+**`lib/types.ts` was**, and it is a settle-first file: `parseEntryId`'s body gained an explicit
+guard for `noUncheckedIndexedAccess` (decision 11). **No shape changed** — the freeze is on the
+`Entry` contract, which is identical — but the edit is recorded here rather than assumed harmless.
+
+### What this makes false in `CLAUDE.md`
+
+Not edited, per the brief. For whoever merges:
+
+- **The migration-state block's first bullet is now wrong in its central claim.** It says
+  `pnpm smoke`'s "server half is its own command and wants `--base-url` plus a `TANGRAM_DATA_DIR`
+  that really holds the artifact: its seventh case exists because the first six all passed against a
+  server that could not answer a single real request." The server smoke needs **no**
+  `TANGRAM_DATA_DIR`, the seventh case is retired, and the invocation is
+  `cd apps/server && npx tsx src/smoke.ts --base-url <url>`. The *root* `pnpm smoke` still needs
+  `--api-base` or `--no-api`; that half is unchanged.
+- **The third bullet.** "What is left is `backend.md` B2's remainder (the contract flip, and
+  `ask-client.ts`, which §5 keeps out of `packages/ai`, and which is still unwritten) and B3–B7."
+  B2's remainder has landed and `ask-client.ts` is written. **B3–B7 are unchanged** and still need
+  the owner's five artefacts.
+- The settle-first table is unchanged and still correct.
+
+### Files another session may collide with
+
+Nothing was reported running in parallel. The surfaces most likely to collide are
+`apps/app/components/lookup/ask-panel.tsx`, `components/review/example-sentences.tsx` and
+`components/hanzi/context-gloss.tsx` (all `core.md`'s to style, all changed here at the call site
+only), `apps/app/lib/srs/known-set.ts` (gained `supportEntries` / `offeredSupport`), and
+`packages/ai/{provider,prompts,anthropic,fake,recall,retrieve}.ts`, whose signatures narrowed from
+`Entry` to `RetrievedEntry`.
+
+### Gates
+
+| | after B1 | after B2 |
+|---|---|---|
+| `pnpm lint` | clean | clean |
+| `pnpm typecheck` | clean | clean |
+| `pnpm build` | clean | clean (server bundle 131 KB → **68.0 KB**) |
+| `pnpm test` | 1,824 app + 102 server | **1,933 app + 103 server** |
+| `PORT=3000 pnpm e2e` | 268 specs, 5.6 min | **282 specs, 8.3 min** |
+| `pnpm smoke --base-url … --api-base …` | 21 ok | **22 ok** |
+| `pnpm -F server smoke --gate off` | 7/7 (and 6/7 with no artifact) | **8/8, and no artifact exists to be missing** |
+| `pnpm -F server smoke --gate on` | 11/11 | **15/15** |
+
+`pnpm build` before `pnpm test`, as `CLAUDE.md` says: `tests/unit/dict/artifact-copy.test.ts` and
+`tests/unit/server/routes.test.ts` read the bytes in `apps/app/dist/` and fail with "run pnpm build
+first" otherwise. The server smoke is
+`cd apps/server && npx tsx src/smoke.ts --base-url http://127.0.0.1:8787` — **and it no longer
+wants `TANGRAM_DATA_DIR`**, which is the single line of this table worth remembering.
+
+**Traps this session hit, for whoever is next:**
+
+- **A Playwright `'**/api/ask'` glob matches neither `/api/ask/propose` nor `/api/ask/answer`.** Four
+  e2e specs intercepted the ask that way and would have gone on passing while intercepting nothing —
+  `p4/ask.spec.ts` counted zero POSTs, `core/sheets.spec.ts` asserted a 503 it was no longer
+  causing. They are regexes now (`/\/api\/ask(\/|$)/`). This is the fourth instance of
+  `wave-zero.md` §10a's "a config-shaped thing matched fewer things than it looked like it matched".
+- **Opening the word sheet now segments on the device**, because `useContextGloss` goes through the
+  ask module and `needsProposals` segments the query. `tests/e2e/p5/reader.spec.ts` counted
+  segmentations to prove "Mark known" does not re-segment the passage, and the count went from 0 to
+  1 for a reason that has nothing to do with the claim. It records the *texts* now and asserts none
+  is longer than the word the sheet is about.
+- **The card back's fixtures need a known set now.** The route used to filter, so a jsdom test could
+  return a sentence citing 我 and draw it whether or not the fixture learner knew 我. The filter runs
+  in the component, so six cases in `examples-card.test.tsx` went red until `beforeEach` marked the
+  word known. That is the filter working, and it is worth knowing before you debug it.
+- **`tests/unit/ai/memory-store.ts` is new** — an in-memory `DictStore` for jsdom, because the card
+  back now needs `search`, `segment` and `hskBand` where it used to need only `entries`. Its
+  segmenter is greedy longest-match and is **not** `lib/dict/segment.ts`; it must never become a
+  second dictionary a grounding test could agree with instead of the real one, which is why
+  `ask-client.test.ts` and `support-pool.test.ts` run in node against the real 124k-entry artifact.
+
+### The reviews
+
+Two adversarial reviewers read the diff cold and in parallel, per the brief: one against B2's
+acceptance criteria one at a time, one on "what breaks that no test covers", led by the grounding
+contract. **The criteria reviewer's report is folded into the sections above** — it ran the gates
+itself, booted `dist/` in an isolated tree with no `data/` and no `pnpm-workspace.yaml` above it
+(8/8), read all nine `ground.ts` hunks and judged them behaviour-preserving, and independently
+reproduced the RSS numbers.
+
+Four of its findings changed something and are recorded where they belong rather than only here:
+
+1. **The assertion provenance was in file headers, not in the commit message**, which is what B2's
+   criterion asks for. It is in the commit message now, and in the table above.
+2. **One old case had no named destination** — `examples-route.test.ts`'s end-to-end offline-provider
+   case. Named: `tests/e2e/a/examples.spec.ts`.
+3. **`lib/types.ts` is a frozen file and I had edited it** without saying so. Said, above.
+4. **The `fake.ts` `freqRank` loss is a real behaviour change** presented as a re-derivation. Split
+   out and stated as one (decision 8).
+
+Three of its observations were accepted and not acted on: the prompt test's band-3 literal (every
+band 1–7 is pinned now, which is strictly more), the retired seventh smoke case (recorded, with what
+it costs), and that the boot RSS did not fall (recorded, with why B2's own text points at the wrong
+row).

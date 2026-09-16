@@ -9,8 +9,8 @@
  *   1. **thinking** — the dictionary card is rendered and addable before the
  *      model returns. The answer never blocks the add.
  *   2. **unavailable** — a quiet chip, and everything else still works.
- *   3. **ungrounded** — an `EmptyState` saying nothing could be checked, no
- *      phrase cards at all, and the real words inside the rejected phrases
+ *   3. **every proposal fails grounding** — and the dictionary answers in its
+ *      own voice rather than leaving an empty panel behind, with the real words
  *      still addable from the dictionary card above.
  *
  * Each one is forced at the network boundary rather than through a test hook,
@@ -18,16 +18,33 @@
  * wire; a hook that sets the state directly would pass against a panel that
  * could never enter it.
  *
- * **The route cannot produce case 3 on its own, deliberately.** `app/api/ask`
- * substitutes a retrieval echo when grounding kills every proposal (§3.4's "no
- * query ever renders an empty panel"), so the panel's `ungrounded` branch is
- * reachable only when even the echo grounds to nothing. That is rare and it is
- * still a state the panel must render correctly, which is exactly what an
- * intercepted response is for. Recorded in HANDOFF.md.
+ * **Case 3 changed in `backend.md` B2, and the change is worth understanding
+ * rather than working around.** It used to assert `ungrounded`, and it could,
+ * because the substitution that prevents that state lived on the *other* side
+ * of the wire: `app/api/ask` replaced a dead answer with a retrieval echo
+ * (§3.4's "no query ever renders an empty panel"), and an intercepted response
+ * bypassed the route and therefore the echo. After the contract flip the echo is
+ * `lib/ai/ask-client.ts`'s, on the same side as the panel, so **nothing an
+ * intercepted response can say reaches the panel un-echoed** — and `ungrounded`
+ * is unreachable through the ask module.
+ *
+ * That is not a regression this phase introduced: it was already unreachable in
+ * a real deployment, for exactly the same reason, and only a mock that skipped
+ * the route could produce it. What B2 changed is that a mock cannot any more, so
+ * the spec asserts what actually happens. The `ungrounded` *rendering* is still
+ * covered — `core/gallery.spec.ts` draws it from C7's fixture and
+ * `tests/unit/lookup/ask-state.test.ts` pins the mapping. Whether the panel
+ * should key `ungrounded` off the echo instead is `core.md` C7's call, not this
+ * phase's; recorded in HANDOFF.md.
+ *
+ * **The route patterns are regexes, not globs**, for a reason that bit this
+ * phase: a glob on the parent path matches neither `/api/ask/propose` nor
+ * `/api/ask/answer`, so one left over from before the flip is a spec that
+ * intercepts nothing and passes for the wrong reason.
  */
 import { expect, type Page, test } from '../dict';
 
-import { ASK_OFFLINE_CHIP, ASK_UNGROUNDED_TITLE } from '@/components/lookup/ask-state';
+import { ASK_OFFLINE_CHIP } from '@/components/lookup/ask-state';
 
 import { expectBaseText } from '../hanzi';
 import { resetApp } from '../p3/helpers';
@@ -66,7 +83,7 @@ test.describe('the Look up tab’s three answer states', () => {
     const held = new Promise<void>((resolve) => {
       release = resolve;
     });
-    await page.route('**/api/ask', async (route) => {
+    await page.route(/\/api\/ask(\/|$)/, async (route) => {
       if (route.request().method() !== 'POST') return route.continue();
       await held;
       await route.abort();
@@ -93,7 +110,7 @@ test.describe('the Look up tab’s three answer states', () => {
   });
 
   test('unavailable: a quiet chip, and the dictionary still answers', async ({ page }) => {
-    await page.route('**/api/ask', async (route) => {
+    await page.route(/\/api\/ask(\/|$)/, async (route) => {
       if (route.request().method() !== 'POST') return route.continue();
       await route.abort('internetdisconnected');
     });
@@ -116,22 +133,21 @@ test.describe('the Look up tab’s three answer states', () => {
     expect(await cardCount(page)).toBe(1);
   });
 
-  test('ungrounded: nothing could be checked, no phrase cards, words still addable', async ({
+  test('every proposal dropped: the dictionary answers, and the panel is never empty', async ({
     page,
   }) => {
-    await page.route('**/api/ask', async (route) => {
-      if (route.request().method() !== 'POST') return route.continue();
+    await page.route(/\/api\/ask\/answer$/, async (route) => {
       /**
        * **Every proposal fails grounding** — which is not the same as an empty
-       * answer, and the difference is the finding that rewrote this fixture.
+       * answer, and the difference is what this case is about.
        *
-       * The body below *cites* two entries and proposes a phrase; none of the
-       * cited ids is in `entries`, so grounding drops all of them and the panel
-       * renders nothing from the answer. An earlier draft sent an empty
-       * `matches` array instead, which never exercised grounding at all — and
-       * the panel, counting raw `response.matches.length`, reported a body of
-       * dropped citations as `answered` and drew a heading over an empty
-       * section. That is what §3.4 forbids and what `ungrounded` exists to say.
+       * The body below *cites* two entries; neither id is in the retrieved set
+       * this device built for 打算, so `ground()` drops both and the answer
+       * collapses to nothing. §3.4's "no query ever renders an empty panel" is a
+       * promise about what is on screen, so `ask-client` substitutes the
+       * dictionary's own ranking (`retrievalEcho`) — and, because that answer is
+       * the dictionary's rather than the model's, it is **not written to the
+       * cache**, which the last assertion checks.
        */
       await route.fulfill({
         status: 200,
@@ -139,8 +155,6 @@ test.describe('the Look up tab’s three answer states', () => {
         body: JSON.stringify({
           provider: 'fake',
           promptVersion: 'v1',
-          query: QUERY,
-          dictVersion: 'test',
           response: {
             interpretation: '',
             matches: [
@@ -150,10 +164,6 @@ test.describe('the Look up tab’s three answer states', () => {
             sayIt: [],
             notes: [],
           },
-          // The entries the client can render from: none of the cited ids.
-          entries: [],
-          retrieved: 0,
-          cacheable: false,
         }),
       });
     });
@@ -162,24 +172,15 @@ test.describe('the Look up tab’s three answer states', () => {
     await page.getByTestId('search-result').first().click();
     await expect(page.getByTestId('entry-detail')).toBeVisible();
 
-    await expect(panel(page)).toHaveAttribute('data-ask-state', 'ungrounded', { timeout: 20_000 });
-    // It says so, in an EmptyState rather than an empty answer body.
-    await expect(page.getByTestId('ask-ungrounded')).toContainText(ASK_UNGROUNDED_TITLE);
-    /**
-     * **And it is announced.** The panel's `role="status"` region was added for
-     * the three asynchronous states and carried two of them: `ungrounded`
-     * rendered in a sibling subtree, so a screen-reader learner heard the
-     * "Thinking about…" line disappear and never heard why. The text alone
-     * cannot catch that, so this asserts the ancestry — the only thing that
-     * decides whether it is spoken (C8's adversarial review).
-     */
-    await expect(
-      page.locator('[role="status"][aria-live="polite"] [data-testid="ask-ungrounded"]'),
-    ).toHaveCount(1);
-    // …and shows nothing it could not check.
-    await expect(page.getByTestId('ask-sayits')).toHaveCount(0);
-    await expect(page.getByTestId('ask-matches')).toHaveCount(0);
-    await expect(page.getByTestId('ask-interpretation')).toHaveCount(0);
+    await expect(panel(page)).toHaveAttribute('data-ask-state', 'answered', { timeout: 20_000 });
+    // The dictionary's voice, not the model's, and it says so.
+    await expect(panel(page)).toContainText('Offline', { timeout: 20_000 });
+    // Not one of the ids the model invented reached the screen.
+    const drawn = (await panel(page).textContent()) ?? '';
+    for (const invented of ['没有这个', '也没有']) expect(drawn).not.toContain(invented);
+
+    // No phrase cards: the model proposed none that survived.
+    expect(await page.getByTestId('ask-sayit-add').count()).toBe(0);
 
     // product-decisions §5: the real words are still addable. The dictionary
     // card is where they come from, and grounding rejecting an answer has no
@@ -188,7 +189,7 @@ test.describe('the Look up tab’s three answer states', () => {
     await expect(page.getByTestId('add-state')).toContainText('Added');
     expect(await cardCount(page)).toBe(1);
 
-    // A rejected answer is never cached: the next ask must reach the provider
+    // The echoed fallback is never cached: the next ask must reach the provider
     // again rather than repeat this for as long as the row lives.
     expect(await askCacheSize(page)).toBe(0);
   });

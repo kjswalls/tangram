@@ -8,8 +8,17 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
-import { answerTool, answerUserPrompt, entryLine, zodToJsonSchema } from '@tangram/ai/prompts';
+import {
+  answerTool,
+  answerUserPrompt,
+  entryLine,
+  examplesUserPrompt,
+  recallUserPrompt,
+  zodToJsonSchema,
+} from '@tangram/ai/prompts';
 import { askResponseSchema } from '@tangram/ai/provider';
+import { ASK_PROMPT_VERSION } from '@tangram/ai/cache-key';
+import { toRetrieved, type RetrievedEntry } from '@tangram/ai/schemas';
 import type { Entry, LearnerProfile } from '@/lib/types';
 
 const ENTRY: Entry = {
@@ -85,5 +94,65 @@ describe('the answer prompt', () => {
 
   it('says so when there is no context at all', () => {
     expect(answerUserPrompt([ENTRY], profile, 'dasuan')).toContain('CONTEXT: none');
+  });
+});
+
+describe('the HSK band survives the wire', () => {
+  /**
+   * **`backend.md` B2's fourth acceptance criterion, as a test.**
+   *
+   * `entryLine` renders `id \t simp \t trad \t pinyinMarked[ HSK<band>] \t
+   * glosses`, and the same function feeds `/api/examples`' TARGET block and
+   * `/api/recall`'s THE WORD block. After the contract flip the client sends a
+   * six-field `RetrievedEntry` rather than a fifteen-field `Entry`, and dropping
+   * `hskBand` from that projection would have changed every prompt containing a
+   * banded entry — a model-behaviour change smuggled in as a transport decision,
+   * in the one phase whose purpose is that the review has a single variable.
+   *
+   * So the band is pinned in all three prompts, from a `RetrievedEntry` rather
+   * than from an `Entry`: what is under test is the shape that actually travels.
+   */
+  const profile: LearnerProfile = { estimatedBand: 3, knownSample: [] };
+  const banded: RetrievedEntry = toRetrieved(ENTRY);
+  const unbanded: RetrievedEntry = {
+    id: '随便|随便[sui2 bian4]',
+    simp: '随便',
+    trad: '隨便',
+    pinyinMarked: 'suíbiàn',
+    glosses: ['as one wishes'],
+  };
+
+  it('renders the band for an entry that has one, and nothing for one that does not', () => {
+    expect(entryLine(banded)).toContain(' HSK2');
+    expect(entryLine(unbanded)).not.toContain('HSK');
+    // `backend.md` B2's criterion names band 3 literally, and every band is
+    // rendered the same way — so the loop is the assertion rather than one
+    // fixture that happens to be the number in the plan.
+    for (const hskBand of [1, 2, 3, 4, 5, 6, 7] as const) {
+      expect(entryLine({ ...unbanded, hskBand })).toContain(` HSK${hskBand}`);
+    }
+    // The line is exactly the six fields and nothing else.
+    expect(entryLine(unbanded)).toBe(
+      '随便|随便[sui2 bian4]\t随便\t隨便\tsuíbiàn\t0: as one wishes',
+    );
+  });
+
+  it('keeps it in all three prompts the wire feeds', () => {
+    expect(answerUserPrompt([banded], profile, 'dasuan')).toContain(' HSK2');
+    expect(examplesUserPrompt(banded, profile)).toContain(' HSK2');
+    expect(recallUserPrompt(banded, 'to plan')).toContain(' HSK2');
+  });
+
+  it('is byte-identical to the prompt a whole Entry produced', () => {
+    // The projection is a narrowing of what `entryLine` already read, so a
+    // prompt built from a `RetrievedEntry` and one built from the `Entry` it
+    // came from are the same string. This is what makes "no prompt text changed
+    // in this phase" checkable rather than asserted, and therefore why
+    // `ASK_PROMPT_VERSION` is not bumped.
+    expect(entryLine(toRetrieved(ENTRY))).toBe(entryLine(ENTRY));
+    expect(answerUserPrompt([toRetrieved(ENTRY)], profile, 'dasuan')).toBe(
+      answerUserPrompt([ENTRY], profile, 'dasuan'),
+    );
+    expect(ASK_PROMPT_VERSION).toBe('v1');
   });
 });

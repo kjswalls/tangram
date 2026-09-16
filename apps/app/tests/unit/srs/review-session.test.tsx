@@ -6,6 +6,10 @@ import { closeDb, getDb, getRepository } from '@/lib/db/get-db';
 import { gradeOptions, MAX_SESSION_REPEATS } from '@/lib/srs/session';
 import { useReviewStore } from '@/lib/stores/review';
 import { resetExamplesInfo } from '@/components/review/example-sentences';
+// `backend.md` B2: the card back grounds and filters the sentences itself now,
+// so this case needs a dictionary on the device rather than a route that had one.
+import { resetDictStores, setDictStore } from '@/lib/dict/browser-store';
+import { memoryStore } from '../ai/memory-store';
 import type { Entry } from '@/lib/types';
 import { context, DASUAN, KANKAN } from '../db/fixtures';
 
@@ -13,6 +17,7 @@ import { context, DASUAN, KANKAN } from '../db/fixtures';
 afterEach(async () => {
   vi.unstubAllGlobals();
   resetExamplesInfo();
+  await resetDictStores();
   useReviewStore.getState().reset();
   await getDb().delete();
   await closeDb();
@@ -178,28 +183,27 @@ describe('the review session', () => {
       freqRank: 400,
     };
     resetExamplesInfo();
+    // A previous case in this file may have opened the real handle.
+    await resetDictStores();
+    setDictStore(memoryStore([XUEXI, DASUAN]));
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
+        // The server returns the model's tokens, ungrounded and unfiltered
+        // (`backend.md` B2's contract flip). Everything that decides what is
+        // drawn — grounding, the i+1 filter, the script — is the card back's.
         const body =
           url === '/api/examples' && init?.method === 'POST'
             ? {
                 provider: 'fake',
                 promptVersion: 'v1',
-                entryId: DASUAN.id,
-                dictVersion: 'test',
                 sentences: [
                   {
                     tokens: [{ entryId: XUEXI.id }, { entryId: DASUAN.id }],
                     en: 'I plan to study.',
-                    register: '',
-                    unverified: false,
                   },
                 ],
-                entries: [XUEXI, DASUAN],
-                support: 1,
-                cacheable: true,
               }
             : { provider: 'fake', promptVersion: 'v1' };
         return { ok: true, status: 200, json: async () => body } as Response;
@@ -208,6 +212,9 @@ describe('the review session', () => {
 
     const repo = getRepository();
     await repo.setSettings({ script: 'trad', newPerDay: 0 });
+    // 學習 has to be a word this learner knows, or the filter drops the
+    // sentence — which is the promise the block is headed with.
+    await repo.markKnown([XUEXI.id]);
     await repo.addCardFromEntry(DASUAN, context({ source: 'lookup' }));
 
     render(<ReviewSession />);

@@ -43,7 +43,7 @@
  *    404 rather than a 401, which `wave-zero.md` §10a requires and which cannot
  *    be written without the string;
  *  - `scripts/smoke.ts`, explaining in the past tense which deleted case used to
- *    supply `SMOKE_ENTRY_ID`;
+ *    supply `SMOKE_ENTRY`;
  *  - `CLAUDE.md` and `HANDOFF.md`, which are prose and are not `.ts` anyway.
  *
  * Widening this walk past `apps/app` would therefore fail on files that are

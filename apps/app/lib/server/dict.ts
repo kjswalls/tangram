@@ -1,34 +1,36 @@
 /**
- * The dictionary, server side, over the SQLite artifact (docs/plans/data.md D6).
+ * The dictionary under Node, over the SQLite artifact (docs/plans/data.md D6).
  *
- * D6 deletes `lib/dict/load.ts` and `lib/dict/index.ts` — the 35 MB JSON parse
- * and the seven lazy indexes over it. Three routes still read the dictionary in
- * process: `/api/ask`, `/api/examples` and `/api/recall`. They are **not this
- * plan's to move** — `backend.md` B1 moves them to `apps/server`, and B2's
- * frozen contract is what takes retrieval off the server entirely (the client
- * has the dictionary and sends the retrieved rows). Until then they need a
- * dictionary, and it is the same artifact every other platform queries, read
- * through the same `DictStore` the browser and the phones use.
+ * **What this module is, after `backend.md` B2.** D6 wrote it so the three model
+ * routes could read the dictionary in process while they waited for B2's
+ * contract flip to take retrieval off the server entirely. The flip has landed:
+ * `apps/server` holds no dictionary, imports nothing from `apps/app`, and
+ * `apps/server/tests/workspace.test.ts` asserts both. So **no production code
+ * reaches this file any more.**
  *
- * What that buys beyond "it still works": the three routes now answer from the
- * file `pnpm data` ships rather than from a parallel JSON path, so there is
- * exactly one dictionary implementation left in the repository. A grounding bug
- * that only the server could have had is no longer possible.
+ * It is kept, deliberately, as the Node-side opener the unit suites use —
+ * `tests/unit/ai/ask-client.test.ts` runs the whole retrieval-and-grounding
+ * pipeline against the real 124k-entry artifact through it, and
+ * `tests/unit/srs/support-pool.test.ts` resolves a real support pool the same
+ * way. Those are claims about Chinese words, and a fixture dictionary is a
+ * fixture that can agree with a bug. It is the same `DictStore` the browser and
+ * the phones use, so there is still exactly one dictionary implementation in
+ * this repository.
  *
- * **Node-only.** It reaches `node:sqlite` through `lib/dict/runners/node.ts`.
- * Nothing in the browser bundle may import this module, and nothing does: the
- * routes are mounted by `vite-plugins/api.ts` in dev and preview, and the two
- * components that name a route module import only its response *type*.
+ * **What went with the routes.** `dictErrorResponse` — the
+ * `503 {error:'dict-data-missing'}` the three handlers answered with — is
+ * deleted. The frozen ask contract lists every error body those routes may
+ * return and says of that code: "it is **not** here and must not come back:
+ * after B2 the server has no dictionary, so it cannot have a missing one, and a
+ * server that still answered it would be telling the browser about a file the
+ * browser owns." The client's own missing-dictionary banner is `data.md`'s
+ * (`DictStatus`) and is unaffected.
  *
- * The runner is nevertheless imported **lazily**, inside `serverDictStore()`.
- * A static import puts `node:sqlite` in the module graph of anything that so
- * much as names a route handler, and one such thing exists already:
- * `tests/unit/server/access.test.ts` runs in **jsdom** — it is about the
- * browser's half of the gate — and imports the three routes to prove they refuse
- * a request without the header. Vite refuses to bundle a Node built-in for a
- * browser environment, so the static form failed that suite at import time,
- * before a single assertion ran. Deferring it costs one microtask on the first
- * query and keeps "reaching for a route" free of "opening a database".
+ * **Node-only.** It reaches `node:sqlite` through `lib/dict/runners/node.ts`,
+ * and nothing in the browser bundle may import it. The runner is imported
+ * **lazily**, inside `serverDictStore()`: a static import puts `node:sqlite` in
+ * the module graph of anything that so much as names this file, and Vite
+ * refuses to bundle a Node built-in for a browser environment.
  *
  * The connection is memoised on `globalThis`, not at module scope, for the
  * reason `lib/db/get-db.ts` is: Vite re-evaluates a module on every HMR edit and
@@ -41,18 +43,15 @@ import { MANIFEST_FILE, type DictManifest } from '../dict/artifact';
 import { SqliteDictStore } from '../dict/sqlite-store';
 import { dataDir } from './roots';
 import type { DictStore } from '../dict/store';
-import type { DictDataMissingBody } from '../dict/types';
 
 /**
  * The dictionary has not been built.
  *
- * A fresh clone before `pnpm data` is a **normal** state, not an exception the
- * routes should 500 on — CLAUDE.md: "missing data is a banner, not a crash" —
- * so it is a distinguishable error the three routes turn into the same
- * `503 {error:'dict-data-missing'}` they have always answered with. The class
- * and `dictErrorResponse` come from `lib/dict/load.ts`, which D6 deletes; the
- * body shape is unchanged, which is what keeps `tests/e2e` and the banner
- * working across the cutover.
+ * A fresh clone before `pnpm data` is a **normal** state, not an exception to
+ * crash on — CLAUDE.md: "missing data is a banner, not a crash". It is a
+ * distinguishable error so a caller can tell "no artifact" from "a broken one";
+ * the only callers left are the unit suites, and `tests/unit/dict/data-required`
+ * is what turns it into a skip rather than a red suite.
  */
 export class DictDataMissingError extends Error {
   override readonly name = 'DictDataMissingError';
@@ -140,17 +139,4 @@ export async function closeServerDictStore(): Promise<void> {
   held.store = undefined;
   held.opening = undefined;
   if (store) await store.close();
-}
-
-/**
- * The 503 a route answers when the dictionary has not been built, or `null` when
- * the error is something else and the route should let it through.
- */
-export function dictErrorResponse(error: unknown): Response | null {
-  if (!(error instanceof DictDataMissingError)) return null;
-  // The body is byte-for-byte `lib/dict/load.ts`'s, hint included: it is what
-  // the ask panel, the card back and two e2e specs match on, and D6 is not the
-  // phase to move a string every one of them reads.
-  const body: DictDataMissingBody = { error: 'dict-data-missing', hint: 'run pnpm data' };
-  return Response.json(body, { status: 503 });
 }

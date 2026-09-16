@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { GATED_PATHS } from '@tangram/access';
+import { ROUTES } from '../src/routes/table.ts';
 
 import { buildApp } from '../src/app.ts';
 import { ALLOWED_HEADERS, allowedMethods, readCorsPolicy } from '../src/cors.ts';
@@ -33,6 +34,13 @@ function server(env: Record<string, string | undefined> = {}) {
     env,
     cors: readCorsPolicy({ TANGRAM_ALLOWED_ORIGINS: APP_ORIGIN }, true),
   });
+}
+
+/** Every gated route that answers POST, in table order. */
+function gatedPostPaths(): string[] {
+  return ROUTES.filter((route) => route.gated && route.methods.includes('POST')).map(
+    (route) => route.path,
+  );
 }
 
 function post(path: string, headers: Record<string, string> = {}): Request {
@@ -167,10 +175,23 @@ describe('the gate, with TANGRAM_ACCESS_SECRET unset', () => {
     vi.stubEnv('TANGRAM_ACCESS_SECRET', undefined);
     // 400, because the body is `{}`. The point is that it is the *handler's*
     // answer: 401 here would mean the gate existed with nothing configured.
-    for (const path of GATED_PATHS) {
+    //
+    // Derived from the table rather than from `GATED_PATHS`, and `backend.md`
+    // B2 is why: `/api/ask` is the handshake alone now — its POST became
+    // `/api/ask/propose` and `/api/ask/answer` — so a POST to it is a 405, and
+    // a loop over `GATED_PATHS` would have been asserting the wrong verb on the
+    // one path whose children spend the money.
+    for (const path of gatedPostPaths()) {
       const response = await app.fetch(post(path));
       expect(response.status, path).toBe(400);
     }
+    // The four that answer POST are the three model endpoints plus propose.
+    expect(gatedPostPaths()).toEqual([
+      '/api/ask/propose',
+      '/api/ask/answer',
+      '/api/examples',
+      '/api/recall',
+    ]);
   });
 });
 

@@ -296,8 +296,12 @@ test.describe('the ask panel', () => {
   test('a repeat question with the same context hits the cache; a different context does not', async ({
     page,
   }) => {
+    // `/api/ask/answer`, not `/api/ask` (`backend.md` B2's contract flip): the
+    // single POST became two calls, and this one is the one that costs a model
+    // round trip. `/api/ask/propose` is skipped for a hanzi query and is not
+    // what "hits the cache" is about.
     let posts = 0;
-    await page.route('**/api/ask', async (route) => {
+    await page.route('**/api/ask/answer', async (route) => {
       if (route.request().method() === 'POST') posts += 1;
       await route.continue();
     });

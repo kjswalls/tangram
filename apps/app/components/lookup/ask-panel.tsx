@@ -11,18 +11,23 @@
  *    debounces, and loads on its own; a slow or failing provider leaves the
  *    entry body untouched. Its own failure is a line of text, not a blank.
  *  - **It renders nothing the dictionary did not supply.** Hanzi and pinyin
- *    come from the entries the route returned (or, on a cache hit, from
- *    the dictionary store), through `renderPhrase`. The model's own strings are
- *    visibly marked, and so is anything grounding could not verify.
- *  - **It checks the cache before it asks.** `askCacheKey` is derivable in the
- *    browser precisely so this can happen client-side; a repeat question with
- *    the same context costs nothing, and a different context is a different
- *    question.
+ *    come from entries this device's own dictionary resolved, through
+ *    `renderPhrase`. The model's own strings are visibly marked, and so is
+ *    anything grounding could not verify.
+ *  - **It checks the cache before it asks.** A repeat question with the same
+ *    context costs nothing, and a different context is a different question.
+ *
+ * **What this file is, after `backend.md` B2's contract flip.** All three
+ * properties above are now facts about `lib/ai/ask-client.ts` — retrieval,
+ * the two round trips, `ground()`, the empty-answer fallback and the cache are
+ * its — and this file is the rendering. B2 changed the module and this call
+ * site and **no state of the panel**: the five states, their copy and their
+ * test ids are `core.md` C7's and are untouched.
  */
 
 import { useEffect, useMemo, useState } from 'react';
 
-import type { AskRouteInfo, AskRouteResponse } from '@/lib/api/contract';
+import type { ProviderName } from '@tangram/ai/schemas';
 import { HanziWord } from '@/components/hanzi/hanzi-text';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -35,50 +40,33 @@ import {
   type AskStateName,
   type AskUnavailableReason,
 } from '@/components/lookup/ask-state';
-import { askCacheKey } from '@tangram/ai/cache-key';
 import {
   entryLookup,
-  groundedAskResponseSchema,
   renderPhrase,
   type PhraseScript,
   type GroundedAskResponse,
   type RenderedPhrase,
 } from '@tangram/ai/ground';
+/**
+ * **The ask module (`backend.md` B2).** Retrieval, the two round trips,
+ * `ground()`, the empty-answer fallback and the cache all live in
+ * `lib/ai/ask-client.ts` now — this panel asks it a question and renders what
+ * comes back. B2 changes the module and this call site, and **no state of the
+ * panel**: `core.md` C7 owns `thinking`, `unavailable` and `ungrounded`, and
+ * every one of them is drawn exactly as it was before the flip.
+ */
+import { ask, askInfo, isAbort } from '@/lib/ai/ask-client';
 import { cn } from '@/lib/cn';
 import type { PhraseToken } from '@/lib/db/schema';
 import { getRepository } from '@/lib/db/get-db';
-import { getDictStore } from '@/lib/dict/browser-store';
 import {
   addCardChecked,
   addPhraseCardChecked,
   phraseCardFor,
 } from '@/lib/lists/looked-up';
-import { getLearnerProfile } from '@/lib/srs/profile';
 import { orderGlosses } from '@/lib/srs/presentation';
 
-/**
- * Entries by id, through `DictStore` (core.md C4a), in the
- * `{ meta: { version }, entries }` shape the cache path already reads.
- *
- * `DictStore.entries` returns rows and no version — the version is the store's
- * own `status`, not a property of a query — so it is read from there. The
- * `AbortSignal` the old fetch took has no equivalent on the frozen interface;
- * the caller's `cancelled` flag already drops a stale answer, so nothing that
- * reaches the screen depends on it. Recorded in HANDOFF.md.
- */
-async function resolveEntries(ids: readonly string[]) {
-  const store = getDictStore();
-  const entries = await store.entries(ids);
-  const version = store.status.state === 'ready' ? store.status.version : '';
-  return { meta: { version }, entries };
-}
 import { hskBandLabel, type CardContext, type Entry } from '@/lib/types';
-
-// `apiFetch`, not `fetch` (docs/plans/web.md W4). It applies the configured
-// API base and attaches `X-Tangram-Access`; without it this call 401s on any
-// deployment with `TANGRAM_ACCESS_SECRET` set, and goes to the wrong origin
-// once `backend.md` moves the route off this one.
-import { apiFetch } from '@/src/access/client';
 
 /** Long enough that typing a sentence is one ask, short enough to feel answered. */
 const DEBOUNCE_MS = 500;
@@ -149,74 +137,13 @@ export function askUiState(input: {
 }
 
 /**
- * Why no model could be reached. The chip does not show it — it is here so the
- * state is a *reachability* fact rather than a shrug, and so a later phase can
- * say "rate-limited" without re-deriving it from a message string.
+ * Re-exported rather than redefined. Both moved into `lib/ai/ask-client.ts`
+ * with the rest of the fetch — they are facts about *reachability*, and after
+ * `backend.md` B2 the module that does the reaching is the ask client. The
+ * spelling stays here because `tests/unit/lookup/ask-state.test.ts` is
+ * `core.md` C7's file and imports them from this one.
  */
-export function unavailableReason(error: unknown): AskUnavailableReason {
-  if (isTimeout(error)) return 'timeout';
-  // A fetch that never reached a server throws a TypeError, and the browser
-  // already knows the likeliest reason.
-  if (typeof navigator !== 'undefined' && navigator.onLine === false)
-    return 'offline';
-  if (error instanceof TypeError) return 'offline';
-  return 'server';
-}
-
-/** The same, for a response that did arrive. */
-export function statusReason(status: number): AskUnavailableReason {
-  if (status === 429) return 'rate-limited';
-  if (status === 401 || status === 403) return 'no-key';
-  return 'server';
-}
-
-/**
- * Which provider is live and under which prompt version — two of the five parts
- * of the cache key, so the client has to know them before it can look in the
- * cache. Memoised per page load; it is one small request.
- */
-let infoRequest: Promise<AskRouteInfo> | undefined;
-
-const FALLBACK_INFO: AskRouteInfo = { provider: 'fake', promptVersion: 'v1' };
-
-/**
- * A *failed* handshake is never memoised. Guessing "fake" once and keeping the
- * guess for the life of the page keys every later cache row under the wrong
- * provider, writes live answers into fake-shaped rows, and paints the offline
- * badge over an answer a model wrote. One transient error must not do that.
- */
-function askInfo(): Promise<AskRouteInfo> {
-  infoRequest ??= apiFetch('/api/ask', { headers: { accept: 'application/json' } })
-    .then((res) => {
-      if (res.ok) return res.json() as Promise<AskRouteInfo>;
-      infoRequest = undefined;
-      return FALLBACK_INFO;
-    })
-    .catch(() => {
-      infoRequest = undefined;
-      return FALLBACK_INFO;
-    });
-  return infoRequest;
-}
-
-function isAbort(error: unknown): boolean {
-  return error instanceof DOMException && error.name === 'AbortError';
-}
-
-/** Our own deadline, not the learner navigating away: this one is worth saying. */
-function isTimeout(error: unknown): boolean {
-  return error instanceof DOMException && error.name === 'TimeoutError';
-}
-
-function citedIds(response: GroundedAskResponse): string[] {
-  const ids = new Set<string>();
-  for (const match of response.matches) ids.add(match.entryId);
-  for (const phrase of response.sayIt) {
-    for (const token of phrase.tokens)
-      if (token.entryId) ids.add(token.entryId);
-  }
-  return [...ids];
-}
+export { statusReason, unavailableReason } from '@/lib/ai/ask-client';
 
 /**
  * The provenance an Add from this panel writes onto the card (§3.4).
@@ -610,7 +537,7 @@ export interface AskPanelProps {
 
 export function AskPanel({ query, context, className }: AskPanelProps) {
   const [state, setState] = useState<AskState>({ status: 'idle' });
-  const [provider, setProvider] = useState<AskRouteInfo['provider']>();
+  const [provider, setProvider] = useState<ProviderName>();
   // The learner's script, read once. Display only: ids, readings and everything
   // a card stores are the same row either way.
   const [script, setScript] = useState<PhraseScript>('simp');
@@ -658,108 +585,46 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
         ? (JSON.parse(contextJson) as CardContext)
         : undefined;
       try {
-        const repo = getRepository();
-        const [info, profile] = await Promise.all([
-          askInfo(),
-          getLearnerProfile(repo),
-        ]);
+        // The handshake first, and on its own: the offline badge is a fact
+        // about the provider, and it should be right while the answer is still
+        // being thought about rather than only once it arrives.
+        const info = await askInfo();
         if (cancelled) return;
         setProvider(info.provider);
 
-        const key = await askCacheKey({
-          query: trimmed,
-          ...(askContext ? { context: askContext } : {}),
-          estimatedBand: profile.estimatedBand,
-          provider: info.provider,
-          promptVersion: info.promptVersion,
-        });
+        const outcome = await ask(
+          { query: trimmed, ...(askContext ? { context: askContext } : {}) },
+          { signal: controller.signal },
+        );
+        if (cancelled) return;
 
-        const row = await repo.askCache.get(key).catch(() => undefined);
-        const cached = row
-          ? groundedAskResponseSchema.safeParse(row.response)
-          : undefined;
-        if (cached?.success) {
-          // Ids and indexes are all the cache holds, so the dictionary text is
-          // fetched fresh rather than redistributed from IndexedDB.
-          const ids = citedIds(cached.data);
-          const resolved =
-            ids.length > 0
-              ? await resolveEntries(ids)
-              : { meta: { version: '' }, entries: [] };
-          if (cancelled) return;
+        if (outcome.state === 'unavailable') {
           setState({
-            status: 'ready',
-            response: cached.data,
-            entries: resolved.entries,
-            ...(resolved.meta.version
-              ? { dictVersion: resolved.meta.version }
-              : {}),
-            cached: true,
-            answered,
+            status: 'error',
+            message: outcome.message,
+            reason: outcome.reason,
           });
           return;
         }
 
-        const res = await apiFetch('/api/ask', {
-          method: 'POST',
-          signal: controller.signal,
-          headers: {
-            'content-type': 'application/json',
-            accept: 'application/json',
-          },
-          body: JSON.stringify({
-            query: trimmed,
-            ...(askContext ? { context: askContext } : {}),
-            profile,
-          }),
-        });
-        if (!res.ok) {
-          const body = (await res.json().catch(() => null)) as {
-            error?: string;
-            hint?: string;
-          } | null;
-          const message =
-            body?.error === 'dict-data-missing'
-              ? 'Dictionary data is missing — run pnpm data.'
-              : (body?.hint ?? `The ask service answered HTTP ${res.status}.`);
-          if (!cancelled)
-            setState({
-              status: 'error',
-              message,
-              reason: statusReason(res.status),
-            });
-          return;
-        }
-        const body = (await res.json()) as AskRouteResponse;
-        // Three things must all hold before a row is written: the route says
-        // this answer is worth keeping (`cacheable: false` is the stand-in it
-        // builds when the provider's answer did not survive grounding), the
-        // handshake was real rather than the offline guess, and the provider
-        // that answered is the one the key was derived for.
-        const trustworthy =
-          body.cacheable !== false &&
-          info !== FALLBACK_INFO &&
-          body.provider === info.provider;
-        if (trustworthy)
-          await repo.askCache.set(key, body.response).catch(() => undefined);
-        if (cancelled) return;
-        setProvider(body.provider);
+        setProvider(outcome.provider);
         setState({
           status: 'ready',
-          response: body.response,
-          entries: body.entries,
-          ...(body.dictVersion ? { dictVersion: body.dictVersion } : {}),
-          cached: false,
+          response: outcome.response,
+          entries: outcome.entries,
+          ...(outcome.dictVersion ? { dictVersion: outcome.dictVersion } : {}),
+          cached: outcome.cached,
           answered,
         });
       } catch (error) {
+        // `ask()` turns every ordinary failure into `unavailable` and rethrows
+        // only the caller's own abort — a new keystroke or an unmount — which
+        // is not a state worth rendering.
         if (cancelled || isAbort(error)) return;
         setState({
           status: 'error',
-          message: isTimeout(error)
-            ? 'The ask took too long and was given up on.'
-            : 'The ask panel could not answer that one.',
-          reason: unavailableReason(error),
+          message: 'The ask panel could not answer that one.',
+          reason: 'server',
         });
       }
     };

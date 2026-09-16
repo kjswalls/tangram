@@ -180,8 +180,8 @@ WebView origins — are built in and need no configuration.
 
 ## 5. The access gate
 
-**The problem.** `/api/ask`, `/api/examples` and `/api/recall` reach a paid
-model. With a key set and nothing in front of them, anybody who finds the URL
+**The problem.** `/api/ask/propose`, `/api/ask/answer`, `/api/examples` and
+`/api/recall` reach a paid model. With a key set and nothing in front of them, anybody who finds the URL
 can spend your money by POSTing to them in a loop. Nothing else in the app costs
 anything: the dictionary is the visitor's own CPU, and every card lives in the
 visitor's own browser.
@@ -191,11 +191,13 @@ visitor's own browser.
 calls `requireAccess` from `@tangram/access` as its first line, and
 `backend.md` B1 adds the layer in front of them. That front layer matches the
 gated paths by **prefix**, not by exact string, and the reason is not
-stylistic: `backend.md` B2's frozen contract adds `/api/ask/propose` and
-`/api/ask/answer` — the two routes that actually spend the money — underneath
-`/api/ask`, and an exact-string gate leaves both open with the secret set while
-every existing test passes (`wave-zero.md` §10a). `isGatedPath` is that rule;
-`tests/unit/server/access.test.ts` names both children explicitly.
+stylistic: `backend.md` B2's contract flip **has now mounted**
+`/api/ask/propose` and `/api/ask/answer` — the two routes that actually spend
+the money — underneath `/api/ask`, and an exact-string gate would leave both
+open with the secret set while every existing test passed (`wave-zero.md`
+§10a). `isGatedPath` is that rule; `tests/unit/server/access.test.ts` names both
+children explicitly, and `pnpm -F server smoke --gate on` probes all five paths
+unkeyed and keyed (**15/15**).
 
 **The credential is a header now: `X-Tangram-Access`,** carrying the secret
 verbatim exactly as the cookie did. Set `TANGRAM_ACCESS_SECRET` to a URL-safe
@@ -273,43 +275,45 @@ that inlines every workspace package and every first-party module) and
 on that package brings four published dependencies. `node dist/index.js` then
 starts and answers `/health`.
 
-**And it cannot answer a single real request, because it has no dictionary.**
-`backend.md` B1 keeps the dictionary in the server process — "the dictionary
-comes with them, on purpose and temporarily", until B2's contract flip moves
-retrieval to the client — so `/api/ask`, `/api/examples` and `/api/recall` open
-`data/dict-<schema>-<cedict>.sqlite` and `data/dict-manifest.json` on first use.
-Neither is in the bundle. Both are found through `TANGRAM_DATA_DIR`, or, when
-that is unset, by walking up from the working directory for
-`pnpm-workspace.yaml` — a marker a deploy tree does not have.
+**And `dist/index.js` really is the whole of it — `backend.md` B2 is what made
+that true.** Until the contract flip this server opened
+`data/dict-<schema>-<cedict>.sqlite` on first use, neither that file nor
+`data/dict-manifest.json` was in the bundle, and a deployment that shipped only
+`dist/` answered `/health` with 200 while every real request came back
+`503 {"error":"dict-data-missing"}`. That was found by an adversarial review of
+B1 and this section used to be two paragraphs of instructions for avoiding it.
 
-So a deployment of this server must do one of two things:
+**They are deleted, and nothing replaces them.** After B2 the client retrieves
+and grounds; the server is handed the dictionary rows it needs on every request
+and looks nothing up. So:
 
-1. ship `data/` alongside `dist/` and set **`TANGRAM_DATA_DIR`** to its absolute
-   path; or
-2. run `pnpm data` on the host before starting, which needs the repository and
-   the upstream sources.
+- **`TANGRAM_DATA_DIR` is not read by this server at all.** Setting it is
+  harmless and pointless. It remains the static build's variable (§4) and
+  `pnpm data`'s.
+- There is no `data/` to ship, no 43 MB beside the bundle, and no
+  `dict-data-missing` — the frozen ask contract's closed list of error codes
+  does not contain it, deliberately, because a server that answered it would be
+  telling the browser about a file the browser owns.
+- `pnpm -F server smoke --base-url <url>` answers **8/8** against a bundle with
+  no `data/` anywhere near it. B1's seventh case — the one that opened the
+  artifact to prove it was there — is retired with the hazard it guarded; see
+  `HANDOFF.md` for what took its place and what that costs.
 
-(1) is the shape to prefer, and the artifact is **43.1 MB**. Get it wrong and
-the failure is quiet in exactly the way this document exists to prevent:
-`/health` answers 200, `pnpm -F server smoke` used to answer 6/6, and every real
-request answers `503 {"error":"dict-data-missing","hint":"run pnpm data"}`. That
-was found by an adversarial review of B1, and the smoke now carries a case that
-opens the dictionary (`POST /api/examples` with an entry id no build contains,
-expecting **404** rather than 503) so the same mistake fails the check.
-
-**Measured in the container, fake provider, for whoever sizes the host:** 78 MB
-RSS after boot, 97 MB after the first ask (which is what opens the artifact),
-55 ms from a cold process to a first answered ask. Those supersede this
-document's old §5 figures — 171–267 MB and ~2.3 s — which measured the 35 MB
-JSON parse `data.md` D6 deleted. `backend.md` B1 asks for the deployed versions
-of the same numbers and they are outstanding.
+**Measured in the container, fake provider, for whoever sizes the host:** B1
+recorded 78 MB RSS after boot, 97 MB after the first ask (which is what opened
+the artifact) and 55 ms from a cold process to a first answered ask. After B2
+the bundle is **68 KB rather than 131 KB** and nothing opens a 43 MB file, so the
+second number should collapse into the first; `backend.md` B2 asks for the
+deployed measurement and it is outstanding. Both supersede this document's old
+§5 figures — 171–267 MB and ~2.3 s — which measured the 35 MB JSON parse
+`data.md` D6 deleted.
 
 **The environment it reads** is `.env.example`'s "The server, apps/server"
 block: `TANGRAM_SERVER_PORT` (or `PORT`), `HOST`, `NODE_ENV`,
 `TANGRAM_ACCESS_SECRET`, `TANGRAM_ALLOWED_ORIGINS`, `ANTHROPIC_API_KEY`,
 `TANGRAM_LLM_PROVIDER`, `TANGRAM_MODEL`, the four deadline overrides,
-`TANGRAM_DRAIN_MS`, `TANGRAM_BUILD_SHA` and `TANGRAM_DATA_DIR`. None of them
-belongs on the static project (§4).
+`TANGRAM_DRAIN_MS` and `TANGRAM_BUILD_SHA`. None of them belongs on the static
+project (§4), and `TANGRAM_DATA_DIR` is no longer among them.
 
 ## 6. Storage, not function memory
 

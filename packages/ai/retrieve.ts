@@ -44,6 +44,24 @@ export { RETRIEVED_CAP };
  */
 export const SEARCH_HEAD = 16;
 
+/**
+ * Does this query need the model's help to find words? A headword does not —
+ * the dictionary already answered it. An English question or a whole sentence
+ * does: nothing in the gloss index matches "how do I say I'm just browsing".
+ *
+ * **It lives here from `backend.md` B2.** It was four lines in
+ * `app/api/ask/route.ts` and B2 names it among the symbols that move into this
+ * module with `mergedSearch`, `candidateEntries`, `mergeRetrieved` and
+ * `RETRIEVED_CAP`. It has to: after the contract flip the party that decides
+ * whether to spend a round trip on `/api/ask/propose` is the client, and it
+ * decides by segmenting against the dictionary it now holds.
+ */
+export async function needsProposals(store: DictStore, query: string): Promise<boolean> {
+  if (!hasCjk(query)) return true;
+  const segmented = await store.segment(query);
+  return segmented.tokens.filter((token) => token.kind === 'word').length >= 3;
+}
+
 /** Entries for a query, in search order, deduped by id. */
 async function searchEntries(store: DictStore, query: string, limit: number): Promise<Entry[]> {
   const out: Entry[] = [];

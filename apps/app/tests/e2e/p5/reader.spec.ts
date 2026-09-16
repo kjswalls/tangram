@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from '../dict';
 
 import {
   DEMO_PARAGRAPH,
@@ -30,6 +30,15 @@ import { expectBaseText, expectExactBaseText } from '../hanzi';
 /** 我 is HSK 1, 面包 HSK 1, 继续 HSK 3 — the three the specs lean on. */
 const KNOWN_WORD = '我';
 const NEW_WORD = '继续';
+
+/**
+ * **This spec needs a dictionary on the device**, so it accepts the ask once
+ * before each test — `tests/e2e/dict.ts`, which is also where the next person
+ * to change this behaviour changes it. The default there is `'ask'`, a fresh
+ * origin with nothing stored, because that is what a fresh origin really gets
+ * now that `<DictGate>`'s mount probes instead of downloading.
+ */
+test.use({ dictionary: 'installed' });
 
 test.describe('/read', () => {
   test('segments a pasted paragraph and colours every token', async ({ page }) => {

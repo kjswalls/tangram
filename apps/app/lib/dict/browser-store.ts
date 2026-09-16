@@ -18,10 +18,12 @@
  * and, now that the store sits on an `opfs-sahpool` worker, a second worker
  * fighting the first for the origin's one exclusive lock.
  *
- * **Nothing here spawns a worker or fetches a byte until `open()`.**
+ * **Nothing here spawns a worker or fetches a byte until an open.**
  * `createWasmDictStore()` only wires a `connect` callback, so a module that
  * merely reaches for the store — and in a jsdom unit test that is most of
- * them — pays nothing. `components/dict/dict-gate.tsx` is what calls `open()`.
+ * them — pays nothing. And the open is two calls, not one:
+ * `components/dict/dict-gate.tsx` mounts with `openStored()`, which fetches
+ * nothing either, and only its button calls `download()`.
  */
 import { JsonDecompStore } from './decomp-json';
 import { createWasmDictStore, type WasmDictStoreHandle } from './wasm-store';
@@ -70,7 +72,58 @@ export function getDictStore(): DictStore {
 }
 
 /**
- * The app's store, opened, for the two consumers that are not behind the gate.
+ * The two-phase open, for whoever holds a `DictStore` and not the handle.
+ *
+ * `DictStore` is frozen by `data.md` D1's first commit and has one `open()`,
+ * which on the web means *fetch 43 MB*. `openStored` / `download` is the
+ * distinction the learner actually cares about and it lives on
+ * `WasmDictStoreHandle`, one layer below what the UI is handed — so this is the
+ * adapter, and it is the only place that knows which of the two a given store
+ * can do.
+ */
+export interface DictOpener {
+  /**
+   * Open **only if this origin already has the artifact**, fetching nothing.
+   * Never rejects: "there is nothing stored" is a state, not an error.
+   */
+  openStored(): Promise<void>;
+  /** The full open — the download the `absent` card's button asks for. */
+  download(): Promise<void>;
+}
+
+/**
+ * The opener for a store, whether or not this module built it.
+ *
+ * For the app's own store that is the handle, which has both halves. For
+ * anything installed by `setDictStore` — the gallery's `FakeDictStore`, a
+ * jsdom stand-in, a real `SqliteDictStore` a unit test drives itself — there is
+ * only `open()`, so:
+ *
+ * - `download()` is `open()`, which is what a plain `DictStore` means by it;
+ * - `openStored()` does **nothing**. That is the conservative reading and the
+ *   correct one: a store with no stored-only rung cannot answer "only if you
+ *   already have it" without fetching, and fetching is the one thing this call
+ *   promises not to do. It leaves the status where it was, which on a store
+ *   nobody has opened is `absent` — the ask.
+ */
+export function getDictOpener(store: DictStore = getDictStore()): DictOpener {
+  const handle = handleFor(store);
+  if (handle) return handle;
+  return {
+    openStored: async () => {},
+    download: () => store.open(),
+  };
+}
+
+/** The wasm handle behind `store`, or nothing if this module did not build it. */
+function handleFor(store: DictStore): WasmDictStoreHandle | undefined {
+  const handle = (globalThis as Global)[HANDLE_KEY];
+  return handle && handle.store === store ? handle : undefined;
+}
+
+/**
+ * The app's store, opened **from what is already on the device**, for the two
+ * consumers that are not behind the gate.
  *
  * `SqliteDictStore` refuses a query before `open()` — "the dictionary is not
  * open" — and that is right: a SQLite connection is a thing you have or do not
@@ -84,26 +137,41 @@ export function getDictStore(): DictStore {
  * data keeps working without a dictionary, so gating Practice to open one would
  * be the wrong fix; opening it where it is used is the right one.
  *
- * It is the **full** open — the same one `<DictGate>` does — and that is the
- * sharper half of the defect recorded in `dict-gate.tsx` and in HANDOFF.md.
- * These two callers sit *outside* the gate, so there is no banner, no progress
- * bar and no cancel anywhere on screen: a fresh install on cellular data that
- * taps **Library** and never opens Look up still downloads 14 MB, because
- * `ListsView`'s mount effect fills an HSK list through `source.band(1)`. The
- * Practice queue's draw is the same path. `getDictHandle().openStored()` is the
- * alternative and it is not taken here only because it has to be taken in both
- * places at once, together with the e2e churn HANDOFF.md accounts for — a card
- * back that silently has no dictionary while the lookup tab downloads one would
- * be a third behaviour nobody chose.
+ * **It is `openStored()`, not `open()`, and that is the sharper half of the fix
+ * this branch is.** These two callers sit outside the gate, so there is no
+ * banner, no progress bar and no cancel anywhere on screen — a full open here
+ * meant that a fresh install on cellular data which taps **Library** and never
+ * opens Look up downloaded 14 MB unasked, because `ListsView`'s mount effect
+ * fills an HSK list through `source.band(1)`. The Practice queue's draw was the
+ * same path. Nothing here fetches now: a learner who has the dictionary gets it
+ * back silently, and a learner who does not gets the *degraded* screen these
+ * callers already draw — a list of their own words with no glosses, which is
+ * what "the app keeps working without a dictionary" has always meant.
  *
- * `open()` is idempotent and shares one in-flight attempt across every caller,
- * so this costs a resolved promise once the dictionary is up. It **rejects**
- * when the dictionary cannot be opened, which is what each caller's existing
- * failure path already handles.
+ * The ask itself belongs to `<DictGate>`, which is a surface with room for it.
+ *
+ * It **rejects** when the dictionary is not there, which is what each caller's
+ * existing failure path already handles — and it rejects here rather than
+ * letting the query throw, so the error says what is true ("not on this
+ * device") instead of advising an `open()` that is the thing being avoided.
  */
 export async function openDictStore(): Promise<DictStore> {
   const store = getDictStore();
-  await store.open();
+  const handle = handleFor(store);
+  if (handle) {
+    await handle.openStored();
+  } else {
+    // A stand-in installed by `setDictStore` — a jsdom fake, the gallery's
+    // store. It has one `open()` and no bytes behind it, so opening it is what
+    // a test means by installing it, and the probe/download distinction has
+    // nothing to be about. Not `getDictOpener()`'s fallback, whose
+    // `openStored()` is a no-op: that one is written for `<DictGate>`, which
+    // must not open a store it was handed, and this one has to.
+    await store.open();
+  }
+  if (store.status.state !== 'ready') {
+    throw new Error('the dictionary is not on this device yet');
+  }
   return store;
 }
 

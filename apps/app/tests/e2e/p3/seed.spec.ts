@@ -2,9 +2,18 @@
  * The demo seed through the URL (PLAN.md §4 P3): `/?seed=demo` leaves a learner
  * mid-course — cards waiting, provenance on them, something to read.
  */
-import { expect, test } from '@playwright/test';
+import { expect, test } from '../dict';
 
 import { resetApp, todayCounts } from './helpers';
+
+/**
+ * **This spec needs a dictionary on the device**, so it accepts the ask once
+ * before each test — `tests/e2e/dict.ts`, which is also where the next person
+ * to change this behaviour changes it. The default there is `'ask'`, a fresh
+ * origin with nothing stored, because that is what a fresh origin really gets
+ * now that `<DictGate>`'s mount probes instead of downloading.
+ */
+test.use({ dictionary: 'installed' });
 
 test.describe('?seed=demo', () => {
   test('loads a worked example and hands Today a real queue', async ({ page }) => {

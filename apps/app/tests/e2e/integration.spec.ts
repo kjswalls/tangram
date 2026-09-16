@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from './dict';
 
 import { DEMO_PARAGRAPH } from './p5/paragraph';
 
@@ -32,6 +32,15 @@ const TABS = [
 async function ready(page: Page): Promise<void> {
   await page.waitForFunction(() => '__tangram' in window);
 }
+
+/**
+ * **This spec needs a dictionary on the device**, so it accepts the ask once
+ * before each test — `tests/e2e/dict.ts`, which is also where the next person
+ * to change this behaviour changes it. The default there is `'ask'`, a fresh
+ * origin with nothing stored, because that is what a fresh origin really gets
+ * now that `<DictGate>`'s mount probes instead of downloading.
+ */
+test.use({ dictionary: 'installed' });
 
 test('the loop: look up 打算, add it, meet it on Today, review it, grade it', async ({ page }) => {
   // A clean database, from the one route that neither draws cards nor

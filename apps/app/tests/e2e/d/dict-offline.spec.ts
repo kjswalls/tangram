@@ -30,11 +30,19 @@ test.setTimeout(180_000);
 
 const PASSAGE = '我打算明天去北京看望我的朋友。';
 
-/** Load the app and wait for the dictionary to finish importing. */
+/**
+ * Load the app and wait for the dictionary to finish importing.
+ *
+ * `dictOpener.download()`, not `dict.open()`. The gate's mount is `openStored()`
+ * now — a probe that fetches nothing — and `SqliteDictStore.open()` shares one
+ * in-flight attempt across every caller, so an `open()` racing that probe joins
+ * it and resolves with nothing downloaded. `download()` is the call the
+ * `absent` card's button makes, and it waits the probe out before fetching.
+ */
 async function warm(page: Page): Promise<void> {
   await page.goto('/');
   await page.waitForFunction(() => Boolean(window.__tangram), null, { timeout: 60_000 });
-  await page.evaluate(() => window.__tangram.dict.open(), null);
+  await page.evaluate(() => window.__tangram.dictOpener.download(), null);
   expect(await page.evaluate(() => window.__tangram.dict.status.state)).toBe('ready');
   // The service worker has to hold the shell, or the reload below fails on the
   // document rather than on the dictionary and the case proves nothing.
@@ -53,7 +61,10 @@ async function coldOffline(page: Page): Promise<void> {
   await page.context().setOffline(true);
   await page.reload();
   await page.waitForFunction(() => Boolean(window.__tangram), null, { timeout: 60_000 });
-  await page.evaluate(() => window.__tangram.dict.open().catch(() => undefined), null);
+  await page.evaluate(
+    () => window.__tangram.dictOpener.download().catch(() => undefined),
+    null,
+  );
 }
 
 test.describe('the dictionary with the network down', () => {

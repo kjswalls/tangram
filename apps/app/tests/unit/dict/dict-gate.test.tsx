@@ -1,8 +1,7 @@
 /**
  * `data.md` D6, acceptance criterion 5 — **the app boots with no dictionary and
- * says so rather than throwing** — and the one place where the fact that the
- * criterion is only half met is written down as a failing-if-changed assertion
- * rather than as prose.
+ * shows `absent` rather than throwing** — met literally, which it could not be
+ * until the gate stopped downloading on mount.
  *
  * > A test asserts the app boots with **no** dictionary present and shows the
  * > `absent` state rather than throwing — the missing-data banner's successor,
@@ -16,33 +15,28 @@
  * Neither can fail if `SqliteDictStore` starts in the wrong state or throws on
  * its way to the first render.
  *
- * ## What is met, and what is not
+ * ## What changed
  *
- * **Met:** the app does not throw, and the learner is told. The settled
- * no-dictionary screen is `failed`, with a reason and a retry, asserted by
- * `tests/e2e/core/dict-states.spec.ts`'s "with the dictionary down" block and
- * by `tests/e2e/d/dict-offline.spec.ts`. That is a banner and not a crash,
- * which is the criterion's own gloss.
+ * D6 could only half-meet the criterion. `absent` is the state *before*
+ * `open()`, `useDictStatus` called `open()` on mount, and since D6 that meant
+ * *download the artifact* — so the settled no-dictionary screen was `failed`
+ * and the `absent` card (the one carrying the size and a "Get it" button,
+ * which `components/dict/dict-status.tsx` says exists because "a silent 14 MB
+ * download on a metered connection is a hostile default") was unreachable.
+ * This file's third case used to **pin** that: it asserted the first observable
+ * frame was already `preparing` and that `dict-start` was not rendered.
  *
- * **Not met:** the screen is not `absent`. `absent` is the state *before*
- * `open()`, and `useDictStatus` calls `open()` on mount — which since D6 means
- * *download the artifact*. So the `absent` card, the one carrying the size and
- * a "Get it" button that `components/dict/dict-status.tsx` says exists because
- * "a silent 14 MB download on a metered connection is a hostile default", is
- * unreachable in the running app. Not merely unlikely: the third case below
- * mounts the gate over a store that has never been opened and the first
- * observable frame is already `preparing`.
+ * The mount is `openStored()` now, so the third case is its opposite — the gate
+ * settles in `absent` and renders the ask — and a fourth says what the ask is
+ * for: pressing it is what downloads, and nothing else does.
  *
- * That case is deliberately written as a **pin on a known defect**, not as an
- * endorsement. D6 did not fix it because the fix is a handful of lines here and
- * about 120 e2e tests everywhere else — that is how many open a gated route on
- * an origin with an empty OPFS, relying on the silent download — which is a
- * change neither D6 nor `core.md` C4a would be reviewed as. HANDOFF.md under D6 carries
- * the reasoning, the one-line fix and the machinery that is already built for
- * it (`WasmDictStoreHandle.openStored()` / `download()`). **Whoever spends that
- * line deletes the third case and un-skips the `absent` expectations in the
- * second.**
+ * **"Settles" is load-bearing in both.** A probe fetches nothing and reports
+ * nothing, so while it runs the status is the `absent` it started in; the gate
+ * holds the space and draws nothing until the probe answers, because otherwise a
+ * learner who *has* the dictionary would see the ask flash at them on every
+ * mount. That is why these wait rather than reading the first frame.
  */
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
 import { DictGate } from '@/components/dict/dict-gate';
@@ -56,12 +50,21 @@ import { render, screen } from '../render';
  * `connect` is the store's one dependency and the only thing in it that needs a
  * platform, so a promise that never settles is a complete stand-in for "this
  * device has no dictionary yet": no OPFS, no `node:sqlite`, no 43 MB. Every
- * other line — the initial status, `subscribe`, what `open()` does to the
- * status before its runner answers — is the shipped one.
+ * other line — the initial status, `subscribe`, what an open does to the status
+ * before its runner answers — is the shipped one.
  */
 function unopened(): SqliteDictStore {
   return new SqliteDictStore({ connect: () => new Promise(() => {}) });
 }
+
+/**
+ * **No `opener` prop anywhere below.** The gate resolves its own through
+ * `getDictOpener()`, and in a jsdom test that has built no wasm handle the
+ * answer is the fallback: `openStored()` does nothing, `download()` is the
+ * store's `open()`. That is the production wiring for any store this module did
+ * not build, so the cases below exercise the real resolution rather than a
+ * stand-in that could agree with a gate that had never been fixed.
+ */
 
 describe('the gate over a dictionary that is not there', () => {
   it('starts in `absent`, before anything has opened it', () => {
@@ -71,12 +74,12 @@ describe('the gate over a dictionary that is not there', () => {
     expect(unopened().status).toEqual({ state: 'absent' });
   });
 
-  it('renders a banner instead of throwing, and withholds what it gates', () => {
+  it('renders a banner instead of throwing, and withholds what it gates', async () => {
     const store = unopened();
-    // Mounting runs the gate's effect, which calls `open()`. A store that threw
-    // on the way to the first frame — synchronously out of `open()`, or out of
-    // `subscribe` — would fail here rather than blanking a fresh install's Look
-    // up tab, which is what "a banner, not a crash" means in one assertion.
+    // Mounting runs the gate's effect. A store or opener that threw on the way
+    // to the first frame — synchronously, or out of `subscribe` — would fail
+    // here rather than blanking a fresh install's Look up tab, which is what "a
+    // banner, not a crash" means in one assertion.
     render(
       <DictGate store={store}>
         <div data-testid="lookup" />
@@ -84,12 +87,12 @@ describe('the gate over a dictionary that is not there', () => {
     );
 
     expect(screen.getByTestId('dict-gate')).toBeTruthy();
-    expect(screen.getByTestId('dict-status')).toBeTruthy();
+    expect(await screen.findByTestId('dict-status')).toBeTruthy();
     // The gated surface is not offered, rather than offered and broken.
     expect(screen.queryByTestId('lookup')).toBeNull();
   });
 
-  it('PINS THE DEFECT: mounting leaves `absent` at once, so the ask never shows', () => {
+  it('settles in `absent` and asks, rather than downloading unannounced', async () => {
     const store = unopened();
     expect(store.status.state).toBe('absent');
 
@@ -99,11 +102,42 @@ describe('the gate over a dictionary that is not there', () => {
       </DictGate>,
     );
 
-    // Not `absent`. The mount-time `open()` has already moved it, and on the
-    // web that means a download the learner was never asked about.
+    // While the probe is out the gate holds the space and says nothing: the ask
+    // is an answer, and there is not one yet.
+    expect(screen.getByTestId('dict-gate').getAttribute('data-checking')).toBe('true');
+    expect(screen.queryByTestId('dict-status')).toBeNull();
+
+    // The criterion, literally: a boot with no dictionary settles on `absent`…
+    const status = await screen.findByTestId('dict-status');
+    expect(screen.getByTestId('dict-gate').getAttribute('data-state')).toBe('absent');
+    expect(screen.getByTestId('dict-gate').getAttribute('data-checking')).toBeNull();
+    // …which is the card with the size on it, and the button that is the only
+    // production path to a download.
+    expect(status.getAttribute('data-state')).toBe('absent');
+    expect(screen.getByTestId('dict-start')).toBeTruthy();
+  });
+
+  it('downloads when the ask is accepted, and not before', async () => {
+    const user = userEvent.setup();
+    const store = unopened();
+
+    render(
+      <DictGate store={store}>
+        <div data-testid="lookup" />
+      </DictGate>,
+    );
+    const start = await screen.findByTestId('dict-start');
+
+    // A mount is not a download. This is the defect in one assertion: before
+    // this branch the store was already `preparing` here and there was no
+    // button to press.
+    expect(store.status.state).toBe('absent');
+
+    await user.click(start);
+
+    // The press reached the store's `open()` — the connection is pending, so
+    // what the gate draws now is the progress it used to draw on mount.
+    expect(store.status.state).toBe('preparing');
     expect(screen.getByTestId('dict-gate').getAttribute('data-state')).toBe('preparing');
-    // …so the card with the size on it, and its "Get it" button, is not what a
-    // first visit renders. `dict-start` has no production path that reaches it.
-    expect(screen.queryByTestId('dict-start')).toBeNull();
   });
 });

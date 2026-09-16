@@ -12,7 +12,7 @@
  * the native selection callout this design replaces. `ios.md` I2 survives as a
  * pre-TestFlight check.
  */
-import { expect, test, type Page } from '@playwright/test';
+import { expect, installDictionary, test, type Page } from '../dict';
 
 import { DEMO_PARAGRAPH, readText, resetApp } from '../p5/helpers';
 import { baseText } from '../hanzi';
@@ -108,6 +108,15 @@ function sheetQuery(page: Page): Promise<string> {
   return baseText(page.getByTestId('reader-panel').getByTestId('lookup-panel').locator('h2'));
 }
 
+/**
+ * **This spec needs a dictionary on the device**, so it accepts the ask once
+ * before each test — `tests/e2e/dict.ts`, which is also where the next person
+ * to change this behaviour changes it. The default there is `'ask'`, a fresh
+ * origin with nothing stored, because that is what a fresh origin really gets
+ * now that `<DictGate>`'s mount probes instead of downloading.
+ */
+test.use({ dictionary: 'installed' });
+
 test.describe('dragging a span in the reader', () => {
   test('selects exactly the characters dragged across, and looks that span up', async ({
     page,
@@ -138,6 +147,10 @@ test.describe('dragging a span in the reader', () => {
     });
     const page = await context.newPage();
     try {
+      // Its own context is its own origin, so the file-level `test.use` above
+      // does not reach it: this page is a fresh install and has to accept the
+      // ask for itself.
+      await installDictionary(page);
       await openReader(page);
       const a = await centreOf(page, 3);
       const b = await centreOf(page, 7);
@@ -212,6 +225,10 @@ test.describe('the clipboard, which the app owns here', () => {
     await context.grantPermissions(['clipboard-read', 'clipboard-write']);
     const page = await context.newPage();
     try {
+      // Its own context is its own origin, so the file-level `test.use` above
+      // does not reach it: this page is a fresh install and has to accept the
+      // ask for itself.
+      await installDictionary(page);
       await openReader(page);
       await drag(page, 3, 7);
       await expect.poll(() => sheetQuery(page)).toBe(slice(3, 7));
@@ -249,6 +266,10 @@ test.describe('the clipboard, which the app owns here', () => {
     await context.grantPermissions(['clipboard-read', 'clipboard-write']);
     const page = await context.newPage();
     try {
+      // Its own context is its own origin, so the file-level `test.use` above
+      // does not reach it: this page is a fresh install and has to accept the
+      // ask for itself.
+      await installDictionary(page);
       await openReader(page);
       // The declaration itself, so the failure names its own cause.
       await expect
@@ -290,6 +311,10 @@ test.describe('the clipboard, which the app owns here', () => {
     await context.grantPermissions(['clipboard-read', 'clipboard-write']);
     const page = await context.newPage();
     try {
+      // Its own context is its own origin, so the file-level `test.use` above
+      // does not reach it: this page is a fresh install and has to accept the
+      // ask for itself.
+      await installDictionary(page);
       await openReader(page);
       await drag(page, 3, 7);
       await expect.poll(() => sheetQuery(page)).toBe(slice(3, 7));
@@ -316,6 +341,10 @@ test.describe('the clipboard, which the app owns here', () => {
     await context.grantPermissions(['clipboard-read', 'clipboard-write']);
     const page = await context.newPage();
     try {
+      // Its own context is its own origin, so the file-level `test.use` above
+      // does not reach it: this page is a fresh install and has to accept the
+      // ask for itself.
+      await installDictionary(page);
       await openReader(page);
       await drag(page, 3, 7);
       await expect.poll(() => sheetQuery(page)).toBe(slice(3, 7));
@@ -337,6 +366,10 @@ test.describe('the gesture, and the page it sits on', () => {
     });
     const page = await context.newPage();
     try {
+      // Its own context is its own origin, so the file-level `test.use` above
+      // does not reach it: this page is a fresh install and has to accept the
+      // ask for itself.
+      await installDictionary(page);
       // Three paragraphs: the criterion is only about a passage taller than the
       // viewport, and one demo paragraph fits on an 844px phone.
       await openReader(page, DEMO_PARAGRAPH.repeat(3));

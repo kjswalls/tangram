@@ -15,7 +15,7 @@
  *  - a repeat is served from `ask_cache` without asking again;
  *  - the toggle removes the block entirely rather than hiding it.
  */
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from '../dict';
 
 import { ready, resetApp } from '../p3/helpers';
 
@@ -72,6 +72,15 @@ async function knownVerdicts(page: Page, ids: string[]): Promise<string[]> {
     });
   }, ids);
 }
+
+/**
+ * **This spec needs a dictionary on the device**, so it accepts the ask once
+ * before each test — `tests/e2e/dict.ts`, which is also where the next person
+ * to change this behaviour changes it. The default there is `'ask'`, a fresh
+ * origin with nothing stored, because that is what a fresh origin really gets
+ * now that `<DictGate>`'s mount probes instead of downloading.
+ */
+test.use({ dictionary: 'installed' });
 
 test.describe('example sentences on the card back', () => {
   test('arrive after the flip, never before it, and are built only from known words', async ({

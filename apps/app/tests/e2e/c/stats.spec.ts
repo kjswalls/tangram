@@ -8,7 +8,7 @@
  * history through the repository and checks that the numbers that then appear
  * are the right ones, denominator included.
  */
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from '../dict';
 
 import { ready, resetApp } from './helpers';
 
@@ -61,6 +61,15 @@ async function seedHistory(page: Page): Promise<void> {
     { goodDays: [...GOOD_DAYS], goodCards: GOOD_CARDS, lapseCards: LAPSE_CARDS, day: DAY },
   );
 }
+
+/**
+ * **This spec needs a dictionary on the device**, so it accepts the ask once
+ * before each test — `tests/e2e/dict.ts`, which is also where the next person
+ * to change this behaviour changes it. The default there is `'ask'`, a fresh
+ * origin with nothing stored, because that is what a fresh origin really gets
+ * now that `<DictGate>`'s mount probes instead of downloading.
+ */
+test.use({ dictionary: 'installed' });
 
 test.describe('/library', () => {
   test('the demo seed gets an honest empty state, not a chart', async ({ page }) => {

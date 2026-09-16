@@ -25,7 +25,7 @@
  * still a state the panel must render correctly, which is exactly what an
  * intercepted response is for. Recorded in HANDOFF.md.
  */
-import { expect, type Page, test } from '@playwright/test';
+import { expect, type Page, test } from '../dict';
 
 import { ASK_OFFLINE_CHIP, ASK_UNGROUNDED_TITLE } from '@/components/lookup/ask-state';
 
@@ -42,6 +42,15 @@ async function lookUp(page: Page, query: string): Promise<void> {
   await page.getByTestId('lookup-input').fill(query);
   await expect(page.getByTestId('search-result').first()).toBeVisible({ timeout: 20_000 });
 }
+
+/**
+ * **This spec needs a dictionary on the device**, so it accepts the ask once
+ * before each test — `tests/e2e/dict.ts`, which is also where the next person
+ * to change this behaviour changes it. The default there is `'ask'`, a fresh
+ * origin with nothing stored, because that is what a fresh origin really gets
+ * now that `<DictGate>`'s mount probes instead of downloading.
+ */
+test.use({ dictionary: 'installed' });
 
 test.describe('the Look up tab’s three answer states', () => {
   test.beforeEach(async ({ page }) => {

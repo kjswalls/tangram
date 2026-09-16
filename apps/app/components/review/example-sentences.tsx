@@ -211,9 +211,17 @@ export function ExampleSentences({
           // Ids and indexes are all the cache holds, so the dictionary text is
           // fetched fresh rather than redistributed out of IndexedDB.
           const ids = citedEntryIds(cached.data.sentences);
+          // `.catch`, and the dictionary's two-phase open is what makes it
+          // necessary: `openDictStore()` **rejects** on a device that has not
+          // downloaded the dictionary, where before it silently downloaded one.
+          // Letting that escape would abandon the request below — which the
+          // server answers, with its own `entries`, and which needs no
+          // dictionary on this device at all — and settle the card on "no
+          // example sentences" when there are some. A cached row that cannot be
+          // resolved is simply not used; the request rewrites it.
           const resolved =
             ids.length > 0
-              ? await resolveEntries(ids)
+              ? await resolveEntries(ids).catch(() => undefined)
               : { meta: { version: '' }, entries: [] };
           if (cancelled) return;
           // The row is a statement about a known set the key does not hold, so
@@ -221,12 +229,14 @@ export function ExampleSentences({
           // is about to be drawn (`filterCachedSentences`). A row that no
           // longer passes is not shown and not repaired: the request below
           // writes a fresh one over it.
-          const kept = filterCachedSentences(cached.data.sentences, {
-            targetId: entryId,
-            entries: resolved.entries,
-            set: known,
-          });
-          if (kept.length > 0) {
+          const kept = resolved
+            ? filterCachedSentences(cached.data.sentences, {
+                targetId: entryId,
+                entries: resolved.entries,
+                set: known,
+              })
+            : [];
+          if (resolved && kept.length > 0) {
             setState({
               status: 'ready',
               answered: requested,

@@ -2,11 +2,20 @@
  * `/lists` (PLAN.md §4 P3): the eight system lists, the active toggle, marking a
  * band known, and a list of your own.
  */
-import { expect, test } from '@playwright/test';
+import { expect, test } from '../dict';
 
 import { ready, resetApp } from './helpers';
 
 const HSK_NAMES = ['HSK 1', 'HSK 2', 'HSK 3', 'HSK 4', 'HSK 5', 'HSK 6', 'HSK 7–9'];
+
+/**
+ * **This spec needs a dictionary on the device**, so it accepts the ask once
+ * before each test — `tests/e2e/dict.ts`, which is also where the next person
+ * to change this behaviour changes it. The default there is `'ask'`, a fresh
+ * origin with nothing stored, because that is what a fresh origin really gets
+ * now that `<DictGate>`'s mount probes instead of downloading.
+ */
+test.use({ dictionary: 'installed' });
 
 test.describe('lists', () => {
   test('seven HSK lists and Looked up appear on the first visit', async ({ page }) => {

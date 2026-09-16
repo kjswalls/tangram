@@ -142,10 +142,15 @@ describe('the seven routes are gone', () => {
     // and added `d/dict-offline.spec.ts` for its own acceptance criterion 3 (the
     // app works with the network down, from a cold start). The number is the
     // repository's, not the plan's — see the note above.
+    //
+    // The eager-open fix added two files and both navigate: `tests/e2e/dict.ts`
+    // (the shared ask helper — a module, not a spec, which is why `specs` rises
+    // by one and `files` by two) and `tests/e2e/d/dict-ask.spec.ts`, which owns
+    // what a fresh origin and a returning learner each get.
     expect({ files: files.length, specs: specs.length, navigating: navigating.length }).toEqual({
-      files: 48,
-      specs: 41,
-      navigating: 41,
+      files: 50,
+      specs: 42,
+      navigating: 43,
     });
   });
 

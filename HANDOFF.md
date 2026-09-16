@@ -10568,3 +10568,276 @@ ps -eo pid,args | grep -E '[p]review|[d]ist/index.js'
 
 before trusting a red e2e. I have left the setting alone — it belongs to `web.md` and the
 convenience is real — but a later phase that wants to close this properly has the evidence here.
+## The eager open, fixed — the dictionary is asked for once, before it is downloaded
+
+One commit on `claude/fix-eager-open`, cut from `claude/integration` at `17e980b`.
+
+This closes **`data.md` D6's one shipped defect**, written up by the session that shipped it under
+"THE ONE DEFECT D6 SHIPS" above. That entry is the brief; the diagnosis in it was correct and is not
+re-argued here. What follows is what the fix turned out to cost, the two numbers the brief asked for,
+and the three things it did not say that the work found.
+
+### The rule, stated once
+
+**The dictionary is asked for once per origin, and after that it maintains itself.** Before the ask,
+nothing fetches — not the gate's mount, not the two callers outside the gate. After it, nothing asks
+again: a second visit, a second tab, a reload, an interrupted download and an eviction are all the
+app's problem, not the learner's. That second half is not decoration. It is what stops the fix being
+a regression, and I only found out because the branch's own new test failed. See "the second tab".
+
+### What changed in the app
+
+- **`components/dict/dict-gate.tsx`** — the mount is `openStored()`; the `absent` card's button is
+  `download()`. The gate takes an optional `opener` beside its optional `store`, and resolves one
+  from `getDictOpener()` otherwise. It also holds the space and draws **nothing** while the first
+  open is still out (`checking`), for the reason in "the flash" below.
+- **`lib/dict/browser-store.ts`** — a `DictOpener` (`openStored` / `download`) and
+  `getDictOpener(store)`, which answers the wasm handle for the app's own store and a fallback for
+  anything else. `openDictStore()` — the two ungated callers, `lib/lists/entry-source.ts` and
+  `components/review/example-sentences.tsx` — probes rather than downloads, and **rejects** when the
+  device has no dictionary, which is the "no dictionary" path those callers already draw.
+- **`lib/dict/wasm-store.ts`** — `openStored()` and `download()` were already built and tested; what
+  this adds is that they cannot trip over each other, that a probe is not repeated pointlessly, and
+  that a probe which fails on an origin that has already consented escalates to a full open instead
+  of re-asking.
+- **`lib/dict/requested.ts`** (new, ~30 lines) — one bit in `localStorage`: has this origin ever said
+  yes? Written by `download()` **before** it fetches, read by a failed probe.
+- **`lib/dict/sqlite-store.ts`** — `SqliteStoreOptions.announceOpen`, an opt-out from the `preparing`
+  and `failed` status transitions for one open. Only the probe says no.
+- **`components/review/example-sentences.tsx`** — one `.catch`, so that a cached ask row that cannot
+  be resolved falls through to the request instead of abandoning it. `openDictStore()` rejects now
+  where it used to download; without this a device with no dictionary loses example sentences the
+  *server* would have answered with its own entries.
+
+**The fallback opener is the part worth reading twice.** For a store this module did not build — the
+gallery's `FakeDictStore`, a jsdom stand-in, a real `SqliteDictStore` a unit test drives —
+`download()` is `store.open()` and **`openStored()` does nothing at all**. A plain `DictStore` has one
+`open()`, which may fetch, and "open only if you already have it" is a promise it cannot keep; doing
+nothing leaves the status where it was, which on a store nobody has opened is `absent` — the ask.
+`openDictStore()` is the one caller that deliberately does *not* use that fallback: a `setDictStore`
+stand-in has no bytes behind it, so opening it is what a test means by installing it, and probing it
+would have quietly broken every jsdom fake that starts in `absent`.
+
+### The two numbers
+
+**90 of 265 e2e tests failed** on the app fix alone, across **20 spec files**. The brief's estimate was
+"about 120 across 19", offered as one; the real figure is lower because a spec that only seeds
+IndexedDB and reads it back never needed a dictionary — it was merely downloading one. That is the
+defect restated as a number. The measuring run is 44.7 minutes, one worker; the green run is 8–11.
+
+Seventeen of those files are *users* of a dictionary and were opted in wholesale. Three are *about*
+the dictionary and were rewritten by hand, because opting them in would have deleted what they test:
+
+| spec | what it needed |
+|---|---|
+| `core/dict-states.spec.ts` | "…and /lookup and /read are the two that DO gate" asserted `failed` on a fresh visit with a 503 manifest. A gate that fetches nothing cannot discover a broken manifest, so `/`'s first screen is `absent`: the test presses the ask and *then* expects `failed` with its retry — and `/read`, visited second, is expected to go straight to `failed`, because the ask is once per origin. |
+| `smoke.spec.ts` | three tests: "no gate when the dictionary answers" and the panel-slot test now earn their origin through `installDictionary()`, and "a dictionary that cannot answer" gained the same press-then-fail shape. |
+| `d/dict-offline.spec.ts` | its `warm()` called `window.__tangram.dict.open()`, which races the gate's probe. It asks for `dictOpener.download()`. |
+
+### The helper
+
+`tests/e2e/dict.ts` exports a `test` that is `@playwright/test`'s plus one option:
+
+```ts
+import { expect, test } from '../dict';
+test.use({ dictionary: 'installed' });
+```
+
+**The default is `'ask'`.** A spec that says nothing runs against a fresh origin with nothing stored,
+which is what a fresh origin really gets — so the thirty-odd spec files that were never opted in are
+all, quietly, evidence that the ask has not crept back into a mount effect. One `test.use` per file
+rather than a call in every test: seventeen lines instead of ninety, and one place —
+`installDictionary()` — for whoever changes this next.
+
+**The trap the brief names is real and the shape is built around it.** A helper that silently
+downloaded for every test would go green and restore the defect, because nothing would exercise the
+ask. Two things stop that. The default is the truth, as above. And `installDictionary()` **asserts
+`data-state="absent"` and a visible `dict-start` before it clicks** — so a gate that began downloading
+on mount again would have no button to press and *every opted-in file* would fail. The helper cannot
+paper over the regression it is standing on.
+
+Two things a spec opting in should know. The install is a real navigation to `/` during fixture
+setup, so it happens **before** the spec's own `beforeEach` and before any `page.route`,
+`addInitScript` or `resetApp` in the body; a spec whose subject is the very first load must not opt
+in, and the three above do not. And the fixture raises its test's budget by the install timeout,
+because `playwright.config.ts` sets no `timeout` and the 30 s default would otherwise report an
+infrastructure failure as a product one.
+
+`tests/e2e/d/dict-ask.spec.ts` (nine cases) owns the behaviour, and it counts **bytes**, not markup,
+because markup is what the old behaviour also produced. On a fresh origin: the ask with the size on
+it and **zero** requests for the manifest or the artifact; pressing it fetches the manifest and
+exactly one artifact; `/library`, `/practice` and `/read` fetch **nothing** — the sharper half, since
+none of those three has anywhere to draw a progress bar. For a learner who has it: no gate and no
+second fetch on a reload, none on Library, and — asserted with a `MutationObserver` installed before
+the first script, because "this never happened" is not a thing a poll can prove — the ask is never
+rendered, however briefly, on a reload or in a second tab.
+
+### The second tab, which is why the ask is once per *origin*
+
+`opfs-sahpool` takes an exclusive handle on each of its files **per origin**. The worker's own comment
+names the case: "or — the common one — a second tab". So a second tab's probe cannot read the stored
+artifact *at all*, and with no manifest to fall back on it fails exactly as a fresh install's probe
+does. The first version of this branch therefore showed a second tab the ask — "About 14 MB to
+download and 43 MB on this device, once" — for a dictionary the learner had already paid for, and the
+same for a reload that lost the pool-handle race, a download a reload interrupted, and a private
+window with no pool at all.
+
+That is a regression against what the app did before the ask existed, and it is not detectable from
+the main thread: "there is nothing here" and "I cannot look" arrive as the same failed open.
+`lib/dict/requested.ts` is what tells them apart, and the reasoning is already in this repository —
+`wasm-store.ts`'s eviction recovery says re-downloading without asking is right because "asking again
+would be asking twice for something the learner has already said yes to". Consent is a property of
+the origin, not of a file an eviction can delete. So a probe that fails on an origin which has
+consented escalates to the full open, which is `data.md` D4's ladder doing what it was built to do,
+with a progress bar wherever there is a gate to draw one.
+
+`localStorage` rather than Dexie for the same reasons `lib/srs/direction-prefs.ts` and
+`lib/fsrs-optimize/previous.ts` use it: synchronous (this decides what the first frame shows), not
+learner data a later sync should carry, and `lib/db/repository.ts` is frozen. Every access is
+guarded; a storage that is absent or throws means "no record", which asks.
+
+**The branch's own test is what caught this**, before either review lens reported it: `dict-ask`'s
+second-tab case failed on the first green-looking run. Two independent reviewers then ranked it
+first. It is the strongest argument for writing the byte-counting spec before the spec churn.
+
+### The flash, and the fifth state `DictStatus` does not have
+
+A probe goes through `SqliteDictStore.open()`, which sets `preparing` synchronously. Left alone, a
+fresh origin therefore saw *"Getting the dictionary… you can carry on — this finishes in the
+background"*, with a progress bar, over an open that fetches nothing — the exact card this branch
+exists to stop showing unasked — and only then the ask. Worse, `dict-start` exists only while the
+status is `absent`, so **any** probe starting while the card was on screen (a sibling gate mounting,
+a `ListsView` effect) took the button out from under a learner's finger, and out from under the
+shared fixture's click in seventeen spec files.
+
+Two small pieces fix it without touching a frozen surface. `SqliteStoreOptions.announceOpen` lets one
+open decline the `preparing` and `failed` transitions, and the probe is the only caller that does: a
+quiet open reports **only its success**, because "nothing stored" is a question's answer and not
+something to put on a screen. And `<DictGate>` tracks `checking` — the first open is still out — and
+draws nothing at all while the status is the `absent` it started in, so the ask appears when it is an
+*answer* and never before. Every other state during a check is an answer (`preparing` is the download
+a press started, `failed` is a reason) and is drawn as usual.
+
+### The race the split creates, and the cost it hides
+
+`SqliteDictStore.open()` shares one in-flight attempt across every caller. Right *within* a kind of
+open, wrong *across* them: a `download()` arriving while a probe was out would join the probe, resolve
+when it resolved, and fetch nothing — the learner presses "Get it" and lands back on the same card.
+`wasm-store.ts` now tracks the two separately. A download drains probes in a `while` loop (a fresh
+probe can start in the microtasks between the awaited one settling and the continuation resuming) and
+waits out an eviction recovery; a probe joins a download or a recovery rather than downgrading it;
+the probe's slot is held across its escalation, so a download waits for that too; both refuse to
+start after `close()`, and `close()` waits all three out. Six cases in `tests/unit/dict/wasm-runner.test.ts`.
+
+**It bit in the suite before I went looking for it.** `d/dict-offline.spec.ts`'s `warm()` called
+`window.__tangram.dict.open()` — the *store's* single open, reached past the handle — joined the
+gate's probe, and reported "the dictionary would not open" in 373 ms with nothing fetched.
+`components/shell/test-hooks.tsx` now also exposes `dictOpener`, with the reason on it.
+
+The cost the split hides is the probe itself: it spawns a worker, boots the sqlite-wasm binary,
+installs the pool and tears it all down. `openStored()` is called from a mount effect *and* from
+`openDictStore()`, which `entry-source.ts` calls per operation (up to 64 bands in a queue draw) and
+`example-sentences.tsx` calls per card back — so a fresh install would have spent a worker per card,
+per band, per navigation, to re-learn the same "no". `probedEmpty` remembers the answer for the
+document; `download()` clears it, and it is the only thing that can change the answer from inside one.
+
+### Acceptance criterion 5, closed literally
+
+D6's criterion 5 asks for a test that the app boots with no dictionary and shows **`absent`** rather
+than throwing. D6 could only half-meet it — `absent` was the state before `open()`, and the mount left
+it immediately — so the settled no-dictionary screen was `failed`. It is satisfiable now and it is
+satisfied: `tests/unit/dict/dict-gate.test.tsx` renders the **real** `SqliteDictStore` through the
+**real** gate with the **real** opener resolution and asserts it settles on `absent` with `dict-start`
+rendered, having drawn nothing before that. The pin — the third case, which asserted the first
+observable frame was already `preparing` — is deleted and replaced by its opposite, plus a fourth case
+that presses the button and watches the store move to `preparing`. `d/dict-ask.spec.ts` makes the same
+claim in a browser, with byte counts.
+
+### What I need from a frozen surface, and did not take
+
+Per CLAUDE.md, written here and the build continued without it.
+
+1. **`DictStatus` has no state for "looking to see whether it is already here".** The gate carries it
+   as a component-local boolean instead (`checking`, above), which works but means the fact lives in
+   one component rather than in the model every surface reads. **The need:** a fifth state
+   (`checking`) or a discriminator on `preparing`, so `components/dict/dict-status.tsx` can draw a
+   probe differently from a download and an ungated surface can tell "not here" from "not yet known".
+   Frozen by `data.md` D1's first commit.
+2. **`DictStore` has one `open()`, so the two-phase open lives beside it rather than on it.** That is
+   why `DictOpener` is in `browser-store.ts` and why `getDictOpener(store)` has to answer for stores
+   it did not build. The consequence: a caller that reaches `getDictStore().open()` while a probe is
+   in flight joins the probe and resolves having fetched nothing. There are **no production callers
+   of that shape** — the gate and `openDictStore()` both go through the opener — but nothing prevents
+   the next one, and a spec already did it. **The need:** `openStored()` and `download()` on
+   `DictStore` itself, which the Capacitor stores will want anyway for "unpack the bundled asset", or
+   an `open({ storedOnly })`.
+
+### What I found wrong, or worth knowing
+
+- **The brief's "about 120 tests across 19 spec files" is 90 across 20.** Offered as an estimate, and
+  the difference is informative rather than a criticism: two thirds of the suite never needed a
+  dictionary and was downloading one anyway.
+- **`tests/unit/shell/tab-routes.test.ts`'s spec census had to move** — `files: 48 → 50`,
+  `specs: 41 → 42`, `navigating: 41 → 43`. `tests/e2e/dict.ts` is a module and not a spec, which is
+  why `files` rises by two and `specs` by one. The test is doing its job.
+- **A learner on Library or Practice with no dictionary is told the truth and offered no way to act
+  on it.** `components/lists/list-detail.tsx` ("This list is drawn from the dictionary, which is not
+  available on this device yet"), `components/lists/lists-view.tsx`'s warning line and
+  `components/review/review-session.tsx`'s "No new words could be drawn" are all accurate and none of
+  them points at Look up, which is the tab with the button. Those files are outside this change and
+  the tab bar is one tap away, so they are left alone — but a one-line "Get the dictionary →" link is
+  the obvious close, and whoever owns `core.md`'s copy should take it.
+- **`DictStatusView`'s `asset` variant still has no production caller.** Nothing passes `source` to
+  `<DictGate>`, so a Capacitor build would tell a phone "About 14 MB to download" about a file that
+  is bundled beside it. Pre-existing (`ios.md` I3 / `android.md` A5 are unbuilt) — but this is the
+  first branch on which the `absent` card is reachable at all, so it is the first branch on which the
+  wrong phone copy could actually be shown.
+- **The gallery's gate no longer calls `open()` on mount**, because its store goes through the
+  fallback opener. `FakeDictStore.opens` is therefore no longer incremented at mount and the gallery
+  section opens on `absent` rather than `preparing`. `tests/e2e/core/dict-states.spec.ts` drives every
+  state through the `drive-*` buttons and never asserted the initial one, so nothing moved — recorded
+  because the fake's `opens` counter now means only "a retry was pressed".
+- **`window.__tangram.dict` is the store, not the handle**, and a spec driving it directly is the one
+  remaining shape that can join a probe by accident. `dictOpener` is on the hook now, with the reason.
+- **`full-loop.spec.ts` failed once, in one run of four, at `gradeAndAdvance`'s 30 s `expect.poll`**,
+  and passed in the other three. The D6 section above records the same spec failing the same way
+  before this branch, and names its un-budgeted 30 s polls as a fragility independent of the
+  dictionary; it is not this change's, and the suspicion recorded there — that the eager import was
+  competing for I/O — is one this branch removes rather than adds to.
+- **`CLAUDE.md`'s migration-state block's first bullet stops being true with this commit.** It says
+  "The first dictionary download is never asked for … the fix is `openStored()` at the gate and
+  `download()` behind the button, plus the ~120 specs that must then start the download themselves."
+  All three parts are done, at 90 specs rather than 120. The other four bullets are unchanged and
+  still true. **I have not edited `CLAUDE.md`** — it is auto-loaded instruction and the orchestrator
+  merges the branches.
+
+### The gate, as run
+
+`pnpm lint`, `pnpm typecheck`, `pnpm build`, `pnpm test` (**1,832** app + **75** server), `pnpm e2e`
+(**274 passed**, 7.6 min — 265 before, plus this branch's nine) and `pnpm smoke` (21 ok) are all
+green on the final tree. The e2e suite was run four times: once to measure the damage (90 failures),
+once after the spec churn (7), once after the first round of review fixes (2), and once clean.
+
+### What the two adversarial reviews found
+
+Both lenses ran cold against the diff, in parallel, and independently ranked the second tab first —
+which the suite had already failed on. Everything below is either fixed above or recorded above; the
+list is here so the next reader can see what was weighed rather than only what survived.
+
+**Fixed:** the second tab and the three origins like it (ask-once); the probe painting the download
+card, and `dict-start` unmounting under a click (`announceOpen` + `checking`); `download()` not
+re-reading `probing` after its await (a `while` loop); `download()` and `close()` blind to `recover()`
+and to `disposed`; `openDictStore()` silently no longer opening `setDictStore` stand-ins; a probe
+re-running per card back and per band (`probedEmpty`); a cached ask row killing the card back instead
+of falling through; the fixture's unspendable 180 s timeout; `useDictStatus`'s default opener
+re-subscribing every render.
+
+**Recorded, not fixed:** the two frozen-surface needs; the Library/Practice dead end; the `asset`
+variant; the gallery's mount.
+
+**Raised and wrong:** that `dict-ask`'s reload case would be flaky (the probe reads stored bytes
+without the pool race, and the `MutationObserver` guard now pins it); that two rapid presses of "Get
+it" could double-fetch (both collapse onto one `#opening`); that the `storedOnly` flag could be torn
+across an interleaving (it is read synchronously inside `connect()`, which `open()` calls
+synchronously); that the new bookkeeping could leak an unhandled rejection (every slot has a handler
+attached before it can settle). All four were checked rather than assumed.

@@ -6,7 +6,7 @@
  * it is the whole spec: the button is present on both surfaces, it is disabled,
  * and it says why. Audio itself is unverified here (HANDOFF.md, Phase 6).
  */
-import { expect, test } from '@playwright/test';
+import { expect, test } from '../dict';
 
 import { DASUAN, openReview, seed } from '../p2/fixtures';
 
@@ -21,6 +21,15 @@ const NO_VOICE = 'No Mandarin voice available in this browser';
  * header says the visible text exists to prevent.
  */
 const NO_VOICE_VISIBLE = 'No voice';
+
+/**
+ * **This spec needs a dictionary on the device**, so it accepts the ask once
+ * before each test — `tests/e2e/dict.ts`, which is also where the next person
+ * to change this behaviour changes it. The default there is `'ask'`, a fresh
+ * origin with nothing stored, because that is what a fresh origin really gets
+ * now that `<DictGate>`'s mount probes instead of downloading.
+ */
+test.use({ dictionary: 'installed' });
 
 test.describe('speaker button', () => {
   test('is on the review card back, disabled, with the reason', async ({ page }) => {

@@ -137,6 +137,12 @@ export function createHttpEntrySource(options: HttpEntrySourceOptions = {}): Ent
    * `SqliteDictStore` refuses a query until it is open. An injected store is
    * used as given and still opened, because `open()` is idempotent and a test
    * fake implements it as a no-op.
+   *
+   * `openDictStore()` opens only what the device already has: none of these
+   * three surfaces is gated, so none of them has anywhere to draw an ask or a
+   * progress bar, and starting a 14 MB download from a mount effect is the
+   * defect this seam used to carry. Its rejection is the "no dictionary" path
+   * the callers below already handle.
    */
   const store = async (): Promise<DictStore> => {
     const injected = options.store;

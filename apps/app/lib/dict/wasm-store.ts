@@ -14,6 +14,7 @@
  * it does, the app is still on `HttpDictStore` and this is what D4's harness and
  * its Playwright suite drive.
  */
+import { dictionaryRequested, rememberDictionaryRequest } from './requested';
 import { SqliteDictStore } from './sqlite-store';
 import { wasmRunner, type WasmRunnerOptions, type WasmSqlRunner } from './runners/wasm';
 import type { OpenReport } from './runners/wasm-protocol';
@@ -84,9 +85,40 @@ export function createWasmDictStore(options: WasmDictStoreOptions = {}): WasmDic
    * already said yes to.
    */
   let storedOnly = false;
+  /**
+   * The two open kinds, in flight, tracked separately — and the reason is that
+   * `SqliteDictStore.open()` **shares one attempt across every caller**.
+   *
+   * That sharing is right within a kind and wrong across them: a `download()`
+   * that arrived while a probe was in flight would join the probe, resolve when
+   * the probe resolved, and fetch nothing — the learner presses "Get it" and
+   * lands back on the same card. So a download waits for a probe to settle and
+   * then opens for real, and a probe that arrives during a download joins the
+   * download rather than trying to downgrade it.
+   */
+  let probing: Promise<void> | undefined;
+  let downloading: Promise<void> | undefined;
+  /**
+   * This document has already looked, and there was nothing here.
+   *
+   * A probe is not free — it spawns a worker, fetches and boots the sqlite-wasm
+   * binary, installs the pool and tears all of it down again — and `openStored()`
+   * is called from a **mount effect** and from `openDictStore()`, which
+   * `lib/lists/entry-source.ts` calls per operation and
+   * `components/review/example-sentences.tsx` calls per card back. Without this
+   * a fresh install spends a worker per card, per band, per navigation, to
+   * re-learn the same "no".
+   *
+   * Cleared by `download()`, which is the only thing that can change the answer
+   * from inside this document, and by an eviction (which can only follow a
+   * successful open, so it clears it by construction).
+   */
+  let probedEmpty = false;
 
   const store = new SqliteDictStore({
     ...(options.cacheSize === undefined ? {} : { cacheSize: options.cacheSize }),
+    // A probe reports only its success. See `SqliteStoreOptions.announceOpen`.
+    announceOpen: () => !storedOnly,
     connect: async (context) => {
       const runner = await wasmRunner({
         storedOnly,
@@ -126,6 +158,10 @@ export function createWasmDictStore(options: WasmDictStoreOptions = {}): WasmDic
         // Re-checked *between* the two calls, not only before them: a caller
         // tearing the store down while the close was in flight must win.
         if (disposed) return;
+        // Stated rather than inherited: recovery is a full open, and a probe
+        // that happened to be in flight when the eviction landed must not turn
+        // it into a stored-only one.
+        storedOnly = false;
         await store.open();
       } catch {
         // `open()` has already set `failed` with its reason; rethrowing here
@@ -140,22 +176,84 @@ export function createWasmDictStore(options: WasmDictStoreOptions = {}): WasmDic
   return {
     store,
     async openStored() {
+      if (disposed) return;
       if (store.status.state === 'ready') return;
-      storedOnly = true;
-      try {
-        await store.open();
-      } catch {
-        // Nothing stored, so nothing is wrong: put the store back to `absent`,
-        // which is the screen that asks. `close()` is what sets it, and it also
-        // releases whatever the failed attempt held.
-        await store.close().catch(() => undefined);
-      } finally {
-        storedOnly = false;
-      }
+      // A download or a recovery already under way is the stronger open, and in
+      // both cases the learner has already asked for the dictionary; join it
+      // rather than racing it back down to a probe.
+      if (downloading) return downloading.catch(() => undefined);
+      if (recovery) return recovery.catch(() => undefined);
+      if (probing) return probing;
+      // `failed` is a settled answer with a reason on screen and a retry beside
+      // it. Probing over it would replace that with the bare ask and lose the
+      // message.
+      if (store.status.state === 'failed') return;
+      // Asked and answered, in this document. See `probedEmpty`.
+      if (probedEmpty) return;
+      // The slot is cleared by a chained `.finally`, not by an inner one, and
+      // it holds for the **whole** call including the escalation below: a probe
+      // that turned into a download is still what a concurrent `openStored()`
+      // should join, and `download()` waits this out before it fetches.
+      const attempt: Promise<void> = (async () => {
+        storedOnly = true;
+        try {
+          await store.open();
+          return;
+        } catch {
+          // Fall through: what to do about it depends on whether this origin
+          // has ever said yes, which the probe itself cannot tell.
+        } finally {
+          storedOnly = false;
+        }
+        if (disposed) return;
+        if (!dictionaryRequested()) {
+          // A fresh install. Nothing is stored, nobody has consented, and the
+          // right screen is the ask. `close()` is what sets `absent`, and it
+          // also releases whatever the failed attempt held.
+          probedEmpty = true;
+          await store.close().catch(() => undefined);
+          return;
+        }
+        // The learner has already paid for this dictionary on this origin. The
+        // probe failing here means this *document* could not reach it — a
+        // second tab holding the pool's exclusive handles, a reload that lost
+        // the same race, a download a reload interrupted, an eviction between
+        // sessions. Re-asking would be asking twice; the full open is what
+        // `data.md` D4's ladder already does for all four, and it draws a
+        // progress bar where there is a gate to draw it on.
+        await store.open().catch(() => undefined);
+      })().finally(() => {
+        if (probing === attempt) probing = undefined;
+      });
+      probing = attempt;
+      return attempt;
     },
     async download() {
-      storedOnly = false;
-      await store.open();
+      if (disposed) return;
+      // Never join a probe: it resolves without fetching, and this call's whole
+      // job is to fetch. A loop rather than one await, because a fresh probe
+      // can start in the microtasks between the awaited one settling and this
+      // continuation resuming. Their failures are not this call's problem.
+      while (probing) await probing.catch(() => undefined);
+      if (recovery) await recovery.catch(() => undefined);
+      if (store.status.state === 'ready') return;
+      if (downloading) return downloading;
+      // Before the fetch, not after it: a reload part-way through a download
+      // must come back to a download rather than to the ask, and the card the
+      // learner is looking at promises exactly that ("it picks up where it left
+      // off if you close the app").
+      rememberDictionaryRequest();
+      probedEmpty = false;
+      const attempt = (async () => {
+        storedOnly = false;
+        try {
+          await store.open();
+        } finally {
+          downloading = undefined;
+        }
+      })();
+      downloading = attempt;
+      return attempt;
     },
     runner: () => current,
     settled: async () => {
@@ -163,7 +261,14 @@ export function createWasmDictStore(options: WasmDictStoreOptions = {}): WasmDic
     },
     close: async () => {
       disposed = true;
+      // Every open this handle can have started, not just the recovery: a probe
+      // that escalated into a download is a fetch with a worker behind it, and
+      // closing over the top of one leaves that worker holding the origin's
+      // only `opfs-sahpool` lock with nobody left to release it. `disposed`
+      // stops a *new* one; these three wait out the ones already running.
       await recovery?.catch(() => {});
+      await probing?.catch(() => {});
+      await downloading?.catch(() => {});
       await store.close();
     },
   };

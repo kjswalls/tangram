@@ -45,7 +45,7 @@
  *    by seeding a history, which also proves the panels are reading the log
  *    rather than a fixture.
  */
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from './dict';
 
 import { ready, resetApp } from './p3/helpers';
 import { DEMO_PARAGRAPH } from './p5/paragraph';
@@ -78,6 +78,15 @@ const DAY = 86_400_000;
 
 /** The full walk is a demo load, a build, two adds and a whole session. */
 test.setTimeout(300_000);
+
+/**
+ * **This spec needs a dictionary on the device**, so it accepts the ask once
+ * before each test — `tests/e2e/dict.ts`, which is also where the next person
+ * to change this behaviour changes it. The default there is `'ask'`, a fresh
+ * origin with nothing stored, because that is what a fresh origin really gets
+ * now that `<DictGate>`'s mount probes instead of downloading.
+ */
+test.use({ dictionary: 'installed' });
 
 interface Cards {
   phraseId: string;

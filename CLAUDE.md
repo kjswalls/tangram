@@ -85,9 +85,12 @@ Node **>= 22.22** (React Router 8's floor); pnpm 10. Playwright uses the contain
 >   domain, a host account and an SMTP sender, which `backend.md` §4 item 4 says the owner brings;
 >   **no phase provisions them**, and every criterion that needs one is marked *(deploy)* and is
 >   committed-and-flagged rather than run.
-> - **Backup, restore and sync are declared, not implemented.** The seven members wave 0 added to
->   `lib/db/repository.ts` throw; `web.md` W5 and `backend.md` B5 write the bodies. They throw on
->   purpose — see the guard in `tests/unit/db/repository.test.ts`.
+> - **Sync is declared, not implemented.** `web.md` W5 wrote `exportAll`/`importAll`, so the local
+>   backup round trip works and survives tombstones. The other **five** of wave 0's members —
+>   `changedSince`, `applyRemote`, `syncState`, `setSyncState`, `resetAccount` — still throw, and
+>   `backend.md` B5 writes them. They throw on purpose: the guard in
+>   `tests/unit/db/repository.test.ts` names all five, so a sixth cannot arrive unguarded and a stub
+>   returning a plausible empty value cannot pass for an implementation.
 > - **Two gloss searches exceed the 50 ms interactive budget** in wasm (`to` and `the`, at
 >   89–100 ms) and are pinned by name at a 200 ms ceiling. `wave-zero.md` §10e is why the cap was
 >   not lowered; any *other* interactive query over 50 ms fails the suite.

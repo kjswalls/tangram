@@ -212,32 +212,50 @@ export const SMOKE_CASES: SmokeCase[] = [
 ];
 
 /**
- * Every route `apps/server` declares has at least one case here.
+ * Every route `apps/server` declares that the app calls has a case here.
  *
  * This is the half that survives the next person: a new route with no case
  * fails `pnpm smoke` and the e2e suite the day it is written, instead of
  * failing in production the day it is deployed. `data.md` D6 removed the five
  * dictionary entries when it retired those routes; `backend.md` B1 moved the
- * three that are left to `apps/server`, so the question "what routes are
- * there" is answered by that package's table rather than by walking
- * `app/api/**`, which this app no longer has.
+ * three that are left to `apps/server`, so the question "what routes are there"
+ * is answered by that package's table rather than by walking `app/api/**`,
+ * which this app no longer has.
  *
- * **`/health` is deliberately not covered here and its absence is not a hole.**
- * `pnpm -F server smoke` walks the same table and probes every route on it,
- * including `/health`; this script's API cases exist to prove the *app's* three
- * calls work against the deployed API, which is `docs/deploy.md` §7's "the same
- * run covers both halves". So the rule is one-directional: a case must name a
- * route the server really has, and every route the app CALLS must have a case.
+ * **"Which routes does the app call" is the table's `gated` column, and writing
+ * the three paths out as a literal here was a finding.** The first version of
+ * this function filtered the table through `['/api/ask','/api/examples',
+ * '/api/recall']`, and a reviewer pointed out that `backend.md` B2 adds
+ * `/api/ask/propose` and `/api/ask/answer` — routes the app will certainly call
+ * — which such a list would skip in silence, with `pnpm smoke` covering
+ * neither, unless someone remembered to edit a literal. That is exactly the
+ * drift `wave-zero.md` §5's ruling 2 legislates against ("a list in prose
+ * drifts from the schema; `Exclude<StoreName, 'ask_cache'>` cannot").
+ *
+ * `gated` is the right derivation and not a coincidence: a route is gated
+ * precisely when it reaches a paid model, which is precisely when the app is
+ * the thing calling it. `/health` is the only ungated route and is deliberately
+ * not covered here — `pnpm -F server smoke` walks the same table and probes
+ * every route on it, including that one. This script's API cases exist to prove
+ * the *app's* calls work against the deployed API, which is `docs/deploy.md`
+ * §7's "the same run covers both halves".
  */
-export const APP_CALLED_ROUTES = ['/api/ask', '/api/examples', '/api/recall'] as const;
+export function appCalledRoutes(): typeof SERVER_ROUTES {
+  return SERVER_ROUTES.filter((route) => route.gated);
+}
 
 export function checkRouteCoverage(): string[] {
   const covered = new Set(
     SMOKE_CASES.filter((c) => c.route !== null).map((c) => `${c.method} ${c.route}`),
   );
   const missing: string[] = [];
-  for (const route of SERVER_ROUTES) {
-    if (!(APP_CALLED_ROUTES as readonly string[]).includes(route.path)) continue;
+  const called = appCalledRoutes();
+  if (called.length === 0) {
+    // A derivation that derives nothing is the vacuous-guard failure this file
+    // exists to prevent, one level up.
+    missing.push('apps/server declares no gated route; this coverage check would pass vacuously');
+  }
+  for (const route of called) {
     if (route.methods.length === 0) {
       missing.push(`${route.path} declares no method`);
       continue;
@@ -246,11 +264,6 @@ export function checkRouteCoverage(): string[] {
       if (!covered.has(`${method} ${route.path}`)) {
         missing.push(`${method} ${route.path} has no case in SMOKE_CASES`);
       }
-    }
-  }
-  for (const path of APP_CALLED_ROUTES) {
-    if (!SERVER_ROUTES.some((route) => route.path === path)) {
-      missing.push(`${path} is called by the app but apps/server does not declare it`);
     }
   }
   return missing;

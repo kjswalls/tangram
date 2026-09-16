@@ -23,9 +23,20 @@
  *  3. **`@/*`**, which is a tsconfig path mapping and not a runtime concept.
  *
  * The bundle is also the better deploy artifact, and that is not incidental:
- * `dist/index.js` plus the four real `dependencies` is the whole of it, so a
- * host that runs `pnpm install --prod` on this package alone gets a server that
- * starts, with no workspace symlinks and no type stripping anywhere.
+ * `dist/index.js` plus the four real `dependencies` is the whole of the
+ * **code**, so a host that runs `pnpm install --prod` on this package alone
+ * gets a server that starts, with no workspace symlinks and no type stripping
+ * anywhere.
+ *
+ * **It is not the whole of the deployment, and an earlier version of this
+ * paragraph said it was.** Until `backend.md` B2's contract flip this server
+ * opens the dictionary itself, and `data/dict-<schema>-<cedict>.sqlite` is not
+ * in the bundle — it is found through `TANGRAM_DATA_DIR`, or by walking up for
+ * `pnpm-workspace.yaml`, which a deploy tree does not have. A deployment that
+ * ships only `dist/` starts, answers `/health` with 200, and returns
+ * `503 {"error":"dict-data-missing"}` to every real request. An adversarial
+ * reviewer of B1 did exactly that; `docs/deploy.md` §5a is now the instruction,
+ * and `routes/table.ts`'s third smoke case is what fails when it is ignored.
  *
  * **What stays external, and why those four.** `dependencies` — Hono, its Node
  * adapter, the Anthropic SDK and zod. They are real, published, versioned

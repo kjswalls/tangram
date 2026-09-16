@@ -260,6 +260,57 @@ secret is never logged and never appears in a response body.
 `pnpm e2e` run in exactly that state, which is deliberate: a gate that changed
 local behaviour would be switched off within a week.
 
+## 5a. The server (`apps/server`), and the one thing that is easy to forget
+
+**This document is the Vercel *static* project's.** `backend.md` B7 owns the
+server's deployment half in full and has not run; what follows is the minimum
+`backend.md` B1 owes a deployer, because B1 is the phase that made a second
+deployable exist.
+
+`pnpm -F server build` emits **two files**: `dist/index.js` (an esbuild bundle
+that inlines every workspace package and every first-party module) and
+`dist/build-info.json` (the git sha `/health` reports). `pnpm install --prod`
+on that package brings four published dependencies. `node dist/index.js` then
+starts and answers `/health`.
+
+**And it cannot answer a single real request, because it has no dictionary.**
+`backend.md` B1 keeps the dictionary in the server process — "the dictionary
+comes with them, on purpose and temporarily", until B2's contract flip moves
+retrieval to the client — so `/api/ask`, `/api/examples` and `/api/recall` open
+`data/dict-<schema>-<cedict>.sqlite` and `data/dict-manifest.json` on first use.
+Neither is in the bundle. Both are found through `TANGRAM_DATA_DIR`, or, when
+that is unset, by walking up from the working directory for
+`pnpm-workspace.yaml` — a marker a deploy tree does not have.
+
+So a deployment of this server must do one of two things:
+
+1. ship `data/` alongside `dist/` and set **`TANGRAM_DATA_DIR`** to its absolute
+   path; or
+2. run `pnpm data` on the host before starting, which needs the repository and
+   the upstream sources.
+
+(1) is the shape to prefer, and the artifact is **43.1 MB**. Get it wrong and
+the failure is quiet in exactly the way this document exists to prevent:
+`/health` answers 200, `pnpm -F server smoke` used to answer 6/6, and every real
+request answers `503 {"error":"dict-data-missing","hint":"run pnpm data"}`. That
+was found by an adversarial review of B1, and the smoke now carries a case that
+opens the dictionary (`POST /api/examples` with an entry id no build contains,
+expecting **404** rather than 503) so the same mistake fails the check.
+
+**Measured in the container, fake provider, for whoever sizes the host:** 78 MB
+RSS after boot, 97 MB after the first ask (which is what opens the artifact),
+55 ms from a cold process to a first answered ask. Those supersede this
+document's old §5 figures — 171–267 MB and ~2.3 s — which measured the 35 MB
+JSON parse `data.md` D6 deleted. `backend.md` B1 asks for the deployed versions
+of the same numbers and they are outstanding.
+
+**The environment it reads** is `.env.example`'s "The server, apps/server"
+block: `TANGRAM_SERVER_PORT` (or `PORT`), `HOST`, `NODE_ENV`,
+`TANGRAM_ACCESS_SECRET`, `TANGRAM_ALLOWED_ORIGINS`, `ANTHROPIC_API_KEY`,
+`TANGRAM_LLM_PROVIDER`, `TANGRAM_MODEL`, the four deadline overrides,
+`TANGRAM_DRAIN_MS`, `TANGRAM_BUILD_SHA` and `TANGRAM_DATA_DIR`. None of them
+belongs on the static project (§4).
+
 ## 6. Storage, not function memory
 
 The previous version of this document budgeted per-route function memory for a

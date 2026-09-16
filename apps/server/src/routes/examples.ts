@@ -49,6 +49,7 @@ import type { ExamplesRouteInfo, ExamplesRouteResponse } from '@/lib/api/contrac
 import { HSK_BANDS, type Entry, type EntryId, type HskBand, type LearnerProfile } from '@/lib/types';
 import { requireAccess } from '@tangram/access';
 import { deadlineMs, modelName } from '../config.ts';
+import { redactString } from '../log.ts';
 
 /**
  * How many dictionary rows the prompt may be built from. The learner may know
@@ -453,7 +454,7 @@ export async function POST(request: Request): Promise<Response> {
       {
         error: outcome.invalid ? 'provider-invalid' : 'provider-failed',
         provider: provider.name,
-        hint: outcome.hint,
+        hint: redactString(outcome.hint),
       },
       { status: 502 },
     );

@@ -13,7 +13,11 @@
  * `Request` in, a `Response` out, which is what lets the money routes be
  * exercised without a provider, a dictionary or a port.
  */
-import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { GATED_PATHS } from '@tangram/access';
 
@@ -56,6 +60,26 @@ describe('the gate, with TANGRAM_ACCESS_SECRET set', () => {
     const none = await app.fetch(post('/api/ask'));
     expect(wrong.status).toBe(401);
     expect(await wrong.text()).toBe(await none.text());
+  });
+
+  it('refuses a PERCENT-ENCODED spelling of a gated path', async () => {
+    // `URL.pathname` does not decode; Hono's router does. So `/api/%61sk` was
+    // "not gated" to a literal prefix match and was routed to the real
+    // `/api/ask` handler anyway — caught by an adversarial reviewer, who also
+    // showed the sharp end: `/api/%61sk/propose` reached the router un-gated
+    // and 404'd, so `backend.md` B2's two money-spending routes would have had
+    // one check in front of them instead of two. `requireAccess` in the handler
+    // meant it never cost anything; the front layer's own claim was false.
+    for (const path of ['/api/%61sk', '/api/%61sk/propose', '/api/%65xamples']) {
+      expect((await app.fetch(post(path))).status, path).toBe(401);
+    }
+  });
+
+  it('does not fall over on a malformed escape', async () => {
+    // `decodeURIComponent('%zz')` throws. The raw form is still matched, and a
+    // path the decoder cannot read is not one the router will match either.
+    expect((await app.fetch(post('/api/ask/%zz'))).status).toBe(401);
+    expect((await app.fetch(post('/nothing/%zz'))).status).toBe(404);
   });
 
   it('refuses the PREFIX, which is the two paths B2 adds under /api/ask', async () => {
@@ -124,14 +148,123 @@ describe('the gate, with TANGRAM_ACCESS_SECRET set', () => {
 describe('the gate, with TANGRAM_ACCESS_SECRET unset', () => {
   // Rule 1 of `packages/access`: absent secret means absent gate, and every
   // local run — `pnpm dev`, the unit suite, `pnpm e2e` — depends on it.
+  //
+  // **The ambient environment is stubbed, and that is not belt-and-braces.**
+  // `buildApp`'s middleware compares against the injected `env`, but each
+  // handler's own `requireAccess(request)` takes `@tangram/access`'s default,
+  // which is `process.env`. So this block was green only because
+  // `TANGRAM_ACCESS_SECRET` happens to be unset in vitest — run the suite with
+  // it exported in the shell and the handlers would 401 while the middleware
+  // waved everything through. A reviewer found it; the stub makes the two
+  // layers agree on purpose rather than by luck.
   const app = server({});
 
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it('lets a gated POST reach its handler, which answers on its own terms', async () => {
+    vi.stubEnv('TANGRAM_ACCESS_SECRET', undefined);
     // 400, because the body is `{}`. The point is that it is the *handler's*
     // answer: 401 here would mean the gate existed with nothing configured.
     for (const path of GATED_PATHS) {
       const response = await app.fetch(post(path));
       expect(response.status, path).toBe(400);
+    }
+  });
+});
+
+/**
+ * The source with its comments blanked out.
+ *
+ * Crude, and deliberately so: over-blanking can only make the scan below *miss*
+ * an offender, and the alternative is a parser in a test. What it is for is the
+ * opposite direction — the paragraph documenting this rule quotes the very
+ * shape the rule matches, so a scan that read comments would report its own
+ * explanation. (It did, first time.)
+ */
+function withoutComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+}
+
+describe('a provider failure never carries a secret out of the process', () => {
+  it('redacts the configured secrets out of a 502 hint', async () => {
+    // The three handlers answer a provider failure with the error's own
+    // message, and the ask panel shows it — suppressing it is B7's call, not
+    // this phase's. What this phase owed was that the message goes through
+    // `log.ts`'s redactor first: a handler-authored `Response.json` is not the
+    // `onError` 500, so until an adversarial reviewer put a real SDK error into
+    // a public 502 it was gated on nothing and scrubbed by nothing.
+    vi.stubEnv('ANTHROPIC_API_KEY', 'sk-ant-not-a-real-key-000000');
+    try {
+      const { redactString } = await import('../src/log.ts');
+      const leaked = 'Error: 401 authentication_error sk-ant-not-a-real-key-000000 is invalid';
+      const scrubbed = redactString(leaked);
+      expect(scrubbed).not.toContain('sk-ant-not-a-real-key-000000');
+      expect(scrubbed).toContain('[redacted]');
+      // …and a message with nothing to scrub comes back byte-identical, which
+      // is why this is a fix rather than a behaviour change.
+      expect(redactString('the model is overloaded')).toBe('the model is overloaded');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('does it on the one 502 path a test can actually drive', async () => {
+    // Behavioural, not textual. `gradeRecallWith` takes its provider as an
+    // argument — the seam `recall.ts` exports "so a test can hand it one that
+    // throws" — so this is the real handler, the real catch, the real body.
+    vi.stubEnv('ANTHROPIC_API_KEY', 'sk-ant-not-a-real-key-000000');
+    try {
+      const { gradeRecallWith } = await import('../src/routes/recall.ts');
+      const entry = {
+        id: 'x|x[x]',
+        simp: '好',
+        trad: '好',
+        pinyinNum: 'hao3',
+        pinyinMarked: 'hǎo',
+        glosses: ['good'],
+      };
+      const response = await gradeRecallWith(
+        {
+          name: 'anthropic',
+          proposePhrases: () => Promise.reject(new Error('unused')),
+          answer: () => Promise.reject(new Error('unused')),
+          exampleSentences: () => Promise.reject(new Error('unused')),
+          gradeRecall: () =>
+            Promise.reject(new Error('401 authentication_error: sk-ant-not-a-real-key-000000')),
+        } as unknown as Parameters<typeof gradeRecallWith>[0],
+        entry as unknown as Parameters<typeof gradeRecallWith>[1],
+        'good',
+      );
+      expect(response.status).toBe(502);
+      const body = (await response.json()) as { hint: string };
+      expect(body.hint).not.toContain('sk-ant-not-a-real-key-000000');
+      expect(body.hint).toContain('[redacted]');
+      // …and the rest of the message survives, because the panel shows it.
+      expect(body.hint).toContain('authentication_error');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('wraps every hint the three routes build from a value, not only that one', () => {
+    // The other two 502 paths select their own provider, so they cannot be
+    // driven from here. A scan stands in: a `hint:` whose value is a literal
+    // this repo wrote needs no scrubbing, and everything else does.
+    for (const name of ['ask', 'examples', 'recall'] as const) {
+      const source = withoutComments(
+        readFileSync(
+          resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'routes', `${name}.ts`),
+          'utf8',
+        ),
+      );
+      for (const match of source.matchAll(/\bhint:\s*([^\n]*)/g)) {
+        const value = (match[1] ?? '').trim();
+        // A string literal, or the `hint: string` of `badRequest`'s signature.
+        if (/^['"`]/.test(value) || /^string\b/.test(value)) continue;
+        expect(value, `${name}.ts: ${match[0].trim()}`).toContain('redactString');
+      }
     }
   });
 });

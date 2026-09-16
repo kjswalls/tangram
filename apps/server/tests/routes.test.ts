@@ -44,9 +44,18 @@ describe('routes/table.ts', () => {
     }
   });
 
-  it('gives every declared route at least one smoke case', () => {
+  it('gives every declared METHOD of every route a smoke case', () => {
+    // Per method, not per route. `backend.md` B1 asks for a smoke in which "a
+    // route added without a smoke case is a test failure", and at path
+    // granularity a route declaring `['GET','POST']` with only a GET case
+    // passed — which is how `POST /api/ask` could ship unprobed while this file
+    // stayed green. `app.ts`'s method-symmetry guard limits the blast radius;
+    // this closes it.
     for (const route of ROUTES) {
-      expect(route.smoke.length, `${route.path} has no smoke case`).toBeGreaterThan(0);
+      const smoked = new Set(route.smoke.map((testCase) => testCase.method));
+      for (const method of route.methods) {
+        expect(smoked, `${method} ${route.path} has no smoke case`).toContain(method);
+      }
       for (const testCase of route.smoke) {
         expect(route.methods, `${route.path} smokes a method it does not answer`).toContain(
           testCase.method,

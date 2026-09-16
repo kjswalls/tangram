@@ -107,6 +107,40 @@ describe('apps/server in the workspace', () => {
     // deletion a deletion rather than an untangling.
     expect(reaching.sort()).toEqual(['routes/ask.ts', 'routes/examples.ts', 'routes/recall.ts']);
   });
+
+  it('turns noUncheckedIndexedAccess back on the moment the app source leaves', () => {
+    // **The two facts are one decision, so they are asserted together.** B1
+    // turned the flag off because its temporary dictionary pulls ~40 apps/app
+    // modules and eleven packages/ai modules into this package's program, and
+    // neither sets the flag — 71 errors, most of them in files this phase does
+    // not own. That is documented in `tsconfig.json`'s own header and assigned
+    // to B2. What was missing is anything that FAILS if B2 forgets: a reviewer
+    // pointed out that the strictness regression would simply persist.
+    //
+    // So: while `src/**` still reaches `@/lib/**`, the flag may be off. The
+    // moment it does not — which is precisely what B2's contract flip
+    // achieves — this test demands the flag back, and it demands it in the same
+    // commit, because the commit that removes the last import is the commit
+    // that makes it possible.
+    const tsconfig = readFileSync(resolve(PACKAGE, 'tsconfig.json'), 'utf8');
+    const strict = /"noUncheckedIndexedAccess"\s*:\s*true/.test(tsconfig);
+    const reaching = sourceFiles(resolve(PACKAGE, 'src')).filter(([, source]) =>
+      /from '@\/lib\//.test(source),
+    );
+
+    if (reaching.length === 0) {
+      expect(
+        strict,
+        'apps/server no longer compiles any apps/app source, so restore ' +
+          '"noUncheckedIndexedAccess": true in tsconfig.json — backend.md B2 owns this',
+      ).toBe(true);
+    } else {
+      // Not `expect(strict).toBe(false)`: turning it back on early is a fine
+      // thing to do if someone clears the 71 errors, and a test that refused
+      // that would be a test enforcing the debt rather than retiring it.
+      expect(reaching.length, 'this is B2’s number to drive to zero').toBeGreaterThan(0);
+    }
+  });
 });
 
 /** Every `.ts` under a directory, walked rather than listed. */

@@ -126,12 +126,12 @@ export function buildApp(options: AppOptions = {}): Hono {
   // the browser ever sent the header the gate wants.
   app.use('*', async (c, next) => {
     if (c.req.method === 'OPTIONS') return next();
-    const path = pathOf(c.req.url);
+    const paths = pathsOf(c.req.url);
     // An unparseable URL is treated as gated: nothing can be proved about it,
     // and the safe answer for the one check whose failure is an invoice is the
     // one that refuses. With no secret configured `isAuthorizedRequest` still
     // says yes, so this cannot break a local run.
-    if (path !== null && !isGatedPath(path)) return next();
+    if (paths !== null && !paths.some((path) => isGatedPath(path))) return next();
     const denied = isAuthorizedRequest(c.req.raw, env) ? null : unauthorizedResponse();
     if (denied) return denied;
     return next();
@@ -198,18 +198,42 @@ export function buildApp(options: AppOptions = {}): Hono {
 }
 
 /**
- * The pathname, without the query, or `null` when the URL will not parse.
+ * Every spelling of this request's path that the gate must consider, or `null`
+ * when the URL will not parse.
  *
  * `isGatedPath` matches a path prefix, and `/api/ask?x=1` is not `/api/ask` to a
  * string comparison. Hono's own `c.req.path` already strips the query, but the
  * gate is the one thing on this server whose failure is an invoice, so it reads
  * the URL rather than trusting a convenience.
+ *
+ * **Two spellings, not one, and an adversarial reviewer found out why.**
+ * `URL.pathname` does not percent-decode; Hono's router matches the **decoded**
+ * path. So `/api/%61sk` is "not gated" to a literal prefix match and is
+ * nonetheless routed to the real `/api/ask` handler. Today that costs nothing —
+ * `requireAccess` is the first line of every handler and refuses it, which is
+ * exactly the redundancy `packages/access`'s header argues for and is good
+ * evidence the redundancy is not ceremonial. It cost something the moment this
+ * module's header claimed the front layer covers `/api/ask/propose` "already":
+ * `/api/%61sk/propose` reached the router un-gated and 404'd, and when
+ * `backend.md` B2 mounts that path it would have reached a route that spends
+ * money with only one of the two checks in front of it.
+ *
+ * Both forms are tested, and a decode that throws (`%zz`) drops to the raw form
+ * alone rather than failing the request — it cannot be a path the router will
+ * match either.
  */
-export function pathOf(url: string): string | null {
+export function pathsOf(url: string): string[] | null {
+  let raw: string;
   try {
-    return new URL(url).pathname;
+    raw = new URL(url).pathname;
   } catch {
     return null;
+  }
+  try {
+    const decoded = decodeURIComponent(raw);
+    return decoded === raw ? [raw] : [raw, decoded];
+  } catch {
+    return [raw];
   }
 }
 

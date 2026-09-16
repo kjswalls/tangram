@@ -40,6 +40,7 @@ import type { Entry, EntryId, HskBand, LearnerProfile } from '@/lib/types';
 import { DEFAULT_MODEL } from '@tangram/ai/anthropic';
 import { requireAccess } from '@tangram/access';
 import { deadlineMs, isDevelopment, modelName } from '../config.ts';
+import { redactString } from '../log.ts';
 
 /**
  * The retrieval constants live in `packages/ai/retrieve.ts` (docs/plans/data.md
@@ -76,6 +77,29 @@ interface AskRequestBody {
   profile: LearnerProfile;
 }
 
+/**
+ * Why a provider failure is redacted before it is put in a 502 body.
+ *
+ * The three handlers have always answered a provider failure with
+ * `{error:'provider-failed', hint: <the error's message>}`, and `core.md`'s ask
+ * panel shows that hint — a learner seeing "the model is overloaded" instead of
+ * a blank panel is the point, so this is not something to suppress.
+ *
+ * What the move changed is where the body is written: `config.ts` defaults
+ * `production` to true precisely because "the fail-open version of this ships
+ * internal error text in public 500 bodies on every host that does not set
+ * `NODE_ENV`", and `log.ts`'s redactor exists to keep `ANTHROPIC_API_KEY` and
+ * `TANGRAM_ACCESS_SECRET` out of anything this process emits. Neither applied
+ * here: a handler-authored `Response.json` is not the `onError` 500, so it was
+ * gated on nothing and scrubbed by nothing. An adversarial reviewer put a real
+ * SDK error into a public 502 to show it.
+ *
+ * `redactString` is therefore run over the hint. It is **not** a behaviour
+ * change anyone can observe: it replaces a configured secret's value with
+ * `[redacted]`, and a body that never contained one comes back byte-identical.
+ * Suppressing the hint outright would be a behaviour change, and is B7's call
+ * along with the rest of the operational surface.
+ */
 function badRequest(hint: string): Response {
   return Response.json({ error: 'bad-request', hint }, { status: 400 });
 }
@@ -228,7 +252,7 @@ export async function POST(request: Request): Promise<Response> {
           ? error.message
           : 'the provider failed';
     return Response.json(
-      { error: 'provider-failed', provider: provider.name, hint: message },
+      { error: 'provider-failed', provider: provider.name, hint: redactString(message) },
       { status: 502 },
     );
   }
@@ -239,7 +263,9 @@ export async function POST(request: Request): Promise<Response> {
       {
         error: 'provider-invalid',
         provider: provider.name,
-        hint: `the answer did not match the schema: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        hint: redactString(
+          `the answer did not match the schema: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        ),
       },
       { status: 502 },
     );

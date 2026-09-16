@@ -54,11 +54,13 @@ export const ACCESS_STORAGE_KEY = 'tangram.access.secret';
 /**
  * Where the API lives.
  *
- * Empty in development and in every build that has not been given one, which
- * keeps same-origin working — the dev and preview servers answer `/api/**`
- * themselves through the adapter W1 built. `backend.md` deploys the server that
- * this eventually points at; until then there is nothing to point it at, and
- * `docs/deploy.md` §4 says so.
+ * **Required from `backend.md` B1 onwards.** It was optional while the dev and
+ * preview servers answered `/api/**` themselves through the adapter W1 built;
+ * B1 moved the three model routes to `apps/server` and deleted that adapter, so
+ * an empty base now means "this origin", which serves no API. `pnpm e2e` sets
+ * it in `apps/app/.env.e2e`, `pnpm dev` in `.env.development`, and a deployment
+ * sets it to `https://api.<domain>` (`docs/deploy.md` §4). See `readApiBase`
+ * for what happens when nobody does.
  *
  * Read once, here, rather than at each call site: `import.meta.env` is
  * substituted at build time, so a second reading is a second chance to spell it
@@ -67,14 +69,34 @@ export const ACCESS_STORAGE_KEY = 'tangram.access.secret';
 export const API_BASE: string = readApiBase();
 
 function readApiBase(): string {
-  // `import.meta.env` is Vite's, substituted at build time. This module is also
-  // pulled in by `lib/dict/client.ts`, which the dev/preview API adapter loads
-  // under **tsx** — plain Node, where `import.meta.env` does not exist and a
-  // bare property read throws before anything can catch it. The optional chain
-  // is not defensive programming for its own sake; it is the difference between
-  // the preview server starting and not.
-  const env = import.meta.env as { VITE_API_BASE?: string } | undefined;
-  return (env?.VITE_API_BASE ?? '').replace(/\/$/, '');
+  // `import.meta.env` is Vite's, substituted at build time. The optional chain
+  // is not defensive programming for its own sake: this module is reachable
+  // from code that has run under plain Node, where `import.meta.env` does not
+  // exist and a bare property read throws before anything can catch it.
+  const env = import.meta.env as { VITE_API_BASE?: string; PROD?: boolean } | undefined;
+  const base = (env?.VITE_API_BASE ?? '').replace(/\/$/, '');
+
+  // **An empty base in a production build is a dead app, and it used not to
+  // be.** Until `backend.md` B1 the dev and preview servers answered `/api/**`
+  // on the app's own origin, so same-origin was a working default. The three
+  // model routes are on `apps/server` now and this origin serves no API at all,
+  // so an unset `VITE_API_BASE` means ask, i+1 sentences and free recall all
+  // fail — and free recall fails *silently* by design, while `initAccess`'s
+  // probe reads the resulting 404 as `unverified` and a phone with a perfectly
+  // good key is told nothing useful forever.
+  //
+  // Nothing can fail the build over it: `pnpm build` is run locally by someone
+  // who has no server, and refusing would be worse than the disease. So it says
+  // so, once, where the one person debugging a dead deployment will look.
+  // `docs/deploy.md` §4 is the other half.
+  if (env?.PROD === true && base.length === 0) {
+    console.warn(
+      'tangram: VITE_API_BASE is unset in a production build, so /api/** resolves to this ' +
+        'origin, which serves no API. Ask, example sentences and free recall will not work. ' +
+        'See docs/deploy.md §4.',
+    );
+  }
+  return base;
 }
 
 /** Module state, populated by `initAccess()` at boot. */

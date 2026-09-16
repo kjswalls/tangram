@@ -46,7 +46,7 @@ import { TABS } from '@/components/shell/nav';
 import { discoverPageRoutes, pageRouteUrl } from '@/lib/server/route-inventory';
 import { ROUTES as SERVER_ROUTES } from '../../../../server/src/routes/table.ts';
 import {
-  APP_CALLED_ROUTES,
+  appCalledRoutes,
   checkRouteCoverage,
   pageCases,
   SMOKE_CASES,
@@ -90,15 +90,24 @@ describe('the API this app calls', () => {
     expect(existsSync(resolve(ROOT, 'app/api'))).toBe(false);
   });
 
-  it('is declared by apps/server, and the app calls exactly those three paths', () => {
+  it('is declared by apps/server, and today that is exactly three paths', () => {
     // Exact, not `arrayContaining`: `data.md` D6 deleted the five dictionary
     // routes and B1 moved these three, so a fourth appearing is something
-    // nobody decided. `GATED_PATHS` in `@tangram/access` is the same list from
-    // the gate's side and `apps/server/tests/routes.test.ts` holds the two
+    // nobody decided — and `backend.md` B2 IS going to add two, at which point
+    // this line is the deliberate edit that records it. What must not need an
+    // edit is the coverage check itself: `appCalledRoutes()` derives the set
+    // from the table's `gated` column rather than from a literal, so B2's
+    // `/api/ask/propose` and `/api/ask/answer` are covered the moment they are
+    // declared. `GATED_PATHS` in `@tangram/access` is the same set from the
+    // gate's side and `apps/server/tests/routes.test.ts` holds the two
     // together.
-    expect([...APP_CALLED_ROUTES].sort()).toEqual(['/api/ask', '/api/examples', '/api/recall']);
+    expect(appCalledRoutes().map((route) => route.path).sort()).toEqual([
+      '/api/ask',
+      '/api/examples',
+      '/api/recall',
+    ]);
     const declared = SERVER_ROUTES.map((route) => route.path);
-    for (const path of APP_CALLED_ROUTES) expect(declared, path).toContain(path);
+    for (const route of appCalledRoutes()) expect(declared, route.path).toContain(route.path);
   });
 
   it('routes every call through apiFetch, so the API base and the header are applied', () => {

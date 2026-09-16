@@ -10400,6 +10400,12 @@ Not edited, per the brief. The migration-state block needs these, and they are f
   `apps/app/lib/ai/` holds (in `wave-zero.md` §5, quoted by the contract test) is worth knowing
   about: this phase put its two new browser-side modules in `lib/srs/` and `lib/api/` rather than
   ask for that rule to change.
+- **The commands block points at a deleted file.** "…which is why `apps/app/tracing.config.ts`
+  traces both" — `tracing.config.ts` is deleted in this phase, at its own header's request. The
+  paragraph's *point* still stands and belongs to `TANGRAM_DATA_DIR`: a bundle or a deployment that
+  carries `data/` without `pnpm-workspace.yaml` beside it breaks the marker walk. That is now
+  `apps/server`'s problem rather than a tracing map's, and `docs/deploy.md` §5a is where it is
+  written down.
 
 ### Files another session may collide with
 
@@ -10433,3 +10439,101 @@ None was needed. Two came close and both were resolved without asking:
 (268 specs) and `pnpm smoke --base-url … --api-base …` all green, plus
 `pnpm -F server smoke --gate off` (6/6) and `--gate on` (11/11, the 401/keyed pair on every gated
 route), which is B1's first acceptance criterion executed rather than described.
+
+### The reviews, and what they changed
+
+Two adversarial reviewers read the diff cold and in parallel, per the brief: one against B1's
+acceptance criteria one at a time, one on "what breaks that no test covers". Both ran the code rather
+than reading it — separate servers on their own ports, real curl, the Playwright spec, and in one
+case a real Anthropic call. **Both confirmed all six criteria** (criterion 5 correctly flagged
+deploy-only), and the criteria reviewer independently reproduced the RSS and cold-start numbers
+above.
+
+Neither found a way past the gate. That is worth writing down plainly, because it is the thing this
+phase could most easily have got wrong and HANDOFF records a previous review catching exactly that:
+every one of the five handler entries calls `requireAccess` first, on top of the server-level prefix
+gate, and `/api/dict/*` 404s rather than 401ing.
+
+**Six survivors were fixed. Each has a test that fails against the old code.**
+
+1. **`pnpm smoke` reported a perfect 6/6 against a server that could not answer a single real
+   request.** Both reviewers found this independently and it is the most serious thing in the review.
+   `backend.md` B1 keeps the dictionary in the server process, the deploy artifact is a code bundle
+   that does not contain `data/`, and every POST smoke case sent `{}` — which `parseBody` rejects
+   **before** `serverDictStore()` is reached. Both handshakes are pure. So a deployment missing the
+   43 MB artifact passed the whole smoke while answering `503 {"error":"dict-data-missing"}` to
+   everything. `apps/server/scripts/build.ts`'s header made it worse by claiming `dist/index.js` plus
+   four dependencies "is the whole of it", and `docs/deploy.md` had no `apps/server` section at all.
+   **Fixed** with a third smoke case — `POST /api/examples` with an entry id no build contains, which
+   gets past validation, opens the artifact, and answers **404**; a dictionary-less server answers
+   503 and the smoke fails naming the line. Verified both ways: 6/7 with `TANGRAM_DATA_DIR` pointed
+   at an empty directory, 7/7 without. `docs/deploy.md` gained §5a, `.env.example` gained the
+   warning on `TANGRAM_DATA_DIR`, and `build.ts`'s claim is corrected.
+
+2. **`pnpm dev:api` — the pair this phase documents — was dead on arrival.** `pnpm -F server dev`
+   set no `NODE_ENV`, `isDevelopment()` therefore said no, `readCorsPolicy` skipped `DEV_ORIGINS`
+   entirely, and every cross-origin call from `localhost:5173` was blocked by a preflight with no
+   `Access-Control-Allow-Origin`. `gate.test.ts` proved the dev origins are in
+   `readCorsPolicy({}, false)` and never asked which branch the one command that needs them takes;
+   `playwright.config.ts` sidesteps it twice over. **Fixed** by setting `NODE_ENV=development` in
+   that script — verified by reading the boot line's `allowedOrigins` and the preflight's header.
+   Decision 8 above said "a working pair" and was wrong when it was written.
+
+3. **A percent-encoded path skipped the front gate.** `URL.pathname` does not decode; Hono's router
+   matches the decoded path. So `/api/%61sk` was "not gated" to a literal prefix match and was routed
+   to the real `/api/ask` handler regardless — and `/api/%61sk/propose` reached the router un-gated
+   and 404'd, which falsifies this module's own claim that B2's two money-spending paths are "already
+   covered by the prefix". It cost nothing today because `requireAccess` is the first line of every
+   handler, which is good evidence that the redundancy `packages/access` argues for is not
+   ceremonial. **Fixed**: `pathsOf` returns both spellings and the gate refuses if either is gated; a
+   malformed escape falls back to the raw form. Three encoded paths and a `%zz` are pinned.
+
+4. **The 502 body carried the provider's error message unredacted.** `log.ts`'s redactor exists to
+   keep `ANTHROPIC_API_KEY` and `TANGRAM_ACCESS_SECRET` out of everything this process emits, and
+   `config.ts` defaults `production` to true precisely so internal error text does not reach a public
+   body — but a handler-authored `Response.json` is not the `onError` 500, so it was gated on nothing
+   and scrubbed by nothing. A reviewer put a real SDK authentication error into a public 502 to show
+   it. **Fixed** by running `redactString` over every hint the three routes build from a value. This
+   is a fix rather than a behaviour change: a message with no configured secret in it comes back
+   byte-identical, and suppressing the hint would be a behaviour change (the ask panel shows it) and
+   is B7's call. Pinned behaviourally through `gradeRecallWith`'s injectable provider, plus a scan of
+   the other two.
+
+5. **`checkRouteCoverage` filtered the server's table through a hand-written list of three paths** —
+   which would silently skip B2's `/api/ask/propose` and `/api/ask/answer`, leaving `pnpm smoke`
+   covering neither unless someone remembered to edit a literal. Precisely the drift `wave-zero.md`
+   §5 ruling 2 legislates against. **Fixed** by deriving the set from the table's `gated` column: a
+   route is gated exactly when it reaches a paid model, which is exactly when the app calls it. The
+   derivation also refuses to pass vacuously if the set is ever empty.
+
+6. **`apps/server/tests/routes.test.ts` asserted one smoke case per route, not per method** — so a
+   route declaring `['GET','POST']` with only a GET case passed, which is how `POST /api/ask` could
+   have shipped unprobed with this file green. **Fixed** to per method.
+
+**Two more were fixed as documentation rather than code**, because the manifest of a frozen surface
+is what the next session reads: `packages/ai/package.json`'s debt note still described the `lib/db`
+imports B1 removed and named six runtime edges where two remain, and
+`packages/ai/examples.ts` said "six" over a list of five.
+
+**Three were accepted and recorded rather than fixed.**
+
+- **`apps/server`'s `noUncheckedIndexedAccess` stays off until B2** (decision 3). A reviewer's point
+  was not that it is undocumented but that *nothing fails if B2 forgets*. So
+  `apps/server/tests/workspace.test.ts` now ties the two together: while `src/**` still imports
+  `@/lib/**` the flag may be off, and the moment the last such import goes — which is exactly what
+  B2's contract flip achieves — the test demands the flag back, in that same commit.
+- **`ask.ts`'s `process.env.NODE_ENV !== 'production'` → `isDevelopment()`** is a real narrowing and
+  the one place "byte-identical move" is untrue: with `NODE_ENV` unset the old code warned on a
+  failed `proposePhrases` and the new one does not. Fix 2 above restores it for the path that
+  matters (`pnpm dev:api` now sets `NODE_ENV=development`), and the difference is a `console.warn`.
+- **`route-inventory.ts`, `scripts/smoke.ts` and `routes.test.ts` were rewritten, and
+  `wave-zero.md` §3 gives W2 their final form.** The criteria reviewer judged it defensible — W2 has
+  landed, `app/api/` no longer exists so the walker returns nothing and the kept tests would have
+  been green-because-empty, and `tracing.config.ts`'s own header named this commit — but called it
+  ownership drift worth a merge-time decision, and noted it is "the one place where *the review has
+  one variable* is not true: B1 deleted a guard rather than leaving it vacuous". Recorded as such.
+
+**Two notes, neither actionable here.** The gated build in `tests/e2e/d/access-gate.spec.ts` carries
+the main build's service-worker shell list, so its precache degrades silently — a throwaway build,
+no production path. And `CLAUDE.md:57` now points at `apps/app/tracing.config.ts`, which this phase
+deletes; it joins the list above for whoever merges.

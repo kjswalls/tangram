@@ -35,8 +35,9 @@
  * imports it for the filter.
  *
  * **What is NOT here, and where it went.** `backend.md` B1 moved the learner's
- * known set — `knownSet`, `getKnownSet`, `knownEntryFilter`, `allowedEntryIds`
- * and `filterCachedSentences` — to `apps/app/lib/srs/known-set.ts`. Those six
+ * known set — `knownSet`, `knownHeadwords`, `getKnownSet`, `knownEntryFilter`,
+ * `allowedEntryIds` and `filterCachedSentences` — to
+ * `apps/app/lib/srs/known-set.ts`. Those six
  * were the only thing in `packages/ai` that read `lib/db`, and from B1 the
  * server imports this package, so `lib/db/schema.ts` (the file B4 rewrites)
  * would otherwise have been a dependency of the server's bundle. They are

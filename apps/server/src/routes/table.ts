@@ -19,6 +19,16 @@
  * broken PWA.
  */
 
+/**
+ * An entry id shaped like a real one and belonging to no dictionary build.
+ *
+ * `trad|simp[pinyin]` is the shape (PLAN.md §3.1). It has to parse far enough
+ * to be looked up and it must never resolve, on any CC-CEDICT snapshot — so it
+ * is deliberately not a rare word that might one day be added, but a string no
+ * lexicographer will ever produce.
+ */
+export const NO_SUCH_ENTRY_ID = 'smoke-no-such-entry|smoke-no-such-entry[nothing]';
+
 export const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'] as const;
 export type HttpMethod = (typeof HTTP_METHODS)[number];
 
@@ -76,6 +86,19 @@ export const ROUTES: readonly ServerRoute[] = [
    * `SmokeCase` precisely so a route whose healthy answer is not a 2xx can say
    * so rather than have the smoke quietly accept any 4xx.
    *
+   * **`/api/examples` gets a second case, and it is the one that proves there
+   * is a dictionary.** An adversarial reviewer ran the smoke against a deploy
+   * artifact with no `data/` and got a perfect 6/6 while every real request
+   * answered `{"error":"dict-data-missing"}` — because `parseBody` rejects `{}`
+   * *before* `serverDictStore()` is reached, and both handshakes are pure. So
+   * one case sends a well-formed body naming an entry id no dictionary
+   * contains: it gets past validation, opens the artifact, looks the id up, and
+   * answers **404 `entry-not-found`** — still without going near a provider. A
+   * server with no dictionary answers 503 there and the smoke fails, which is
+   * the whole point. `backend.md` B1 keeps the dictionary on this server "on
+   * purpose and temporarily"; until B2 removes it, this is what says it is
+   * actually present.
+   *
    * With `--gate on` each of these runs twice: unkeyed expecting 401, keyed
    * expecting the status below. That pair is B1's first acceptance criterion.
    */
@@ -95,6 +118,11 @@ export const ROUTES: readonly ServerRoute[] = [
     smoke: [
       { method: 'GET', expect: 200 },
       { method: 'POST', body: {}, expect: 400 },
+      {
+        method: 'POST',
+        body: { entryId: NO_SUCH_ENTRY_ID, profile: { estimatedBand: 1, knownSample: [] } },
+        expect: 404,
+      },
     ],
   },
   {

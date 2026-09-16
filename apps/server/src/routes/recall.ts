@@ -39,6 +39,7 @@ import type { RecallRouteResponse } from '@/lib/api/contract';
 import type { Entry } from '@/lib/types';
 import { requireAccess } from '@tangram/access';
 import { deadlineMs } from '../config.ts';
+import { redactString } from '../log.ts';
 
 /**
  * A person is waiting on this with a flipped card in front of them, so the
@@ -114,7 +115,7 @@ export async function gradeRecallWith(
           ? error.message
           : 'the provider failed';
     return Response.json(
-      { error: 'provider-failed', provider: provider.name, hint: message },
+      { error: 'provider-failed', provider: provider.name, hint: redactString(message) },
       { status: 502 },
     );
   }
@@ -125,7 +126,9 @@ export async function gradeRecallWith(
       {
         error: 'provider-invalid',
         provider: provider.name,
-        hint: `the grade did not match the schema: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        hint: redactString(
+          `the grade did not match the schema: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        ),
       },
       { status: 502 },
     );

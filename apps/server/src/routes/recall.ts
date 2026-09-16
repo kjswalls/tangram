@@ -33,34 +33,21 @@ import {
   ProviderError,
   selectProvider,
   type LLMProvider,
-  type ProviderName,
 } from '@tangram/ai/provider';
 import { dictErrorResponse, serverDictStore } from '@/lib/server/dict';
+import type { RecallRouteResponse } from '@/lib/api/contract';
 import type { Entry } from '@/lib/types';
 import { requireAccess } from '@tangram/access';
-
-// The dictionary is read from disk per process; never prerender this at build time.
-export const dynamic = 'force-dynamic';
+import { deadlineMs } from '../config.ts';
+import { redactString } from '../log.ts';
 
 /**
  * A person is waiting on this with a flipped card in front of them, so the
  * deadline is well under the ask's 30 s: past about this long the suggestion has
- * missed the moment it was for. Overridable by env, which is what lets a test
+ * missed the moment it was for. 15 s, in `DEADLINE_DEFAULTS` (`src/config.ts`)
+ * with the other three, and overridable by env — which is what lets a test
  * prove the deadline exists without waiting for it.
  */
-export const RECALL_TIMEOUT_MS = 15_000;
-
-function timeoutMs(): number {
-  const raw = Number(process.env.TANGRAM_RECALL_TIMEOUT_MS);
-  return Number.isFinite(raw) && raw > 0 ? raw : RECALL_TIMEOUT_MS;
-}
-
-export interface RecallRouteResponse {
-  suggested: 1 | 2 | 3 | 4;
-  /** One line of plain prose. Scrubbed of CJK and pinyin. */
-  why: string;
-  provider: ProviderName;
-}
 
 interface RecallRequestBody {
   entryId: string;
@@ -117,7 +104,7 @@ export async function gradeRecallWith(
   try {
     raw = await withDeadline(
       provider.gradeRecall(entry, answer, senseIndex),
-      timeoutMs(),
+      deadlineMs('recall'),
       'the grade',
     );
   } catch (error) {
@@ -128,7 +115,7 @@ export async function gradeRecallWith(
           ? error.message
           : 'the provider failed';
     return Response.json(
-      { error: 'provider-failed', provider: provider.name, hint: message },
+      { error: 'provider-failed', provider: provider.name, hint: redactString(message) },
       { status: 502 },
     );
   }
@@ -139,7 +126,9 @@ export async function gradeRecallWith(
       {
         error: 'provider-invalid',
         provider: provider.name,
-        hint: `the grade did not match the schema: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        hint: redactString(
+          `the grade did not match the schema: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        ),
       },
       { status: 502 },
     );

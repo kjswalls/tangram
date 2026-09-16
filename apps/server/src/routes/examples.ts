@@ -45,11 +45,11 @@ import {
 import { withStoreContext } from '@tangram/ai/retrieve';
 import { dictErrorResponse, serverDictStore } from '@/lib/server/dict';
 import type { DictStore } from '@/lib/dict/store';
+import type { ExamplesRouteInfo, ExamplesRouteResponse } from '@/lib/api/contract';
 import { HSK_BANDS, type Entry, type EntryId, type HskBand, type LearnerProfile } from '@/lib/types';
 import { requireAccess } from '@tangram/access';
-
-// The dictionary is opened from disk per process; never prerender at build time.
-export const dynamic = 'force-dynamic';
+import { deadlineMs, modelName } from '../config.ts';
+import { redactString } from '../log.ts';
 
 /**
  * How many dictionary rows the prompt may be built from. The learner may know
@@ -68,43 +68,12 @@ const MAX_ENTRY_ID_CHARS = 160;
 
 /**
  * The learner is mid-review with a grade to press, so the card back gives up
- * sooner than the lookup panel does. Overridable by env for the same two
+ * sooner than the lookup panel does — 20 s, in `DEADLINE_DEFAULTS`
+ * (`src/config.ts`) with the other three. Overridable by env for the same two
  * reasons `/api/ask`'s deadlines are: a test can prove the deadline exists
  * without waiting for it, and a slower upstream can be accommodated without a
  * rebuild.
  */
-export const EXAMPLES_TIMEOUT_MS = 20_000;
-
-function timeoutMs(name: string, fallback: number): number {
-  const raw = Number(process.env[name]);
-  return Number.isFinite(raw) && raw > 0 ? raw : fallback;
-}
-
-export interface ExamplesRouteInfo {
-  provider: ProviderName;
-  promptVersion: string;
-  /** Present only for the live provider; the fake has no model. */
-  model?: string;
-}
-
-export interface ExamplesRouteResponse extends ExamplesRouteInfo {
-  entryId: EntryId;
-  senseIndex?: number;
-  /** The CC-CEDICT snapshot the entries came from. */
-  dictVersion: string;
-  /** Validated and filtered: ids and indexes only. This is what the client caches. */
-  sentences: ExampleSentence[];
-  /** Every entry the sentences cite, so the client can render without a round trip. */
-  entries: Entry[];
-  /** How many entries the prompt was allowed to build from. Diagnostic only. */
-  support: number;
-  /**
-   * False when nothing survived the filter. An empty answer must not be cached:
-   * it is a statement about how many words the learner knew today, and tomorrow
-   * it would be wrong in the one direction the learner cannot fix.
-   */
-  cacheable: boolean;
-}
 
 interface ExamplesRequestBody {
   entryId: EntryId;
@@ -355,7 +324,7 @@ export async function examplesFor(
   try {
     raw = await withDeadline(
       provider.exampleSentences(input.entry, input.profile, input.senseIndex, offered),
-      timeoutMs('TANGRAM_EXAMPLES_TIMEOUT_MS', EXAMPLES_TIMEOUT_MS),
+      deadlineMs('examples'),
       'the sentences',
     );
   } catch (error) {
@@ -402,9 +371,7 @@ function info(provider: ProviderName): ExamplesRouteInfo {
   return {
     provider,
     promptVersion: EXAMPLES_PROMPT_VERSION,
-    ...(provider === 'anthropic'
-      ? { model: process.env.TANGRAM_MODEL?.trim() || DEFAULT_MODEL }
-      : {}),
+    ...(provider === 'anthropic' ? { model: modelName(DEFAULT_MODEL) } : {}),
   };
 }
 
@@ -487,7 +454,7 @@ export async function POST(request: Request): Promise<Response> {
       {
         error: outcome.invalid ? 'provider-invalid' : 'provider-failed',
         provider: provider.name,
-        hint: outcome.hint,
+        hint: redactString(outcome.hint),
       },
       { status: 502 },
     );

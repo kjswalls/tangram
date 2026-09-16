@@ -33,11 +33,14 @@
  */
 
 import {
-  requestRecallGrade,
   type RecallGradeValue,
   type RecallRequest,
   type RecallSuggestion,
 } from '@tangram/ai/recall';
+// The app's `RecallRequest`, not `requestRecallGrade` itself: that one calls the
+// global `fetch` with a relative path, so it reaches the app's own origin rather
+// than the API base and carries no credential (`lib/api/recall-client.ts`).
+import { appRecallRequest } from '@/lib/api/recall-client';
 import type { Repository } from '@/lib/db/repository';
 import type {
   CardDirection,
@@ -658,7 +661,7 @@ const PROVIDER_GRADES_PRODUCTION: boolean = false;
 export function productionRecallRequest(
   card: Pick<CardRow, 'snapshot' | 'entryId' | 'senseIndex'>,
   script: ScriptPreference,
-  fallback: RecallRequest = requestRecallGrade,
+  fallback: RecallRequest = appRecallRequest,
 ): RecallRequest {
   return async (requestInput, options) => {
     const snapshot = wordSnapshot(card.snapshot);

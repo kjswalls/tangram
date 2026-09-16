@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "pnpm -F app dev",
+    "dev:api": "pnpm -F server dev",
     "build": "pnpm run typecheck && pnpm run data:ensure && pnpm -F app build && pnpm -F server build",
     "build:e2e": "pnpm run typecheck && pnpm run data:ensure && pnpm -F app build:e2e && pnpm -F server build",
     "lint": "eslint . && pnpm -F app lint && pnpm -F server lint && pnpm -F @tangram/ai lint && pnpm -F @tangram/access lint",

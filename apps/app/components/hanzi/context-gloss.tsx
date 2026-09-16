@@ -27,7 +27,7 @@
  */
 import { useEffect, useState } from 'react';
 
-import type { AskRouteResponse } from '@/app/api/ask/route';
+import type { AskRouteResponse } from '@/lib/api/contract';
 import { scrubProse } from '@tangram/ai/ground';
 import type { GroundedMatch } from '@tangram/ai/ground';
 import { getRepository } from '@/lib/db/get-db';

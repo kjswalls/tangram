@@ -1,24 +1,25 @@
 {
-  "//": "The whole package — src, tests and the build scripts — for `pnpm -F server typecheck`. `tsconfig.build.json` narrows it to src/ and is the only one that emits. Splitting them is what stops a test file compiling into dist/ and a script going unchecked (the W0 lesson: a file that leaves a project's include is a file nothing typechecks).",
+  "//": "The whole package — src, tests and the build scripts — for `pnpm -F server typecheck`. There is no separate emitting project any more: `backend.md` B1 replaced tsc's emit with an esbuild bundle (scripts/build.ts), because from B1 this server's program contains apps/app source — `lib/server/dict.ts` and `lib/dict/**`, whose relative imports are extensionless — which plain `node` cannot resolve and tsc does not rewrite. So this file is `noEmit` throughout and `moduleResolution` is `bundler`, which is what the bundle actually does. TWO CONSEQUENCES ARE B2's TO REVERSE. (1) `noUncheckedIndexedAccess` is OFF. It was on while this package compiled nothing but its own src/; B1's temporary dictionary (backend.md B1: 'the dictionary comes with them, on purpose and temporarily') puts 40-odd apps/app modules and eleven packages/ai modules into the program, neither of which sets the flag — 71 errors, most in lib/dict/** and lib/types.ts, which this phase does not own. B2 deletes the server's dictionary; turn it back on in the same commit. (2) The `@/*` mapping points OUT of this package and into an app, which is backwards, and it is here for the same reason: B2's contract flip is what removes every `@/lib/**` import from apps/server/src/**. `apps/server/tests/workspace.test.ts` counts those imports so B2 has a number to drive to zero.",
   "compilerOptions": {
     "target": "ES2023",
     "lib": ["ES2023"],
-    "module": "nodenext",
-    "moduleResolution": "nodenext",
+    "module": "esnext",
+    "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
-    "rewriteRelativeImportExtensions": true,
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "strict": true,
-    "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
     "noFallthroughCasesInSwitch": true,
     "skipLibCheck": true,
     "noEmit": true,
     "incremental": true,
-    "types": ["node"]
+    "types": ["node"],
+    "paths": {
+      "@/*": ["../app/*"]
+    }
   },
   "include": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts", "*.ts"],
   "exclude": ["node_modules", "dist"]

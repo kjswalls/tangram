@@ -11,7 +11,7 @@
 import { render, screen, waitFor } from '../render';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ExamplesRouteResponse } from '@/app/api/examples/route';
+import type { ExamplesRouteResponse } from '@/lib/api/contract';
 import { ExampleSentences, resetExamplesInfo } from '@/components/review/example-sentences';
 import { closeDb, getDb, getRepository } from '@/lib/db/get-db';
 import { resetDictStores, setDictStore } from '@/lib/dict/browser-store';

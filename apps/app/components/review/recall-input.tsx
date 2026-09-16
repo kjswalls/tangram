@@ -37,10 +37,13 @@ import { Input } from '@/components/ui/input';
 import {
   blankRecall,
   recallReducer,
-  requestRecallGrade,
   type RecallRequest,
   type RecallSuggestion,
 } from '@tangram/ai/recall';
+// Not `requestRecallGrade` itself: that one calls the global `fetch` with a
+// relative path, which reaches the app's own origin rather than the API base
+// and carries no `X-Tangram-Access`. See `lib/api/recall-client.ts`.
+import { appRecallRequest } from '@/lib/api/recall-client';
 import type { CardRow } from '@/lib/db/schema';
 import { RATING_LABELS } from '@/lib/srs/card';
 
@@ -78,7 +81,7 @@ export function RecallInput({
   revealed,
   onReveal,
   onSuggestion,
-  request = requestRecallGrade,
+  request = appRecallRequest,
   label = 'What does it mean?',
   placeholder = 'in your own words',
 }: RecallInputProps) {

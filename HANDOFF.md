@@ -10093,3 +10093,478 @@ that the two-phase open would remove.
 artifact's sha256 is unchanged — `685ecf4c5be76933e3fdbe8a5abaae6db9774147d29e7a1b0e910f55d8a65f58`,
 byte for byte what D1 built. That is the evidence that moving the index out of the app changed
 nothing about the data, and it is also D1's reproducibility criterion holding across a refactor.
+
+---
+
+## `backend.md` B1 — the three model routes move, and `apps/app` stops having an API
+
+Commits on `claude/build-backend-1`, cut from `claude/integration` at `17e980b`.
+
+**B1 is done as far as this container can take it.** Its container-runnable criteria all pass,
+including the two the plan marked *"(deploy, or against two local origins)"* — those were run
+against two local origins, in a browser, and are **not** outstanding. What is outstanding is
+listed below and is the same five artefacts `backend.md` §4 item 4 says the owner brings.
+
+**B2, B3, B4 and B5 did not run and were not started.**
+
+### What landed
+
+**The three handlers moved as files.** `apps/app/app/api/{ask,examples,recall}/route.ts` →
+`apps/server/src/routes/{ask,examples,recall}.ts`, by `git mv`, with three edits each and no
+behaviour change: the Next-only `export const dynamic`, the response types (below), and
+`process.env` (below). `apps/app/app/api/` no longer exists.
+
+**The gate is in front of them, by prefix.** `apps/server/src/app.ts` runs two `app.use('*')`
+middlewares, and their order is the design. CORS is outermost so that **every** response carries
+`Vary: Origin` and, for an allowed origin, `Access-Control-Allow-Origin` — the 401 included. That
+is not decoration: `src/access/client.ts` decides `granted`/`denied` by reading the **status** of a
+probe, and a cross-origin 401 with no `Access-Control-Allow-Origin` reaches page script as a
+network error rather than as a status, so a wrong key would report `unverified` and revoke nothing.
+The gate runs inside it, matching by prefix (`isGatedPath`, `wave-zero.md` §10a) and skipping
+`OPTIONS`, because a preflight carries no credentials and refusing it would fail every gated POST
+before the browser ever sent the header the gate wants. Each handler still calls `requireAccess`
+first, which is the redundancy `packages/access`'s own header asks for.
+
+**`apps/server/src/cors.ts` is new.** An additive allowlist: `capacitor://localhost` (iOS) and
+`http://localhost` (Android) always, the four development origins only when `NODE_ENV` says
+development, plus whatever `TANGRAM_ALLOWED_ORIGINS` names. A request with **no** `Origin` is
+answered normally (curl, the smoke, a native fetch); a request from a disallowed origin is also
+answered, without the header, so the browser discards it — CORS is not the gate and refusing
+outright would leak the allowlist and still not stop a non-browser caller.
+
+**The route table grew three rows and `app.ts` grew a dimension.** `routes/table.ts` now declares
+`/api/ask` (GET, POST), `/api/examples` (GET, POST) and `/api/recall` (POST), and `buildApp`'s
+symmetric check is symmetric in **two** dimensions now: a declared method with no handler throws at
+boot, and a handler for a method the table does not declare throws too. Until B1 every route
+answered one verb, so "the path is mounted" was the whole question.
+
+**The smoke's POST cases send `{}` and expect 400, deliberately.** `pnpm -F server smoke` is an
+after-deploy habit and these three routes cost money on every successful call. An empty body proves
+the route is mounted, the method routed, the gate run and the handler reached, and stops one step
+short of the provider. `SmokeCase.expect` exists for exactly this.
+
+**`packages/ai` depends on nothing under `lib/db` any more** — see the decision below.
+
+**`apps/server` builds with esbuild rather than `tsc`** — see the decision below.
+
+**The dev/preview API adapter is gone**, with `apps/app/vite-plugins/api.ts`, its registration in
+`vite.config.ts`, and `apps/app/tracing.config.ts` (whose own header asked to be deleted "in the
+same commit as the thing they guarded"). The API half of `lib/server/route-inventory.ts` went with
+them; the page half, which `web.md` W2 owns, is untouched apart from the header.
+
+**One bug fixed that predates B1 and would have shipped dead.** `packages/ai/recall.ts`'s
+`requestRecallGrade` calls `fetchImpl('/api/recall', …)` through the global `fetch` — a relative
+path, with no `X-Tangram-Access`. Against a gated deployment free recall was **already** a silent
+401 (the function turns every failure into "no suggestion" and the grade buttons stay live either
+way); after B1 a relative `/api/recall` reaches a static host with no API and the feature is simply
+dead. `apps/app/lib/api/recall-client.ts` is the app-side default that goes through `apiFetch`, and
+the two places that defaulted a `RecallRequest` now default to it.
+`tests/unit/ai/recall-client.test.ts` pins it and `tests/unit/server/routes.test.ts` refuses a
+literal `/api/…` fetch anywhere in `apps/app`, so the next one fails in the suite.
+
+### Outstanding *(deploy)* criteria
+
+Per `backend.md` §4, a phase whose deploy-only criteria have not run is committed and flagged. This
+is the flag. **B0's five are still outstanding too** and are not repeated here.
+
+| Criterion | Phase | Blocked on |
+|---|---|---|
+| The gate, the 404-not-401 rule and the three routes, repeated against the deployment | B1 criterion 1, *(deploy)* half | a registered domain with DNS control, a host account with billing |
+| The full app end to end against the deployed server — look up → ask → add a card → review → example sentences → free recall | B1 criterion 5 | the same |
+| RSS after boot and after the first ask, time from process start to first successful ask, and whether the host keeps the process warm — if it scales to zero, the cold ask latency | B1 criterion 6, *(deploy)* half | a host account. The **container** numbers are recorded below and they are B2's justification, so read them first |
+
+**Not outstanding, and this is the distinction `backend.md` §4 insists on.** Criterion 1's
+container half (`--gate on`/`--gate off` against a locally started server) ran and passes.
+Criterion 4 — CORS, including the preflight — is written *"(deploy, or against two local origins)"*
+and was run **against two local origins in a browser**, which is the branch the plan offers: see
+`tests/e2e/d/access-gate.spec.ts`. Criterion 2 (secret unset, everything open and unchanged),
+criterion 3 (`tests/unit/ai/**` unmoved except for import paths) and criterion 6's
+`packages/ai`/`lib/db` decision all ran in full.
+
+### The numbers B1 asks for, measured in the container
+
+`backend.md` B1 says to measure the server's memory and cold path and calls them "the numbers that
+justify B2". Measured against `node apps/server/dist/index.js`, fake provider, this container:
+
+| | |
+|---|---|
+| RSS after boot, before any request | **78.4 MB** |
+| RSS after the first `POST /api/ask` (which opens the dictionary) | **97.3 MB** |
+| RSS after a second ask and one `/api/examples` | 98.8 MB |
+| Time from a cold process to the first successful ask | **55 ms** |
+| Second ask, warm | 10 ms |
+| `dist/index.js` | 131 KB |
+
+**Read this as weakening B2's cold-start argument, not strengthening it.** `docs/deploy.md` §5
+measured the *old* path — the 35 MB JSON parse — at ~2.3 s to the first ask and 171–267 MB RSS, and
+`backend.md` B1 and STACK §2.2 both reason from those figures. `data.md` D6 already replaced that
+with the SQLite artifact, so the dictionary now costs about **19 MB of page cache and tens of
+milliseconds**, not hundreds of megabytes and seconds. B2 should still happen — the contract flip is
+about grounding on the client, a dictionary-free proxy and PLAN.md §1's third commitment, and those
+arguments are untouched — but "the server's cold start and memory" is no longer one of its reasons
+and a plan that leads with it is leading with a number that is four months stale. The
+deploy-measured version of the same table is the outstanding criterion above; nothing here
+substitutes for it, because a host that scales to zero pays the 78 MB and the 55 ms on every cold
+instance rather than once.
+
+### What I decided that the plan did not settle
+
+**1. The `packages/ai` / `lib/db` decision — neither of B1's two options; a third that `wave-zero.md`
+§5's own rule already implied.** B1 offers injection (recommended) or extracting a `packages/schema`,
+and says the choice must be made in the phase and written here. Both were unnecessary. The only
+things in `packages/ai` that read `lib/db` were six functions in `examples.ts` — `knownSet`,
+`knownHeadwords`, `getKnownSet`, `knownEntryFilter`, `allowedEntryIds` and `filterCachedSentences` —
+and every one of them resolves the learner's vocabulary out of **Dexie**, which exists only in the
+browser. `wave-zero.md` §5 says `packages/ai/` holds "anything the app and the server both need";
+the server needs none of them. So they **moved** rather than changing shape, byte-identical, which
+is what keeps B1's "the review has one variable" promise — injection would have changed four call
+sites' signatures in a phase whose whole point is that nothing changes.
+
+They landed in **`apps/app/lib/srs/known-set.ts`**, not in `lib/ai/`. `wave-zero.md` §5 reserves
+`apps/app/lib/ai/` for B2's `ask-client.ts` alone and `tests/unit/ai/contract.test.ts` enforces it;
+`lib/srs/` already owns `wordState`, `KNOWN_SAMPLE_LIMIT` and the looser `LearnerProfile.knownSample`
+built off the same rows. `apps/app/lib/api/recall-client.ts` is in the same position for the same
+reason.
+
+**What is left in `packages/ai` that still reaches `@/lib/**`, and why it is not the same problem.**
+Ten `import type` edges (erased at emit) plus **two** runtime ones: `sha1Hex` from `@/lib/dev/sha1`
+(`cache-key.ts`) and `hasCjk` from `@/lib/dict/rank` (`retrieve.ts`). Both are pure leaf functions
+with nothing under `lib/db` in their graphs, both files are `data.md` D3's rather than this phase's,
+and B1's criterion is "nothing under `lib/db`", which now holds exactly. `packages/ai/package.json`'s
+note says the ruling "has to cover cache-key.ts and retrieve.ts too"; it does not, and the reason is
+that the bundler (below) resolves those two edges and B2's contract flip is the phase that removes
+`retrieve.ts` from the server's graph altogether.
+
+**2. `apps/server` is bundled by esbuild; `tsc` no longer emits.** This was forced, not preferred,
+and B0's `tsconfig.build.json` is deleted. Three things in this server's module graph cannot be made
+loadable by a `tsc` emit:
+
+- `packages/ai` and `packages/access` **export TypeScript source**. Both package.jsons record the
+  debt and HANDOFF says "whoever needs the server to load this package must add a build emitting
+  `dist/*.js`". Against a deploy artifact where `@tangram/ai` is a real directory under
+  `node_modules` rather than a pnpm symlink, Node refuses type stripping and the emitted
+  `dist/index.js` fails with `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`.
+- `apps/app/lib/dict/**` and `lib/server/dict.ts` — which B1 requires, "the dictionary comes with
+  them, on purpose and temporarily" — use **extensionless** relative imports (`from '../artifact'`).
+  Node's ESM resolver requires an extension and `tsc` does not add one, so no emit of that graph
+  loads at all.
+- `@/*` is a tsconfig path mapping, not a runtime concept.
+
+`scripts/build.ts` marks `dependencies` external and inlines every workspace package and app module.
+That **settles the type-stripping debt for the server**: `dist/index.js` plus four real published
+packages is the whole deploy artifact, with no workspace symlinks and no type stripping anywhere.
+`pnpm -F @tangram/ai` and `packages/access` still export source, and still must grow a build the day
+something other than a bundler consumes them.
+
+**3. Two things in `apps/server/tsconfig.json` got worse, and B2 is the phase that reverses both.**
+`moduleResolution` went from `nodenext` to `bundler` (correct: the bundle is what resolves), and
+**`noUncheckedIndexedAccess` is off**. It was on while this package compiled nothing but its own
+`src/`; B1's temporary dictionary puts ~40 `apps/app` modules and eleven `packages/ai` modules into
+the program, neither of which sets the flag — 71 errors, 48 of them in `lib/dict/**` and
+`lib/types.ts`, which this phase does not own and another session is editing right now. The
+alternative was to edit 48 lines of someone else's files in a phase whose criterion is that nothing
+changes. `packages/ai/tsconfig.json`'s note says B1 "is the commit that turns it back on here, in
+the same breath as removing the mapping" — **it is not**, and cannot be: removing the `@/*` mapping
+means removing `@/lib/types`, which B1's own text keeps ("`packages/ai` depends on `zod`, the SDK
+and `lib/types.ts`"). The two documents disagree; B1's text is the one with authority over B1.
+`apps/server/tests/workspace.test.ts` now counts the `@/lib/**` import sites in `apps/server/src/**`
+and asserts they are exactly the three route files, so B2 has a number to drive to zero.
+
+**4. The old response types moved to `apps/app/lib/api/contract.ts`.** `AskRouteInfo`,
+`AskRouteResponse`, `ExamplesRouteInfo`, `ExamplesRouteResponse` and `RecallRouteResponse` were
+exported by the route modules and imported by the ask panel, the card back and the in-context gloss.
+An app component may not import a server module — the type erases, but the import would put
+`apps/server/src` in the app's TypeScript project and its eslint scope. They are **declarations
+only**, and the file is a dead end by design: B2 replaces every shape in it with the frozen
+`packages/ai/schemas.ts` and deletes it. It is deliberately *not* beside `schemas.ts`, because "two
+contract modules next to each other" is how the contract review's `ExampleSentence` collision
+happened.
+
+**5. The handlers take their environment through named accessors in `config.ts`.**
+`apps/server/tests/config.test.ts` says "when B1 moves the three model routes here, this is the rule
+that stops one of them reading the key directly instead of being handed it", and all three read
+`process.env` before the move. `config.ts` grew `modelName(fallback, env)` and
+`deadlineMs(name, env)` over a `DEADLINE_DEFAULTS` table carrying the same four numbers and the same
+four variable names. `deadlineMs` reads the environment on **every call**, so the three suites that
+set `TANGRAM_*_TIMEOUT_MS` between cases still work unchanged. `/api/ask`'s one
+`process.env.NODE_ENV !== 'production'` guard became `isDevelopment()`, which is a narrowing —
+a `console.warn` now needs an explicit opt-in rather than merely an unset `NODE_ENV`.
+
+**6. The route table is `scripts/smoke.ts`'s source of truth for API routes now.** W2's smoke walked
+`discoverApiRoutes(app/api/**)`, which returns nothing after the move, so `checkRouteCoverage` would
+have passed vacuously — a guard that is green because there is nothing left to check. It reads
+`apps/server/src/routes/table.ts` instead, and the rule is one-directional and stated in the file:
+every route the **app calls** must have a case, and every case must name a route the server really
+declares. `/health` is deliberately not covered there; `pnpm -F server smoke` walks the same table
+and probes it. This needed `allowImportingTsExtensions` in the workspace-root `tsconfig.json`
+(safe: `noEmit` is set), because `apps/server` writes `./x.ts` specifiers.
+
+**7. `pnpm smoke` with neither `--api-base` nor `--no-api` is now a usage error.** Before B1 the
+fallback (`apiBase = baseURL`) was right, because the preview server answered `/api/**` itself. It
+is now an origin that serves no API at all, so the fallback reports five 404s that look like a
+broken deployment and are really a missing argument. `docs/deploy.md` §7 was rewritten to match, and
+gained the `pnpm -F server smoke --gate on` invocation, which is B1's first criterion as a command.
+
+**8. `pnpm e2e` is a genuinely two-origin run.** `apps/app/.env.e2e` bakes
+`VITE_API_BASE=http://127.0.0.1:8787` into the e2e build and `playwright.config.ts` starts
+`apps/server` there as a second `webServer`, with the app's origin in `TANGRAM_ALLOWED_ORIGINS` and
+**no** `TANGRAM_ACCESS_SECRET` — rule 1 of `@tangram/access`, and what keeps the suite identical to
+an ungated deployment. Every one of the app's API calls in the suite is therefore a real
+cross-origin, preflighted call. There is also `apps/app/.env.development`, so `pnpm dev` plus the
+new root `pnpm dev:api` is a working pair; without the second process the three model-backed
+features fail, which is the honest local shape of a two-deployable product.
+
+**9. `tests/e2e/d/access-gate.spec.ts` stopped using a stub.** Its cross-origin block stood up a
+hand-written `node:http` server "to play the part of `backend.md`'s"; it now runs the **real**
+`apps/server`, gated, on its own port, and a second app build (`dist-gated`) pointed at it. The
+second build is unavoidable: `VITE_API_BASE` is substituted at build time, the suite's main build
+points at the *ungated* API, and the `?key=` exchange decides `granted`/`denied` from the probe's
+status — so against an ungated API a wrong key comes back 200 and nothing is ever revoked. The spec
+removes `dist-gated` in `afterAll`.
+
+**10. `scripts/preview.ts` takes `TANGRAM_PREVIEW_OUT_DIR`**, for (9). Its header used to justify its
+existence by the deleted adapter's need for `tsx`; what justifies it now is pinning port 3000 and
+this knob.
+
+**11. The preflight is asserted in two halves, and Chromium is why.** A preflight is issued by the
+browser's network stack and is **not** surfaced to Playwright: `page.on('request')` never sees the
+`OPTIONS` — measured, the first version of that test recorded zero. So the preflight *answer* is
+asserted directly (methods, and `X-Tangram-Access` in `Access-Control-Allow-Headers`), and the real
+cross-origin POST is made **from the page**, whose success is the proof that a preflight happened
+and the browser accepted the answer. Take either half away and the pair stops meaning anything.
+
+### What I found wrong in the repository and the plan set
+
+1. **`vite-plugins/headers.ts`'s preview 404 was resolved against the wrong directory**, and it took
+   an hour to find. `notFound()` checked `vercel.json`'s `outputDirectory` rather than the directory
+   Vite is actually serving, so the moment `TANGRAM_PREVIEW_OUT_DIR` pointed elsewhere, every hashed
+   asset of that build became a hard 404 **before** Vite's static middleware — a served `index.html`
+   whose own module script is missing, which is a blank page with no error anywhere and no failing
+   request except the one nobody looks at. It now uses `server.config.build.outDir`. It is W2's file
+   and the fix is one expression; the class of bug is the third instance of `wave-zero.md` §10a's
+   "a config-shaped thing matched fewer things than it looked like it matched".
+
+2. **The same file passed `/api/**` through to Vite's SPA fallback.** That was right while the
+   adapter answered its own 404s; with the adapter gone it would have answered `/api/ask` with
+   **200 `index.html`** on the app's origin — a probe that reads healthy while every call fails to
+   parse, which is the exact failure `vercel.json`'s `/api/` exclusion exists to prevent. Removed;
+   the app origin now 404s `/api/**` the way the host does.
+
+3. **`packages/ai/recall.ts` never carried the credential or the API base.** Described above. It was
+   wrong before B1 and B1 is what makes it fatal. Nothing in the plan set names it: `web.md` W4's
+   disposition covers the client half of the gate and lists the call sites that use `apiFetch`, and
+   this one is not among them because it is not in `apps/app`.
+
+4. **`backend.md` B1's memory and cold-start premise is stale.** See the numbers above. B1 says the
+   dictionary "sets a memory floor for the host" and treats the recorded figures as B2's
+   justification; after `data.md` D6 they are 78–97 MB and 55 ms rather than 171–267 MB and 2.3 s.
+   B2's case rests on the grounding contract, not on this.
+
+5. **`apps/server/tests/workspace.test.ts`'s "ships no dictionary" assertion could not have held.**
+   It asserted `dependencies` is exactly `['@hono/node-server', 'hono']`, on the premise that a
+   server-side dictionary would arrive as a *package*. B1 requires the dictionary to arrive, and it
+   arrives through `@/lib/server/dict` and the bundle instead — so the assertion would have failed
+   for the SDK and zod while the thing it guards against walked in the other door. It is re-aimed:
+   the dependency list is still exact (it is the deploy's whole `node_modules`), no dependency may
+   look like a dictionary or a database, and the `@/lib/**` import sites in `src/**` are counted.
+
+6. **`packages/ai/tsconfig.json`'s instruction to B1 contradicts `backend.md` B1.** Decision 3 above.
+
+7. **`.env.example`'s access-gate paragraph still described the cookie** `web.md` W4 replaced
+   ("the cookie it leaves behind lasts a year"). Rewritten, and the file gained
+   `TANGRAM_ALLOWED_ORIGINS` and the four deadline overrides, which `docs/deploy.md` §3 claimed it
+   defined and it did not.
+
+8. **`data.md` D6's `tests/unit/dict/client-callers.test.ts` makes one B1 assertion unwritable in
+   `apps/app`.** It scans every app source file for a dictionary route path and fails on any hit,
+   which is what keeps the deleted routes deleted — so a spec that names one *to prove it 404s* trips
+   the guard that proves it is gone. B1's "requesting one is a 404, not a 401" is therefore asserted
+   in `apps/server/tests/gate.test.ts`, which is outside that scan and is where a fact about the
+   server's route table belongs anyway. Recorded because the next person to try it will lose the same
+   ten minutes.
+
+### What this makes false in `CLAUDE.md`
+
+Not edited, per the brief. The migration-state block needs these, and they are for whoever merges:
+
+- **"There are no accounts, no sync and no AI proxy. The three model-backed routes still run in the
+  app rather than `apps/server`, which is `backend.md` B1."** The second sentence is now false: they
+  run in `apps/server`. Accounts and sync (B3–B5) are unchanged and still need the owner's five
+  artefacts. `ask-client.ts` is still unwritten and still B2's.
+- The commands table: **`pnpm dev` alone no longer serves `/api/**`.** `pnpm dev:api` (new) runs the
+  server beside it, and `apps/app/.env.development` points the app at it.
+- **`pnpm smoke`** now requires `--api-base <url>` or `--no-api`; its description ("hit every route
+  of a built, running server") is true of two servers now, and `pnpm -F server smoke` is the API
+  half.
+- The settle-first table's `packages/ai/**` row is unchanged, but the sentence about what
+  `apps/app/lib/ai/` holds (in `wave-zero.md` §5, quoted by the contract test) is worth knowing
+  about: this phase put its two new browser-side modules in `lib/srs/` and `lib/api/` rather than
+  ask for that rule to change.
+- **The commands block points at a deleted file.** "…which is why `apps/app/tracing.config.ts`
+  traces both" — `tracing.config.ts` is deleted in this phase, at its own header's request. The
+  paragraph's *point* still stands and belongs to `TANGRAM_DATA_DIR`: a bundle or a deployment that
+  carries `data/` without `pnpm-workspace.yaml` beside it breaks the marker walk. That is now
+  `apps/server`'s problem rather than a tracing map's, and `docs/deploy.md` §5a is where it is
+  written down.
+
+### Files another session may collide with
+
+`claude/fix-eager-open` was told to stay out of `apps/app/app/api/**`, `apps/server/**`,
+`packages/access/**`, `scripts/smoke.ts` and `lib/server/route-inventory.ts`, and I was told to stay
+out of `apps/app/lib/dict/**`, `apps/app/components/dict/**` and `lib/lists/entry-source.ts`. I did.
+**Both of us touch `tests/e2e/**`.** Mine, in full:
+
+| File | What changed |
+|---|---|
+| `tests/e2e/d/access-gate.spec.ts` | rewritten around the real gated server and a second build |
+| `tests/e2e/d/smoke.spec.ts` | passes `apiBaseURL`; header reworded |
+
+No other e2e spec is touched. Outside `tests/e2e/**` the overlap risk is
+`components/review/example-sentences.tsx`, where I changed **one import line** (the known-set half
+moved out of `packages/ai`) — `CLAUDE.md` names that file as one the dict-gate fix has an interest
+in.
+
+### A frozen surface I did not change
+
+None was needed. Two came close and both were resolved without asking:
+
+- **`packages/ai/**`** is frozen by `wave-zero.md` §5's move, and B1 explicitly sanctions editing it
+  to break the `lib/db` coupling. The edit is a deletion — six functions moved out, one import line
+  narrowed — and `packages/ai/schemas.ts`, the frozen ask contract, is untouched.
+- **`lib/db/repository.ts`, `lib/db/schema.ts`, `lib/types.ts`, `lib/srs/params.ts`** — none touched.
+
+### Gate
+
+Final, after the review fixes below: `pnpm build`, `pnpm lint`, `pnpm typecheck`, `pnpm test`
+(**1,824** app + **102** server), `pnpm e2e` (**268** specs, 5.6 min) and
+`pnpm smoke --base-url … --api-base …` (21 ok) all green, plus
+`pnpm -F server smoke --gate off` (**7/7**) and `--gate on` (**11/11**, the unkeyed-401 / keyed pair
+on every gated route), which is B1's first acceptance criterion executed rather than described.
+
+The server smoke's seventh case is the one the review added, and it is worth knowing it fails
+loudly: against an instance with `TANGRAM_DATA_DIR` pointed at an empty directory the same command
+reports **6/7** with `FAIL POST /api/examples → 503 (expected 404)`.
+
+### The reviews, and what they changed
+
+Two adversarial reviewers read the diff cold and in parallel, per the brief: one against B1's
+acceptance criteria one at a time, one on "what breaks that no test covers". Both ran the code rather
+than reading it — separate servers on their own ports, real curl, the Playwright spec, and in one
+case a real Anthropic call. **Both confirmed all six criteria** (criterion 5 correctly flagged
+deploy-only), and the criteria reviewer independently reproduced the RSS and cold-start numbers
+above.
+
+Neither found a way past the gate. That is worth writing down plainly, because it is the thing this
+phase could most easily have got wrong and HANDOFF records a previous review catching exactly that:
+every one of the five handler entries calls `requireAccess` first, on top of the server-level prefix
+gate, and `/api/dict/*` 404s rather than 401ing.
+
+**Six survivors were fixed. Each has a test that fails against the old code.**
+
+1. **`pnpm smoke` reported a perfect 6/6 against a server that could not answer a single real
+   request.** Both reviewers found this independently and it is the most serious thing in the review.
+   `backend.md` B1 keeps the dictionary in the server process, the deploy artifact is a code bundle
+   that does not contain `data/`, and every POST smoke case sent `{}` — which `parseBody` rejects
+   **before** `serverDictStore()` is reached. Both handshakes are pure. So a deployment missing the
+   43 MB artifact passed the whole smoke while answering `503 {"error":"dict-data-missing"}` to
+   everything. `apps/server/scripts/build.ts`'s header made it worse by claiming `dist/index.js` plus
+   four dependencies "is the whole of it", and `docs/deploy.md` had no `apps/server` section at all.
+   **Fixed** with a third smoke case — `POST /api/examples` with an entry id no build contains, which
+   gets past validation, opens the artifact, and answers **404**; a dictionary-less server answers
+   503 and the smoke fails naming the line. Verified both ways: 6/7 with `TANGRAM_DATA_DIR` pointed
+   at an empty directory, 7/7 without. `docs/deploy.md` gained §5a, `.env.example` gained the
+   warning on `TANGRAM_DATA_DIR`, and `build.ts`'s claim is corrected.
+
+2. **`pnpm dev:api` — the pair this phase documents — was dead on arrival.** `pnpm -F server dev`
+   set no `NODE_ENV`, `isDevelopment()` therefore said no, `readCorsPolicy` skipped `DEV_ORIGINS`
+   entirely, and every cross-origin call from `localhost:5173` was blocked by a preflight with no
+   `Access-Control-Allow-Origin`. `gate.test.ts` proved the dev origins are in
+   `readCorsPolicy({}, false)` and never asked which branch the one command that needs them takes;
+   `playwright.config.ts` sidesteps it twice over. **Fixed** by setting `NODE_ENV=development` in
+   that script — verified by reading the boot line's `allowedOrigins` and the preflight's header.
+   Decision 8 above said "a working pair" and was wrong when it was written.
+
+3. **A percent-encoded path skipped the front gate.** `URL.pathname` does not decode; Hono's router
+   matches the decoded path. So `/api/%61sk` was "not gated" to a literal prefix match and was routed
+   to the real `/api/ask` handler regardless — and `/api/%61sk/propose` reached the router un-gated
+   and 404'd, which falsifies this module's own claim that B2's two money-spending paths are "already
+   covered by the prefix". It cost nothing today because `requireAccess` is the first line of every
+   handler, which is good evidence that the redundancy `packages/access` argues for is not
+   ceremonial. **Fixed**: `pathsOf` returns both spellings and the gate refuses if either is gated; a
+   malformed escape falls back to the raw form. Three encoded paths and a `%zz` are pinned.
+
+4. **The 502 body carried the provider's error message unredacted.** `log.ts`'s redactor exists to
+   keep `ANTHROPIC_API_KEY` and `TANGRAM_ACCESS_SECRET` out of everything this process emits, and
+   `config.ts` defaults `production` to true precisely so internal error text does not reach a public
+   body — but a handler-authored `Response.json` is not the `onError` 500, so it was gated on nothing
+   and scrubbed by nothing. A reviewer put a real SDK authentication error into a public 502 to show
+   it. **Fixed** by running `redactString` over every hint the three routes build from a value. This
+   is a fix rather than a behaviour change: a message with no configured secret in it comes back
+   byte-identical, and suppressing the hint would be a behaviour change (the ask panel shows it) and
+   is B7's call. Pinned behaviourally through `gradeRecallWith`'s injectable provider, plus a scan of
+   the other two.
+
+5. **`checkRouteCoverage` filtered the server's table through a hand-written list of three paths** —
+   which would silently skip B2's `/api/ask/propose` and `/api/ask/answer`, leaving `pnpm smoke`
+   covering neither unless someone remembered to edit a literal. Precisely the drift `wave-zero.md`
+   §5 ruling 2 legislates against. **Fixed** by deriving the set from the table's `gated` column: a
+   route is gated exactly when it reaches a paid model, which is exactly when the app calls it. The
+   derivation also refuses to pass vacuously if the set is ever empty.
+
+6. **`apps/server/tests/routes.test.ts` asserted one smoke case per route, not per method** — so a
+   route declaring `['GET','POST']` with only a GET case passed, which is how `POST /api/ask` could
+   have shipped unprobed with this file green. **Fixed** to per method.
+
+**Two more were fixed as documentation rather than code**, because the manifest of a frozen surface
+is what the next session reads: `packages/ai/package.json`'s debt note still described the `lib/db`
+imports B1 removed and named six runtime edges where two remain, and
+`packages/ai/examples.ts` said "six" over a list of five.
+
+**Three were accepted and recorded rather than fixed.**
+
+- **`apps/server`'s `noUncheckedIndexedAccess` stays off until B2** (decision 3). A reviewer's point
+  was not that it is undocumented but that *nothing fails if B2 forgets*. So
+  `apps/server/tests/workspace.test.ts` now ties the two together: while `src/**` still imports
+  `@/lib/**` the flag may be off, and the moment the last such import goes — which is exactly what
+  B2's contract flip achieves — the test demands the flag back, in that same commit.
+- **`ask.ts`'s `process.env.NODE_ENV !== 'production'` → `isDevelopment()`** is a real narrowing and
+  the one place "byte-identical move" is untrue: with `NODE_ENV` unset the old code warned on a
+  failed `proposePhrases` and the new one does not. Fix 2 above restores it for the path that
+  matters (`pnpm dev:api` now sets `NODE_ENV=development`), and the difference is a `console.warn`.
+- **`route-inventory.ts`, `scripts/smoke.ts` and `routes.test.ts` were rewritten, and
+  `wave-zero.md` §3 gives W2 their final form.** The criteria reviewer judged it defensible — W2 has
+  landed, `app/api/` no longer exists so the walker returns nothing and the kept tests would have
+  been green-because-empty, and `tracing.config.ts`'s own header named this commit — but called it
+  ownership drift worth a merge-time decision, and noted it is "the one place where *the review has
+  one variable* is not true: B1 deleted a guard rather than leaving it vacuous". Recorded as such.
+
+**Two notes, neither actionable here.** The gated build in `tests/e2e/d/access-gate.spec.ts` carries
+the main build's service-worker shell list, so its precache degrades silently — a throwaway build,
+no production path. And `CLAUDE.md:57` now points at `apps/app/tracing.config.ts`, which this phase
+deletes; it joins the list above for whoever merges.
+
+### A trap this phase makes much worse, for whoever runs the suite next
+
+`playwright.config.ts` has set `reuseExistingServer: true` since `web.md` W1, and it is useful: a
+preview server already on `:3000` is reused and the six-minute build is skipped. **After B1 that is
+a loaded gun.** The e2e build is the only thing that bakes in `VITE_API_BASE` (`.env.e2e`), so a
+server left running from a plain `pnpm build` — or from a `pnpm smoke` session somebody forgot to
+close — is silently substituted for the one the suite meant to test, and the app it serves has an
+*empty* API base and no `/gallery`.
+
+I did exactly that to myself between two runs, and the presentation is worth recording because it
+looks nothing like its cause: **78 failures spread across `a/examples`, `b/recall`, `p4/ask`,
+`core/dict-states` and `core/gallery`**, none of them mentioning the API, the run taking 16.8
+minutes instead of 5.5, and `pnpm -F server smoke`, the unit suites and the access-gate spec all
+green throughout. The tell is `core/gallery` failing — that spec touches no network at all, and it
+is only in the bundle under `--mode e2e`, so its absence says "the build you are testing is not the
+build this command makes".
+
+`ss` is not installed in this container and `pkill -f` is forbidden, so the check is:
+
+```bash
+ps -eo pid,args | grep -E '[p]review|[d]ist/index.js'
+```
+
+before trusting a red e2e. I have left the setting alone — it belongs to `web.md` and the
+convenience is real — but a later phase that wants to close this properly has the evidence here.

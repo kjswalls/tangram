@@ -11,14 +11,16 @@ import { beforeAll, describe, expect, it } from 'vitest';
 
 import {
   EXAMPLES_SHOWN,
-  filterCachedSentences,
   groundExamples,
   keepSentence,
+  type ExampleSentence,
+} from '@tangram/ai/examples';
+import {
+  filterCachedSentences,
   knownEntryFilter,
   knownHeadwords,
   knownSet,
-  type ExampleSentence,
-} from '@tangram/ai/examples';
+} from '@/lib/srs/known-set';
 import { MAX_PHRASE_TOKENS, renderPhrase, entryLookup } from '@tangram/ai/ground';
 import type { ParsedExampleSentences } from '@tangram/ai/provider';
 import type { CardRow } from '@/lib/db/schema';

@@ -303,23 +303,38 @@ describe('the stored credential', () => {
 
 describe('the API base', () => {
   it('is same-origin when no VITE_API_BASE was built in', () => {
-    // Which is every build so far: `backend.md` has not deployed a server, and
-    // the dev and preview servers answer /api/** themselves.
+    // Still the default, and after `backend.md` B1 it is a default that reaches
+    // nothing: the dev and preview servers no longer answer `/api/**` at all.
+    // A deployment sets `VITE_API_BASE` to the server's origin (docs/deploy.md
+    // §4) and `pnpm e2e` sets it in `.env.e2e`. This asserts the fallback, not
+    // that the fallback is useful.
     expect(apiUrl('/api/ask')).toBe('/api/ask');
     expect(apiUrl('/api/examples?band=1')).toBe('/api/examples?band=1');
   });
 });
 
 describe('the routes', () => {
+  // They live in `apps/server` now (`backend.md` B1) and the app's suite still
+  // runs them, through the `@server/*` alias `vitest.config.ts` declares: these
+  // four suites call `requireDictData` and need the real 124k-entry dictionary
+  // in `data/`, which a server package that (after B2) ships no `data/` cannot
+  // host. B1 says so in as many words.
+  //
+  // What this asserts is the HANDLER's own gate — `requireAccess` as the first
+  // line of each — which is the redundancy `packages/access`'s header asks for.
+  // The layer in FRONT of them is the server's and is asserted there
+  // (`apps/server/tests/gate.test.ts`), because neither test can see the other
+  // half and a gate with only one half is the failure `wave-zero.md` §10a is
+  // about.
   it('401s a POST with no header and lets one with the header through', async () => {
     process.env.TANGRAM_ACCESS_SECRET = SECRET;
 
     // Imported lazily: with the variable set *before* the handlers run, this
     // exercises the gate as the deployment does.
     const [ask, examples, recall] = await Promise.all([
-      import('@/app/api/ask/route'),
-      import('@/app/api/examples/route'),
-      import('@/app/api/recall/route'),
+      import('@server/routes/ask.ts'),
+      import('@server/routes/examples.ts'),
+      import('@server/routes/recall.ts'),
     ]);
 
     const post = (path: string, value?: string): Request =>

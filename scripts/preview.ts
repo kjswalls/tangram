@@ -1,17 +1,23 @@
 /**
- * Serves the production build, with the API adapter mounted.
+ * Serves the production build.
  *
- * **This exists because of one constraint and it is worth stating plainly.** The
- * Vite preview server has no transform pipeline — it serves `dist/` statically —
- * so the adapter's `await import('<app>/app/api/ask/route.ts')` from Node is a
- * bare resolution error. `web.md` W1 offers two mechanisms; this is **(a)**:
- * start preview from a script run under `tsx`, whose loader hook compiles the
- * handler modules on import. `tsx` is already a direct devDependency and is
- * already how `pnpm data`, `pnpm sw` and `pnpm smoke` execute TypeScript under
- * Node, so it adds no dependency and no second build step. Mechanism (b) — a
- * second esbuild/Rollup pass emitting the handlers as a Node-loadable bundle —
- * would have added a build artifact whose only consumer is a bridge that
- * `data.md` D6 and `backend.md` delete. Recorded in HANDOFF.md.
+ * **It existed for a constraint that `backend.md` B1 removed, and it is worth
+ * saying what is left.** The Vite preview server has no transform pipeline — it
+ * serves `dist/` statically — so the API adapter `web.md` W1 built could not
+ * `await import('<app>/app/api/ask/route.ts')` from plain Node. W1 offered two
+ * mechanisms and took (a): start preview from a script run under `tsx`, whose
+ * loader hook compiles the handler modules on import. B1 deleted that adapter
+ * and moved the three handlers to `apps/server`, so nothing here imports a
+ * `.ts` module any more.
+ *
+ * What still justifies a script rather than `vite preview`: it pins the port to
+ * **3000**, which is what `scripts/smoke.ts` and `playwright.config.ts` both
+ * default to and what `next start` used before them, and it takes
+ * `TANGRAM_PREVIEW_OUT_DIR` so a caller can serve a second build without a
+ * second config. `tests/e2e/d/access-gate.spec.ts` is that caller: it builds
+ * the app a second time against a *gated* API origin, because `VITE_API_BASE`
+ * is substituted at build time and the suite's main build points at the ungated
+ * one.
  *
  * `PORT` rather than a flag, because that is what `playwright.config.ts` and
  * `pnpm smoke` already pass around.
@@ -29,9 +35,14 @@ const appDir = resolve(workspaceRoot(dirOf(import.meta.url)), 'apps/app');
 // shows up when someone runs the two commands separately, as CLAUDE.md invites.
 const port = Number(process.env.PORT ?? 3000);
 
+// Which build to serve. `dist` unless a caller says otherwise; Vite's preview
+// server reads `build.outDir`, so this is the one knob that moves it.
+const outDir = process.env.TANGRAM_PREVIEW_OUT_DIR?.trim() || 'dist';
+
 const server = await preview({
   root: appDir,
   configFile: resolve(appDir, 'vite.config.ts'),
+  build: { outDir },
   preview: { port, strictPort: true, host: '127.0.0.1' },
 });
 

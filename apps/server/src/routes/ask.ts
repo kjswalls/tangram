@@ -21,9 +21,8 @@
  */
 
 import { withDeadline } from '@tangram/ai/deadline';
-import type { GroundedAskResponse } from '@tangram/ai/ground';
 import { ASK_PROMPT_VERSION } from '@tangram/ai/cache-key';
-import { selectProvider, askResponseSchema, ProviderError, type AskContext, type ProviderName } from '@tangram/ai/provider';
+import { selectProvider, askResponseSchema, ProviderError, type AskContext } from '@tangram/ai/provider';
 import { retrievalEcho } from '@tangram/ai/fake';
 import {
   RETRIEVED_CAP,
@@ -36,39 +35,38 @@ import {
 import { hasCjk } from '@/lib/dict/rank';
 import { dictErrorResponse, serverDictStore } from '@/lib/server/dict';
 import type { DictStore } from '@/lib/dict/store';
+import type { AskRouteInfo, AskRouteResponse } from '@/lib/api/contract';
 import type { Entry, EntryId, HskBand, LearnerProfile } from '@/lib/types';
 import { DEFAULT_MODEL } from '@tangram/ai/anthropic';
 import { requireAccess } from '@tangram/access';
-
-// The dictionary is opened from disk per process; never prerender at build time.
-export const dynamic = 'force-dynamic';
+import { deadlineMs, isDevelopment, modelName } from '../config.ts';
+import { redactString } from '../log.ts';
 
 /**
- * The retrieval constants live in `lib/ai/retrieve.ts` now (docs/plans/data.md
- * D6) and are re-exported rather than redeclared: two copies of a cap is how a
- * cap drifts, and `tests/unit/ai/route.test.ts` reads them from here.
+ * The retrieval constants live in `packages/ai/retrieve.ts` (docs/plans/data.md
+ * D3 and D6) and are re-exported rather than redeclared: two copies of a cap is
+ * how a cap drifts, and `tests/unit/ai/route.test.ts` reads them from here.
  */
 export { RETRIEVED_CAP, SEARCH_HEAD };
 
 /**
- * How long a provider may take. A cron is not waiting on this — a person is,
- * with "Thinking about …" on screen and no way out but retyping, so a hung
- * upstream has to become an answer rather than a spinner. The proposal step
- * gets the short one: it is retrieval help (§3.4), and the dictionary search
- * already stands without it.
+ * **How long a provider may take is `src/config.ts`'s now** —
+ * `DEADLINE_DEFAULTS.askPropose` (8 s) and `.askAnswer` (30 s), the same two
+ * numbers and the same two environment variables this file used to hold.
+ *
+ * A cron is not waiting on these; a person is, with "Thinking about …" on
+ * screen and no way out but retyping, so a hung upstream has to become an
+ * answer rather than a spinner. The proposal step gets the short one: it is
+ * retrieval help (§3.4), and the dictionary search already stands without it.
+ *
+ * They moved because this server's rule is that a handler takes values rather
+ * than reaching for `process`, and `tests/config.test.ts` names `backend.md` B1
+ * — this move — as the phase the rule was written for. `deadlineMs` still reads
+ * the environment on every call, so a test that sets
+ * `TANGRAM_ASK_ANSWER_TIMEOUT_MS` between cases still works.
  */
-export const PROPOSE_TIMEOUT_MS = 8_000;
-export const ANSWER_TIMEOUT_MS = 30_000;
 
-/**
- * Both are overridable by env, which is what lets a test prove the deadline
- * exists without waiting 30 s for it — and what lets a deployment behind a
- * slower upstream move them without a rebuild.
- */
-function timeoutMs(name: string, fallback: number): number {
-  const raw = Number(process.env[name]);
-  return Number.isFinite(raw) && raw > 0 ? raw : fallback;
-}
+/** Everything below is a limit on what a *caller* may send. */
 const MAX_QUERY_CHARS = 400;
 const MAX_SENTENCE_CHARS = 400;
 const MAX_KNOWN_SAMPLE = 200;
@@ -79,32 +77,29 @@ interface AskRequestBody {
   profile: LearnerProfile;
 }
 
-export interface AskRouteInfo {
-  provider: ProviderName;
-  promptVersion: string;
-  /** Present only for the live provider; the fake has no model. */
-  model?: string;
-}
-
-export interface AskRouteResponse extends AskRouteInfo {
-  query: string;
-  /** The CC-CEDICT snapshot the entries came from; stamped onto any card added. */
-  dictVersion: string;
-  /** Validated: ids and indexes only. This is what the client caches. */
-  response: GroundedAskResponse;
-  /** Every entry the answer cites, so the client can render it without a round trip. */
-  entries: Entry[];
-  /** How many entries were retrieved for the model. Diagnostic only. */
-  retrieved: number;
-  /**
-   * False when the answer is a stand-in the route built because the provider's
-   * own answer did not survive grounding. The client must not cache it: the
-   * next ask should reach the provider again rather than repeat the fallback
-   * for as long as the row lives.
-   */
-  cacheable: boolean;
-}
-
+/**
+ * Why a provider failure is redacted before it is put in a 502 body.
+ *
+ * The three handlers have always answered a provider failure with
+ * `{error:'provider-failed', hint: <the error's message>}`, and `core.md`'s ask
+ * panel shows that hint — a learner seeing "the model is overloaded" instead of
+ * a blank panel is the point, so this is not something to suppress.
+ *
+ * What the move changed is where the body is written: `config.ts` defaults
+ * `production` to true precisely because "the fail-open version of this ships
+ * internal error text in public 500 bodies on every host that does not set
+ * `NODE_ENV`", and `log.ts`'s redactor exists to keep `ANTHROPIC_API_KEY` and
+ * `TANGRAM_ACCESS_SECRET` out of anything this process emits. Neither applied
+ * here: a handler-authored `Response.json` is not the `onError` 500, so it was
+ * gated on nothing and scrubbed by nothing. An adversarial reviewer put a real
+ * SDK error into a public 502 to show it.
+ *
+ * `redactString` is therefore run over the hint. It is **not** a behaviour
+ * change anyone can observe: it replaces a configured secret's value with
+ * `[redacted]`, and a body that never contained one comes back byte-identical.
+ * Suppressing the hint outright would be a behaviour change, and is B7's call
+ * along with the rest of the operational surface.
+ */
 function badRequest(hint: string): Response {
   return Response.json({ error: 'bad-request', hint }, { status: 400 });
 }
@@ -190,9 +185,7 @@ export function GET(request: Request): Response {
   const info: AskRouteInfo = {
     provider: provider.name,
     promptVersion: ASK_PROMPT_VERSION,
-    ...(provider.name === 'anthropic'
-      ? { model: process.env.TANGRAM_MODEL?.trim() || DEFAULT_MODEL }
-      : {}),
+    ...(provider.name === 'anthropic' ? { model: modelName(DEFAULT_MODEL) } : {}),
   };
   return Response.json(info);
 }
@@ -227,14 +220,14 @@ export async function POST(request: Request): Promise<Response> {
         candidates = (
           await withDeadline(
             provider.proposePhrases(query, context),
-            timeoutMs('TANGRAM_ASK_PROPOSE_TIMEOUT_MS', PROPOSE_TIMEOUT_MS),
+            deadlineMs('askPropose'),
             'proposePhrases',
           )
         ).candidates;
       } catch (error) {
         // Retrieval help is optional; the dictionary search still stands.
         candidates = [];
-        if (process.env.NODE_ENV !== 'production') console.warn('proposePhrases failed', error);
+        if (isDevelopment()) console.warn('proposePhrases failed', error);
       }
     }
     retrieved = mergeRetrieved(fromSearch, await candidateEntries(store, candidates));
@@ -248,7 +241,7 @@ export async function POST(request: Request): Promise<Response> {
   try {
     raw = await withDeadline(
       provider.answer(retrieved, profile, query, context),
-      timeoutMs('TANGRAM_ASK_ANSWER_TIMEOUT_MS', ANSWER_TIMEOUT_MS),
+      deadlineMs('askAnswer'),
       'the answer',
     );
   } catch (error) {
@@ -259,7 +252,7 @@ export async function POST(request: Request): Promise<Response> {
           ? error.message
           : 'the provider failed';
     return Response.json(
-      { error: 'provider-failed', provider: provider.name, hint: message },
+      { error: 'provider-failed', provider: provider.name, hint: redactString(message) },
       { status: 502 },
     );
   }
@@ -270,7 +263,9 @@ export async function POST(request: Request): Promise<Response> {
       {
         error: 'provider-invalid',
         provider: provider.name,
-        hint: `the answer did not match the schema: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        hint: redactString(
+          `the answer did not match the schema: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        ),
       },
       { status: 502 },
     );
@@ -311,9 +306,7 @@ export async function POST(request: Request): Promise<Response> {
   const body: AskRouteResponse = {
     provider: provider.name,
     promptVersion: ASK_PROMPT_VERSION,
-    ...(provider.name === 'anthropic'
-      ? { model: process.env.TANGRAM_MODEL?.trim() || DEFAULT_MODEL }
-      : {}),
+    ...(provider.name === 'anthropic' ? { model: modelName(DEFAULT_MODEL) } : {}),
     query,
     dictVersion: store.status.state === 'ready' ? store.status.version : '',
     response: grounded,

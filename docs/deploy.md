@@ -149,14 +149,34 @@ The static build reads **one** variable, at build time:
 
 | Variable | Required | Effect when absent |
 |---|---|---|
-| `VITE_API_BASE` | once `apps/server` is deployed | empty, i.e. same-origin — which on this static host means **no API at all**. Build-time, so changing it needs a redeploy |
+| `VITE_API_BASE` | **yes**, from `backend.md` B1 | empty, i.e. same-origin — which on this static host means **no API at all**, so ask, i+1 sentences and free recall are simply dead. Build-time, so changing it needs a redeploy. Set it to `https://api.<domain>` |
 | `TANGRAM_DATA_DIR` | no | the workspace root's `data/`, found by walking up for `pnpm-workspace.yaml` |
 | `TANGRAM_DICT_BROTLI_QUALITY` | no | 9 (§2) |
 
-Everything else — `ANTHROPIC_API_KEY`, `TANGRAM_ACCESS_SECRET`, the four ask
-timeouts, `TANGRAM_LLM_PROVIDER`, `TANGRAM_MODEL` — belongs to **`apps/server`**
-and must never be set on this project. A model key in a static site's build
-environment is a key in a bundle. `.env.example` lists them with the server.
+**`VITE_API_BASE` is required now, not "once the server is deployed".**
+`backend.md` B1 moved `/api/ask`, `/api/examples` and `/api/recall` into
+`apps/server` and deleted the dev/preview adapter that used to mount them on the
+app's own origin. A build with this unset produces an app whose three
+model-backed features fail silently — the ask panel reports a network error, the
+card back shows no sentences, and free recall simply gives no suggestion,
+because it was written to treat every failure as "no suggestion". `pnpm e2e`
+bakes it in through `apps/app/.env.e2e`, which is also the working example.
+
+Everything else — `ANTHROPIC_API_KEY`, `TANGRAM_ACCESS_SECRET`,
+`TANGRAM_ALLOWED_ORIGINS`, the four ask timeouts, `TANGRAM_LLM_PROVIDER`,
+`TANGRAM_MODEL` — belongs to **`apps/server`** and must never be set on this
+project. A model key in a static site's build environment is a key in a bundle.
+`.env.example` lists them with the server.
+
+**One of the server's variables is this project's problem anyway, and it is the
+one that will bite first.** `TANGRAM_ALLOWED_ORIGINS` on the server has to name
+*this* deployment's origin, exactly — scheme, host and port, no trailing path.
+A custom request header makes every cross-origin `POST` a preflighted one, so an
+origin missing from that list fails every gated call before the handler is
+reached, and the browser reports it as a CORS error rather than as anything
+about the API. Deploying the app to a new origin means editing a variable on the
+*server*. `capacitor://localhost` and `http://localhost` — the two Capacitor
+WebView origins — are built in and need no configuration.
 
 ## 5. The access gate
 
@@ -240,6 +260,57 @@ secret is never logged and never appears in a response body.
 `pnpm e2e` run in exactly that state, which is deliberate: a gate that changed
 local behaviour would be switched off within a week.
 
+## 5a. The server (`apps/server`), and the one thing that is easy to forget
+
+**This document is the Vercel *static* project's.** `backend.md` B7 owns the
+server's deployment half in full and has not run; what follows is the minimum
+`backend.md` B1 owes a deployer, because B1 is the phase that made a second
+deployable exist.
+
+`pnpm -F server build` emits **two files**: `dist/index.js` (an esbuild bundle
+that inlines every workspace package and every first-party module) and
+`dist/build-info.json` (the git sha `/health` reports). `pnpm install --prod`
+on that package brings four published dependencies. `node dist/index.js` then
+starts and answers `/health`.
+
+**And it cannot answer a single real request, because it has no dictionary.**
+`backend.md` B1 keeps the dictionary in the server process — "the dictionary
+comes with them, on purpose and temporarily", until B2's contract flip moves
+retrieval to the client — so `/api/ask`, `/api/examples` and `/api/recall` open
+`data/dict-<schema>-<cedict>.sqlite` and `data/dict-manifest.json` on first use.
+Neither is in the bundle. Both are found through `TANGRAM_DATA_DIR`, or, when
+that is unset, by walking up from the working directory for
+`pnpm-workspace.yaml` — a marker a deploy tree does not have.
+
+So a deployment of this server must do one of two things:
+
+1. ship `data/` alongside `dist/` and set **`TANGRAM_DATA_DIR`** to its absolute
+   path; or
+2. run `pnpm data` on the host before starting, which needs the repository and
+   the upstream sources.
+
+(1) is the shape to prefer, and the artifact is **43.1 MB**. Get it wrong and
+the failure is quiet in exactly the way this document exists to prevent:
+`/health` answers 200, `pnpm -F server smoke` used to answer 6/6, and every real
+request answers `503 {"error":"dict-data-missing","hint":"run pnpm data"}`. That
+was found by an adversarial review of B1, and the smoke now carries a case that
+opens the dictionary (`POST /api/examples` with an entry id no build contains,
+expecting **404** rather than 503) so the same mistake fails the check.
+
+**Measured in the container, fake provider, for whoever sizes the host:** 78 MB
+RSS after boot, 97 MB after the first ask (which is what opens the artifact),
+55 ms from a cold process to a first answered ask. Those supersede this
+document's old §5 figures — 171–267 MB and ~2.3 s — which measured the 35 MB
+JSON parse `data.md` D6 deleted. `backend.md` B1 asks for the deployed versions
+of the same numbers and they are outstanding.
+
+**The environment it reads** is `.env.example`'s "The server, apps/server"
+block: `TANGRAM_SERVER_PORT` (or `PORT`), `HOST`, `NODE_ENV`,
+`TANGRAM_ACCESS_SECRET`, `TANGRAM_ALLOWED_ORIGINS`, `ANTHROPIC_API_KEY`,
+`TANGRAM_LLM_PROVIDER`, `TANGRAM_MODEL`, the four deadline overrides,
+`TANGRAM_DRAIN_MS`, `TANGRAM_BUILD_SHA` and `TANGRAM_DATA_DIR`. None of them
+belongs on the static project (§4).
+
 ## 6. Storage, not function memory
 
 The previous version of this document budgeted per-route function memory for a
@@ -261,14 +332,34 @@ it is still a `tsx` CLI:
 
 ```bash
 pnpm build                      # so there is a build manifest to check assets against
-pnpm smoke --base-url https://<your-app>.vercel.app --no-api
+pnpm smoke --base-url https://<your-app>.vercel.app --api-base https://api.<domain>
 ```
 
-**`--no-api` is required until `backend.md` ships a server**, and leaving it off
-is not a near miss: this deployable emits no functions, `vercel.json`'s fallback
-deliberately excludes `/api/` so those paths 404, and every API case would fail
-against a perfectly healthy deployment. Once the server exists, replace it with
-`--api-base https://<the server>` and the same run covers both halves.
+**`--api-base` is what covers both halves**, and it is not optional dressing:
+this deployable emits no functions, `vercel.json`'s fallback deliberately
+excludes `/api/` so those paths 404 on the app's origin, and every API case
+would fail against a perfectly healthy deployment without it. Use `--no-api`
+only when there is no server to point at yet; a run with neither flag fails by
+construction.
+
+The API has a smoke of its own, and it is the one that proves the gate:
+
+```bash
+TANGRAM_ACCESS_SECRET=<the secret> \
+  pnpm -F server smoke --base-url https://api.<domain> --gate on
+```
+
+`--gate on` runs every gated case **twice** — once with no credential expecting
+401, once with it expecting the route's own status — which is `backend.md` B1's
+first acceptance criterion exactly. `--gate off` asserts the open behaviour of a
+deployment with no secret set. Whether a gate exists is a property of the
+server's environment rather than of the route, so it is stated rather than
+guessed: a smoke that accepted either would not notice a gate that had stopped
+existing. Its POST cases send an empty body and expect the route's own 400,
+deliberately: these three routes cost money on every successful call, and a
+deploy check that billed the owner would stop being run. Pass the secret in the
+environment rather than with `--key`; `--key` works, and warns, because pnpm
+echoes the resolved command line twice per run.
 
 It walks every hashed asset in `dist/.vite/manifest.json`, the three files the
 PWA needs, the dictionary's four, and every page route in `src/routes.tsx` —

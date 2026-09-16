@@ -65,3 +65,9 @@ blob-report/
 # crashed run leaves it behind; it is never something to commit.
 apps/app/dist-prod-check/
 apps/app/dist-e2e-check/
+
+# The gated build `apps/app/tests/e2e/d/access-gate.spec.ts` makes so the
+# `?key=` exchange can probe an API that actually refuses a wrong key
+# (docs/plans/backend.md B1). Same shape as the two above: throwaway, and never
+# something to commit.
+apps/app/dist-gated/

@@ -11,7 +11,8 @@
  */
 import { beforeAll, describe, expect, it } from 'vitest';
 
-import { gradeRecallWith, parseRecallBody, POST, type RecallRouteResponse } from '@/app/api/recall/route';
+import { gradeRecallWith, parseRecallBody, POST } from '@server/routes/recall.ts';
+import type { RecallRouteResponse } from '@/lib/api/contract';
 import { RECALL_ANSWER_MAX_CHARS, RECALL_GRADE_VALUES } from '@tangram/ai/recall';
 import { ProviderError, RECALL_GRADES, type LLMProvider } from '@tangram/ai/provider';
 import type { Entry } from '@/lib/types';

@@ -1,5 +1,5 @@
 {
-  "//": "The workspace root's own TypeScript project: `scripts/**` and nothing else. `apps/app` has its own tsconfig.json and is not included from here. Before the W0 move these four files were inside the app's project and `next build` typechecked them; this file is what keeps that true now that they are not (docs/plans/web.md W0, docs/plans/wave-zero.md §1).",
+  "//": "The workspace root's own TypeScript project: `scripts/**` and nothing else. `allowImportingTsExtensions` is on (and safe, because `noEmit` is) so that `scripts/smoke.ts` can read `apps/server/src/routes/table.ts` — apps/server writes `./x.ts` specifiers because its bundle needs them, and backend.md B1 made the server route table the source of truth for which API routes exist. `apps/app` has its own tsconfig.json and is not included from here. Before the W0 move these four files were inside the app's project and `next build` typechecked them; this file is what keeps that true now that they are not (docs/plans/web.md W0, docs/plans/wave-zero.md §1).",
   "compilerOptions": {
     "target": "ES2022",
     "lib": ["ES2022", "DOM"],
@@ -13,6 +13,7 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
     "incremental": true,
     "types": ["node"],
     "paths": {

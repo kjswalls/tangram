@@ -9,8 +9,8 @@
  * rather than remembered. There is no CI (`wave-zero.md` §10, ruling 13), so a
  * rule that wants enforcement is a unit test.
  */
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { readdirSync, readFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
@@ -48,21 +48,110 @@ describe('apps/server in the workspace', () => {
   });
 
   it('typechecks its tests and its build scripts, not only src/', () => {
-    // tsconfig.build.json emits src/ alone; tsconfig.json is what `typecheck`
-    // runs and it has to cover everything, or a test file is a file nothing
-    // checks — W0's exact finding.
+    // `tsconfig.json` is what `typecheck` runs and it has to cover everything,
+    // or a test file is a file nothing checks — W0's exact finding. There is no
+    // second emitting project any more: B1 replaced tsc's emit with an esbuild
+    // bundle (`scripts/build.ts`), which is itself one of the files this glob
+    // set has to keep covered.
     const tsconfig = readFileSync(resolve(PACKAGE, 'tsconfig.json'), 'utf8');
     for (const glob of ['src/**/*.ts', 'tests/**/*.ts', 'scripts/**/*.ts']) {
       expect(tsconfig).toContain(glob);
     }
   });
 
-  it('ships no dictionary — B2 removes the server-side copy and B1 must not add a second', () => {
-    // Asserted from B0 so that the phase which would break it has to edit this
-    // line. `backend.md` B2: "no `lib/dict/**` import remains in apps/server".
+  it('declares exactly the four packages the bundle leaves external', () => {
+    // `scripts/build.ts` marks `dependencies` external and inlines everything
+    // else, so this list IS the deploy's `node_modules`. Exact, not a superset:
+    // B0 asserted it from the start so that the phase which would break it has
+    // to edit this line, and B1 is that phase — the Anthropic SDK and zod
+    // arrived with the three model routes.
     const pkg = JSON.parse(readFileSync(resolve(PACKAGE, 'package.json'), 'utf8')) as {
       dependencies: Record<string, string>;
     };
-    expect(Object.keys(pkg.dependencies).sort()).toEqual(['@hono/node-server', 'hono']);
+    expect(Object.keys(pkg.dependencies).sort()).toEqual([
+      '@anthropic-ai/sdk',
+      '@hono/node-server',
+      'hono',
+      'zod',
+    ]);
+  });
+
+  it('ships no dictionary of its own, and counts the app modules B2 must remove', () => {
+    // The original of this test asserted "no dictionary" through the
+    // dependency list, on the premise that a server-side dictionary would
+    // arrive as a package. `backend.md` B1 makes it arrive another way and says
+    // so in as many words — "the dictionary comes with them, on purpose and
+    // temporarily" — through `@/lib/server/dict` and `packages/ai`'s `@/lib/**`
+    // mapping, which the esbuild bundle inlines. So the guard is re-aimed at
+    // what B2 actually promises ("no `lib/dict/**` import remains in
+    // apps/server") and made countable: the number below may only go DOWN.
+    //
+    // No dependency may be a dictionary or a database either. That half is
+    // unchanged and is what stops a second copy arriving the old way.
+    const pkg = JSON.parse(readFileSync(resolve(PACKAGE, 'package.json'), 'utf8')) as {
+      dependencies: Record<string, string>;
+    };
+    for (const name of Object.keys(pkg.dependencies)) {
+      expect(name, `${name} looks like a dictionary or a database`).not.toMatch(
+        /sqlite|dexie|sql\.js|better-sqlite/i,
+      );
+    }
+
+    const sources = sourceFiles(resolve(PACKAGE, 'src'));
+    const reaching = sources
+      .filter(([, source]) => /from '@\/lib\//.test(source))
+      .map(([file]) => file);
+    // The three model routes, and nothing else. `health.ts`, `table.ts`,
+    // `app.ts`, `config.ts`, `cors.ts`, `log.ts`, `build-info.ts`, `index.ts`
+    // and `smoke.ts` reach nothing in the app, which is what keeps B2's
+    // deletion a deletion rather than an untangling.
+    expect(reaching.sort()).toEqual(['routes/ask.ts', 'routes/examples.ts', 'routes/recall.ts']);
+  });
+
+  it('turns noUncheckedIndexedAccess back on the moment the app source leaves', () => {
+    // **The two facts are one decision, so they are asserted together.** B1
+    // turned the flag off because its temporary dictionary pulls ~40 apps/app
+    // modules and eleven packages/ai modules into this package's program, and
+    // neither sets the flag — 71 errors, most of them in files this phase does
+    // not own. That is documented in `tsconfig.json`'s own header and assigned
+    // to B2. What was missing is anything that FAILS if B2 forgets: a reviewer
+    // pointed out that the strictness regression would simply persist.
+    //
+    // So: while `src/**` still reaches `@/lib/**`, the flag may be off. The
+    // moment it does not — which is precisely what B2's contract flip
+    // achieves — this test demands the flag back, and it demands it in the same
+    // commit, because the commit that removes the last import is the commit
+    // that makes it possible.
+    const tsconfig = readFileSync(resolve(PACKAGE, 'tsconfig.json'), 'utf8');
+    const strict = /"noUncheckedIndexedAccess"\s*:\s*true/.test(tsconfig);
+    const reaching = sourceFiles(resolve(PACKAGE, 'src')).filter(([, source]) =>
+      /from '@\/lib\//.test(source),
+    );
+
+    if (reaching.length === 0) {
+      expect(
+        strict,
+        'apps/server no longer compiles any apps/app source, so restore ' +
+          '"noUncheckedIndexedAccess": true in tsconfig.json — backend.md B2 owns this',
+      ).toBe(true);
+    } else {
+      // Not `expect(strict).toBe(false)`: turning it back on early is a fine
+      // thing to do if someone clears the 71 errors, and a test that refused
+      // that would be a test enforcing the debt rather than retiring it.
+      expect(reaching.length, 'this is B2’s number to drive to zero').toBeGreaterThan(0);
+    }
   });
 });
+
+/** Every `.ts` under a directory, walked rather than listed. */
+function sourceFiles(dir: string, prefix = ''): [string, string][] {
+  const out: [string, string][] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
+    a.name.localeCompare(b.name),
+  )) {
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) out.push(...sourceFiles(join(dir, entry.name), rel));
+    else if (entry.name.endsWith('.ts')) out.push([rel, readFileSync(join(dir, entry.name), 'utf8')]);
+  }
+  return out;
+}

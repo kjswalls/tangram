@@ -12,8 +12,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { GET, POST, needsProposals, RETRIEVED_CAP, SEARCH_HEAD } from '@/app/api/ask/route';
-import type { AskRouteInfo, AskRouteResponse } from '@/app/api/ask/route';
+import { GET, POST, needsProposals, RETRIEVED_CAP, SEARCH_HEAD } from '@server/routes/ask.ts';
+import type { AskRouteInfo, AskRouteResponse } from '@/lib/api/contract';
 import { ASK_PROMPT_VERSION } from '@tangram/ai/cache-key';
 import { mergeRetrieved } from '@tangram/ai/retrieve';
 import { closeServerDictStore, serverDictStore } from '@/lib/server/dict';

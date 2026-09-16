@@ -9,14 +9,25 @@
  */
 import { describe, expect, it } from 'vitest';
 
+import { GATED_PATHS } from '@tangram/access';
+
 import { buildApp } from '../src/app.ts';
 import { gatedPaths, HTTP_METHODS, ROUTES } from '../src/routes/table.ts';
 
 const app = buildApp();
 
-/** Every path Hono actually registered a non-catch-all handler for. */
+/**
+ * Every path Hono actually registered a handler for.
+ *
+ * `'/*'` is excluded — Hono's normalisation of the `'*'` those registrations
+ * were written with. `backend.md` B1 put two `app.use('*', …)` middlewares in
+ * front of everything (CORS, then the gate) and Hono records them in
+ * `app.routes` like any other registration. They are not routes, and counting
+ * them would make the two assertions below compare a table of paths against a
+ * set that always has one extra member in it.
+ */
 function mountedPaths(): Set<string> {
-  return new Set(app.routes.map((route) => route.path));
+  return new Set(app.routes.map((route) => route.path).filter((path) => path !== '/*'));
 }
 
 describe('routes/table.ts', () => {
@@ -33,9 +44,18 @@ describe('routes/table.ts', () => {
     }
   });
 
-  it('gives every declared route at least one smoke case', () => {
+  it('gives every declared METHOD of every route a smoke case', () => {
+    // Per method, not per route. `backend.md` B1 asks for a smoke in which "a
+    // route added without a smoke case is a test failure", and at path
+    // granularity a route declaring `['GET','POST']` with only a GET case
+    // passed — which is how `POST /api/ask` could ship unprobed while this file
+    // stayed green. `app.ts`'s method-symmetry guard limits the blast radius;
+    // this closes it.
     for (const route of ROUTES) {
-      expect(route.smoke.length, `${route.path} has no smoke case`).toBeGreaterThan(0);
+      const smoked = new Set(route.smoke.map((testCase) => testCase.method));
+      for (const method of route.methods) {
+        expect(smoked, `${method} ${route.path} has no smoke case`).toContain(method);
+      }
       for (const testCase of route.smoke) {
         expect(route.methods, `${route.path} smokes a method it does not answer`).toContain(
           testCase.method,
@@ -56,11 +76,21 @@ describe('routes/table.ts', () => {
     }
   });
 
-  it('has no gated route yet, because B1 has not moved the three model routes here', () => {
-    // When B1 lands this becomes ['/api/ask', '/api/examples', '/api/recall'].
-    // Until then a gated path with no gate in front of it would be the worst of
-    // both: a claim of protection and none.
-    expect(gatedPaths()).toEqual([]);
+  it('gates exactly the three paths the access package gates, in both directions', () => {
+    // The two lists are written by different plans — `GATED_PATHS` is
+    // `web.md` W4's in `packages/access`, this table is `backend.md` B1's — and
+    // a disagreement either way is a bill. A path the gate covers and the table
+    // calls open is a route answering for free; a path the table calls gated
+    // and the gate does not cover is a claim of protection and none.
+    expect(gatedPaths().sort()).toEqual([...GATED_PATHS].sort());
+  });
+
+  it('declares GET only where a handler answers GET', () => {
+    // `/api/recall` has no handshake and must not advertise one: a GET to it is
+    // a 405 with `Allow: POST`, not a 200 the client would try to read a
+    // provider name out of.
+    const recall = ROUTES.find((route) => route.path === '/api/recall');
+    expect(recall?.methods).toEqual(['POST']);
   });
 
   it('throws at boot if the table names a path app.ts has no handler for', () => {
@@ -69,6 +99,30 @@ describe('routes/table.ts', () => {
         routes: [{ path: '/nope', methods: ['GET'], gated: false, smoke: [{ method: 'GET', expect: 200 }] }],
       }),
     ).toThrow(/no handler/);
+  });
+
+  it('throws at boot if the table declares a METHOD app.ts has no handler for', () => {
+    // The dimension B1 added. Until B1 every route answered one verb, so "the
+    // path is mounted" was the whole question; `/api/ask` and `/api/examples`
+    // answer two each. A table that declared `DELETE /api/ask` would otherwise
+    // register a handler-less verb and 404 in the deployment.
+    expect(() =>
+      buildApp({
+        routes: ROUTES.map((route) =>
+          route.path === '/api/recall' ? { ...route, methods: ['POST', 'DELETE' as const] } : route,
+        ),
+      }),
+    ).toThrow(/no handler for that method/);
+  });
+
+  it('throws at boot if app.ts answers a METHOD the table does not declare', () => {
+    expect(() =>
+      buildApp({
+        routes: ROUTES.map((route) =>
+          route.path === '/api/ask' ? { ...route, methods: ['POST' as const] } : route,
+        ),
+      }),
+    ).toThrow(/does not declare that method/);
   });
 
   it('throws at boot if app.ts has a handler the table does not declare', () => {

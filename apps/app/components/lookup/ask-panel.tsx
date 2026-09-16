@@ -22,7 +22,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 
-import type { AskRouteInfo, AskRouteResponse } from '@/app/api/ask/route';
+import type { AskRouteInfo, AskRouteResponse } from '@/lib/api/contract';
 import { HanziWord } from '@/components/hanzi/hanzi-text';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';

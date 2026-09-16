@@ -377,3 +377,48 @@ describe('texts, ask cache and reset', () => {
     expect((await repo.getSettings()).newPerDay).toBe(10);
   });
 });
+
+/**
+ * The wave-0 interface diff (`docs/plans/wave-zero.md` §5), landed types-only.
+ *
+ * This guard exists because the dangerous failure is not a missing member, which
+ * `tsc` catches — it is a member stubbed with a plausible empty value. An
+ * `exportAll` that resolves `{rows: {...[]}}` is a backup that silently restores
+ * nothing; a `changedSince` that resolves `[]` is a sync engine that silently
+ * pushes nothing. Both look healthy in every test that does not assert content.
+ *
+ * So: until someone writes a body, each of the seven must reject. `web.md` W5
+ * owns the first two, `backend.md` B5 the other five, and **each of them deletes
+ * its own rows from the table below as it implements them** — a red line here
+ * after a real implementation lands is this test being out of date, not a bug.
+ */
+describe('the wave-0 sync and backup members', () => {
+  const unimplemented: readonly [name: string, call: (r: ReturnType<typeof setup>) => Promise<unknown>][] = [
+    ['exportAll', (r) => r.exportAll()],
+    ['importAll', (r) => r.importAll({ format: 1, dbVersion: 3, createdAt: 0, rows: {} as never })],
+    ['changedSince', (r) => r.changedSince('cards', 0)],
+    ['applyRemote', (r) => r.applyRemote('cards', [])],
+    ['syncState', (r) => r.syncState()],
+    ['setSyncState', (r) => r.setSyncState({})],
+    ['resetAccount', (r) => r.resetAccount()],
+  ];
+
+  it.each(unimplemented)('%s rejects rather than returning a plausible empty value', async (name, call) => {
+    const repo = setup();
+    await expect(call(repo)).rejects.toThrow(new RegExp(`^${name}: not implemented`));
+  });
+
+  it('names all seven, so a member added to the interface is not silently unguarded', () => {
+    // Mirrors wave-zero.md §5's table. If this fails, the diff grew — which is a
+    // frozen-surface change, and the rule is to stop and write it into HANDOFF.md.
+    expect(unimplemented.map(([name]) => name)).toEqual([
+      'exportAll',
+      'importAll',
+      'changedSince',
+      'applyRemote',
+      'syncState',
+      'setSyncState',
+      'resetAccount',
+    ]);
+  });
+});

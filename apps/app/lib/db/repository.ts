@@ -19,6 +19,7 @@ import type {
   ReviewRow,
   SettingsRow,
   StoredRating,
+  StoreName,
   TextRow,
   WordRow,
 } from '@/lib/db/schema';
@@ -97,6 +98,49 @@ export const STABILITY_BUCKETS: readonly { label: string; minDays: number; maxDa
 export interface AskCache {
   get(key: string): Promise<AskCacheRow | undefined>;
   set(key: string, response: unknown): Promise<AskCacheRow>;
+}
+
+/**
+ * The eight stores that sync. Derived from `StoreName` rather than hand-listed,
+ * so a store added to the schema is a type error here instead of a silent
+ * omission from the change feed. `ask_cache` is excluded and stays excluded: it
+ * is a cache keyed by a hash of the prompt, it holds entry ids and sense indexes
+ * only, and re-deriving it costs one model call.
+ */
+export type SyncedStore = Exclude<StoreName, 'ask_cache'>;
+
+/** The row shape each synced store carries on the row-level channel. */
+export interface SyncedRow {
+  words: WordRow;
+  cards: CardRow;
+  reviews: ReviewRow;
+  lists: ListRow;
+  list_members: ListMemberRow;
+  known_words: KnownWordRow;
+  texts: TextRow;
+  settings: SettingsRow;
+}
+
+/** Where the last sync got to. One row, client-side. */
+export interface SyncState {
+  /**
+   * The `t0` of the last successful push — taken *before* the read, so a row
+   * written during a push is caught by the next one (`backend.md` B5).
+   */
+  lastPushedAt: number | null;
+  /** The maximum `server_updated_at` the last pull saw, per store. */
+  cursors: Partial<Record<SyncedStore, string>>;
+  lastSyncedAt: number | null;
+}
+
+/** A whole-database dump. Versioned, because a restore outlives its writer. */
+export interface Snapshot {
+  /** This envelope's format version, bumped when the envelope changes. */
+  format: 1;
+  /** The `DB_VERSION` the dump was cut at. */
+  dbVersion: number;
+  createdAt: number;
+  rows: { [S in SyncedStore]: SyncedRow[S][] } & { ask_cache: AskCacheRow[] };
 }
 
 export interface Repository {
@@ -288,4 +332,50 @@ export interface Repository {
 
   /** Wipe every table. The `/settings` reset and the demo seed both use it. */
   resetAll(): Promise<void>;
+
+  // ---------------------------------------------------------------------------
+  // The wave-0 interface diff (`docs/plans/wave-zero.md` §5). Frozen.
+  //
+  // These seven are the *row-level* channel alongside the domain API above, and
+  // they exist because applying a remote row cannot go through `grade()` — that
+  // would write a new review for a review that already happened. `web.md` W5
+  // implements the first two, `backend.md` B5 the other five. A builder who
+  // needs an eighth stops, writes the need into HANDOFF.md, and continues
+  // without it.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Every store, every row, **tombstones included**. With `importAll`, the only
+   * two members allowed to see `deletedAt !== null` rows: a round trip that
+   * drops soft-deleted rows resurrects deleted cards on the next sync.
+   */
+  exportAll(): Promise<Snapshot>;
+
+  /**
+   * Destructive by contract — this is restore, not merge. Merge is sync
+   * (`changedSince` / `applyRemote`). Replaces the database wholesale.
+   */
+  importAll(snapshot: Snapshot): Promise<void>;
+
+  /**
+   * Local writes to push. Not one key: `reviews` is append-only and filters on
+   * `createdAt`, everything else on `updatedAt` (`backend.md` B5's table).
+   */
+  changedSince<S extends SyncedStore>(store: S, sinceMs: number): Promise<SyncedRow[S][]>;
+
+  /**
+   * Remote rows in — last-write-wins plus `backend.md` B4's natural-key dedupe,
+   * one Dexie transaction per call.
+   */
+  applyRemote<S extends SyncedStore>(store: S, rows: SyncedRow[S][]): Promise<void>;
+
+  syncState(): Promise<SyncState>;
+  setSyncState(patch: Partial<SyncState>): Promise<SyncState>;
+
+  /**
+   * Sign-out and account deletion. Tombstones and pushes, so the reset reaches
+   * other devices; it does **not** drop the database. That is `resetAll`, which
+   * `backend.md` B4 makes refuse while a session is live.
+   */
+  resetAccount(): Promise<void>;
 }

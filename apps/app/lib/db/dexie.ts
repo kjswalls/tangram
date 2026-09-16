@@ -753,5 +753,44 @@ export function createDexieRepository(db: TangramDb): Repository {
         await Promise.all(db.tables.map((table) => table.clear()));
       });
     },
+
+    // -------------------------------------------------------------------------
+    // The wave-0 interface diff (`docs/plans/wave-zero.md` §5), declared and not
+    // yet implemented. `web.md` W5 replaces the first two, `backend.md` B5 the
+    // other five.
+    //
+    // They **throw**. A stub that returns a plausible empty value — `[]`, or a
+    // zeroed `SyncState` — is how a phase ships a sync engine that silently
+    // syncs nothing and a backup that silently restores an empty database. The
+    // failure has to be loud until someone writes the body.
+    // -------------------------------------------------------------------------
+
+    async exportAll() {
+      throw new Error('exportAll: not implemented — web.md W5');
+    },
+
+    async importAll() {
+      throw new Error('importAll: not implemented — web.md W5');
+    },
+
+    async changedSince() {
+      throw new Error('changedSince: not implemented — backend.md B5');
+    },
+
+    async applyRemote() {
+      throw new Error('applyRemote: not implemented — backend.md B5');
+    },
+
+    async syncState() {
+      throw new Error('syncState: not implemented — backend.md B5');
+    },
+
+    async setSyncState() {
+      throw new Error('setSyncState: not implemented — backend.md B5');
+    },
+
+    async resetAccount() {
+      throw new Error('resetAccount: not implemented — backend.md B5');
+    },
   };
 }

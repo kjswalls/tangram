@@ -120,7 +120,7 @@ test.describe('with TANGRAM_ACCESS_SECRET set', () => {
     // gate that quietly widened would break offline review for a stranger.
     expect((await api.get('/api/dict/search?q=%E4%BD%A0%E5%A5%BD')).status()).toBe(200);
     expect((await api.get('/api/dict/hsk?band=1')).status()).toBe(200);
-    for (const path of ['/', '/lookup', '/review', '/settings', '/offline.html', '/sw.js', '/manifest.webmanifest']) {
+    for (const path of ['/', '/read', '/practice', '/library', '/offline.html', '/sw.js', '/manifest.webmanifest']) {
       expect((await api.get(path)).status(), path).toBe(200);
     }
   });

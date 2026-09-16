@@ -19,7 +19,7 @@ const KAN4_SENSE = 5;
 
 /** The panel is on the lookup page; typing is all it takes to ask. */
 async function ask(page: Page, query: string): Promise<void> {
-  await page.goto('/lookup');
+  await page.goto('/');
   await page.getByTestId('lookup-input').fill(query);
   await expect(page.getByTestId('ask-panel')).toHaveAttribute('data-status', 'ready', {
     timeout: 20_000,
@@ -29,12 +29,14 @@ async function ask(page: Page, query: string): Promise<void> {
 /**
  * The cache key, computed the way the browser computes it (§3.4:
  * sha1(promptVersion, provider, query, context, estimatedBand)). A fresh
- * database means `estimatedBand` is `settings.knownBand`, which is 2.
+ * database means `estimatedBand` is `settings.knownBand`, which core.md C8
+ * moved to **0** — and `LearnerProfile.estimatedBand` has no zero, so
+ * `lib/srs/profile.ts` floors it at 1.
  */
 async function cacheKey(page: Page, query: string, context = ''): Promise<string> {
   return page.evaluate(
     async ({ query: q, context: ctx }) => {
-      const payload = JSON.stringify(['v1', 'fake', q, ctx, 2]);
+      const payload = JSON.stringify(['v1', 'fake', q, ctx, 1]);
       const digest = await crypto.subtle.digest('SHA-1', new TextEncoder().encode(payload));
       return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
     },
@@ -136,7 +138,7 @@ test.describe('the ask panel', () => {
     // that quotes its own front is not provenance (the review's minor fix).
     expect(saved[0].context?.question).toBeUndefined();
 
-    await page.goto('/review');
+    await page.goto('/practice');
     await expect(page.getByTestId('review-card')).toBeVisible();
     await page.keyboard.press('Space');
     const glosses = page.getByTestId('card-glosses').locator('li');
@@ -148,6 +150,11 @@ test.describe('the ask panel', () => {
   test('Add from a sayIt makes a phrase card, and the words can be added one by one', async ({
     page,
   }) => {
+    // **The band assumption, stated.** This case is about "add the words"
+    // skipping the ones the learner already knows, so it needs a learner who
+    // knows some: core.md C8 made `knownBand` default to 0, and inheriting it
+    // would have made the case about nothing.
+    await page.evaluate(() => window.__tangram.repo.setSettings({ knownBand: 2 }));
     await ask(page, BROWSING);
 
     const phrase = page.getByTestId('ask-sayit').first();
@@ -165,10 +172,10 @@ test.describe('the ask panel', () => {
     await expect(phrase.getByTestId('ask-sayit-add-words')).toContainText('Words added');
 
     const afterWords = await cards(page);
-    // One card for the one word the learner does not already know. 我 (HSK 1)
-    // and 随便 (HSK 2) are inside `knownBand`, and queueing a word the app
-    // itself paints as known — and lists as "known · Queued" — is the app
-    // arguing with the learner.
+    // One card for the one word this learner does not already know. 我 (HSK 1)
+    // and 随便 (HSK 2) are inside the `knownBand: 2` set above, and queueing a
+    // word the app itself paints as known — and lists as "known · Queued" — is
+    // the app arguing with the learner.
     expect(afterWords.filter((card) => card.kind === 'word').map((card) => card.simp)).toEqual([
       '看看',
     ]);

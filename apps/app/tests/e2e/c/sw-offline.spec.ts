@@ -54,12 +54,12 @@ test.describe('the service worker offline', () => {
 
     await context.setOffline(true);
     try {
-      await page.goto('/lookup');
+      await page.goto('/');
       // The nav is rendered by React, so seeing it means the document AND its
       // script AND its stylesheet all came out of the cache. A blank page —
       // the bug this is here for — fails on this line.
       await expect(page.getByRole('navigation', { name: 'Main' })).toBeVisible();
-      await expect(page.getByRole('heading', { name: 'Lookup' })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Look up' })).toBeVisible();
       const bodyText = (await page.locator('body').innerText()).trim();
       expect(bodyText.length, 'offline page rendered empty').toBeGreaterThan(20);
     } finally {
@@ -81,12 +81,14 @@ test.describe('the service worker offline', () => {
 
     await context.setOffline(true);
     try {
-      // Never opened in this context, and not in the precache list.
-      await page.goto('/stats');
+      // Never opened in this context, and not in the precache list. `/stats`
+      // until core.md C7 removed it; the precache is generated from Vite's
+      // manifest now, so no page route but `/` is in it either way.
+      await page.goto('/library');
       await expect(page.getByRole('navigation', { name: 'Main' })).toBeVisible();
-      await expect(page.locator('[data-route="/stats"]')).toHaveCount(1);
+      await expect(page.locator('[data-route="/library"]')).toHaveCount(1);
       // Not the offline page wearing the app's clothes.
-      await expect(page.getByRole('heading', { name: 'Stats' })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Library' })).toBeVisible();
     } finally {
       await context.setOffline(false);
     }
@@ -123,7 +125,7 @@ test.describe('the service worker offline', () => {
 
     await context.setOffline(true);
     try {
-      await page.goto('/stats');
+      await page.goto('/library');
       // The offline page, not a browser error and not a blank document.
       await expect(page.getByTestId('offline-page')).toBeVisible();
     } finally {

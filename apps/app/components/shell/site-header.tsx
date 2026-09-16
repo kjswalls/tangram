@@ -1,24 +1,22 @@
 import { Link } from 'react-router';
 
-import { NavLink } from '@/components/shell/nav-link';
-import { NAV_ITEMS } from '@/components/shell/nav';
-
-export function SiteHeader() {
+/**
+ * The wordmark row (docs/plans/core.md C7).
+ *
+ * What is left of the seven-route header. The nav that used to sit beside it is
+ * the tab bar now — at the bottom on a phone, in the header on a wide screen —
+ * so this is the name of the app and the way home, and both shells render the
+ * same one so the two cannot drift.
+ *
+ * The 七巧板 wordmark stays **plain type, no ruby** (C3's call-site table): it
+ * is a logotype, not a reading surface, and a reading over it would be the one
+ * place in the app where pinyin is decoration.
+ */
+export function SiteHeader({ className }: { className?: string }) {
   return (
-    <header className="border-b border-border bg-surface/80 backdrop-blur">
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-        <Link to="/" className="flex items-baseline gap-2">
-          <span className="text-lg font-semibold tracking-tight">Tangram</span>
-          <span className="hanzi text-sm text-muted">七巧板</span>
-        </Link>
-        {/* Wraps rather than scrolls: an overflow-x-auto row on a 390px phone
-            hides the last link behind an invisible scrollbar. */}
-        <nav aria-label="Main" className="-mx-1 flex flex-wrap items-center gap-0.5 sm:gap-1">
-          {NAV_ITEMS.map((item) => (
-            <NavLink key={item.href} {...item} />
-          ))}
-        </nav>
-      </div>
-    </header>
+    <Link to="/" data-testid="wordmark" className={className ?? 'flex items-baseline gap-2'}>
+      <span className="text-lg font-semibold tracking-tight">Tangram</span>
+      <span className="hanzi text-sm text-muted">七巧板</span>
+    </Link>
   );
 }

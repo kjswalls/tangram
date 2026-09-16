@@ -27,7 +27,7 @@ test.describe('/review with free recall on', () => {
     await openReview(page);
 
     // The switch is a real setting, thrown the way a person throws it.
-    await page.goto('/settings');
+    await page.goto('/library');
     const toggle = page.getByTestId('settings-free-recall');
     await expect(toggle).not.toBeChecked();
     // A click, not `check()`: this is a controlled checkbox whose write is
@@ -41,7 +41,7 @@ test.describe('/review with free recall on', () => {
       async () => (await window.__tangram.repo.getSettings()).freeRecall === true,
     );
 
-    await page.goto('/review');
+    await page.goto('/practice');
     await ready(page);
     await seed(page, [{ entry: DASUAN, context: readerContext(), gradedDaysAgo: 30 }]);
 

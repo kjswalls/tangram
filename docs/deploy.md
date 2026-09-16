@@ -299,9 +299,11 @@ Then, by hand, the things a script cannot tell you:
    this one is wrong the dictionary can never be updated and nothing will look
    broken until it needs to be.
 
-3. **A deep route renders.** Open `https://<app>/settings` directly — not by
+3. **A deep route renders.** Open `https://<app>/library` directly — not by
    navigating to it — and check the attribution renders. That is the SPA
-   fallback and the licence obligation in one.
+   fallback and the licence obligation in one. (`/settings` is not a route:
+   `core.md` C7 folded the settings, the lists and the licences into the
+   Library tab.)
 
 4. **The PWA updated.** Open the deployment on the phone, pull to refresh once.
    Navigations are network-first, so a new deploy is picked up on the first

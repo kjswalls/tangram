@@ -182,7 +182,14 @@ describe('gradeOptions', () => {
   it('labels all four buttons with the interval each would schedule', () => {
     const options = gradeOptions(newCard(NOW), NOW);
     expect(options.map((option) => option.rating)).toEqual([1, 2, 3, 4]);
-    expect(options.map((option) => option.label)).toEqual(['Again', 'Hard', 'Good', 'Easy']);
+    // C8's words, ratings 1–4 unchanged. The pairing is the assertion: a
+    // relabelling that reordered them would move every learner's grade by one.
+    expect(options.map((option) => option.label)).toEqual([
+      'Forgot it',
+      'Barely remembered',
+      'Got it',
+      'Instant',
+    ]);
     for (const option of options) {
       expect(option.due).toBeGreaterThan(NOW);
       expect(option.ms).toBe(option.due - NOW);
@@ -191,8 +198,8 @@ describe('gradeOptions', () => {
   });
 
   it('labels a learning step in minutes rather than rounding it up to a day', () => {
-    // The default settings run FSRS's own learning steps, so Again on a new
-    // card is one minute out. A button reading `1d` there would be describing
+    // The default settings run FSRS's own learning steps, so "Forgot it" on a
+    // new card is one minute out. A button reading `1d` there would be describing
     // a schedule the app is not going to follow.
     const again = gradeOptions(newCard(NOW), NOW)[0];
     expect(again.ms).toBeLessThan(DAY);
@@ -241,55 +248,55 @@ describe('emptyStateMessage', () => {
     // Again on a new card is one minute, and "next card in 1 hour" would send
     // the learner away from a session that is not over.
     expect(emptyStateMessage({ next: NOW + 9 * 60_000, now: NOW })).toBe(
-      'Nothing due — 1 card comes back in 9 minutes.',
+      'All done for now — 1 word comes back in 9 minutes.',
     );
     expect(emptyStateMessage({ next: NOW + 30_000, now: NOW })).toBe(
-      'Nothing due — 1 card comes back in 1 minute.',
+      'All done for now — 1 word comes back in 1 minute.',
     );
     expect(emptyStateMessage({ next: NOW + 4 * 60_000, now: NOW, returning: 3 })).toBe(
-      'Nothing due — 3 cards come back in 4 minutes.',
+      'All done for now — 3 words come back in 4 minutes.',
     );
   });
 
   it('counts hours up to two days out', () => {
     expect(emptyStateMessage({ next: NOW + 5 * HOUR, now: NOW })).toBe(
-      'Nothing due — next card in 5 hours.',
+      'All done — the next word comes back in 5 hours.',
     );
     expect(emptyStateMessage({ next: NOW + 90 * 60_000, now: NOW })).toBe(
-      'Nothing due — next card in 2 hours.',
+      'All done — the next word comes back in 2 hours.',
     );
     expect(emptyStateMessage({ next: NOW + 47 * HOUR, now: NOW })).toBe(
-      'Nothing due — next card in 47 hours.',
+      'All done — the next word comes back in 47 hours.',
     );
   });
 
   it('counts days beyond that', () => {
     expect(emptyStateMessage({ next: NOW + 3 * DAY, now: NOW })).toBe(
-      'Nothing due — next card in 3 days.',
+      'All done — the next word comes back in 3 days.',
     );
     expect(emptyStateMessage({ next: NOW + 60 * DAY, now: NOW })).toBe(
-      'Nothing due — next card in 60 days.',
+      'All done — the next word comes back in 60 days.',
     );
   });
 
   it('says so when nothing is scheduled', () => {
     expect(emptyStateMessage({ next: null, now: NOW })).toBe(
-      'Nothing due — no cards are scheduled yet.',
+      'Nothing to practise yet — look a word up and it joins the next session.',
     );
   });
 
   it('names the cards the session set aside rather than hiding them', () => {
     expect(emptyStateMessage({ next: null, now: NOW, deferred: 1 })).toBe(
-      'Nothing more is due right now. 1 card you kept missing is set aside until next time.',
+      'Nothing more to practise right now. 1 word you kept missing is set aside until next time.',
     );
     expect(emptyStateMessage({ next: NOW + 2 * DAY, now: NOW, deferred: 3 })).toBe(
-      'Nothing due — next card in 48 hours. 3 cards you kept missing are set aside until next time.',
+      'All done — the next word comes back in 48 hours. 3 words you kept missing are set aside until next time.',
     );
   });
 
   it('still puts the dictionary outage first', () => {
     expect(emptyStateMessage({ next: NOW + DAY, now: NOW, waiting: 2 })).toBe(
-      'Nothing due — 2 new words are waiting, once the dictionary is back.',
+      'All done — 2 new words are waiting, once the dictionary is back.',
     );
   });
 });

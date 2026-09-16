@@ -111,8 +111,8 @@ export function WorkloadChart({ past, forecast, peak, windowDays }: WorkloadChar
       title: formatDay(column.day.start),
       lines: [
         column.series === 'past'
-          ? { label: 'reviewed', value: formatCount(column.day.count), color: SERIES_1 }
-          : { label: 'coming due', value: formatCount(column.day.count), color: SERIES_2 },
+          ? { label: 'practised', value: formatCount(column.day.count), color: SERIES_1 }
+          : { label: 'coming up', value: formatCount(column.day.count), color: SERIES_2 },
       ],
     });
   };
@@ -170,7 +170,7 @@ export function WorkloadChart({ past, forecast, peak, windowDays }: WorkloadChar
     }));
 
   return (
-    <Card title="Workload" data-testid="stats-workload">
+    <Card title="What’s coming up" data-testid="stats-workload">
       {empty ? (
         <EmptyNote testId="stats-workload-empty">
           No reviews in the last {windowDays} days, and nothing scheduled for the next {windowDays}.
@@ -180,8 +180,8 @@ export function WorkloadChart({ past, forecast, peak, windowDays }: WorkloadChar
         <>
           <Legend
             items={[
-              { label: `Reviewed (last ${windowDays} days)`, color: SERIES_1 },
-              { label: `Coming due (next ${windowDays})`, color: SERIES_2 },
+              { label: `Practised (last ${windowDays} days)`, color: SERIES_1 },
+              { label: `Coming up (next ${windowDays})`, color: SERIES_2 },
             ]}
           />
           {/* Capped for the same reason as the calibration chart: the type
@@ -193,7 +193,7 @@ export function WorkloadChart({ past, forecast, peak, windowDays }: WorkloadChar
               role="img"
               tabIndex={0}
               className="viz-plot"
-              aria-label={`Reviews per day for the last ${windowDays} days and cards coming due for the next ${windowDays}. Use the arrow keys to read each day.`}
+              aria-label={`Words practised per day for the last ${windowDays} days and words coming up over the next ${windowDays}. Use the arrow keys to read each day.`}
               onPointerMove={onPointerMove}
               onPointerLeave={clear}
               onKeyDown={onKeyDown}
@@ -300,8 +300,8 @@ export function WorkloadChart({ past, forecast, peak, windowDays }: WorkloadChar
           </ChartFrame>
 
           <p data-testid="stats-workload-note" className="mt-2 text-sm text-muted">
-            {formatCount(reviewed)} reviews in the last {windowDays} days.{' '}
-            {formatCount(forecast.counted)} cards land in the next {windowDays}
+            {formatCount(reviewed)} words practised in the last {windowDays} days.{' '}
+            {formatCount(forecast.counted)} come back over the next {windowDays}
             {forecast.overdue > 0 ? (
               <>
                 , of which {formatCount(forecast.overdue)} {forecast.overdue === 1 ? 'is' : 'are'}{' '}
@@ -309,7 +309,8 @@ export function WorkloadChart({ past, forecast, peak, windowDays }: WorkloadChar
               </>
             ) : null}
             {forecast.beyond > 0 ? <>; {formatCount(forecast.beyond)} more are scheduled beyond it</> : null}.
-            New cards are not counted — a new card is introduced by the daily cap, not by a due date.
+            Words you have not met yet are not counted — they arrive when you practise, not on a
+            date.
           </p>
         </>
       )}
@@ -317,7 +318,7 @@ export function WorkloadChart({ past, forecast, peak, windowDays }: WorkloadChar
       <TableView
         label="Every day, as numbers"
         testId="stats-workload-table"
-        head={['Day', 'Reviewed', 'Coming due']}
+        head={['Day', 'Practised', 'Coming up']}
         rows={rows}
       />
     </Card>

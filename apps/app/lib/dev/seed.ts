@@ -200,6 +200,13 @@ export async function loadDemo(options: DemoOptions = {}): Promise<DemoSummary> 
   await ensureSystemLists(repo);
 
   // 1. HSK 1–2 are known: the demo learner did not start from zero.
+  //
+  // **Stated, not inherited.** `DEFAULT_SETTINGS.knownBand` was 2 and the demo
+  // relied on it; core.md C8 made the default 0 ("assume nothing"), which is
+  // right for a new learner and wrong for this one — the demo is a learner
+  // mid-journey and the whole seed is built on their knowing HSK 1–2. So the
+  // seed says so.
+  await repo.setSettings({ knownBand: DEMO_KNOWN_BANDS[DEMO_KNOWN_BANDS.length - 1] });
   const knownIds: EntryId[] = [];
   for (const band of DEMO_KNOWN_BANDS) {
     for (const entry of await source.band(band)) knownIds.push(entry.id);

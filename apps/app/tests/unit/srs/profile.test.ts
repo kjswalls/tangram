@@ -108,6 +108,9 @@ describe('getLearnerProfile', () => {
     const { db, repo } = freshRepository();
     close = () => db.close();
 
+    // Stated, not inherited: core.md C8 made `knownBand` default to 0 ("assume
+    // nothing"), and this case is about the profile *reading* the setting.
+    await repo.setSettings({ knownBand: 2 });
     const card = await repo.addCardFromEntry(DASUAN);
     await repo.grade(card.id, 3, Date.now());
     await repo.markKnown([KANKAN.id]);
@@ -116,5 +119,15 @@ describe('getLearnerProfile', () => {
     expect(profile.estimatedBand).toBe(2);
     expect(profile.knownSample).toContain('打算');
     expect(profile.knownSample.length).toBeLessThanOrEqual(200);
+  });
+
+  it('reports band 1 for a learner who has declared nothing known', async () => {
+    // `LearnerProfile.estimatedBand` is an `HskBand` and has no zero, so the
+    // new default floors at 1 rather than widening the contract the ask prompt
+    // and the cache key are built on (`lib/srs/profile.ts`).
+    const { db, repo } = freshRepository();
+    close = () => db.close();
+    expect((await repo.getSettings()).knownBand).toBe(0);
+    expect((await getLearnerProfile(repo)).estimatedBand).toBe(1);
   });
 });

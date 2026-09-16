@@ -13,7 +13,7 @@
  * Decomposition comes from its own route because it comes from its own file under
  * its own licence (CLAUDE.md); it is displayed and never written onto the card.
  */
-import { Link } from 'react-router';
+import { useScreenNavigate } from '@/components/screens/navigate';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 
 import { SpeakButton } from '@/components/tts/speak-button';
@@ -129,6 +129,7 @@ export function EntryDetail({
    */
   belowHeadword?: ReactNode;
 }) {
+  const go = useScreenNavigate();
   const [selectedId, setSelectedId] = useState(group.entries[0].id);
   // Both of these belong to one reading, so they carry the id they were made
   // for: switching readings must not leave the previous one's "In your cards"
@@ -374,14 +375,17 @@ export function EntryDetail({
           </span>
         ) : null}
         {settled ? (
+          // One way out since core.md C7: Today is a region of the Look up tab,
+          // so "see it on Today" was the screen the learner is already on.
           <span className="text-sm text-muted">
-            <Link to="/review" className="text-accent underline underline-offset-2">
-              Review now
-            </Link>{' '}
-            ·{' '}
-            <Link to="/" className="text-accent underline underline-offset-2">
-              see it on Today
-            </Link>
+            <button
+              type="button"
+              data-testid="practice-now"
+              className="text-accent underline underline-offset-2"
+              onClick={() => go({ tab: 'practice' })}
+            >
+              Practice now
+            </button>
           </span>
         ) : null}
       </div>

@@ -1,13 +1,17 @@
 'use client';
 
-import { Link } from 'react-router';
 import { useEffect, useState } from 'react';
 
 import { OptimizerPanel } from '@/components/settings/optimizer-panel';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { getRepository } from '@/lib/db/get-db';
-import { DEFAULT_SETTINGS, type ScriptPreference, type SettingsRow } from '@/lib/db/schema';
+import {
+  DEFAULT_SETTINGS,
+  type PinyinDisplay,
+  type ScriptPreference,
+  type SettingsRow,
+} from '@/lib/db/schema';
 import { loadDemo, resetAll } from '@/lib/dev/seed';
 import { describeParameters, RETENTION_CHOICES } from '@/lib/srs/params';
 import { HSK_BANDS, hskBandLabel, type HskBand } from '@/lib/types';
@@ -27,7 +31,17 @@ const SELECT =
  * a demo. Every change is written straight through — there is no Save button to
  * forget to press, and the queue reads the row, not this component.
  */
-export function SettingsForm() {
+export interface SettingsFormProps {
+  /**
+   * Called with every row this form writes, so a sibling that renders the same
+   * fields — C8's "Your level" line at the bottom of Library — stays in step
+   * without polling or a second read. Optional: the form is the writer either
+   * way.
+   */
+  onSettings?: (settings: SettingsRow) => void;
+}
+
+export function SettingsForm({ onSettings }: SettingsFormProps = {}) {
   const [settings, setSettings] = useState<SettingsRow>();
   const [status, setStatus] = useState<string>();
   const [confirming, setConfirming] = useState<Danger>();
@@ -61,6 +75,7 @@ export function SettingsForm() {
   const patch = async (values: Partial<Omit<SettingsRow, 'id' | 'createdAt'>>) => {
     const next = await getRepository().setSettings(values);
     setSettings(next);
+    onSettings?.(next);
     setStatus('Saved');
   };
 
@@ -117,7 +132,11 @@ export function SettingsForm() {
         </label>
 
         <label className="flex flex-col gap-1 text-sm">
-          <span>Spine starts at HSK</span>
+          {/* "Spine starts at HSK" with the hint "the first band the auto-draw
+              takes new words from" is the internal vocabulary C8 exists to
+              remove — and it is what the Your level card's own Change button
+              scrolls to. */}
+          <span>New words come from HSK</span>
           <select
             className={SELECT}
             data-testid="settings-spine-start-band"
@@ -130,24 +149,36 @@ export function SettingsForm() {
               </option>
             ))}
           </select>
-          <span className="text-xs text-muted">The first band the auto-draw takes new words from.</span>
+          <span className="text-xs text-muted">
+            Where the app starts picking words for you. Anything you already know, below, is
+            skipped as well.
+          </span>
         </label>
 
         <label className="flex flex-col gap-1 text-sm">
-          <span>Assume known through HSK</span>
+          <span>Words you already know</span>
           <select
             className={SELECT}
             data-testid="settings-known-band"
             value={settings.knownBand}
-            onChange={(event) => void patch({ knownBand: Number(event.target.value) as HskBand })}
+            onChange={(event) =>
+              void patch({ knownBand: Number(event.target.value) as HskBand | 0 })
+            }
           >
+            {/* Zero is the default and it is a real answer, not an empty one:
+                a learner who is starting knows nothing yet, and any other value
+                makes the spine skip the bands below it. */}
+            <option value={0}>Nothing yet</option>
             {HSK_BANDS.map((band) => (
               <option key={band} value={band}>
-                {hskBandLabel(band)}
+                Through HSK {hskBandLabel(band)}
               </option>
             ))}
           </select>
-          <span className="text-xs text-muted">Words at or below this band read as known everywhere.</span>
+          <span className="text-xs text-muted">
+            Words at or below this read as known everywhere, and new ones are never drawn from
+            them.
+          </span>
         </label>
 
         <label className="flex flex-col gap-1 text-sm">
@@ -163,6 +194,39 @@ export function SettingsForm() {
             }
           />
           <span className="text-xs text-muted">Local hour. 4 means 01:30 still counts as yesterday.</span>
+        </label>
+
+        {/*
+          **The pinyin control** (docs/plans/core.md C8; product-decisions §4
+          rule 1). C3 added `SettingsRow.pinyinDisplay` and specified exactly
+          what each value does to the rendering; nothing since has let the
+          learner reach it, so until now the app has had a three-state setting
+          that was always in state one. C8 owns Library, so C8 is where it
+          surfaces. It writes the same field C3 reads.
+
+          "Only when I tap" is the one option that is not self-evident, so it
+          is the one with a line under it.
+        */}
+        <label className="flex flex-col gap-1 text-sm">
+          <span>Show pinyin</span>
+          <select
+            className={SELECT}
+            data-testid="settings-pinyin-display"
+            value={settings.pinyinDisplay ?? DEFAULT_SETTINGS.pinyinDisplay}
+            onChange={(event) =>
+              void patch({ pinyinDisplay: event.target.value as PinyinDisplay })
+            }
+          >
+            <option value="always">Always</option>
+            <option value="tap">Only when I tap</option>
+            <option value="never">Never</option>
+          </select>
+          <span className="text-xs text-muted">
+            {/* **See, not hear.** Tapping in `tap` mode reveals the written
+                reading and opens the word sheet; nothing speaks. The plan's own
+                wording is "tap a word to see how it sounds". */}
+            “Only when I tap” hides the readings until you tap a word to see how it sounds.
+          </span>
         </label>
 
         <label className="flex flex-col gap-1 text-sm">
@@ -237,7 +301,7 @@ export function SettingsForm() {
               checked={settings.productionDirection ?? DEFAULT_SETTINGS.productionDirection}
               onChange={(event) => void patch({ productionDirection: event.target.checked })}
             />
-            Also practise the other direction
+            Also write words from memory
           </span>
           <span className="text-xs text-muted">
             English on the front, the hanzi recalled. A second card per word, with its own
@@ -291,10 +355,7 @@ export function SettingsForm() {
         <p className="text-sm text-muted">
           The demo replaces everything in this browser with a worked example: HSK 1–2 known, eight cards
           carrying where they came from, a paragraph to read. You can also reach it at{' '}
-          <Link to="/?seed=demo" className="text-accent underline underline-offset-2">
-            /?seed=demo
-          </Link>
-          .
+          <code className="text-accent">/?seed=demo</code>.
         </p>
         <div className="flex flex-wrap items-center gap-3">
           <Button

@@ -52,6 +52,102 @@ export function buildReviewQueue(input: ReviewQueueInput): CardRow[] {
 }
 
 /**
+ * **The merged session** (docs/plans/core.md C7; wave-zero.md §9).
+ *
+ * product-decisions §1's central claim is that learning a new word, recognising
+ * it and writing it are **one** session. Until C7 they were not: `buildQueue`
+ * returns `[...due, ...newCards]`, so a learner with fifteen reviews and five
+ * new words worked through fifteen cards and only then met a new word — and the
+ * new words were introduced on a *different screen*, which is the half
+ * `wave-zero.md` §9 says C7 owns.
+ *
+ * This is the interleave. It is composition over `buildQueue` and **nothing
+ * about FSRS changes**: the scheduler decides when a card comes back, this
+ * decides only the order the session offers what is already in the queue.
+ *
+ * The rule: spread the new words evenly through the due ones rather than
+ * fronting or tailing them. A learner who stops halfway has then met roughly
+ * half the day's new words, which is the honest split — fronting them spends
+ * the whole day's introductions on a session that might be abandoned, and
+ * tailing them means a bad day of reviews costs the new words entirely.
+ *
+ * **Due first at equal position.** The first card of a session is a review, not
+ * a new word: opening Practice to something you have never seen reads as the
+ * app ignoring the work you have waiting. (`step` is never below 1, so at
+ * `served = 0` no new word can be owed before the first review.)
+ */
+export interface ServedSoFar {
+  /** Reviews this session has already handed out. */
+  due: number;
+  /** New words this session has already handed out. */
+  fresh: number;
+}
+
+const NOTHING_SERVED: ServedSoFar = { due: 0, fresh: 0 };
+
+export function interleaveNew(
+  due: readonly CardRow[],
+  fresh: readonly CardRow[],
+  served: ServedSoFar = NOTHING_SERVED,
+): CardRow[] {
+  if (fresh.length === 0) return [...due];
+  if (due.length === 0) return [...fresh];
+
+  /**
+   * **`served` is what makes this a schedule rather than a decoration**, and
+   * the first version did not have it.
+   *
+   * The session store rebuilds the queue after *every* grade — it has to, so a
+   * card that came back on a short step is picked up — and it reads the next
+   * card as `queue[0]`. Without an offset each rebuild re-spreads the *remaining*
+   * new words through the *remaining* reviews, so the first new word is always
+   * about `remainingDue / remainingNew` places away and the learner never
+   * arrives. Simulated over fifteen reviews and five new words, the order
+   * actually served was all fifteen reviews and then all five new words:
+   * exactly the `[...due, ...newCards]` this function exists to replace.
+   *
+   * Counting what the session has already handed out fixes it, because the
+   * spacing is then computed over the *whole* session rather than over what is
+   * left of it. `tests/unit/srs/merged-session.test.ts` runs the simulation.
+   */
+  const totalDue = served.due + due.length;
+  const totalFresh = served.fresh + fresh.length;
+  // One new word every `step` items, counted over the session's full length so
+  // the last new word lands near the end rather than in the middle.
+  const step = (totalDue + totalFresh) / totalFresh;
+
+  const out: CardRow[] = [];
+  let placed = served.fresh;
+  let position = served.due + served.fresh;
+  let nextAt = step * (placed + 1);
+
+  /** Hand out whatever new words this position has now earned. */
+  const takeNew = () => {
+    while (placed < totalFresh && position >= Math.round(nextAt)) {
+      out.push(fresh[placed - served.fresh]);
+      placed += 1;
+      position += 1;
+      nextAt += step;
+    }
+  };
+
+  // Before the first review as well as after each one: a new word whose turn
+  // came while the learner was away from the tab belongs at the front of the
+  // rebuilt queue, not one review later.
+  takeNew();
+  for (const card of due) {
+    out.push(card);
+    position += 1;
+    takeNew();
+  }
+  // Whatever did not fit — a session with more new words than reviews.
+  for (let index = placed - served.fresh; index < fresh.length; index += 1) {
+    out.push(fresh[index]);
+  }
+  return out;
+}
+
+/**
  * How many times one card may be served in a single session before it is set
  * aside (see `deferredCardIds`). With `shortTermSteps` on, Again on a card in a
  * learning step schedules it a minute out, so a learner who keeps missing it is
@@ -196,7 +292,7 @@ export function formatDelay(ms: number): string {
 
 export interface GradeOption {
   rating: StoredRating;
-  /** Again · Hard · Good · Easy. */
+  /** Forgot it · Barely remembered · Got it · Instant (C8). Ratings 1–4, unchanged. */
   label: string;
   /** `10m`, `1d`, `3d`, `8d` … — what this button would schedule. */
   interval: string;
@@ -301,15 +397,15 @@ export function emptyStateMessage(state: EmptyState): string {
 
   const aside =
     deferred > 0
-      ? ` ${deferred} ${deferred === 1 ? 'card you kept missing is' : 'cards you kept missing are'} set aside until next time.`
+      ? ` ${deferred} ${deferred === 1 ? 'word you kept missing is' : 'words you kept missing are'} set aside until next time.`
       : '';
 
   if (waiting > 0) {
-    return `Nothing due — ${waiting} new ${waiting === 1 ? 'word is' : 'words are'} waiting, once the dictionary is back.${aside}`;
+    return `All done — ${waiting} new ${waiting === 1 ? 'word is' : 'words are'} waiting, once the dictionary is back.${aside}`;
   }
   if (next === null) {
-    if (deferred > 0) return `Nothing more is due right now.${aside}`;
-    return 'Nothing due — no cards are scheduled yet.';
+    if (deferred > 0) return `Nothing more to practise right now.${aside}`;
+    return 'Nothing to practise yet — look a word up and it joins the next session.';
   }
 
   const diff = Math.max(0, next - now);
@@ -318,12 +414,12 @@ export function emptyStateMessage(state: EmptyState): string {
     // `returning` is the count the caller measured over the same horizon; one
     // card is the floor because `next` being non-null means there is one.
     const count = Math.max(1, returning);
-    return `Nothing due — ${count} ${count === 1 ? 'card comes' : 'cards come'} back in ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}.${aside}`;
+    return `All done for now — ${count} ${count === 1 ? 'word comes' : 'words come'} back in ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}.${aside}`;
   }
   const hours = Math.ceil(diff / HOUR_MS);
   if (hours <= 48) {
-    return `Nothing due — next card in ${hours} ${hours === 1 ? 'hour' : 'hours'}.${aside}`;
+    return `All done — the next word comes back in ${hours} ${hours === 1 ? 'hour' : 'hours'}.${aside}`;
   }
   const days = Math.max(1, Math.ceil(diff / DAY_MS));
-  return `Nothing due — next card in ${days} ${days === 1 ? 'day' : 'days'}.${aside}`;
+  return `All done — the next word comes back in ${days} ${days === 1 ? 'day' : 'days'}.${aside}`;
 }

@@ -129,7 +129,7 @@ describe("'tap' — one gesture, two effects", () => {
     expect(screen.getByTestId('hanzi-text').getAttribute('data-band')).toBe('none');
   });
 
-  it("works with NO callback at all, which is every real call site", async () => {
+  it('works with NO callback at all, which is every real call site', async () => {
     // The reveal lives in the delegated handler, and the handler used to be
     // attached only when a caller supplied `onWord` or `onCharacter`. The
     // gallery was the one call site that did — so `'tap'` behaved exactly like
@@ -261,7 +261,13 @@ describe('one delegated handler', () => {
     const bindings = code.match(/\bonClick=/g) ?? [];
     expect(bindings).toHaveLength(1);
     // …and it is on the wrapper, next to the delegation comment's own marker.
-    expect(code).toContain('onClick={onWord || onCharacter || revealsOnTap ? onClick : undefined}');
+    // C5b adds `spanSelect` to the condition — the two-tap degrade's closing
+    // tap arrives at this handler and nowhere else — and C6 adds `speakOnTap`,
+    // rule 3's "tap a character → hear that syllable alone". Both are
+    // *conditions*; the handler is still the one on the container.
+    expect(code).toContain(
+      'onWord || onCharacter || revealsOnTap || spanSelect || speakOnTap ? onClick : undefined',
+    );
     // The per-character components must not take one at all.
     expect(code).not.toMatch(/function Ruby\([^)]*onClick/);
   });

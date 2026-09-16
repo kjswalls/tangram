@@ -149,9 +149,39 @@ export interface BackNavigation {
  * C7 it is three, and the first entry becomes Look up. Nothing in this module
  * knows which; the caller supplies the list.
  */
-export function createBackNavigation(tabs: readonly string[]): BackNavigation {
+export interface BackNavigationOptions {
+  /**
+   * Extra paths that belong to a tab without being its root.
+   *
+   * `tabOf` files a path by the longest root that prefixes it, and `'/'`
+   * matches only itself — so a sub-path of the first tab that does not start
+   * with that tab's root is invisible to the model. `core.md` C7 created
+   * exactly one: `/read`, which is a page inside the **Look up** tab (`'/'`)
+   * and is a path precisely so a text can be bookmarked and come back to.
+   *
+   * Without this, a cold start on `/read` resolved to no tab at all (`current`
+   * is null on the first arrival), `visit` returned without recording, and the
+   * first back press after moving to another tab **minimised the app** instead
+   * of returning to the text. Found by C7's adversarial review.
+   *
+   * Keys are paths (and their sub-paths); values are the tab root they belong
+   * to. A key that is not a declared root is a programming error.
+   */
+  belongsTo?: Readonly<Record<string, string>>;
+}
+
+export function createBackNavigation(
+  tabs: readonly string[],
+  options: BackNavigationOptions = {},
+): BackNavigation {
   const roots = tabs.map(normalise);
   if (roots.length === 0) throw new Error('createBackNavigation needs at least one tab');
+  const belongsTo = new Map(
+    Object.entries(options.belongsTo ?? {}).map(([path, root]) => [normalise(path), normalise(root)]),
+  );
+  for (const root of belongsTo.values()) {
+    if (!roots.includes(root)) throw new Error(`belongsTo names an unknown tab root: ${root}`);
+  }
 
   /**
    * The history stack as this session observed it, oldest first.
@@ -201,7 +231,14 @@ export function createBackNavigation(tabs: readonly string[]): BackNavigation {
       const matches = root === '/' ? path === '/' : path === root || path.startsWith(`${root}/`);
       if (matches && (best === null || root.length > best.length)) best = root;
     }
-    return best ?? current;
+    if (best !== null) return best;
+    // A declared sub-path of a tab, and anything under it. Checked after the
+    // roots so a root always wins, and longest-first so a nested declaration
+    // could still be added later without changing this.
+    for (const [declared, root] of [...belongsTo].sort((a, b) => b[0].length - a[0].length)) {
+      if (path === declared || path.startsWith(`${declared}/`)) return root;
+    }
+    return current;
   }
 
   /**

@@ -21,14 +21,26 @@ import {
 /** The shell A1 actually ships against: `components/shell/nav.ts`'s seven. */
 const SEVEN = ['/', '/lookup', '/review', '/read', '/lists', '/stats', '/settings'];
 
-/** What `core.md` C7 re-baselines it to. Look up is first, so it is rule 4's. */
-const THREE = ['/lookup', '/practice', '/library'];
+/**
+ * What `core.md` C7 re-baselines it to, **as the shell actually supplies it**:
+ * `TABS.map((tab) => tab.path)`, whose first entry is `'/'`, not `/lookup`.
+ *
+ * The first draft of this constant said `/lookup`, so every post-C7 case here
+ * ran against a first tab root that is a *removed route* — and the one branch
+ * the model's own header calls "the common case, not the exotic one" (`'/'` is
+ * a root, not a namespace) was exercised only by the seven-route fixtures.
+ * Found by C7's adversarial review.
+ */
+const THREE = ['/', '/practice', '/library'];
+
+/** The sub-path the shell declares, so `/read` is a page inside Look up. */
+const SUB_PATHS = { '/read': '/' } as const;
 
 describe('rule 1 — an open overlay swallows the press', () => {
   beforeEach(resetOverlays);
 
   it('closes the overlay and stops, whatever the tab state', () => {
-    const nav = createBackNavigation(THREE);
+    const nav = createBackNavigation(THREE, { belongsTo: SUB_PATHS });
     nav.visit('/library');
     nav.visit('/library/hsk-1');
     const close = vi.fn();
@@ -73,7 +85,7 @@ describe('rule 1 — an open overlay swallows the press', () => {
 
 describe('rule 2 — pop the current tab before leaving it', () => {
   it('pops while the tab stack is deeper than its root', () => {
-    const nav = createBackNavigation(THREE);
+    const nav = createBackNavigation(THREE, { belongsTo: SUB_PATHS });
     nav.visit('/library');
     nav.visit('/library/hsk-1');
     nav.visit('/library/hsk-1/entry');
@@ -83,7 +95,7 @@ describe('rule 2 — pop the current tab before leaving it', () => {
   });
 
   it('counts depth per tab, so a deep A does not keep B from switching', () => {
-    const nav = createBackNavigation(THREE);
+    const nav = createBackNavigation(THREE, { belongsTo: SUB_PATHS });
     nav.visit('/library');
     nav.visit('/library/hsk-1');
     nav.visit('/practice');
@@ -95,7 +107,7 @@ describe('rule 2 — pop the current tab before leaving it', () => {
   it('attributes an unenumerated route to the tab the learner is in', () => {
     // A detail route no tab list covers must still be popped rather than
     // treated as a tab switch — otherwise back leaves the tab from a child page.
-    const nav = createBackNavigation(THREE);
+    const nav = createBackNavigation(THREE, { belongsTo: SUB_PATHS });
     nav.visit('/library');
     nav.visit('/entry/中文');
 
@@ -103,8 +115,8 @@ describe('rule 2 — pop the current tab before leaving it', () => {
     expect(nav.handleBack({ overlayOpen: false })).toEqual({ type: 'pop' });
   });
 
-  it("a POP arrival unwinds the stack it came from", () => {
-    const nav = createBackNavigation(THREE);
+  it('a POP arrival unwinds the stack it came from', () => {
+    const nav = createBackNavigation(THREE, { belongsTo: SUB_PATHS });
     nav.visit('/library');
     nav.visit('/library/hsk-1');
     nav.visit('/library/hsk-1/entry');
@@ -114,7 +126,7 @@ describe('rule 2 — pop the current tab before leaving it', () => {
   });
 
   it('REPLACE does not deepen the stack', () => {
-    const nav = createBackNavigation(THREE);
+    const nav = createBackNavigation(THREE, { belongsTo: SUB_PATHS });
     nav.visit('/library');
     nav.visit('/library/hsk-1');
     nav.visit('/library/hsk-2', 'REPLACE');
@@ -146,7 +158,7 @@ describe('rule 2 — pop the current tab before leaving it', () => {
 
   it('ignores a repeated arrival at the same path', () => {
     // A re-render that re-reports the same location must not look like a push.
-    const nav = createBackNavigation(THREE);
+    const nav = createBackNavigation(THREE, { belongsTo: SUB_PATHS });
     nav.visit('/library');
     nav.visit('/library/hsk-1');
     nav.visit('/library/hsk-1');
@@ -155,7 +167,7 @@ describe('rule 2 — pop the current tab before leaving it', () => {
   });
 
   it('treats a trailing slash as the same tab root', () => {
-    const nav = createBackNavigation(THREE);
+    const nav = createBackNavigation(THREE, { belongsTo: SUB_PATHS });
     nav.visit('/library/');
 
     expect(nav.snapshot()).toMatchObject({ current: '/library', depth: 0 });
@@ -165,8 +177,8 @@ describe('rule 2 — pop the current tab before leaving it', () => {
 describe('rule 3 — walk the most-recently-visited tab stack, and pop it', () => {
   it('returns to the tab actually visited before, not the one to the left', () => {
     // A1's own example: Look up → Library → Practice. Back goes to Library.
-    const nav = createBackNavigation(THREE);
-    nav.visit('/lookup');
+    const nav = createBackNavigation(THREE, { belongsTo: SUB_PATHS });
+    nav.visit('/');
     nav.visit('/library');
     nav.visit('/practice');
 
@@ -177,36 +189,36 @@ describe('rule 3 — walk the most-recently-visited tab stack, and pop it', () =
     // The echo trap: the switch produces a router arrival at the target tab. If
     // that arrival re-pushed the tab we left, back would alternate between two
     // tabs forever. Every switch is followed here by the arrival it causes.
-    const nav = createBackNavigation(THREE);
-    nav.visit('/lookup');
+    const nav = createBackNavigation(THREE, { belongsTo: SUB_PATHS });
+    nav.visit('/');
     nav.visit('/library');
     nav.visit('/practice');
 
     expect(nav.handleBack({ overlayOpen: false })).toEqual({ type: 'switch-tab', to: '/library' });
     nav.visit('/library');
-    expect(nav.snapshot()).toMatchObject({ current: '/library', mru: ['/lookup'] });
+    expect(nav.snapshot()).toMatchObject({ current: '/library', mru: ['/'] });
 
-    expect(nav.handleBack({ overlayOpen: false })).toEqual({ type: 'switch-tab', to: '/lookup' });
-    nav.visit('/lookup');
-    expect(nav.snapshot()).toMatchObject({ current: '/lookup', mru: [] });
+    expect(nav.handleBack({ overlayOpen: false })).toEqual({ type: 'switch-tab', to: '/' });
+    nav.visit('/');
+    expect(nav.snapshot()).toMatchObject({ current: '/', mru: [] });
 
     expect(nav.handleBack({ overlayOpen: false })).toEqual({ type: 'background' });
   });
 
   it('visits a tab once in the stack however many times it is revisited', () => {
-    const nav = createBackNavigation(THREE);
-    nav.visit('/lookup');
+    const nav = createBackNavigation(THREE, { belongsTo: SUB_PATHS });
+    nav.visit('/');
     nav.visit('/library');
-    nav.visit('/lookup');
+    nav.visit('/');
     nav.visit('/practice');
 
-    // Not ['/lookup', '/library', '/lookup'] — the stack is most-recently-visited.
-    expect(nav.snapshot().mru).toEqual(['/library', '/lookup']);
+    // Not ['/', '/library', '/'] — the stack is most-recently-visited.
+    expect(nav.snapshot().mru).toEqual(['/library', '/']);
   });
 
   it('pops the current tab before consulting the stack', () => {
-    const nav = createBackNavigation(THREE);
-    nav.visit('/lookup');
+    const nav = createBackNavigation(THREE, { belongsTo: SUB_PATHS });
+    nav.visit('/');
     nav.visit('/practice');
     nav.visit('/practice/session');
 
@@ -216,9 +228,9 @@ describe('rule 3 — walk the most-recently-visited tab stack, and pop it', () =
 
 describe('rule 4 — background at the root of the first tab', () => {
   it('backgrounds from the first tab even with a stack behind it', () => {
-    const nav = createBackNavigation(THREE);
+    const nav = createBackNavigation(THREE, { belongsTo: SUB_PATHS });
     nav.visit('/practice');
-    nav.visit('/lookup');
+    nav.visit('/');
 
     expect(nav.snapshot().mru).toEqual(['/practice']);
     // Rule 3 is explicitly "if the tab is not the first tab". At the first tab's
@@ -227,7 +239,7 @@ describe('rule 4 — background at the root of the first tab', () => {
   });
 
   it('backgrounds when the tab stack is exhausted on a non-first tab', () => {
-    const nav = createBackNavigation(THREE);
+    const nav = createBackNavigation(THREE, { belongsTo: SUB_PATHS });
     nav.visit('/practice');
 
     expect(nav.handleBack({ overlayOpen: false })).toEqual({ type: 'background' });
@@ -235,13 +247,51 @@ describe('rule 4 — background at the root of the first tab', () => {
 
   it('backgrounds on a press before any navigation has been recorded', () => {
     // The very first press, if the effect that feeds the model has not run.
-    const nav = createBackNavigation(THREE);
+    const nav = createBackNavigation(THREE, { belongsTo: SUB_PATHS });
 
     expect(nav.handleBack({ overlayOpen: false })).toEqual({ type: 'background' });
   });
 });
 
-describe("the seven-route shell A1 actually ships against", () => {
+describe('a sub-path of a tab (core.md C7: /read lives inside Look up)', () => {
+  it('records a cold start on /read, so back returns to the text', () => {
+    /**
+     * The regression, exactly as C7's review found it. `'/'` matches only
+     * itself, so `/read` matched no root; `tabOf` fell back to `current`, which
+     * is `null` on the very first arrival; `visit` returned without recording.
+     * The learner opened their text, tapped Practice, pressed back — and the
+     * app **minimised** instead of going back to the text.
+     */
+    const nav = createBackNavigation(THREE, { belongsTo: SUB_PATHS });
+    nav.visit('/read', 'POP');
+    expect(nav.snapshot()).toMatchObject({ current: '/' });
+
+    nav.visit('/practice');
+    expect(nav.handleBack({ overlayOpen: false })).toEqual({ type: 'switch-tab', to: '/' });
+  });
+
+  it('files /read under Look up rather than under itself', () => {
+    // Not a fourth tab: a text is a page inside Look up, so backing out of it
+    // leaves the tab rather than switching to one.
+    const nav = createBackNavigation(THREE, { belongsTo: SUB_PATHS });
+    nav.visit('/', 'POP');
+    nav.visit('/read');
+    expect(nav.snapshot()).toMatchObject({ current: '/', depth: 1 });
+    // Rule 2: the entry below is in the same tab, so this pops rather than
+    // switching.
+    expect(nav.handleBack({ overlayOpen: false })).toEqual({ type: 'pop' });
+  });
+
+  it('refuses a sub-path declared against a tab that does not exist', () => {
+    // A typo here would be silent otherwise: the path would simply never be
+    // filed, which is the bug this whole block is about.
+    expect(() => createBackNavigation(THREE, { belongsTo: { '/read': '/nope' } })).toThrow(
+      /unknown tab root/,
+    );
+  });
+});
+
+describe('the seven-route shell A1 actually ships against', () => {
   it("makes '/' the tab the app backs out of, and does not swallow the others", () => {
     const nav = createBackNavigation(SEVEN);
     nav.visit('/');
@@ -334,10 +384,10 @@ describe('the four hazards that only show up on a device', () => {
     // leave the tab.
     const nav = createBackNavigation(SEVEN);
     nav.visit('/', 'POP');
-    nav.visit('/lookup');
+    nav.visit('/');
     nav.visit('/entry/中文');
 
-    expect(nav.snapshot()).toMatchObject({ current: '/lookup', depth: 1 });
+    expect(nav.snapshot()).toMatchObject({ current: '/', depth: 1 });
     expect(nav.handleBack({ overlayOpen: false })).toEqual({ type: 'pop' });
   });
 
@@ -346,7 +396,7 @@ describe('the four hazards that only show up on a device', () => {
     // history entry per character.
     const nav = createBackNavigation(SEVEN);
     nav.visit('/', 'POP');
-    nav.visit('/lookup');
+    nav.visit('/');
     nav.visit('/lookup?q=%E4%BD%A0');
     nav.visit('/lookup?q=%E4%BD%A0%E5%A5%BD');
     nav.visit('/lookup#results');
@@ -362,8 +412,8 @@ describe('two presses before the router answers the first', () => {
     // `handleBack` mutates: without this, one arrival consumes two entries of
     // the most-recently-visited stack, a tab is skipped on the way out, and the
     // app backgrounds a press early.
-    const nav = createBackNavigation(THREE);
-    nav.visit('/lookup');
+    const nav = createBackNavigation(THREE, { belongsTo: SUB_PATHS });
+    nav.visit('/');
     nav.visit('/library');
     nav.visit('/practice');
 
@@ -371,8 +421,8 @@ describe('two presses before the router answers the first', () => {
     expect(nav.handleBack({ overlayOpen: false })).toEqual({ type: 'switch-tab', to: '/library' });
 
     nav.visit('/library'); // the one arrival both presses produce
-    expect(nav.snapshot().mru).toEqual(['/lookup']);
-    expect(nav.handleBack({ overlayOpen: false })).toEqual({ type: 'switch-tab', to: '/lookup' });
+    expect(nav.snapshot().mru).toEqual(['/']);
+    expect(nav.handleBack({ overlayOpen: false })).toEqual({ type: 'switch-tab', to: '/' });
   });
 });
 
@@ -384,21 +434,21 @@ describe('an unenumerated route keeps the tab it was recorded under', () => {
     // and rule 2 would pop straight out of Stats into it.
     const nav = createBackNavigation(SEVEN);
     nav.visit('/', 'POP');
-    nav.visit('/lookup');
+    nav.visit('/');
     nav.visit('/entry/zhongwen');
     nav.visit('/stats');
 
     expect(nav.snapshot()).toMatchObject({ current: '/stats', depth: 0 });
-    expect(nav.handleBack({ overlayOpen: false })).toEqual({ type: 'switch-tab', to: '/lookup' });
+    expect(nav.handleBack({ overlayOpen: false })).toEqual({ type: 'switch-tab', to: '/' });
   });
 
   it('still offers the pop while the learner is in the tab that recorded it', () => {
     const nav = createBackNavigation(SEVEN);
     nav.visit('/', 'POP');
-    nav.visit('/lookup');
+    nav.visit('/');
     nav.visit('/entry/zhongwen');
 
-    expect(nav.snapshot()).toMatchObject({ current: '/lookup', depth: 1 });
+    expect(nav.snapshot()).toMatchObject({ current: '/', depth: 1 });
     expect(nav.handleBack({ overlayOpen: false })).toEqual({ type: 'pop' });
   });
 });

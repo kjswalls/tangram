@@ -22,7 +22,7 @@
  */
 import { expect, test } from '@playwright/test';
 
-import { NAV_ITEMS } from '../../../components/shell/nav';
+import { TABS } from '../../../components/shell/nav';
 import { appRoot } from '../../../lib/server/roots';
 import { discoverPageRoutes, pageRouteUrl } from '../../../lib/server/route-inventory';
 
@@ -38,7 +38,7 @@ test.describe('every route in the table renders', () => {
     // lower bound, because it is derived from the same collapse.
     expect(PAGES.length).toBeGreaterThan(0);
     expect(PAGES.map((page) => page.pattern)).toEqual(
-      expect.arrayContaining(NAV_ITEMS.map((item) => item.href)),
+      expect.arrayContaining(TABS.map((tab) => tab.path)),
     );
     expect(PAGES.map((page) => page.pattern)).not.toContain('/gallery');
   });

@@ -3,7 +3,7 @@
  * thresholds are what colour every token in the reader and every row in a list.
  */
 
-import type { FsrsCardState } from '@/lib/db/schema';
+import type { FsrsCardState, KnownBand } from '@/lib/db/schema';
 import type { HskBand } from '@/lib/types';
 import { State, toFsrsCard, toStoredCard } from '@/lib/srs/card';
 
@@ -24,7 +24,7 @@ export interface WordStateInput {
   known?: boolean;
   hskBand?: HskBand;
   /** `settings.knownBand` — bands at or below it are assumed known. */
-  knownBand: HskBand;
+  knownBand: KnownBand;
 }
 
 /**

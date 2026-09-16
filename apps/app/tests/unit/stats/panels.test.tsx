@@ -56,10 +56,12 @@ describe('the retention panel', () => {
 
     expect(screen.getByTestId('stats-retention-rate')).toHaveTextContent('90%');
     expect(screen.getByTestId('stats-retention-denominator')).toHaveTextContent(
-      '45 of 50 reviews recalled',
+      '45 of 50 remembered',
     );
+    // The denominator says what it counts in the learner's words — "the Review
+     // state" is the scheduler's name for it (core.md C8's jargon gate).
     expect(screen.getByTestId('stats-retention-denominator')).toHaveTextContent(
-      'already in the Review state',
+      'coming back to after getting them right before',
     );
     expect(screen.getByTestId('stats-retention-excluded')).toHaveTextContent('20');
   });
@@ -90,7 +92,7 @@ describe('the calibration chart', () => {
     expect(dots).toHaveLength(2);
     expect(dots.map((dot) => dot.getAttribute('data-count'))).toEqual(['45', '60']);
     expect(screen.getByTestId('stats-calibration-note')).toHaveTextContent(
-      'deciles held fewer than 10 reviews',
+      'levels held fewer than 10 of them',
     );
     // The thin bucket is in the table even though it is not on the chart.
     expect(screen.getByTestId('stats-calibration-table')).toHaveTextContent('60–70%');
@@ -111,7 +113,7 @@ describe('the calibration chart', () => {
     render(<CalibrationChart summary={calibration(reviews, W)} parameters="FSRS defaults" />);
     expect(screen.getByTestId('stats-calibration')).toHaveTextContent('all time');
     expect(screen.getByTestId('stats-calibration-note')).toHaveTextContent(
-      'reviews of cards in the Review state, all time',
+      'you came back to a word you had got right before, all time',
     );
   });
 

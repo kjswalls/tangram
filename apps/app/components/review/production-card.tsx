@@ -118,7 +118,11 @@ export function ProductionCard({
         }
         aria-label={revealed ? undefined : 'Show the answer'}
       >
-        <p className="text-xs tracking-wide text-muted uppercase">Write this in Chinese</p>
+        {/* The same slot as the recognise card's question (C8), so the two
+            directions ask in the same voice and in the same place. */}
+        <p data-testid="card-prompt" className="text-xs tracking-wide text-muted uppercase">
+          Write it from memory
+        </p>
 
         <ol
           data-testid="production-prompt"
@@ -175,6 +179,9 @@ export function ProductionCard({
                 {...(face.pinyinNum === undefined ? {} : { pinyinNum: face.pinyinNum })}
                 force
                 rtClassName="text-[0.28em]"
+                /* Rule 3's third clause (core.md C6). The answer face only:
+                   the question face of a write card shows no hanzi to tap. */
+                speakOnTap
               />
             </h2>
             {face.secondary ? (

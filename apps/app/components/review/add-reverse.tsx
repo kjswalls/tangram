@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * "Add the reverse" — the per-card way to start producing a word you can
+ * "Also write it from memory" — the per-card way to start producing a word you can
  * already read (Phase 8, builder B).
  *
  * It sits on the **back** of a recognition card, where the learner has just
@@ -95,7 +95,7 @@ export function AddReverse({ card, repo }: AddReverseProps) {
     <div data-testid="add-reverse" data-phase={phase} className="text-sm">
       {phase === 'present' ? (
         <p className="text-muted">
-          Reverse card added — you will be asked to write this one from its meaning.
+          Added — you will be asked to write this one from memory too.
         </p>
       ) : (
         <>
@@ -106,7 +106,7 @@ export function AddReverse({ card, repo }: AddReverseProps) {
             disabled={phase === 'adding' || phase === 'unknown'}
             onClick={() => void add()}
           >
-            {phase === 'adding' ? 'Adding…' : 'Add the reverse'}
+            {phase === 'adding' ? 'Adding…' : 'Also write it from memory'}
           </Button>
           {phase === 'failed' ? (
             <span className="ml-2 text-warning">That did not save — try again.</span>

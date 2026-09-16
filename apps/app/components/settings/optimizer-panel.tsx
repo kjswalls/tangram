@@ -20,6 +20,7 @@ import {
   type PreviousWeights,
 } from '@/lib/fsrs-optimize';
 import { describeParameters } from '@/lib/srs/params';
+import { RATING_LABELS } from '@/lib/srs/card';
 import { gradeOptions } from '@/lib/srs/session';
 
 /**
@@ -230,6 +231,31 @@ export function OptimizerPanel({ settings, onSettings }: OptimizerPanelProps) {
   const optimized = settings.fsrsWeights !== null;
   const canRevert = previous !== undefined || optimized;
 
+  /**
+   * **Absent, not disabled** (docs/plans/core.md C8).
+   *
+   * The fit needs {@link MIN_REVIEWS_FOR_FIT} scorable reviews, which for a new
+   * learner is months away. A greyed-out button with a paragraph explaining why
+   * it is greyed out is a promise the app cannot keep, sitting on the settings
+   * screen for the whole of that time — so until the fit can actually run,
+   * there is nothing here at all.
+   *
+   * Two exceptions, both of them "the learner has already used this": a fit
+   * that has been applied, and an undo slot that is still worth offering. A
+   * reset wipes the reviews without wiping `fsrsWeights`, and vanishing the
+   * only way back to the defaults would strand them.
+   *
+   * `scorable === undefined` is "still counting", which is also nothing: a
+   * panel that appears and then disappears a tick later is worse than one that
+   * arrives late.
+   *
+   * `status`/`result` keep it on screen once something has happened in it. A
+   * Revert below the floor clears `fsrsWeights`, which clears `canRevert` —
+   * and without this the learner's click would take the panel away with it,
+   * confirmation message and all.
+   */
+  if (!enough && !canRevert && status === undefined && result === undefined) return null;
+
   return (
     <div data-testid="optimizer-panel" className="flex flex-col gap-3 rounded-lg border border-border p-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -400,8 +426,14 @@ function OptimizerResult({
         </table>
       </div>
       <p className="text-xs text-muted">
-        Worked examples, not your cards: what &ldquo;Good&rdquo; would schedule for a card of that
-        age at average difficulty. Applying changes nothing you have already answered — no review
+        {/*
+          The button's own label, not the scheduler's name for rating 3. "Good"
+          is ts-fsrs's word and C8 renamed every one of the four on screen; this
+          paragraph is the last place the old name survived, and it named a
+          button the learner has never seen (core.md C8's review).
+        */}
+        Worked examples, not your cards: what &ldquo;{RATING_LABELS[3]}&rdquo; would schedule for a
+        card of that age at average difficulty. Applying changes nothing you have already answered — no review
         is rewritten, and every card keeps the state it is in.
       </p>
       <div>

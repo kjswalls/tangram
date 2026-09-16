@@ -81,6 +81,37 @@ export function discoverApiRoutes(repoRoot: string): ApiRoute[] {
 /** The route table React Router is built from. `web.md`'s file; `core.md` C7 edits it. */
 export const PAGE_ROUTE_TABLE = 'src/routes.tsx';
 
+/** Where `TAB_PATHS` lives. `core.md` C7 made the route table derive from it. */
+export const TAB_PATHS_SOURCE = 'components/shell/nav.ts';
+
+/**
+ * `TAB_PATHS`, scraped rather than imported.
+ *
+ * `core.md` C7 stopped writing route patterns as literals in the table and
+ * started deriving them — `{ path: TAB_PATHS.practice.slice(1) }` — so the nav
+ * and the router cannot disagree. That is the better invariant and it stays.
+ * But this module is a **static** reader by design: `scripts/smoke.ts` is a
+ * dependency-free CLI so the after-deploy checklist never needs a bundler, and
+ * importing `nav.ts` here would pull a `.tsx` component graph into it.
+ *
+ * So the reference is resolved the same way the table is: by reading the file.
+ * `TAB_PATHS` is a flat object of string literals and a `const` assertion,
+ * which is exactly what makes that safe — and if it ever stops being one, the
+ * caller below throws rather than guessing.
+ */
+function readTabPaths(repoRoot: string): Map<string, string> {
+  const source = readFileSync(resolve(repoRoot, TAB_PATHS_SOURCE), 'utf8');
+  const start = source.indexOf('export const TAB_PATHS');
+  if (start === -1) {
+    throw new Error(`${TAB_PATHS_SOURCE} has no \`export const TAB_PATHS\` declaration`);
+  }
+  const body = source.slice(start, source.indexOf('}', start));
+  const out = new Map<string, string>();
+  for (const match of body.matchAll(/(\w+):\s*'([^']*)'/g)) out.set(match[1], match[2]);
+  if (out.size === 0) throw new Error(`${TAB_PATHS_SOURCE}: TAB_PATHS yielded no paths`);
+  return out;
+}
+
 export interface PageRoute {
   /** The pattern, e.g. `/`, `/lookup`, `/lists/:id`. Also the DOM marker's value. */
   pattern: string;
@@ -130,15 +161,34 @@ export function discoverPageRoutes(repoRoot: string): PageRoute[] {
   // exercises), and `core.md` C7 is about to rewrite this table. A parse that
   // cannot see a route has to be loud, exactly as this file already is about a
   // route file that exports no handler.
-  for (const match of table.matchAll(/\bindex:\s*true|\bpath:\s*(['"`])((?:[^\\]|\\.)*?)\1|\bpath:\s*([^'"`\s])/g)) {
-    if (match[3] !== undefined) {
+  //
+  // `TAB_PATHS.<key>` and `TAB_PATHS.<key>.slice(1)` are read too, because C7
+  // derives the table from them (see `readTabPaths`). Anything else still
+  // throws: the point is that this cannot silently miss a route, not that it
+  // understands TypeScript.
+  const tabPaths = readTabPaths(repoRoot);
+  const pattern =
+    /\bindex:\s*true|\bpath:\s*(['"`])((?:[^\\]|\\.)*?)\1|\bpath:\s*TAB_PATHS\.(\w+)(\.slice\(1\))?|\bpath:\s*([^'"`\s])/g;
+  for (const match of table.matchAll(pattern)) {
+    if (match[5] !== undefined) {
       throw new Error(
         `${PAGE_ROUTE_TABLE}: a \`path:\` this cannot read (${match[0].trim()}…). ` +
-          'Route patterns must be plain quoted strings, or nothing derived from this ' +
-          'table will know the route exists.',
+          'Route patterns must be plain quoted strings or TAB_PATHS references, or ' +
+          'nothing derived from this table will know the route exists.',
       );
     }
-    const raw = match[2];
+    let raw = match[2];
+    if (match[3] !== undefined) {
+      const resolved = tabPaths.get(match[3]);
+      if (resolved === undefined) {
+        throw new Error(
+          `${PAGE_ROUTE_TABLE}: \`TAB_PATHS.${match[3]}\` is not in ${TAB_PATHS_SOURCE}.`,
+        );
+      }
+      // `.slice(1)` in the table makes the pattern relative to the layout route;
+      // the branch below re-adds the leading slash either way.
+      raw = match[4] === undefined ? resolved : resolved.slice(1);
+    }
     let pattern: string;
     if (raw === undefined) pattern = '/';
     else if (raw === '*') continue;

@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 
+import type { TabAccent } from '@/components/ui/tab-accent';
 import { cn } from '@/lib/cn';
 
 /**
@@ -27,8 +28,7 @@ import { cn } from '@/lib/cn';
  * `neutral`, which is ink on a `--border` pill and is the right answer for a
  * destination with no colour of its own.
  */
-/** Which of §1's accents this destination owns, if any. */
-export type TabAccent = 'neutral' | 'lookup' | 'practice' | 'new';
+export type { TabAccent };
 
 export interface TabItem {
   key: string;
@@ -39,15 +39,21 @@ export interface TabItem {
   accent?: TabAccent;
 }
 
-export interface TabBarProps {
-  items: readonly TabItem[];
+/**
+ * Generic over the item, so a caller with a richer tab — the shells' `TabItem`
+ * in `components/shell/nav.ts` carries a path and a blurb — gets it back in the
+ * renderer rather than having to look it up again by key. Anything satisfying
+ * `TabItem` is a tab as far as this component is concerned.
+ */
+export interface TabBarProps<T extends TabItem = TabItem> {
+  items: readonly T[];
   /** `key` of the active tab, or undefined when none is. */
   active?: string;
   /**
    * Renders one tab's clickable body. The shell hands back a router `<Link>`;
-   * the gallery hands back a `<button>`. `current` drives `aria-current`.
+   * the gallery hands back a `<button>`. `active` drives `aria-current`.
    */
-  renderItem: (item: TabItem, state: { active: boolean; className: string }) => ReactNode;
+  renderItem: (item: T, state: { active: boolean; className: string }) => ReactNode;
   className?: string;
   'aria-label'?: string;
 }
@@ -75,13 +81,13 @@ export function tabItemClass(accent: TabAccent = 'neutral'): string {
 
 export { ACTIVE as TAB_ACTIVE_CLASS };
 
-export function TabBar({
+export function TabBar<T extends TabItem>({
   items,
   active,
   renderItem,
   className,
   'aria-label': label = 'Main',
-}: TabBarProps) {
+}: TabBarProps<T>) {
   return (
     <nav
       aria-label={label}

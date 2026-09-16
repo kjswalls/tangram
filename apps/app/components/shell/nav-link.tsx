@@ -1,25 +1,44 @@
-import { Link, useLocation } from 'react-router';
+'use client';
 
-import { cn } from '@/lib/cn';
+/**
+ * One tab, as a router link (docs/plans/core.md C7).
+ *
+ * `TabBar` takes a **renderer** rather than importing the router, because
+ * `components/ui/**` is the layer both shells and the gallery render and the
+ * gallery has no destinations to point at. This is the shells' renderer; the
+ * gallery passes a `<button>`.
+ *
+ * `aria-current="page"` is what marks the tab a learner is on, and it is the
+ * attribute `TabBar`'s accent classes key off — so the mark and the tint cannot
+ * disagree. Which tab is active is `tabForPath()`'s answer, not this
+ * component's: a sub-path like `/read` or `/library/lists/42` keeps its tab
+ * marked, and deciding that per link is how the two came apart before.
+ */
+import { Link } from 'react-router';
 
-export function NavLink({ href, label }: { href: string; label: string }) {
-  // `usePathname()` was Next's; `useLocation()` is React Router's, and unlike
-  // `NavLink` from the same package it leaves the "is this active" rule here —
-  // which matters, because "/" is exact and everything else is a prefix.
-  const { pathname } = useLocation();
-  const active = href === '/' ? pathname === '/' : pathname.startsWith(href);
+import type { TabItem } from '@/components/shell/nav';
+
+export function TabLink({
+  item,
+  active,
+  className,
+}: {
+  item: TabItem;
+  active: boolean;
+  className?: string;
+}) {
   return (
     <Link
-      to={href}
+      to={item.path}
+      data-testid="tab-link"
+      data-tab={item.key}
+      // The same tooltip in both shells: anything one shell says and the other
+      // does not is a second design (C7's identical-screens rule).
+      title={item.blurb}
       aria-current={active ? 'page' : undefined}
-      className={cn(
-        // Tight enough that six links fit one phone row; py-2 gives the link a
-        // hand-sized target rather than the 28px a py-1 row would have.
-        'rounded-md px-1.5 py-2 text-sm whitespace-nowrap transition sm:px-2',
-        active ? 'bg-accent-soft text-accent font-medium' : 'text-muted hover:text-foreground',
-      )}
+      className={className}
     >
-      {label}
+      {item.label}
     </Link>
   );
 }

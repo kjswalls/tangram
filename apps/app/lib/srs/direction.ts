@@ -55,6 +55,26 @@ import type { CardContext, Entry, EntryId } from '@/lib/types';
 export const PRODUCTION: CardDirection = 'production';
 export const RECOGNITION: CardDirection = 'recognition';
 
+/**
+ * What the two directions are called where a learner can read them
+ * (docs/plans/core.md C8).
+ *
+ * The internal names stay `recognition` and `production` — they are in the
+ * database, in `data-direction`, and in every test — because renaming a stored
+ * value to fix a label is how a schema ends up describing a screen. These are
+ * the words, and they live here so the card, the list and Today cannot each
+ * invent their own.
+ *
+ * "Recognise" and "Write", not "hanzi → meaning" and "meaning → hanzi": the
+ * arrows were a description of the card's mechanism, and a learner who has to
+ * work out which side of the arrow they are on has been handed the scheduler's
+ * problem.
+ */
+export const DIRECTION_LABELS: Record<CardDirection, string> = {
+  recognition: 'Recognise',
+  production: 'Write',
+};
+
 /** A card row written before Phase 8 has no direction at all; it is recognition. */
 export function directionOf(card: Pick<CardRow, 'direction'>): CardDirection {
   return card.direction === PRODUCTION ? PRODUCTION : RECOGNITION;

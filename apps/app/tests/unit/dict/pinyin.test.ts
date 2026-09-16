@@ -77,7 +77,7 @@ describe('toMarked — whole readings', () => {
   it('separates syllables that would otherwise be ambiguous', () => {
     expect(toMarked('xi1 an1')).toBe("xī'ān");
     expect(toMarked('xian1')).toBe('xiān');
-    expect(toMarked("xi1 an1")).not.toBe(toMarked('xian1'));
+    expect(toMarked('xi1 an1')).not.toBe(toMarked('xian1'));
   });
 
   it('breaks a name into words at CC-CEDICT\'s capitals', () => {

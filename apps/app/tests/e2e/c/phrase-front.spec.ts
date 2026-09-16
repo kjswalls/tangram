@@ -19,7 +19,7 @@ test.describe('a phrase card front', () => {
   test('marks the token no dictionary row stands behind', async ({ page }) => {
     // No spine draw: the only card in the session is the one this spec writes.
     await resetApp(page, { newPerDay: 0 });
-    await page.goto('/review');
+    await page.goto('/practice');
     await ready(page);
 
     await page.evaluate(async (tokens) => {
@@ -60,7 +60,7 @@ test.describe('a phrase card front', () => {
 
   test('leaves a fully cited phrase unmarked', async ({ page }) => {
     await resetApp(page, { newPerDay: 0 });
-    await page.goto('/review');
+    await page.goto('/practice');
     await ready(page);
 
     await page.evaluate(async (tokens) => {

@@ -155,8 +155,9 @@ contains the word has misread the situation.
 ## Data and licences
 
 `data/*.json` (and the SQLite artifact that replaces it) is **generated** by `pnpm data` and
-gitignored. `data/ATTRIBUTION.md` and `data/COPYING-*` are **committed** and rendered in `/settings`;
-that rendering is a licence obligation, not a nicety.
+gitignored. `data/ATTRIBUTION.md` and `data/COPYING-*` are **committed** and rendered in the **Library** tab
+(`/library` — `core.md` C7 folded `/settings` into it); that rendering is a licence obligation, not
+a nicety.
 
 The sources are kept apart because their licences differ, and they must never be merged:
 

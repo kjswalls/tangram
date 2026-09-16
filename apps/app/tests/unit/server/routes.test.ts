@@ -42,7 +42,7 @@ import {
   sourceToRegExp,
 } from '@/lib/server/host-config';
 import { appRoot, workspaceRoot } from '@/lib/server/roots';
-import { NAV_ITEMS } from '@/components/shell/nav';
+import { TABS } from '@/components/shell/nav';
 import { OUTPUT_FILE_TRACING_INCLUDES } from '@/tracing.config';
 import {
   discoverApiRoutes,
@@ -124,16 +124,18 @@ describe('the route inventory', () => {
 describe('the page route table', () => {
   const pages = discoverPageRoutes(ROOT);
 
-  it('is read out of src/routes.tsx and holds today’s eight routes', () => {
+  it('is read out of src/routes.tsx and holds today’s five routes', () => {
+    // An exact list on purpose: adding or removing a destination should be a
+    // deliberate edit here, not something that slips past. `core.md` C7
+    // collapsed the eight this used to name into three tabs plus two sub-paths,
+    // and the table now derives them from `TAB_PATHS` — which is what
+    // `discoverPageRoutes` learned to resolve when the two landed together.
     expect(pages.map((page) => page.pattern)).toEqual([
       '/',
-      '/lookup',
-      '/review',
       '/read',
-      '/lists',
-      '/lists/:id',
-      '/stats',
-      '/settings',
+      '/practice',
+      '/library',
+      '/library/lists/:id',
     ]);
   });
 
@@ -149,7 +151,7 @@ describe('the page route table', () => {
 
   it('covers every nav destination', () => {
     expect(pages.map((page) => page.pattern)).toEqual(
-      expect.arrayContaining(NAV_ITEMS.map((item) => item.href)),
+      expect.arrayContaining(TABS.map((tab) => tab.path)),
     );
   });
 

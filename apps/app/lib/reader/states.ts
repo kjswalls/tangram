@@ -18,7 +18,7 @@
  */
 
 import type { Repository } from '@/lib/db/repository';
-import type { FsrsCardState } from '@/lib/db/schema';
+import type { FsrsCardState, KnownBand } from '@/lib/db/schema';
 import type { EntrySource } from '@/lib/lists/entry-source';
 import { wordState, type WordState } from '@/lib/srs/states';
 import { HSK_BANDS, type EntryId, type HskBand, type Token } from '@/lib/types';
@@ -37,12 +37,12 @@ export interface ReaderIndex {
    * answer — so the reader pulls two lists, not seven.
    */
   bands: Map<EntryId, HskBand>;
-  knownBand: HskBand;
+  knownBand: KnownBand;
 }
 
 const RANK: Record<WordState, number> = { new: 0, learning: 1, known: 2 };
 
-export function emptyReaderIndex(knownBand: HskBand = 1): ReaderIndex {
+export function emptyReaderIndex(knownBand: KnownBand = 0): ReaderIndex {
   return { cards: new Map(), known: new Set(), bands: new Map(), knownBand };
 }
 
@@ -90,7 +90,7 @@ export interface ReaderIndexInput {
   known: readonly EntryId[];
   /** entryId → band, for bands ≤ `knownBand`. */
   bands?: Iterable<readonly [EntryId, HskBand]>;
-  knownBand: HskBand;
+  knownBand: KnownBand;
 }
 
 export function buildReaderIndex(input: ReaderIndexInput): ReaderIndex {

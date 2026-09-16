@@ -22,7 +22,7 @@ import { expectBaseText, expectExactBaseText } from '../hanzi';
  *   immediately; the text survives navigation.
  *
  * The database is the fixture, through `window.__tangram` (§ Phase 0's test
- * hook). `newPerDay: 0` throughout: opening `/review` introduces the day's
+ * hook). `newPerDay: 0` throughout: opening `/practice` introduces the day's
  * spine words (HANDOFF.md, "Phases 1–3 review fixes"), and these specs are
  * about the one card the reader mined.
  */
@@ -116,7 +116,7 @@ test.describe('/read', () => {
     await expect(token(page, NEW_WORD)).toHaveAttribute('data-state', 'learning');
 
     // And the same sentence is on the back of the card in the review session.
-    await page.goto('/review');
+    await page.goto('/practice');
     await ready(page);
     await expectBaseText(page.getByTestId('card-front'), NEW_WORD);
     await page.keyboard.press('Space');
@@ -196,10 +196,14 @@ test.describe('/read', () => {
 
     const before = await page.getByTestId('reader-token').count();
 
-    // Client-side navigation, the way the nav works: the store keeps the text.
-    await page.getByRole('link', { name: 'Review' }).click();
-    await expect(page).toHaveURL(/\/review$/);
-    await page.getByRole('link', { name: 'Read' }).click();
+    // Client-side navigation, the way the tab bar works: the store keeps the
+    // text. `/read` is inside the Look up tab since core.md C7, so the way back
+    // is the tab and then the screen's own "Open a text".
+    const bar = page.getByTestId('tab-bar');
+    await bar.getByRole('link', { name: 'Practice', exact: true }).click();
+    await expect(page).toHaveURL(/\/practice$/);
+    await bar.getByRole('link', { name: 'Look up', exact: true }).click();
+    await page.getByTestId('open-texts').click();
     await expect(page).toHaveURL(/\/read$/);
     await expectBaseText(page.getByTestId('reader-text'), NEW_WORD);
     expect(await page.getByTestId('reader-token').count()).toBe(before);

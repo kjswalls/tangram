@@ -1,6 +1,8 @@
 'use client';
 
 import { Link, useNavigate } from 'react-router';
+
+import { TAB_PATHS } from '@/components/shell/nav';
 import { useEffect, useState } from 'react';
 
 import { ProductionListToggle } from '@/components/lists/production-list-toggle';
@@ -167,7 +169,7 @@ export function ListDetail({ listId }: { listId: string }) {
       <Card title="Not found">
         <p className="text-sm text-muted">
           That list does not exist.{' '}
-          <Link to="/lists" className="text-accent underline underline-offset-2">
+          <Link to={TAB_PATHS.library} className="text-accent underline underline-offset-2">
             Back to lists
           </Link>
           .
@@ -179,7 +181,7 @@ export function ListDetail({ listId }: { listId: string }) {
   return (
     <div className="flex flex-col gap-4">
       <p className="text-sm text-muted">
-        <Link to="/lists" className="text-accent underline underline-offset-2">
+        <Link to={TAB_PATHS.library} className="text-accent underline underline-offset-2">
           ← All lists
         </Link>
       </p>
@@ -319,7 +321,7 @@ export function ListDetail({ listId }: { listId: string }) {
                 onClick={() => {
                   void getRepository()
                     .deleteList(list.id)
-                    .then(() => navigate('/lists'));
+                    .then(() => navigate(TAB_PATHS.library));
                 }}
               >
                 Delete list

@@ -68,22 +68,33 @@ export interface SeedCard {
 }
 
 /**
- * Open /review with an empty database and the test hook ready.
+ * Open the Practice tab with an empty database and the test hook ready.
  *
- * `newPerDay: 0` by default: since the merge fixes, loading `/review` runs
- * `loadToday`, so the route introduces the day's new words exactly as Today
- * does. These specs are about the session mechanics, so the spine draw is
- * switched off and every card on screen is one the spec seeded. Pass a cap to
- * exercise the draw itself.
+ * `newPerDay: 0` by default: since the merge, loading `/practice` runs
+ * `loadToday`, so the tab introduces the day's new words. These specs are about
+ * the session mechanics, so the spine draw is switched off and every card on
+ * screen is one the spec seeded. Pass a cap to exercise the draw itself.
+ *
+ * **The reset happens on `/read`, before the session is ever mounted.** This
+ * used to navigate to `/practice` first and wipe afterwards — which raced the
+ * mount's own `loadToday`: that call reads the settings and the card table
+ * early and writes the drawn cards late, so a draw begun under the *default*
+ * cap could land on the far side of the wipe and leave four spine words in a
+ * session the spec thought it had emptied. core.md C8 is what made it show:
+ * with `spineStartBand: 1` and `knownBand: 0` the draw finds HSK 1 immediately,
+ * where before it waited on band 3 and usually lost the race. `/read` starts no
+ * session and materialises no list, which is why `resetApp` uses it too.
  */
 export async function openReview(page: Page, settings: { newPerDay?: number } = {}): Promise<void> {
-  await page.goto('/review');
+  await page.goto('/read');
   await page.waitForFunction(() => Boolean((window as TangramWindow).__tangram));
   await page.evaluate(async (patch) => {
     const repo = (window as TangramWindow).__tangram!.repo;
     await repo.resetAll();
     await repo.setSettings({ newPerDay: patch.newPerDay ?? 0 });
   }, settings);
+  await page.goto('/practice');
+  await page.waitForFunction(() => Boolean((window as TangramWindow).__tangram));
 }
 
 /**

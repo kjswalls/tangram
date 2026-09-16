@@ -31,7 +31,7 @@ import {
 
 /** Throw the switch the way a person does, and wait for the row, not the box. */
 async function enableProduction(page: Page): Promise<void> {
-  await page.goto('/settings');
+  await page.goto('/library');
   await ready(page);
   const toggle = page.getByTestId('settings-production-direction');
   await expect(toggle).not.toBeChecked();
@@ -50,7 +50,7 @@ test.describe('/review, both directions', () => {
     // Nothing was created by the setting itself.
     expect(await page.evaluate(() => window.__tangram.repo.allCards())).toHaveLength(0);
 
-    await page.goto('/review');
+    await page.goto('/practice');
     await ready(page);
     const [recognitionId] = await seed(page, [
       { entry: DASUAN, context: readerContext(), gradedDaysAgo: 30 },
@@ -128,7 +128,7 @@ test.describe('/review, both directions', () => {
   test('accepts the other script, and counts the directions apart on Today', async ({ page }) => {
     await openReview(page);
     await enableProduction(page);
-    await page.goto('/review');
+    await page.goto('/practice');
     await ready(page);
 
     // Two words: one recognised, one to be produced. 看看 is written the same
@@ -169,9 +169,9 @@ test.describe('/review, both directions', () => {
     // Today says what the learner signed up for, in two numbers.
     await page.goto('/');
     await ready(page);
-    await expect(page.getByTestId('today-direction-split')).toBeVisible();
-    await expect(page.getByTestId('today-recognition-count')).toHaveText('2');
-    await expect(page.getByTestId('today-production-count')).toHaveText('1');
+    // C8: one sentence. The writing half is still counted and named apart —
+    // that is what Phase 8 added and what C8 kept — it is just a clause now.
+    await expect(page.getByTestId('today-sentence')).toContainText('1 to write from memory');
 
     // Take the two recognition cards out of the way rather than walking the
     // queue: they are graded, so they come back in minutes and what is left to
@@ -183,7 +183,7 @@ test.describe('/review, both directions', () => {
       }
     });
 
-    await page.goto('/review');
+    await page.goto('/practice');
     await ready(page);
     await expect(page.getByTestId('review-card')).toHaveAttribute('data-direction', 'production');
 
@@ -234,13 +234,13 @@ test.describe('/lists, also study production', () => {
     );
 
     // Off in settings means the control is not there at all.
-    await page.goto(`/lists/${listId}`);
+    await page.goto(`/library/lists/${listId}`);
     await ready(page);
     await expect(page.getByTestId('list-members')).toBeVisible();
     await expect(page.getByTestId('list-production')).toHaveCount(0);
 
     await enableProduction(page);
-    await page.goto(`/lists/${listId}`);
+    await page.goto(`/library/lists/${listId}`);
     await ready(page);
 
     const toggle = page.getByTestId('list-production-toggle');
@@ -256,7 +256,7 @@ test.describe('/lists, also study production', () => {
     await toggle.click();
 
     await expect(page.getByTestId('list-production-status')).toContainText(
-      '1 reverse card added today',
+      '1 word to write added today',
     );
     await expect(page.getByTestId('list-production-status')).toContainText('1 more');
     const twins = await page.evaluate(async () =>

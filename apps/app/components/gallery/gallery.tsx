@@ -28,8 +28,10 @@ import { DictGate } from '@/components/dict/dict-gate';
 import { DictStatusView } from '@/components/dict/dict-status';
 import { Section, Row } from '@/components/gallery/section';
 import { FakeDictStore, TOTAL } from '@/components/gallery/fake-dict-store';
+import { GalleryTTSProvider } from '@/components/gallery/fake-tts';
 import { passageRuns } from '@/components/gallery/passage';
 import { HanziText } from '@/components/hanzi/hanzi-text';
+import { SpeakControl } from '@/components/hanzi/speak-control';
 import {
   ASK_OFFLINE_CHIP,
   ASK_UNGROUNDED_BODY,
@@ -334,7 +336,19 @@ function ThemeControl() {
   );
 }
 
+/** One block, long enough that a hold has several characters to walk through. */
+const SPEAKER_RUNS = [
+  { text: '打算', pinyinNum: 'da3 suan4' },
+  { text: '明天', pinyinNum: 'ming2 tian1' },
+  { text: '去', pinyinNum: 'qu4' },
+  { text: '北京', pinyinNum: 'Bei3 jing1' },
+] as const;
+const SPEAKER_TEXT = SPEAKER_RUNS.map((run) => run.text).join('');
+
 export function Gallery() {
+  // One provider for the life of the page: a new one per render would cancel
+  // the sequence the learner is listening to on every state change.
+  const [speakProvider] = useState(() => new GalleryTTSProvider());
   const [sheetOpen, setSheetOpen] = useState(false);
   const [fieldValue, setFieldValue] = useState('');
   const [activeTab, setActiveTab] = useState('look-up');
@@ -726,6 +740,38 @@ export function Gallery() {
               Ready is the state with no screen — this is what a lookup surface renders through.
             </p>
           </DictGate>
+        </div>
+      </Section>
+
+      <Section
+        id="speaker"
+        title="The speaker, and hold to slow"
+        note={
+          <>
+            Tap to read the block as one utterance; <strong>hold</strong> it (500 ms — both
+            platforms&rsquo; own long-press default) to read it character by character at 0.6×,
+            with each character lit as it plays. The <em>Slow</em> button beside it does the same
+            thing from the keyboard, because a long press is not an accessible affordance on its
+            own. The provider here is the gallery&rsquo;s own: it produces{' '}
+            <strong>no audio</strong> — headless Chromium has no voices at all — and exists so the
+            gesture, the timing and the lit character can be driven in a real browser.
+          </>
+        }
+      >
+        <div data-testid="gallery-speaker" className="flex flex-col gap-3">
+          <div className="flex items-center gap-3">
+            <HanziText
+              runs={SPEAKER_RUNS}
+              display="always"
+              className="text-3xl"
+              data-testid="gallery-speaker-text"
+              // Rule 3's third clause, demonstrable in a browser for the same
+              // reason the hold is: the real adapter has no voice to speak with.
+              speakOnTap
+              speakProvider={speakProvider}
+            />
+            <SpeakControl text={SPEAKER_TEXT} provider={speakProvider} label={SPEAKER_TEXT} />
+          </div>
         </div>
       </Section>
 

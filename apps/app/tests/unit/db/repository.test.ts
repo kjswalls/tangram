@@ -25,8 +25,12 @@ describe('settings', () => {
     expect(settings).toMatchObject({
       id: 'singleton',
       newPerDay: 10,
-      spineStartBand: 3,
-      knownBand: 2,
+      // HSK 1 since core.md C8: a new learner's first session is the easiest
+      // band, and Library says so in words. `knownBand: 0` is the other half —
+      // the draw skips any band at or below it, so leaving it at 2 would have
+      // made the spine start at 3 whatever `spineStartBand` said.
+      spineStartBand: 1,
+      knownBand: 0,
       dayRollover: 4,
       script: 'simp',
       provider: 'fake',

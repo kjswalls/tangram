@@ -25,7 +25,7 @@ export interface RetentionPanelProps {
 }
 
 function denominator(summary: RetentionSummary, span: string): string {
-  return `${formatCount(summary.recalled)} of ${formatCount(summary.reviews)} reviews recalled — cards already in the Review state, ${span}`;
+  return `${formatCount(summary.recalled)} of ${formatCount(summary.reviews)} remembered — words you were coming back to after getting them right before, ${span}`;
 }
 
 export function RetentionPanel({ window, allTime, windowDays }: RetentionPanelProps) {
@@ -33,7 +33,10 @@ export function RetentionPanel({ window, allTime, windowDays }: RetentionPanelPr
 
   return (
     <Card
-      title="True retention"
+      // C8: plain English. "True retention" is the SRS community's term for
+      // this number and it means nothing to a learner; what they want to know
+      // is whether the words are staying put.
+      title="How well it’s sticking"
       aside={<Badge tone="neutral">{span}</Badge>}
       data-testid="stats-retention"
     >
@@ -54,8 +57,8 @@ export function RetentionPanel({ window, allTime, windowDays }: RetentionPanelPr
           have={window.reviews}
           needed={window.needed}
         >
-          Only reviews of cards already in the Review state count, and in the {span} you have{' '}
-          {formatCount(window.reviews)} of those.
+          Only words you were coming back to after a day or more count, and in the {span} you
+          have {formatCount(window.reviews)} of those.
         </NotEnough>
       )}
 
@@ -74,14 +77,22 @@ export function RetentionPanel({ window, allTime, windowDays }: RetentionPanelPr
           label="Not counted"
           testId="stats-retention-excluded"
           value={formatCount(allTime.excluded)}
-          hint="learning-step reviews, all time"
+          // Not "same-sitting tries": the excluded set is every review of a
+          // word that was not yet in the come-back-later state — which is each
+          // word's **first** meeting as well as the repeats, and any word being
+          // relearned. Found by C8's adversarial review.
+          hint="first meetings and words you were relearning, all time"
         />
       </div>
 
+      {/* C8's rule, applied to the one paragraph on this panel: the old copy
+          named the four buttons by their old names, so it was both jargon and
+          out of date the moment `RATING_LABELS` changed. */}
       <p className="mt-3 text-sm text-muted">
-        Again is the only failure; Hard, Good and Easy all count as recalled. Reviews of cards
-        still inside their learning steps are left out — they measure how many times you pressed a
-        button in a session, not whether the interval held.
+        “Forgot it” is the only miss; the other three all count as remembered. Words you had not
+        got right yet are left out — the first time you meet a word, and any you were relearning —
+        because those say how many times you pressed a button, not whether the word stayed with
+        you.
       </p>
     </Card>
   );

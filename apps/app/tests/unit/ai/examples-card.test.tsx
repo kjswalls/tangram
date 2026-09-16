@@ -160,6 +160,10 @@ describe('the example sentences on a card back', () => {
   });
 
   it('serves a repeat from the cache, and re-resolves the text from the dictionary', async () => {
+    // The cache key carries `estimatedBand`, which is derived from
+    // `settings.knownBand` — so the band is part of this fixture, not a
+    // default to inherit. core.md C8 moved the default to 0.
+    await getRepository().setSettings({ knownBand: 2 });
     const view = render(<ExampleSentences entryId={KAISHI.id} />);
     await screen.findByTestId('examples-list');
     expect(calls.post).toBe(1);
@@ -224,6 +228,8 @@ describe('the example sentences on a card back', () => {
 
   it('sends the known set as ids and a band, not as characters', async () => {
     const repo = getRepository();
+    // The band assumption under test, stated rather than inherited.
+    await repo.setSettings({ knownBand: 2 });
     await repo.markKnown([FUJIN.id]);
     render(<ExampleSentences entryId={KAISHI.id} />);
     await screen.findByTestId('examples-list');

@@ -21,7 +21,7 @@ import { describe, expect, it } from 'vitest';
 import { appRoot, workspaceRoot } from '@/lib/server/roots';
 import { precacheList } from '../../../../../scripts/build-sw';
 
-import { NAV_ITEMS } from '@/components/shell/nav';
+import { TABS, TAB_PATHS } from '@/components/shell/nav';
 
 const root = appRoot(import.meta.dirname);
 const manifest = JSON.parse(readFileSync(resolve(root, 'public/manifest.webmanifest'), 'utf8'));
@@ -49,6 +49,24 @@ describe('manifest.webmanifest', () => {
     expect(manifest.display).toBe('standalone');
     expect(manifest.theme_color).toMatch(/^#[0-9a-f]{6}$/i);
     expect(manifest.background_color).toMatch(/^#[0-9a-f]{6}$/i);
+  });
+
+  it('describes itself in the app’s own words, in both places at once', () => {
+    /**
+     * The tagline is written twice — once in the manifest, once as the entry
+     * document's `<meta name="description">` — and the installed app shows the
+     * manifest's copy. C8 renamed the verb everywhere a learner can see it and
+     * both copies kept saying "review it", because neither is in a directory
+     * the jargon sweep walked and nothing held them to each other. Found by
+     * C8's adversarial review.
+     */
+    const meta = /<meta name="description" content="([^"]+)"/.exec(html)?.[1];
+    expect(meta).toBeDefined();
+    expect(manifest.description).toBe(meta);
+    // The one word C8 replaced. Not a general jargon sweep — that lives in the
+    // components — just the tagline the home screen quotes back.
+    expect(manifest.description).not.toMatch(/\breviews?\b/i);
+    expect(manifest.description).toMatch(/practise/i);
   });
 
   it('leaves orientation to the device', () => {
@@ -158,10 +176,10 @@ describe('sw.js', () => {
     // C7's collapse to three tabs costs this file nothing, and no nav route is
     // named here to go stale.
     expect(sw).toContain('const SHELL = __TANGRAM_PRECACHE__');
-    for (const item of NAV_ITEMS) {
-      if (item.href === '/') continue;
-      expect(sw, `${item.href} must not be a literal in the worker any more`).not.toContain(
-        `'${item.href}'`,
+    for (const tab of TABS) {
+      if (tab.path === '/') continue;
+      expect(sw, `${tab.path} must not be a literal in the worker any more`).not.toContain(
+        `'${tab.path}'`,
       );
     }
   });
@@ -169,7 +187,7 @@ describe('sw.js', () => {
   it('denies the dictionary artifact outright, brotli sibling included', () => {
     // It is imported into OPFS (`data.md` D4); an HTTP-cache copy is the same
     // 43 MB again on an origin the browser is willing to evict wholesale.
-    const rule = "if (/^\\/dict-.+\\.sqlite(\\.br)?$/.test(url.pathname)) return;";
+    const rule = 'if (/^\\/dict-.+\\.sqlite(\\.br)?$/.test(url.pathname)) return;';
     expect(sw).toContain(rule);
     // Anchored on the RULE, not on the first `.sqlite` in the file — which is
     // in the header comment on line 20, so the old version of this assertion
@@ -217,6 +235,45 @@ describe('sw.js', () => {
     const body = sw.slice(sw.indexOf('async function shell('), sw.indexOf("addEventListener('fetch"));
     expect(body).toContain("cache.match('/')");
     expect(body.indexOf("cache.match('/')")).toBeLessThan(body.indexOf('cache.match(OFFLINE_URL)'));
+  });
+
+  /**
+   * The offline page may only link where the offline page can actually go
+   * (found by C7's adversarial review).
+   *
+   * It shipped for one commit offering `/review`, `/lists` and `/settings` —
+   * paths core.md C7 had deleted. Online, the SPA fallback lands the learner on
+   * the not-found screen; that half is still the bug and still checked below.
+   *
+   * **The offline half of C7's reasoning no longer holds, and the check changed
+   * with it.** C7 derived the allowed set from the `SHELL` literal, on the
+   * grounds that the worker has nothing cached for an unprecached path and
+   * serves this same page again. `web.md` W3 landed at the same time and made
+   * `SHELL` a build-time substitution of one document plus this build's assets,
+   * with `shell()` falling back to `cache.match('/')` for *any* navigation — so
+   * every route renders offline from the one cached document, precached or not.
+   * The case above asserts that ordering, and `tests/e2e/c/sw-offline.spec.ts`
+   * proves it in a browser on a never-visited route. Deriving from `SHELL` here
+   * would now compare links against a list of asset URLs.
+   *
+   * So the set is the tab model, which is what "where the offline page can go"
+   * actually means under the fallback, and what the next phase that moves a tab
+   * will move.
+   */
+  it('links only to paths the app still has', () => {
+    const page = readFileSync(resolve(root, 'public/offline.html'), 'utf8');
+    const reachable = new Set<string>([
+      ...Object.values(TAB_PATHS).filter((path) => !path.includes(':')),
+      '/offline.html',
+    ]);
+    const links = [...page.matchAll(/href="([^"]+)"/g)].map((match) => match[1]);
+    expect(links.length).toBeGreaterThan(0);
+    expect(links.filter((href) => !reachable.has(href))).toEqual([]);
+    // …and the three it does offer are the three tabs, named as the tabs are.
+    expect(links).toEqual(['/', '/practice', '/library']);
+    for (const gone of ['/review', '/lists', '/settings', '/today', '/lookup', '/stats']) {
+      expect(page, `offline.html still links ${gone}`).not.toContain(`href="${gone}"`);
+    }
   });
 
   it('only ever stores a same-origin, ok response', () => {

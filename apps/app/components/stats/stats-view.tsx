@@ -43,7 +43,7 @@ export function StatsView() {
 
   if (error) {
     return (
-      <Card title="Stats">
+      <Card title="How it’s going">
         <p role="status" className="text-sm text-warning">
           {error}
         </p>
@@ -53,7 +53,7 @@ export function StatsView() {
 
   if (!summary) {
     return (
-      <Card title="Stats">
+      <Card title="How it’s going">
         <p data-testid="stats-loading" className="text-sm text-muted">
           Reading your review log…
         </p>

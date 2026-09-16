@@ -45,7 +45,12 @@ import {
 } from '@/lib/ai/ground';
 import type { ParsedExampleSentences } from '@/lib/ai/provider';
 import type { Repository } from '@/lib/db/repository';
-import { isPhraseSnapshot, type CardRow, type SettingsRow } from '@/lib/db/schema';
+import {
+  isPhraseSnapshot,
+  type CardRow,
+  type KnownBand,
+  type SettingsRow,
+} from '@/lib/db/schema';
 import { KNOWN_SAMPLE_LIMIT } from '@/lib/srs/profile';
 import { wordState } from '@/lib/srs/states';
 import { parseEntryId, type Entry, type EntryId, type HskBand } from '@/lib/types';
@@ -147,7 +152,7 @@ export interface KnownSet {
   /** The exact entries. What the filter's whitelist is built from. */
   ids: EntryId[];
   /** `settings.knownBand`: bands at or below it are assumed known. */
-  knownBand: HskBand;
+  knownBand: KnownBand;
   /** Entries inside those bands the learner is *not* done with, by id. */
   excludeIds: EntryId[];
 }

@@ -62,15 +62,19 @@ async function seedHistory(page: Page): Promise<void> {
   );
 }
 
-test.describe('/stats', () => {
+test.describe('/library', () => {
   test('the demo seed gets an honest empty state, not a chart', async ({ page }) => {
     await resetApp(page);
     await page.goto('/?seed=demo');
     await expect(page).toHaveURL(/\/$/, { timeout: 120_000 });
-    await expect(page.getByTestId('today-due-count')).not.toHaveText('—', { timeout: 120_000 });
+    // Wait for the summary rather than for the element: the sentence says it is
+    // counting until `loadToday` lands.
+    await expect(page.getByTestId('today-sentence')).not.toContainText('Counting', {
+      timeout: 120_000,
+    });
 
-    await page.goto('/stats');
-    await expect(page.getByRole('heading', { level: 1, name: 'Stats' })).toBeVisible();
+    await page.goto('/library');
+    await expect(page.getByRole('heading', { level: 1, name: 'Library' })).toBeVisible();
 
     // The demo's whole history is a handful of backdated grades, most of them
     // of cards still inside their learning steps.
@@ -95,7 +99,7 @@ test.describe('/stats', () => {
 
   test('reads the real numbers off a seeded history', async ({ page }) => {
     await resetApp(page, { newPerDay: 0 });
-    await page.goto('/stats');
+    await page.goto('/library');
     await ready(page);
     await seedHistory(page);
     await page.reload();
@@ -104,10 +108,10 @@ test.describe('/stats', () => {
       percent(RECALLED_WINDOW, REVIEWS_WINDOW),
     );
     await expect(page.getByTestId('stats-retention-denominator')).toContainText(
-      `${RECALLED_WINDOW} of ${REVIEWS_WINDOW} reviews recalled`,
+      `${RECALLED_WINDOW} of ${REVIEWS_WINDOW} remembered`,
     );
     await expect(page.getByTestId('stats-retention-denominator')).toContainText(
-      'already in the Review state',
+      'coming back to after getting them right before',
     );
     await expect(page.getByTestId('stats-retention-all')).toContainText(
       percent(RECALLED_ALL, REVIEWS_ALL),
@@ -125,7 +129,7 @@ test.describe('/stats', () => {
     const dots = page.getByTestId('stats-calibration-dot');
     expect(await dots.count()).toBeGreaterThan(0);
     await expect(page.getByTestId('stats-calibration-note')).toContainText(
-      `${REVIEWS_ALL} reviews of cards in the Review state`,
+      `${REVIEWS_ALL} times you came back to a word you had got right before`,
     );
     for (const dot of await dots.all()) {
       // Nothing thin reached the chart.
@@ -157,11 +161,11 @@ test.describe('/stats', () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto('/');
     await page
-      .getByRole('navigation', { name: 'Main' })
-      .getByRole('link', { name: 'Stats', exact: true })
+      .getByTestId('tab-bar')
+      .getByRole('link', { name: 'Library', exact: true })
       .click();
-    await expect(page).toHaveURL(/\/stats$/);
-    await expect(page.getByRole('heading', { level: 1, name: 'Stats' })).toBeVisible();
+    await expect(page).toHaveURL(/\/library$/);
+    await expect(page.getByRole('heading', { level: 1, name: 'Library' })).toBeVisible();
 
     // Charts scale to the viewport rather than pushing the page sideways.
     const overflow = await page.evaluate(

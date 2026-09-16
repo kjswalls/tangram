@@ -11,6 +11,7 @@ import {
   storedCard,
 } from './fixtures';
 import { expectBaseText, expectExactBaseText, expectNoBaseText } from '../hanzi';
+import { expectTodayCounts } from '../p3/helpers';
 
 const DAY_MS = 86_400_000;
 
@@ -19,7 +20,7 @@ const DAY_MS = 86_400_000;
  * (`components/shell/test-hooks.tsx`) — the app is local-first, so the database
  * is the fixture.
  */
-test.describe('/review', () => {
+test.describe('/practice', () => {
   test('walks the due queue: flip, four intervals, grade with 1–4, one review row', async ({
     page,
   }) => {
@@ -30,7 +31,7 @@ test.describe('/review', () => {
       { entry: KANKAN, context: readerContext({ source: 'lookup' }), gradedDaysAgo: 20 },
     ]);
 
-    await expect(page.getByTestId('review-progress')).toHaveText('Card 1 of 2');
+    await expect(page.getByTestId('tangram-label')).toHaveText('0 of 2 done');
     await expectBaseText(page.getByTestId('card-front'), '打算');
     /**
      * **And not its reading.** `expectBaseText` strips the `<rt>`s, so it
@@ -60,10 +61,10 @@ test.describe('/review', () => {
     // Phase 8 — the FSRS learning steps are on by default — so the assertion is
     // the shape of a label, not a floor of one day.
     for (const [rating, label] of [
-      [1, 'Again'],
-      [2, 'Hard'],
-      [3, 'Good'],
-      [4, 'Easy'],
+      [1, 'Forgot it'],
+      [2, 'Barely remembered'],
+      [3, 'Got it'],
+      [4, 'Instant'],
     ] as const) {
       const button = page.getByTestId(`grade-${rating}`);
       await expect(button).toContainText(label);
@@ -75,7 +76,7 @@ test.describe('/review', () => {
 
     // The grade persisted as its own review row — the seed's backdated grade is
     // the other one — and the card is rescheduled forward from this instant.
-    await expect(page.getByTestId('review-progress')).toHaveText('Card 2 of 2');
+    await expect(page.getByTestId('tangram-label')).toHaveText('1 of 2 done');
     const rows = (await reviewRows(page)).filter((row) => row.cardId === first);
     expect(rows).toHaveLength(2);
     const latest = rows[rows.length - 1];
@@ -118,7 +119,7 @@ test.describe('/review', () => {
     await expectBaseText(card, '看看');
     await expectNoBaseText(card, '打算');
     // A fresh session, so the counter starts over on what is left.
-    await expect(page.getByTestId('review-progress')).toHaveText('Card 1 of 1');
+    await expect(page.getByTestId('tangram-label')).toHaveText('0 of 1 done');
     // One row per grade: the graded card has the seed's plus this one, the card
     // that was never reached still has only the seed's.
     const rows = await reviewRows(page);
@@ -177,7 +178,7 @@ test.describe('/review', () => {
     // rounding that up to "1 hour" (which is what the copy did until Phase 8)
     // sent the learner away from a session that was not over.
     await expect(page.getByTestId('review-empty')).toHaveText(
-      /^Nothing due — (\d+ cards? comes? back in \d+ minutes?|next card in \d+ (hours?|days?))\.$/,
+      /^All done( for now)? — (\d+ words? comes? back in \d+ minutes?|the next word comes back in \d+ (hours?|days?))\.$/,
     );
   });
 
@@ -185,7 +186,7 @@ test.describe('/review', () => {
     await openReview(page);
     await page.reload();
     await expect(page.getByTestId('review-empty')).toHaveText(
-      'Nothing due — no cards are scheduled yet.',
+      'Nothing to practise yet — look a word up and it joins the next session.',
     );
   });
 
@@ -197,7 +198,7 @@ test.describe('/review', () => {
     await openReview(page, { newPerDay: 3 });
     await page.reload();
 
-    await expect(page.getByTestId('review-progress')).toHaveText('Card 1 of 3', {
+    await expect(page.getByTestId('tangram-label')).toHaveText('0 of 3 done', {
       timeout: 60_000,
     });
     const introduced = await page.evaluate(() => window.__tangram.repo.allCards());
@@ -217,8 +218,8 @@ test.describe('/review', () => {
     await page.reload();
     await expect(page.getByTestId('review-empty')).toBeVisible({ timeout: 60_000 });
     await page.goto('/');
-    await expect(page.getByTestId('today-new-count')).toHaveText('0', { timeout: 60_000 });
-    await expect(page.getByText('3 of 3 new words introduced today')).toBeVisible();
+    await expectTodayCounts(page, { fresh: 0 }, { timeout: 60_000 });
+    await expect(page.getByText('3 of 3 new words started today')).toBeVisible();
     expect(await page.evaluate(() => window.__tangram.repo.allCards())).toHaveLength(3);
   });
 
@@ -236,7 +237,7 @@ test.describe('/review', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].before.state).toBe(0);
     const stored = await storedCard(page, rows[0].cardId);
-    // "Again" is a learning step now (Phase 8: `shortTermSteps` defaults on),
+    // "Forgot it" is a learning step now (Phase 8: `shortTermSteps` defaults on),
     // so the card is minutes away rather than a day — far enough that this
     // session ends rather than looping, and close enough that the queue has to
     // expect it back (HANDOFF.md, Phase 8 prep).

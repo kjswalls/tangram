@@ -29,13 +29,15 @@
  * rather than hidden, because a queue that quietly drops a card the learner is
  * struggling with is a queue that lies.
  *
- * The re-read goes through `loadToday` — the same call Today makes — so the two
- * routes introduce and offer the same rows whichever one is opened first.
- * Reading `listDue`/`newCandidates` here instead made `/review` a dead end on a
- * fresh database ("no cards are scheduled yet") while `/` was holding ten new
- * words for the same learner, and made the demo show seven cards or fourteen
- * depending on the order the two pages were visited. Introducing on `/review`
- * spends the day's allowance exactly as opening Today does (§3.3).
+ * The re-read goes through `loadToday`, and **this store is the only caller
+ * that introduces** (`wave-zero.md` §9): the Practice tab draws the day's new
+ * words, creates their cards and charges the counter, and the Today region on
+ * the Look up tab reports the same numbers with `introduce: false`. Reading
+ * `listDue`/`newCandidates` here instead made the session a dead end on a fresh
+ * database ("no cards are scheduled yet") while Today was holding ten new words
+ * for the same learner, and made the demo show seven cards or fourteen
+ * depending on the order the two screens were visited. Spending the day's
+ * allowance is Practice's alone (§3.3).
  */
 
 import { create } from 'zustand';
@@ -45,6 +47,7 @@ import { loadToday } from '@/lib/lists/today';
 import { spaceDirections } from '@/lib/srs/direction';
 import {
   deferredCardIds,
+  interleaveNew,
   nextDueAt,
   returningWithin,
   sessionQueue,
@@ -62,6 +65,18 @@ export interface ReviewState {
   loaded: boolean;
   /** Grades written this session — the left-hand half of the progress counter. */
   graded: number;
+  /**
+   * What this session has already handed out, split by kind
+   * (`interleaveNew`'s `served`).
+   *
+   * The queue is rebuilt after every grade and read at `index: 0`, so the
+   * merged order has to be a schedule over the *whole* session rather than a
+   * fresh spread of whatever is left. Without this the first new word recedes
+   * by one place for every review graded and the learner reaches it only after
+   * the reviews run out — which is the behaviour the merge exists to end. Not
+   * persisted: leaving and coming back starts a session.
+   */
+  served: { due: number; fresh: number };
   /** A grade is in flight; the buttons and the keyboard are inert until it lands. */
   grading: boolean;
   /** The instant the queue was built, so the empty state does not drift per render. */
@@ -106,6 +121,7 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
   loading: false,
   loaded: false,
   graded: 0,
+  served: { due: 0, fresh: 0 },
   grading: false,
   now: 0,
   nextDue: null,
@@ -132,14 +148,26 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
       // name a card this session has stopped offering.
       const repeats = get().repeats;
       const deferred = deferredCardIds(repeats);
-      // Both Phase 8 queue rules, in the one order that keeps both true.
-      // `sessionQueue` drops the cards this session has set aside; only then is
-      // the order adjusted, because spacing a list and *then* removing rows from
-      // it can put a word's two directions back to back — the very thing the
-      // spacing exists to prevent. Recognition immediately followed by
-      // production of the same word is not a test of the second memory: the
-      // answer is sitting on the back of the card just graded.
-      const queue = spaceDirections(sessionQueue(summary.queue.cards, deferred));
+      /**
+       * **One session** (docs/plans/core.md C7; `wave-zero.md` §9).
+       *
+       * `summary.queue.cards` is `[...due, ...newCards]` — every review, then
+       * every new word — so a learner with fifteen reviews met a new word on
+       * card sixteen, if at all. `interleaveNew` spreads them through instead,
+       * which is what makes this *one* session rather than two behind one
+       * label. Nothing about FSRS changes: this is the order the session offers
+       * what the queue already contains.
+       *
+       * Then the two Phase 8 rules, in the one order that keeps both true.
+       * `sessionQueue` drops the cards this session has set aside; only then is
+       * the order adjusted, because spacing a list and *then* removing rows from
+       * it can put a word's two directions back to back — the very thing the
+       * spacing exists to prevent. Recognition immediately followed by
+       * production of the same word is not a test of the second memory: the
+       * answer is sitting on the back of the card just graded.
+       */
+      const merged = interleaveNew(summary.queue.due, summary.queue.newCards, get().served);
+      const queue = spaceDirections(sessionQueue(merged, deferred));
       set({
         queue,
         settings: summary.settings,
@@ -147,7 +175,23 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
         returning: returningWithin(all, now, SESSION_RETURN_HORIZON_MS, deferred),
         deferred: [...deferred],
         attempts: queue[0] ? (repeats[queue[0].id] ?? 0) : 0,
-        waiting: summary.queue.draws.length,
+        /**
+         * **New words the day allows that could not be created.**
+         *
+         * It used to be `summary.queue.draws.length`, which is structurally
+         * always zero — `today.ts` never passes `newCandidates` to
+         * `buildQueue`, so `Queue.draws` is `[]` — and the empty state's
+         * "N new words are waiting, once the dictionary is back" branch was
+         * dead code. During an outage the learner got the *other* branch
+         * instead: "look a word up and it joins your next session", which is
+         * advice the missing dictionary makes impossible to follow. Found by
+         * C8's adversarial review.
+         *
+         * The honest number is what the day's cap still allows, and it is only
+         * meaningful when the draw actually failed — otherwise the words were
+         * created and are in the queue.
+         */
+        waiting: summary.drawError === undefined ? 0 : summary.queue.drawLimit,
         ...(summary.drawError === undefined ? {} : { drawError: summary.drawError }),
         now,
         index: 0,
@@ -178,8 +222,15 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
       await getRepository().grade(card.id, rating, now);
       // Counted before the re-read, so a card that has just spent its last try
       // is already set aside by the time the next queue is built.
+      // Which kind was just served, read from the card as it was *before* the
+      // grade: grading is precisely what stops a card being new.
+      const wasNew = card.fsrs.state === 0;
       set((state) => ({
         graded: state.graded + 1,
+        served: {
+          due: state.served.due + (wasNew ? 0 : 1),
+          fresh: state.served.fresh + (wasNew ? 1 : 0),
+        },
         repeats: { ...state.repeats, [card.id]: (state.repeats[card.id] ?? 0) + 1 },
       }));
       await get().load(now);
@@ -211,6 +262,7 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
       peeked: false,
       loaded: false,
       graded: 0,
+      served: { due: 0, fresh: 0 },
       grading: false,
       nextDue: null,
       returning: 0,

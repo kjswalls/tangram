@@ -13,7 +13,7 @@ export async function ready(page: Page): Promise<void> {
  * (the same reason `tests/e2e/p3/helpers.ts` resets from there).
  */
 export async function resetApp(page: Page, settings?: Partial<SettingsRow>): Promise<void> {
-  await page.goto('/settings');
+  await page.goto('/read');
   await ready(page);
   await page.evaluate(async (patch) => {
     await window.__tangram.repo.resetAll();

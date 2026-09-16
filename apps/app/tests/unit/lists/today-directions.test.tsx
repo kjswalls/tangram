@@ -1,15 +1,20 @@
 /**
- * Today, counting the two directions apart (Phase 8, builder B).
+ * Today, counting the two directions apart (Phase 8, builder B; reworded by
+ * docs/plans/core.md C8).
  *
  * "12 cards" stops meaning one thing the moment a word can carry two, so the
  * page says which half is which — and says nothing at all until there is a
- * production card to say it about, because a split with a zero on one side is
- * just noise on the page of a learner who never turned it on.
+ * production card to say it about, because a clause with a zero in it is just
+ * noise on the page of a learner who never turned it on.
+ *
+ * C8 replaced the tiles with one sentence and this file followed it there. The
+ * rule under test is the same one: the writing half is counted and named
+ * separately, and it disappears entirely when there is none.
  */
 import { render, screen, waitFor } from '../render';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { TodayView } from '@/app/(today)/today-view';
+import { TodayView } from '@/components/screens/today';
 import { closeDb, getDb, getRepository } from '@/lib/db/get-db';
 import { entryFromSnapshot, wordSnapshot } from '@/lib/srs/direction';
 import { context, DASUAN, KANKAN } from '../db/fixtures';
@@ -26,10 +31,12 @@ describe('the Today counts', () => {
     await repo.addCardFromEntry(DASUAN, context({ source: 'lookup' }), undefined, 'test');
 
     render(<TodayView />);
-    // The counts render as em dashes until the summary lands, so wait for the
+    // The sentence says it is counting until the summary lands, so wait for the
     // number rather than for the element.
-    await waitFor(() => expect(screen.getByTestId('today-new-count')).toHaveTextContent('1'));
-    expect(screen.queryByTestId('today-direction-split')).toBeNull();
+    await waitFor(() =>
+      expect(screen.getByTestId('today-sentence')).toHaveTextContent('1 new word to learn'),
+    );
+    expect(screen.getByTestId('today-sentence')).not.toHaveTextContent('write from memory');
   });
 
   it('counts the directions separately once a word is being produced too', async () => {
@@ -51,12 +58,11 @@ describe('the Today counts', () => {
     );
 
     render(<TodayView />);
-    const split = await screen.findByTestId('today-direction-split');
-    expect(split).toBeVisible();
-    expect(screen.getByTestId('today-recognition-count')).toHaveTextContent('2');
-    expect(screen.getByTestId('today-production-count')).toHaveTextContent('1');
-    // Three cards on offer, and the page still says three.
-    expect(screen.getByTestId('today-new-count')).toHaveTextContent('3');
+    // Two to learn and one to write — three cards on offer, named apart. The
+    // writing clause is what Phase 8 added and what C8 kept.
+    const sentence = await screen.findByTestId('today-sentence');
+    await waitFor(() => expect(sentence).toHaveTextContent('2 new words to learn'));
+    expect(sentence).toHaveTextContent('1 to write from memory');
 
     // A word and its reverse are two rows, and they must not be the same row
     // twice: the reverse leads with what it asks for and carries its own badge.
@@ -64,11 +70,13 @@ describe('the Today counts', () => {
     expect(rows).toHaveLength(3);
     const reverse = rows.filter((row) => row.dataset.direction === 'production');
     expect(reverse).toHaveLength(1);
-    expect(reverse[0]).toHaveTextContent(/write/);
-    expect(reverse[0]).toHaveTextContent(/reverse/);
+    // C8 names the direction "Write" rather than "reverse": the old word
+    // described the operation that made the card, not what it asks of you.
+    expect(reverse[0]).toHaveTextContent(/Write/);
+    expect(reverse[0]).not.toHaveTextContent(/reverse/i);
     const recognition = rows.filter((row) => row.dataset.direction === 'recognition');
     expect(recognition).toHaveLength(2);
-    for (const row of recognition) expect(row).not.toHaveTextContent(/write/);
+    for (const row of recognition) expect(row).not.toHaveTextContent(/Write/);
   });
 
   /**
@@ -97,8 +105,10 @@ describe('the Today counts', () => {
 
     await repo.setSettings({ productionDirection: false });
     render(<TodayView />);
-    await waitFor(() => expect(screen.getByTestId('today-new-count')).toHaveTextContent('1'));
-    expect(screen.queryByTestId('today-direction-split')).toBeNull();
+    await waitFor(() =>
+      expect(screen.getByTestId('today-sentence')).toHaveTextContent('1 new word to learn'),
+    );
+    expect(screen.getByTestId('today-sentence')).not.toHaveTextContent('write from memory');
     expect(
       screen.getAllByTestId('today-new-word').filter((row) => row.dataset.direction === 'production'),
     ).toHaveLength(0);

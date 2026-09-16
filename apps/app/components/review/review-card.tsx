@@ -103,6 +103,19 @@ export function ReviewCard({
         }
         aria-label={revealed ? undefined : 'Show the answer'}
       >
+        {/*
+          The question, said out loud (docs/plans/core.md C8). A first-time
+          learner meeting a large character and four buttons has to infer what
+          is being asked; one line removes the inference. It is gone once the
+          answer is showing, because by then it is asking about something the
+          learner can already see.
+        */}
+        {!revealed ? (
+          <p data-testid="card-prompt" className="text-xs tracking-wide text-muted uppercase">
+            Do you remember it?
+          </p>
+        ) : null}
+
         {phrase ? (
           <PhraseFace card={card} />
         ) : (
@@ -138,6 +151,10 @@ export function ReviewCard({
                 ? { pinyinNum: face.pinyinNum, force: true }
                 : { display: 'never' as const })}
               rtClassName="text-[0.28em]"
+              /* Rule 3's third clause (core.md C6): a tap on a character reads
+                 that syllable alone. The card's block speaker is three lines
+                 down; before this, a tap on the headword did nothing at all. */
+              speakOnTap
             />
           </h2>
         )}

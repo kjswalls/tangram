@@ -132,6 +132,16 @@ export interface WordSheetProps {
   onExtend?: (() => void) | undefined;
   extendLabel?: string | undefined;
   /**
+   * The touch **Copy** affordance for a span (docs/plans/core.md C5b).
+   *
+   * There is no Cmd+C on a phone and no native selection to long-press on a
+   * `user-select: none` passage, so the only way a learner can take the
+   * characters they just dragged across is a button — and the sheet, sitting
+   * next to the lookup result for that span, is where C5b puts it. Absent
+   * everywhere but the reader.
+   */
+  onCopySpan?: (() => void) | undefined;
+  /**
    * A tap on one character inside the word — the caller opens the character
    * sheet. The **index into the word** travels with it, because the card a
    * character sheet writes needs its own span inside the sentence, not the
@@ -151,6 +161,7 @@ export function WordSheet({
   gloss,
   onExtend,
   extendLabel,
+  onCopySpan,
   onCharacter,
   onClose,
 }: WordSheetProps) {
@@ -341,6 +352,11 @@ export function WordSheet({
           {onExtend ? (
             <Button data-testid="extend-span" variant="secondary" size="sm" onClick={onExtend}>
               {extendLabel ?? 'Extend'}
+            </Button>
+          ) : null}
+          {onCopySpan ? (
+            <Button data-testid="copy-span" variant="secondary" size="sm" onClick={onCopySpan}>
+              Copy
             </Button>
           ) : null}
           <Button data-testid="close-panel" variant="ghost" size="sm" onClick={onClose}>

@@ -69,7 +69,7 @@ describe('also study production, for one list', () => {
     );
     // One today, one waiting — the cap is the cap, and the line says so.
     const status = screen.getByTestId('list-production-status');
-    await waitFor(() => expect(status).toHaveTextContent('1 reverse card added today'));
+    await waitFor(() => expect(status).toHaveTextContent('1 word to write added today'));
     expect(status).toHaveTextContent('1 more');
 
     // The day was charged for it, so the spine gets one word fewer rather than

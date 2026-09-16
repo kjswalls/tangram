@@ -136,6 +136,10 @@ async function gradeAndAdvance(page: Page, id: string | null, key: string): Prom
 test('the whole loop with i+1 sentences and free recall on', async ({ page }) => {
   // --- the demo learner, and both Phase 6 toggles --------------------------
   await resetApp(page);
+  // `resetApp` wipes from `/read` since core.md C7 — the one page that neither
+  // draws nor materialises anything — so the settings form needs a visit of its
+  // own. It is in Library now, beside the lists.
+  await page.goto('/library');
   await page.getByTestId('load-demo').click(); // arms the confirmation
   await page.getByTestId('load-demo').click(); // runs it
   await expect(page.getByTestId('settings-status')).toContainText('Demo', { timeout: 120_000 });
@@ -177,11 +181,11 @@ test('the whole loop with i+1 sentences and free recall on', async ({ page }) =>
 
   // The spine draw is off for the rest of the walk: this spec is about the two
   // cards it adds by hand and the demo's own due cards, not about the ten HSK
-  // words `/review` would otherwise introduce on top of them.
+  // words `/practice` would otherwise introduce on top of them.
   await page.evaluate(() => window.__tangram.repo.setSettings({ newPerDay: 0 }));
 
   // --- ask an English sentence, and add the phrase (P4) --------------------
-  await page.goto('/lookup');
+  await page.goto('/');
   await page.getByTestId('lookup-input').fill(BROWSING);
   const ask = page.getByTestId('ask-panel');
   await expect(ask).toHaveAttribute('data-status', 'ready', { timeout: 60_000 });
@@ -238,19 +242,23 @@ test('the whole loop with i+1 sentences and free recall on', async ({ page }) =>
   // --- Today counts them both (P3) -----------------------------------------
   await page.goto('/');
   await ready(page);
-  await expect(page.getByTestId('today-new-count')).not.toHaveText('—', { timeout: 60_000 });
-  const before = await page.evaluate(() => ({
-    due: Number(document.querySelector('[data-testid="today-due-count"]')?.textContent ?? '0'),
-    fresh: Number(document.querySelector('[data-testid="today-new-count"]')?.textContent ?? '0'),
-  }));
+  // C8: one sentence, with the counts inside it. The numbers are read back out
+  // of the sentence rather than off two tiles, which is the same assertion with
+  // the same meaning — "the two adds are on today's plate".
+  await expect(page.getByTestId('today-sentence')).not.toContainText('Counting', {
+    timeout: 60_000,
+  });
+  const sentence = (await page.getByTestId('today-sentence').textContent()) ?? '';
+  const numberBefore = (phrase: string): number =>
+    Number(new RegExp(`(\\d+)[^,.]*${phrase}`).exec(sentence)?.[1] ?? '0');
   // The two adds are never subject to the daily cap (§3.3), so they are on the
   // day's plate even with `newPerDay: 0`, and the demo left cards due.
-  expect(before.fresh).toBeGreaterThanOrEqual(2);
-  expect(before.due).toBeGreaterThanOrEqual(1);
+  expect(numberBefore('new word'), sentence).toBeGreaterThanOrEqual(2);
+  expect(numberBefore('to practise') + numberBefore('to write'), sentence).toBeGreaterThanOrEqual(1);
 
   // --- the session, with both card features live ---------------------------
   await page.getByTestId('start-review').click();
-  await expect(page).toHaveURL(/\/review$/);
+  await expect(page).toHaveURL(/\/practice$/);
   await expect(page.getByTestId('review-session')).toBeVisible({ timeout: 60_000 });
 
   let sawPhrase = false;
@@ -506,13 +514,12 @@ test('the whole loop with i+1 sentences and free recall on', async ({ page }) =>
   // --- Today has moved (P3), and counts the two directions apart (Phase 8 B)
   await page.goto('/');
   await ready(page);
-  await expect(page.getByTestId('today-due-count')).toHaveText('0');
-  await expect(page.getByTestId('today-new-count')).toHaveText('0');
-  await expect(page.getByTestId('start-review').getByRole('button')).toBeDisabled();
-  // The split line counts *today's plate*, and the walk emptied it — so the
-  // correct thing for it to do here is not appear. What is durable is the row:
-  // one production card, its own schedule, its own review.
-  await expect(page.getByTestId('today-direction-split')).toHaveCount(0);
+  await expect(page.getByTestId('today-sentence')).toContainText('Nothing waiting');
+  await expect(page.getByTestId('start-review')).toBeDisabled();
+  // The sentence counts *today's plate*, and the walk emptied it — so the
+  // correct thing for the writing clause to do here is not appear. What is
+  // durable is the row: one production card, its own schedule, its own review.
+  await expect(page.getByTestId('today-sentence')).not.toContainText('write from memory');
   const twin = await page.evaluate(async (id) => {
     const rows = await window.__tangram.repo.allCards();
     const card = rows.find((row) => row.id === id);
@@ -533,8 +540,8 @@ test('the whole loop with i+1 sentences and free recall on', async ({ page }) =>
   // had barely started, and the retention denominator counts Review-state
   // reviews only. So the page has almost nothing to go on, and the thing it
   // must not do is draw a confident curve over it.
-  await page.goto('/stats');
-  await expect(page.getByRole('heading', { level: 1, name: 'Stats' })).toBeVisible();
+  await page.goto('/library');
+  await expect(page.getByRole('heading', { level: 1, name: 'Library' })).toBeVisible();
 
   const retentionEmpty = page.getByTestId('stats-retention-empty');
   await expect(retentionEmpty).toBeVisible({ timeout: 60_000 });
@@ -553,9 +560,9 @@ test('the whole loop with i+1 sentences and free recall on', async ({ page }) =>
 
   await expect(page.getByTestId('stats-retention-empty')).toHaveCount(0, { timeout: 60_000 });
   await expect(page.getByTestId('stats-retention-rate')).toHaveText(/^\d+%$/);
-  await expect(page.getByTestId('stats-retention-denominator')).toContainText('reviews recalled');
+  await expect(page.getByTestId('stats-retention-denominator')).toContainText('remembered');
   await expect(page.getByTestId('stats-retention-denominator')).toContainText(
-    'already in the Review state',
+    'coming back to after getting them right before',
   );
 
   await expect(page.getByTestId('stats-calibration-empty')).toHaveCount(0);

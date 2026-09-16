@@ -10,7 +10,7 @@
  *
  * v1 ran with `enable_short_term: false`, so every grade scheduled at least a
  * day. `settings.shortTermSteps` now defaults **true** (ts-fsrs's own default),
- * so "Again" on a new card means ten minutes again — which is the point, and
+ * so "Forgot it" on a new card means ten minutes again — which is the point, and
  * which is why the queue has to expect a card back inside a session.
  *
  * Everything crossing this module is epoch ms; `Date` objects exist only inside
@@ -36,11 +36,29 @@ import { getScheduler, type ParameterSettings } from '@/lib/srs/params';
 
 export const RATINGS: readonly StoredRating[] = [1, 2, 3, 4];
 
+/**
+ * What the four buttons say (docs/plans/core.md C8).
+ *
+ * **Nothing about FSRS changes**: these are ratings 1–4, in the same order, with
+ * the same scheduling behaviour. Only the words changed, and they changed
+ * because the old ones were the scheduler's vocabulary rather than the
+ * learner's. "Hard" and "Good" are a judgement about the *card*; "Barely
+ * remembered" and "Got it" are a report about what just happened in the
+ * learner's head, which is the thing FSRS is actually asking for.
+ *
+ * "Got it" is the filled primary button and the only one on the screen
+ * (`grade-bar.tsx`), because a grade bar where every button looks equally
+ * likely is four decisions instead of one.
+ *
+ * The subtitle under each button stays the **real** interval `gradeOptions()`
+ * previews from the card's own state. Hardcoding "1 min / 6 min / 3 days /
+ * 8 days" would be a regression from what the bar already does correctly.
+ */
 export const RATING_LABELS: Record<StoredRating, string> = {
-  1: 'Again',
-  2: 'Hard',
-  3: 'Good',
-  4: 'Easy',
+  1: 'Forgot it',
+  2: 'Barely remembered',
+  3: 'Got it',
+  4: 'Instant',
 };
 
 /** A brand-new, never-reviewed card. */

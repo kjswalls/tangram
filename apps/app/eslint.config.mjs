@@ -78,6 +78,53 @@ const config = [
     },
   },
   {
+    /**
+     * **A screen cannot tell which shell it is in** (docs/plans/core.md C7).
+     *
+     * Screens live in `components/screens/**`, take everything they need as
+     * props or from stores, and import nothing from `components/shell/**` and
+     * nothing from the router. Navigation is handed down as a *destination*
+     * through `components/screens/navigate.ts`. Without the rule the two shells
+     * drift into two designs and a screen stops working anywhere but its own
+     * route.
+     *
+     * The rule is duplicated by `tests/unit/shell/screens-are-portable.test.ts`,
+     * which walks the import graph — deliberately, because an eslint glob that
+     * matches nothing is a rule that looks enforced and is not. That has now
+     * happened twice in this build (`wave-zero.md` §10a), and the unit test is
+     * what fails if this block ever stops matching.
+     */
+    files: ['components/screens/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'react-router',
+              message:
+                'A screen may not know about routes (core.md C7). Take a destination from ' +
+                '`useScreenNavigate()` in components/screens/navigate.ts; the shell knows where it is.',
+            },
+            {
+              name: 'react-router-dom',
+              message: 'A screen may not know about routes (core.md C7). See navigate.ts.',
+            },
+          ],
+          patterns: [
+            {
+              group: ['@/components/shell/*', '**/components/shell/*'],
+              message:
+                'A screen may not import the shell (core.md C7) — the shell imports screens, ' +
+                'never the other way round. A heading is not the shell: `PageHeader` moved to ' +
+                'components/ui/page-header.tsx for exactly this reason.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     // `.ts` as well as `.tsx`: a custom hook in a plain .ts module is exactly
     // where rules-of-hooks earns its keep, and eslint-config-next covered both.
     files: ['**/*.{ts,tsx}'],

@@ -77,8 +77,11 @@ Node **>= 22.22** (React Router 8's floor); pnpm 10. Playwright uses the contain
 >   D5b need an Android phone and a Mac with a physical iOS 26 device; register #4 (the reported
 >   10 MB per-file OPFS cap in WKWebView) is unanswered because the container has no Safari.
 > - **There are no accounts, no sync and no AI proxy.** The three model-backed routes still run in
->   the app rather than `apps/server`, and `packages/ai/` holds only `schemas.ts` and `retrieve.ts`
->   — wave 0's move of the ten `lib/ai/**` modules has not run, and `backend.md` B1 gates on it.
+>   the app rather than `apps/server`, which is `backend.md` **B1**. Its blocker is gone: wave 0's
+>   move has run, `packages/ai/` holds all twelve modules, and `apps/app/lib/ai/` no longer exists —
+>   `ask-client.ts`, the one browser-side module §5 keeps out of the package, is B2's and unwritten.
+>   Accounts and sync (B3–B5) additionally need a Supabase project, a domain, a host account and an
+>   SMTP sender, which `backend.md` §4 item 4 says the owner brings; no phase provisions them.
 > - **Backup, restore and sync are declared, not implemented.** The seven members wave 0 added to
 >   `lib/db/repository.ts` throw; `web.md` W5 and `backend.md` B5 write the bodies. They throw on
 >   purpose — see the guard in `tests/unit/db/repository.test.ts`.

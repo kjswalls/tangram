@@ -11,21 +11,31 @@
  *
  * **Path note.** `data.md` D3 writes this file as `packages/ai/retrieve.ts`,
  * because it assumes wave 0's deliverable 5 — creating `packages/ai/` and moving
- * the ten `lib/ai/**` modules into it — has already run. It has not:
- * `docs/plans/README.md`'s verification register V6 records that deliverable as
- * not executable as written (it names ten modules to move and none of the 33
- * files with 74 import sites that break), and this session was scoped out of it.
- * So this lands at the pre-move spelling the register itself uses for D3's file,
- * `lib/ai/retrieve.ts`, and moves with its nine neighbours when someone
- * specifies that move. See HANDOFF.md, D3.
+ * the `lib/ai/**` modules into it — has already run. It had not when D3 landed,
+ * so this file arrived at `apps/app/lib/ai/retrieve.ts` and travelled here with
+ * its ten neighbours when deliverable 5 ran. It is now at D3's own spelling.
+ * `hasCjk`, `DictStore` and `Entry` are still read out of `apps/app` through the
+ * `@/*` mapping in this package's tsconfig; `backend.md` B1 is what breaks that
+ * edge. See HANDOFF.md, D3 and wave 0 deliverable 5.
  */
-import { ground, type GroundContext, type GroundedAskResponse, type RawAskResponse } from './ground';
-import { hasCjk } from '../dict/rank';
-import type { DictStore } from '../dict/store';
-import type { Entry, EntryId, Token } from '../types';
+import { ground, type GroundContext, type GroundedAskResponse, type RawAskResponse } from './ground.js';
+import { RETRIEVED_CAP } from './schemas.js';
+import { hasCjk } from '@/lib/dict/rank';
+import type { DictStore } from '@/lib/dict/store';
+import type { Entry, EntryId, Token } from '@/lib/types';
 
-/** §3.4 caps the retrieved set at 40 entries. */
-export const RETRIEVED_CAP = 40;
+/**
+ * §3.4 caps the retrieved set at 40 entries — **declared in `./schemas.ts` and
+ * re-exported here**, not redeclared. That file is the frozen ask contract and
+ * says so itself: "two constants of the same name in one package is a value the
+ * edge validator and the client's own `mergeRetrieved()` can disagree about with
+ * nothing failing to compile." This file held its own `= 40` while it lived in
+ * `apps/app/lib/ai/`, where the two were in different packages and the warning
+ * did not bite; wave 0 deliverable 5 is the move that put them side by side, so
+ * it is the commit that has to honour it. `SEARCH_HEAD` below is the opposite
+ * case — it shapes retrieval and never reaches the wire — so it stays here.
+ */
+export { RETRIEVED_CAP };
 /**
  * How much of the cap the dictionary search may take before the proposed
  * phrases have had their turn. A flat "search first, then proposals" order lets
@@ -220,5 +230,5 @@ export async function groundWithStore(
 
   // Four rounds without closing means something asks for a new string every
   // time, which `ground()` cannot do — it is a bug here, not a slow convergence.
-  throw new Error('grounding did not converge; see lib/ai/retrieve.ts');
+  throw new Error('grounding did not converge; see packages/ai/retrieve.ts');
 }

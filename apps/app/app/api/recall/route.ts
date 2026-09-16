@@ -25,16 +25,16 @@
  * written by the learner in `useReviewStore.grade` and nowhere else.
  */
 
-import { withDeadline } from '@/lib/ai/deadline';
-import { scrubProse } from '@/lib/ai/ground';
-import { oneLine, RECALL_ANSWER_MAX_CHARS } from '@/lib/ai/recall';
+import { withDeadline } from '@tangram/ai/deadline';
+import { scrubProse } from '@tangram/ai/ground';
+import { oneLine, RECALL_ANSWER_MAX_CHARS } from '@tangram/ai/recall';
 import {
   gradeRecallSchema,
   ProviderError,
   selectProvider,
   type LLMProvider,
   type ProviderName,
-} from '@/lib/ai/provider';
+} from '@tangram/ai/provider';
 import { getEntry } from '@/lib/dict/index';
 import { dictErrorResponse } from '@/lib/dict/load';
 import type { Entry } from '@/lib/types';

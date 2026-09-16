@@ -33,15 +33,15 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { HanziWord } from '@/components/hanzi/hanzi-text';
 import type { ExamplesRouteInfo, ExamplesRouteResponse } from '@/app/api/examples/route';
-import { examplesCacheKey } from '@/lib/ai/cache-key';
+import { examplesCacheKey } from '@tangram/ai/cache-key';
 import {
   citedEntryIds,
   filterCachedSentences,
   groundedExamplesSchema,
   knownSet,
   type ExampleSentence,
-} from '@/lib/ai/examples';
-import { entryLookup, renderPhrase, type PhraseScript } from '@/lib/ai/ground';
+} from '@tangram/ai/examples';
+import { entryLookup, renderPhrase, type PhraseScript } from '@tangram/ai/ground';
 import { cn } from '@/lib/cn';
 import { getRepository } from '@/lib/db/get-db';
 import { getDictStore } from '@/lib/dict/browser-store';

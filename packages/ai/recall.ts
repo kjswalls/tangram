@@ -28,8 +28,8 @@
  * pure and is already imported by the ask panel.
  */
 
-import { scrubProse } from '@/lib/ai/ground';
-import type { ParsedGradeRecall, ProviderName } from '@/lib/ai/provider';
+import { scrubProse } from './ground.js';
+import type { ParsedGradeRecall, ProviderName } from './provider.js';
 
 /**
  * The 1–4 vocabulary, by value. `RECALL_GRADES` in `lib/ai/provider.ts` and

@@ -1,17 +1,21 @@
 {
-  "//": "Declarations only — `noEmit`, and nothing here is compiled by anyone. The app reads this package through Vite and the server through tsc; both resolve the `.ts` source named in `exports`. docs/plans/backend.md B2, first commit.",
+  "//": "`noEmit`, and nothing here is compiled by anyone: the app reads this package through Vite, the dev/preview adapter through tsx, and apps/server (from backend.md B1) through tsc; all of them resolve the `.ts` source named in `exports`. See package.json's note for the two debts that follow from that. The `@/*` mapping is the second of them — eight of this package's twelve modules still read `@/lib/**` out of apps/app, so the package cannot typecheck without it. It points OUT of this package and into an app, which is backwards, and backend.md B1's injection ruling is what removes it. Until then: `apps/server`'s own tsconfig has no such mapping, so the moment the server imports one of these modules its typecheck fails, loudly, which is the right failure. `noUncheckedIndexedAccess` is deliberately NOT set here, and the honest reason is two reasons. Most of what turning it on reports is apps/app source pulled in through the mapping above, which this package does not own — but NOT all of it: 23 errors are in the modules wave 0 just moved here (ground.ts 18, fake.ts 3, prompts.ts 2). Those 23 are code that has never been checked under the flag, because apps/app does not set it either, and fixing them is a change to eleven files whose whole point this commit was to move unchanged. It is not deferred indefinitely: `apps/server/tsconfig.json` DOES set the flag, so backend.md B1 has to clear those 23 before the server can compile this package, and B1 is the commit that turns it back on here — in the same breath as removing the mapping. `lib` is ES2023 with NO `DOM`, matching apps/server rather than apps/app, and `types: node` supplies what the moved modules actually reach for (crypto.subtle, TextEncoder, setTimeout, globalThis.fetch, AbortSignal, process.env) — measured: `tsc --lib ES2023` exits 0. Adding DOM would let `document`, `window` and `localStorage` typecheck clean inside a package apps/server compiles with no DOM, which is the app-code-leaks-into-the-shared-package failure this whole deliverable is about. docs/plans/backend.md B2 first commit (schemas.ts), docs/plans/wave-zero.md §5 (everything else).",
   "compilerOptions": {
     "target": "ES2023",
     "lib": ["ES2023"],
     "module": "esnext",
     "moduleResolution": "bundler",
+    "esModuleInterop": true,
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
     "strict": true,
-    "noUncheckedIndexedAccess": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "incremental": true
+    "incremental": true,
+    "types": ["node"],
+    "paths": {
+      "@/*": ["../../apps/app/*"]
+    }
   },
   "include": ["*.ts"],
   "exclude": ["node_modules"]

@@ -12,7 +12,7 @@ import { ProductionCard } from '@/components/review/production-card';
 import { ReviewCard } from '@/components/review/review-card';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import type { RecallSuggestion } from '@/lib/ai/recall';
+import type { RecallSuggestion } from '@tangram/ai/recall';
 import { DEFAULT_SETTINGS, type StoredRating } from '@/lib/db/schema';
 import { isProduction, productionRecallRequest } from '@/lib/srs/direction';
 import {

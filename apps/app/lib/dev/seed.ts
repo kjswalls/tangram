@@ -15,7 +15,7 @@
  * not a learning start date here.
  */
 
-import { askCacheKey } from '@/lib/ai/cache-key';
+import { askCacheKey } from '@tangram/ai/cache-key';
 import type { CardRow, Repository, SettingsRow } from '@/lib/db';
 import { forgetPrevious } from '@/lib/fsrs-optimize';
 import { getEntrySource, type EntrySource } from '@/lib/lists/entry-source';

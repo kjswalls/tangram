@@ -66,8 +66,16 @@ function code(path: string): string {
  * `routeScope` is criterion two's `components/ lib/`, kept narrow on purpose —
  * with `src/` added, which is stricter than the plan asks and costs nothing.
  */
-const wholeApp = [appRoot];
-const routeScope = [join(appRoot, 'components'), join(appRoot, 'lib'), join(appRoot, 'src')];
+//
+// **Both lists reach outside `apps/app`, because production code now lives
+// outside it.** Wave 0's deliverable 5 moved eleven modules to `packages/ai/`,
+// and one of them — `retrieve.ts` — is the `DictStore` consumer this criterion
+// is actually about. A walk rooted at the app alone would have stopped seeing
+// it the day it moved, which is W0's own lesson (a file that leaves a scope is
+// a file nothing checks) applied to the file that matters most here.
+const sharedAi = resolve(appRoot, '..', '..', 'packages', 'ai');
+const wholeApp = [appRoot, sharedAi];
+const routeScope = [join(appRoot, 'components'), join(appRoot, 'lib'), join(appRoot, 'src'), sharedAi];
 
 describe('the DictStore cutover', () => {
   it('nothing imports lib/dict/client except the store that replaces it', () => {

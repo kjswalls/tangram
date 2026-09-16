@@ -40,7 +40,7 @@ import { LookupPanel } from '@/components/lookup/lookup-panel';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Sheet } from '@/components/ui/sheet';
-import type { GroundedMatch } from '@/lib/ai/ground';
+import type { GroundedMatch } from '@tangram/ai/ground';
 import { getRepository } from '@/lib/db/get-db';
 import type { DictStore } from '@/lib/dict/store';
 import type { SearchGroup } from '@/lib/dict/search';

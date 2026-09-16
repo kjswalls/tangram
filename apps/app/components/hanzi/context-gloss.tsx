@@ -28,8 +28,8 @@
 import { useEffect, useState } from 'react';
 
 import type { AskRouteResponse } from '@/app/api/ask/route';
-import { scrubProse } from '@/lib/ai/ground';
-import type { GroundedMatch } from '@/lib/ai/ground';
+import { scrubProse } from '@tangram/ai/ground';
+import type { GroundedMatch } from '@tangram/ai/ground';
 import { getRepository } from '@/lib/db/get-db';
 import { getLearnerProfile } from '@/lib/srs/profile';
 import type { CardContext, Entry } from '@/lib/types';

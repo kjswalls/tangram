@@ -19,8 +19,8 @@ import type {
   LLMProvider,
   ParsedExampleSentences,
   ParsedGradeRecall,
-} from '@/lib/ai/provider';
-import { EXAMPLES_PROMPT_VERSION } from '@/lib/ai/cache-key';
+} from '@tangram/ai/provider';
+import { EXAMPLES_PROMPT_VERSION } from '@tangram/ai/cache-key';
 import { resetDictCache } from '@/lib/dict/load';
 import type { Entry, LearnerProfile } from '@/lib/types';
 import { requireDictData } from '../dict/data-required';
@@ -29,9 +29,9 @@ import { entriesFor, entryFor, readingOf } from './helpers';
 /** What `selectProvider` hands the route, when a case wants to choose. */
 const stubbed = vi.hoisted(() => ({ provider: undefined as LLMProvider | undefined }));
 
-vi.mock('@/lib/ai/provider', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/lib/ai/provider')>();
-  const { FakeProvider } = await import('@/lib/ai/fake');
+vi.mock('@tangram/ai/provider', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@tangram/ai/provider')>();
+  const { FakeProvider } = await import('@tangram/ai/fake');
   return {
     ...actual,
     selectProvider: () => stubbed.provider ?? new FakeProvider(),

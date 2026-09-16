@@ -32,11 +32,27 @@ import { appRoot, workspaceRoot } from '@/lib/server/roots';
 const APP = appRoot(import.meta.dirname);
 const WORKSPACE = workspaceRoot(import.meta.dirname);
 
-/** Tracked source only: generated output and `node_modules` are nobody's style. */
+/**
+ * Tracked source only: generated output and `node_modules` are nobody's style.
+ *
+ * **`packages/ai` is in scope, and had to be added.** Wave 0's deliverable 5
+ * moved eleven modules out of `apps/app/lib/ai/` — `fake.ts` and `ground.ts`
+ * among them, the two most string-literal-dense files in the repo — and an
+ * `apps/app/**` glob stopped seeing them the moment they moved. The convention
+ * is the repository's, not one directory's, and there is no lint rule behind it
+ * (see the header), so the glob is the whole of the enforcement.
+ */
 function trackedSources(): string[] {
   const out = execFileSync(
     'git',
-    ['ls-files', '--', 'apps/app/**/*.ts', 'apps/app/**/*.tsx'],
+    [
+      'ls-files',
+      '--',
+      'apps/app/**/*.ts',
+      'apps/app/**/*.tsx',
+      'packages/*/**.ts',
+      'packages/*/*.ts',
+    ],
     { cwd: WORKSPACE, encoding: 'utf8' },
   );
   return out.split('\n').filter(Boolean);
@@ -74,9 +90,14 @@ describe('the app’s source style', () => {
   it('has sources to check, so a silent zero is not a pass', () => {
     const files = trackedSources();
     expect(files.length).toBeGreaterThan(100);
-    expect(files.every((file) => file.startsWith('apps/app/'))).toBe(true);
+    expect(
+      files.every((file) => file.startsWith('apps/app/') || file.startsWith('packages/')),
+    ).toBe(true);
     // The file the rule was written for.
     expect(files).toContain('apps/app/components/lookup/ask-panel.tsx');
+    // …and the shared package, named so the widening cannot be lost silently.
+    expect(files).toContain('packages/ai/fake.ts');
+    expect(files).toContain('packages/access/index.ts');
   });
 
   it('single-quotes every string literal outside a JSX attribute', () => {

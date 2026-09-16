@@ -20,7 +20,7 @@ import {
   RECALL_ANSWER_MAX_CHARS,
   RECALL_GRADE_VALUES,
   type RecallState,
-} from '@/lib/ai/recall';
+} from '@tangram/ai/recall';
 
 /** A `fetch` that answers with this body, and records what it was asked. */
 function fetchReturning(body: unknown, init: { ok?: boolean; status?: number } = {}) {

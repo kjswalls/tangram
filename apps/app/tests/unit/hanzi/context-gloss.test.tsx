@@ -11,7 +11,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { ContextGloss, citedSense } from '@/components/hanzi/context-gloss';
-import type { GroundedMatch } from '@/lib/ai/ground';
+import type { GroundedMatch } from '@tangram/ai/ground';
 import type { Entry } from '@/lib/types';
 
 import { render, screen } from '../render';

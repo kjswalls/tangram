@@ -56,7 +56,16 @@ export function buildLearnerProfile(input: ProfileInput): LearnerProfile {
     if (band !== undefined) reachedPerBand.set(band, (reachedPerBand.get(band) ?? 0) + 1);
   }
 
-  let estimatedBand: HskBand = knownBand;
+  /**
+   * `knownBand` is 0 by default since core.md C8 ("assume nothing known"), and
+   * `LearnerProfile.estimatedBand` is an `HskBand`, which has no zero — the
+   * model is being told roughly where this learner is, and "below band 1" is
+   * not a place. Band 1 is the floor, and it is also the honest answer: a
+   * learner who knows nothing is at the start of band 1, not outside the scale.
+   * Widening `LearnerProfile` instead would change the ask prompt's contract
+   * and the cache key for every existing row.
+   */
+  let estimatedBand: HskBand = knownBand === 0 ? 1 : knownBand;
   if (input.bandSizes) {
     for (const band of HSK_BANDS) {
       const total = input.bandSizes[band] ?? 0;

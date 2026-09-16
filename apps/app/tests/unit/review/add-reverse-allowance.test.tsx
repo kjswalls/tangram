@@ -1,5 +1,5 @@
 /**
- * "Add the reverse" is an explicit add, and this is what that costs: nothing.
+ * "Also write it from memory" is an explicit add, and this is what that costs: nothing.
  *
  * The component's own header says it — "Unlike the per-list toggle this does not
  * spend the day's new-card allowance" — and so does PLAN §3.3 ("one card,
@@ -60,7 +60,7 @@ describe('adding the reverse of a card', () => {
     await act(async () => {
       fireEvent.click(button);
     });
-    await screen.findByText(/Reverse card added/);
+    await screen.findByText(/you will be asked to write this one from memory/);
 
     const cards = await repo.allCards();
     expect(cards).toHaveLength(2);

@@ -290,7 +290,8 @@ Then, by hand, the three things a script cannot tell you:
    {"error":"unauthorized"}`. If it answers 200, `TANGRAM_ACCESS_SECRET` did not
    reach that environment.
 3. **The PWA updated.** Open the deployment on the phone, pull to refresh once,
-   and check `/settings` renders. Navigations are network-first, so a new deploy
+   and check `/library` renders (the settings, the lists and the licences live
+   in the Library tab since `core.md` C7; `/settings` is not a route). Navigations are network-first, so a new deploy
    is picked up on the first online load; `sw.js` is served `no-cache` so the
    worker itself is never pinned to an old build.
 

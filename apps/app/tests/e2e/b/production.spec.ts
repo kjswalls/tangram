@@ -169,9 +169,9 @@ test.describe('/review, both directions', () => {
     // Today says what the learner signed up for, in two numbers.
     await page.goto('/');
     await ready(page);
-    await expect(page.getByTestId('today-direction-split')).toBeVisible();
-    await expect(page.getByTestId('today-recognition-count')).toHaveText('2');
-    await expect(page.getByTestId('today-production-count')).toHaveText('1');
+    // C8: one sentence. The writing half is still counted and named apart —
+    // that is what Phase 8 added and what C8 kept — it is just a clause now.
+    await expect(page.getByTestId('today-sentence')).toContainText('1 to write from memory');
 
     // Take the two recognition cards out of the way rather than walking the
     // queue: they are graded, so they come back in minutes and what is left to

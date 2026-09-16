@@ -24,7 +24,9 @@ async function loadDemo(page: Page): Promise<void> {
   await resetApp(page);
   await page.goto('/?seed=demo');
   await expect(page).toHaveURL(/\/$/, { timeout: 120_000 });
-  await expect(page.getByTestId('today-due-count')).not.toHaveText('—', { timeout: 120_000 });
+  await expect(page.getByTestId('today-sentence')).not.toContainText('Counting', {
+    timeout: 120_000,
+  });
 }
 
 async function openReview(page: Page): Promise<void> {

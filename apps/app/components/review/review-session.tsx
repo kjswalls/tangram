@@ -23,6 +23,7 @@ import {
   ratingFromKey,
   sessionRefreshDelay,
 } from '@/lib/srs/session';
+import { TangramProgress } from '@/components/practice/tangram-progress';
 import { useReviewStore } from '@/lib/stores/review';
 
 /**
@@ -195,8 +196,17 @@ export function ReviewSession() {
     return (
       <Card
         title="Session"
-        aside={graded > 0 ? <span className="text-sm text-muted">{graded} graded</span> : null}
+        aside={graded > 0 ? <span className="text-sm text-muted">{graded} done</span> : null}
       >
+        {/*
+          **The finished square** (docs/plans/core.md C8). The pieces fill as the
+          session runs and the last grade is what completes them — so if the
+          square only existed while a card was on screen, the one state it is
+          built for is the one nobody would ever see. It is here when a session
+          just ended (`graded > 0`) and absent on an idle Practice tab, which is
+          what "never appears outside a running session" means.
+        */}
+        {graded > 0 ? <TangramProgress done={graded} total={graded} className="mb-3" /> : null}
         <p data-testid="review-empty" className="text-base">
           {emptyStateMessage({ next: nextDue, now, waiting, returning, deferred: deferred.length })}
         </p>
@@ -239,10 +249,24 @@ export function ReviewSession() {
 
   return (
     <div data-testid="review-session" className="space-y-4">
-      <div className="flex items-baseline justify-between gap-3">
-        <p data-testid="review-progress" className="text-sm text-muted">
-          Card {graded + 1} of {graded + remaining}
-        </p>
+      {/*
+        **The seven pieces** (docs/plans/core.md C8; `wave-zero.md` §7).
+
+        C8's Files list mounts them in `components/screens/practice.tsx`, but
+        the two numbers they need — how many items this session has and how many
+        are done — exist only here, and a screen reaching into the review store
+        to re-derive them would be a second source of truth for the session's
+        progress. They are mounted here instead, inside the running-session
+        branch, which is also what satisfies "never appears outside a running
+        session": the empty state above returns before this point. Recorded in
+        HANDOFF.md.
+
+        The denominator is `graded + remaining`, the same one the old
+        "Card 1 of 2" line used, so a card that comes back on a short step
+        lengthens the session honestly rather than making the square overflow.
+      */}
+      <div data-testid="review-progress" className="flex items-center justify-between gap-3">
+        <TangramProgress done={graded} total={graded + remaining} />
         <p className="text-xs text-muted">
           {revealed ? '1–4 to grade' : 'Space to flip'}
         </p>
@@ -341,13 +365,21 @@ export function ReviewSession() {
         // no keyboard to press 1–4 on. Above `sm` it sits where it always did.
         <div
           data-testid="grade-dock"
-          className="sticky bottom-0 z-10 bg-background pt-2 pb-2 sm:static sm:bg-transparent sm:p-0"
+          /*
+            **Above the tab bar, not under it.** `sticky bottom-0` pins to the
+            bottom of the *viewport*, which on a phone is where the shell's
+            fixed tab bar is — so the bottom row of grade buttons was painted
+            behind the tab links and a tap on "Got it" navigated to Look up.
+            `--tab-bar-height` is the bar's own height (zero in the wide
+            arrangement), declared once in `tokens.css`.
+          */
+          className="sticky bottom-[var(--tab-bar-height,0px)] z-10 bg-background pt-2 pb-2 sm:static sm:bg-transparent sm:p-0"
         >
           <GradeBar options={options} disabled={grading} suggested={suggested} onGrade={onGrade} />
         </div>
       ) : (
         <Button data-testid="reveal" size="lg" className="w-full" onClick={reveal}>
-          Show answer
+          Show the answer
         </Button>
       )}
     </div>

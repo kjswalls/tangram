@@ -6,7 +6,12 @@ import { OptimizerPanel } from '@/components/settings/optimizer-panel';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { getRepository } from '@/lib/db/get-db';
-import { DEFAULT_SETTINGS, type ScriptPreference, type SettingsRow } from '@/lib/db/schema';
+import {
+  DEFAULT_SETTINGS,
+  type PinyinDisplay,
+  type ScriptPreference,
+  type SettingsRow,
+} from '@/lib/db/schema';
 import { loadDemo, resetAll } from '@/lib/dev/seed';
 import { describeParameters, RETENTION_CHOICES } from '@/lib/srs/params';
 import { HSK_BANDS, hskBandLabel, type HskBand } from '@/lib/types';
@@ -26,7 +31,17 @@ const SELECT =
  * a demo. Every change is written straight through — there is no Save button to
  * forget to press, and the queue reads the row, not this component.
  */
-export function SettingsForm() {
+export interface SettingsFormProps {
+  /**
+   * Called with every row this form writes, so a sibling that renders the same
+   * fields — C8's "Your level" line at the bottom of Library — stays in step
+   * without polling or a second read. Optional: the form is the writer either
+   * way.
+   */
+  onSettings?: (settings: SettingsRow) => void;
+}
+
+export function SettingsForm({ onSettings }: SettingsFormProps = {}) {
   const [settings, setSettings] = useState<SettingsRow>();
   const [status, setStatus] = useState<string>();
   const [confirming, setConfirming] = useState<Danger>();
@@ -60,6 +75,7 @@ export function SettingsForm() {
   const patch = async (values: Partial<Omit<SettingsRow, 'id' | 'createdAt'>>) => {
     const next = await getRepository().setSettings(values);
     setSettings(next);
+    onSettings?.(next);
     setStatus('Saved');
   };
 
@@ -133,20 +149,29 @@ export function SettingsForm() {
         </label>
 
         <label className="flex flex-col gap-1 text-sm">
-          <span>Assume known through HSK</span>
+          <span>Words you already know</span>
           <select
             className={SELECT}
             data-testid="settings-known-band"
             value={settings.knownBand}
-            onChange={(event) => void patch({ knownBand: Number(event.target.value) as HskBand })}
+            onChange={(event) =>
+              void patch({ knownBand: Number(event.target.value) as HskBand | 0 })
+            }
           >
+            {/* Zero is the default and it is a real answer, not an empty one:
+                a learner who is starting knows nothing yet, and any other value
+                makes the spine skip the bands below it. */}
+            <option value={0}>Nothing yet</option>
             {HSK_BANDS.map((band) => (
               <option key={band} value={band}>
-                {hskBandLabel(band)}
+                Through HSK {hskBandLabel(band)}
               </option>
             ))}
           </select>
-          <span className="text-xs text-muted">Words at or below this band read as known everywhere.</span>
+          <span className="text-xs text-muted">
+            Words at or below this read as known everywhere, and new ones are never drawn from
+            them.
+          </span>
         </label>
 
         <label className="flex flex-col gap-1 text-sm">
@@ -162,6 +187,36 @@ export function SettingsForm() {
             }
           />
           <span className="text-xs text-muted">Local hour. 4 means 01:30 still counts as yesterday.</span>
+        </label>
+
+        {/*
+          **The pinyin control** (docs/plans/core.md C8; product-decisions §4
+          rule 1). C3 added `SettingsRow.pinyinDisplay` and specified exactly
+          what each value does to the rendering; nothing since has let the
+          learner reach it, so until now the app has had a three-state setting
+          that was always in state one. C8 owns Library, so C8 is where it
+          surfaces. It writes the same field C3 reads.
+
+          "Only when I tap" is the one option that is not self-evident, so it
+          is the one with a line under it.
+        */}
+        <label className="flex flex-col gap-1 text-sm">
+          <span>Show pinyin</span>
+          <select
+            className={SELECT}
+            data-testid="settings-pinyin-display"
+            value={settings.pinyinDisplay ?? DEFAULT_SETTINGS.pinyinDisplay}
+            onChange={(event) =>
+              void patch({ pinyinDisplay: event.target.value as PinyinDisplay })
+            }
+          >
+            <option value="always">Always</option>
+            <option value="tap">Only when I tap</option>
+            <option value="never">Never</option>
+          </select>
+          <span className="text-xs text-muted">
+            “Only when I tap” hides the readings until you tap a word to hear how it sounds.
+          </span>
         </label>
 
         <label className="flex flex-col gap-1 text-sm">

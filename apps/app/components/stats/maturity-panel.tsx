@@ -68,7 +68,7 @@ export function MaturityPanel({ states, stability, known }: MaturityPanelProps) 
 
   return (
     <Card
-      title="Maturity"
+      title="How many words are solid"
       aside={
         states.total > 0 ? (
           <Badge tone="neutral" data-testid="stats-card-total">
@@ -80,7 +80,11 @@ export function MaturityPanel({ states, stability, known }: MaturityPanelProps) 
     >
       {states.total === 0 ? (
         <EmptyNote testId="stats-maturity-empty">
-          No cards yet. Look a word up, or open Today to draw the day&rsquo;s new words.
+          {/* Since core.md C7 the day's new words are introduced by the
+              Practice session, not by opening Today — this line used to send a
+              learner to a screen that no longer does it. */}
+          Nothing here yet. Look a word up, or open Practice — the day&rsquo;s new words start
+          there.
         </EmptyNote>
       ) : (
         <>

@@ -14,7 +14,7 @@
  * no side effects — importing it from anywhere, on any runtime, is free.
  */
 
-import type { CardContext, HskBand } from '@/lib/types';
+import type { CardContext, HskBand, KnownBand } from '@/lib/types';
 
 export const DB_NAME = 'tangram';
 
@@ -299,7 +299,20 @@ export interface SettingsRow {
   id: 'singleton';
   newPerDay: number;
   spineStartBand: HskBand;
-  knownBand: HskBand;
+  /**
+   * HSK bands at or below this are treated as words the learner already knows:
+   * the reader paints them known, the spine never draws them, and "add the
+   * words" skips them.
+   *
+   * **`0` means "assume nothing", and it is the default** (docs/plans/core.md
+   * C8). The old default was `2`, which is why moving `spineStartBand` to 1 on
+   * its own changed nothing: `lib/lists/draw.ts` skips a band that is at or
+   * below `knownBand` *whatever* `spineStartBand` says, so a new learner still
+   * got HSK 3 and Library's "new words come from HSK 1, easiest first" would
+   * have been false on the first day. C8 names only `spineStartBand`; the two
+   * fields have to move together or neither moves. Recorded in HANDOFF.md.
+   */
+  knownBand: KnownBand;
   /** Local hour the study day rolls over at (§3.3, `lib/srs/day.ts`). */
   dayRollover: number;
   script: ScriptPreference;
@@ -388,8 +401,21 @@ export const SETTINGS_ID = 'singleton';
 export const DEFAULT_SETTINGS: Omit<SettingsRow, 'createdAt' | 'updatedAt'> = {
   id: SETTINGS_ID,
   newPerDay: 10,
-  spineStartBand: 3,
-  knownBand: 2,
+  /**
+   * **HSK 1, not HSK 3** (docs/plans/core.md C8).
+   *
+   * `3` was chosen when this file was written and it means a learner who
+   * installs the app and presses Practice is handed HSK 3 vocabulary on their
+   * first day. That is the wrong first impression for the default, and the
+   * field is a *setting*: a learner who is past HSK 1 and 2 moves it, and
+   * Library says so in plain words ("Your level: Just starting — new words come
+   * from HSK 1, easiest first").
+   *
+   * It was frozen by Phase 0 to protect data; there is no data, and core.md
+   * §4's dependency row unfreezes it for this phase.
+   */
+  spineStartBand: 1,
+  knownBand: 0,
   dayRollover: 4,
   script: 'simp',
   provider: 'fake',

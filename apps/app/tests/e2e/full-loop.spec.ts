@@ -242,15 +242,19 @@ test('the whole loop with i+1 sentences and free recall on', async ({ page }) =>
   // --- Today counts them both (P3) -----------------------------------------
   await page.goto('/');
   await ready(page);
-  await expect(page.getByTestId('today-new-count')).not.toHaveText('—', { timeout: 60_000 });
-  const before = await page.evaluate(() => ({
-    due: Number(document.querySelector('[data-testid="today-due-count"]')?.textContent ?? '0'),
-    fresh: Number(document.querySelector('[data-testid="today-new-count"]')?.textContent ?? '0'),
-  }));
+  // C8: one sentence, with the counts inside it. The numbers are read back out
+  // of the sentence rather than off two tiles, which is the same assertion with
+  // the same meaning — "the two adds are on today's plate".
+  await expect(page.getByTestId('today-sentence')).not.toContainText('Counting', {
+    timeout: 60_000,
+  });
+  const sentence = (await page.getByTestId('today-sentence').textContent()) ?? '';
+  const numberBefore = (phrase: string): number =>
+    Number(new RegExp(`(\\d+)[^,.]*${phrase}`).exec(sentence)?.[1] ?? '0');
   // The two adds are never subject to the daily cap (§3.3), so they are on the
   // day's plate even with `newPerDay: 0`, and the demo left cards due.
-  expect(before.fresh).toBeGreaterThanOrEqual(2);
-  expect(before.due).toBeGreaterThanOrEqual(1);
+  expect(numberBefore('new word'), sentence).toBeGreaterThanOrEqual(2);
+  expect(numberBefore('to practice') + numberBefore('to write'), sentence).toBeGreaterThanOrEqual(1);
 
   // --- the session, with both card features live ---------------------------
   await page.getByTestId('start-review').click();
@@ -510,13 +514,12 @@ test('the whole loop with i+1 sentences and free recall on', async ({ page }) =>
   // --- Today has moved (P3), and counts the two directions apart (Phase 8 B)
   await page.goto('/');
   await ready(page);
-  await expect(page.getByTestId('today-due-count')).toHaveText('0');
-  await expect(page.getByTestId('today-new-count')).toHaveText('0');
+  await expect(page.getByTestId('today-sentence')).toContainText('Nothing waiting');
   await expect(page.getByTestId('start-review')).toBeDisabled();
-  // The split line counts *today's plate*, and the walk emptied it — so the
-  // correct thing for it to do here is not appear. What is durable is the row:
-  // one production card, its own schedule, its own review.
-  await expect(page.getByTestId('today-direction-split')).toHaveCount(0);
+  // The sentence counts *today's plate*, and the walk emptied it — so the
+  // correct thing for the writing clause to do here is not appear. What is
+  // durable is the row: one production card, its own schedule, its own review.
+  await expect(page.getByTestId('today-sentence')).not.toContainText('write from memory');
   const twin = await page.evaluate(async (id) => {
     const rows = await window.__tangram.repo.allCards();
     const card = rows.find((row) => row.id === id);

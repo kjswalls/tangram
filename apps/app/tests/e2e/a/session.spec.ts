@@ -61,7 +61,7 @@ test.describe('/review with the short learning steps on', () => {
     await page.getByTestId('grade-1').click();
 
     await expect(page.getByTestId('review-empty')).toHaveText(
-      /^Nothing due — 1 card comes back in \d+ minutes?\.$/,
+      /^All done for now — 1 word comes back in \d+ minutes?\.$/,
     );
     const stored = await storedCard(page, id);
     expect(stored!.due - Date.now()).toBeLessThan(DAY_MS);
@@ -83,7 +83,7 @@ test.describe('/review with the short learning steps on', () => {
     await page.reload();
 
     await expect(page.getByTestId('review-empty')).toHaveText(
-      /^Nothing due — 1 card comes back in 1 minute\.$/,
+      /^All done for now — 1 word comes back in 1 minute\.$/,
     );
     await expect(page.getByTestId('review-card')).toBeVisible({ timeout: 30_000 });
     await expectBaseText(page.getByTestId('card-front'), '打算');
@@ -104,7 +104,7 @@ test.describe('/review with the short learning steps on', () => {
     await page.getByTestId('grade-1').click();
 
     await expect(page.getByTestId('review-empty')).toHaveText(
-      /^Nothing due — next card in \d+ (hours?|days?)\.$/,
+      /^All done — the next word comes back in \d+ (hours?|days?)\.$/,
     );
     const stored = await storedCard(page, id);
     expect(stored!.due - Date.now()).toBeGreaterThanOrEqual(DAY_MS - 60_000);

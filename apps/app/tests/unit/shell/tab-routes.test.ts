@@ -123,20 +123,22 @@ describe('the seven routes are gone', () => {
    * C7's suite-migration criterion, "with a number in it".
    *
    * **The plan's number is stale and that is the finding, not a failure.** C7
-   * was written against 29 files, of which 22 navigated by path; C1–C6 have
-   * since added their own specs, so the number here is the one the repository
-   * actually has. What matters is that it is *asserted*: a migration whose
-   * scope is "the specs I happened to open" is how three of them quietly stop
-   * running. Recorded in HANDOFF.md.
+   * was written against 29 files, of which 22 navigated by path; C1–C6 had
+   * already added their own specs by the time C7 ran (44/37/35), and C8 added
+   * three more. The number here is the one the repository actually has, and
+   * what matters is that it is *asserted*: a migration whose scope is "the
+   * specs I happened to open" is how three of them quietly stop running. A
+   * phase that adds a spec updates this line, deliberately. Recorded in
+   * HANDOFF.md.
    */
   it('every spec in the suite is accounted for, by count', () => {
     const files = walk(join(appRoot, 'tests', 'e2e'));
     const specs = files.filter((path) => path.endsWith('.spec.ts'));
     const navigating = files.filter((path) => code(path).includes('page.goto('));
     expect({ files: files.length, specs: specs.length, navigating: navigating.length }).toEqual({
-      files: 44,
-      specs: 37,
-      navigating: 35,
+      files: 46,
+      specs: 39,
+      navigating: 37,
     });
   });
 

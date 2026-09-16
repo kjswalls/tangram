@@ -33,8 +33,8 @@ Node >= 20.9 (`.nvmrc` says 22), pnpm 10.
 frequencies and Make Me a Hanzi decompositions, caches the raw files under
 `TANGRAM_DATA_DIR/raw` (default `.cache/tangram/`), and writes `data/dict.json` and
 `data/decomp.json`. Those JSON files are generated and gitignored; `pnpm data --force`
-rebuilds them. `data/ATTRIBUTION.md` and `data/COPYING-*` are committed and are shown in
-`/settings`. Without the JSON the dictionary routes answer
+rebuilds them. `data/ATTRIBUTION.md` and `data/COPYING-*` are committed and are shown in the
+**Library** tab (`/library`). Without the JSON the dictionary routes answer
 `503 {error:'dict-data-missing'}` and the shell shows a banner — nothing crashes.
 
 ## Environment

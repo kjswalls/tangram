@@ -17,7 +17,7 @@
  */
 import { expect, test } from '@playwright/test';
 
-import { gradeAllNew, ready, resetApp } from './helpers';
+import { expectTodayCounts, gradeAllNew, ready, resetApp } from './helpers';
 
 /** Open Practice and wait for the session to have loaded (or be empty). */
 async function practice(page: import('@playwright/test').Page): Promise<void> {
@@ -37,8 +37,7 @@ test.describe('today', () => {
     await expect(page.getByTestId('settings-status')).toHaveText('Saved');
 
     await page.goto('/');
-    await expect(page.getByTestId('today-new-count')).toHaveText('3', { timeout: 60_000 });
-    await expect(page.getByTestId('today-due-count')).toHaveText('0');
+    await expectTodayCounts(page, { fresh: 3, practice: 0, write: 0 }, { timeout: 60_000 });
     // **Nothing has been created.** This is the half the merge is about: the
     // number is what the cap allows, and the database is still empty.
     await expect(page.getByText('0 of 3 new words introduced today')).toBeVisible();
@@ -52,7 +51,7 @@ test.describe('today', () => {
 
     // Back on Today: the same three, now real, and the charge is on the record.
     await page.goto('/');
-    await expect(page.getByTestId('today-new-count')).toHaveText('3', { timeout: 60_000 });
+    await expectTodayCounts(page, { fresh: 3 }, { timeout: 60_000 });
     await expect(page.getByTestId('today-new-word')).toHaveCount(3);
     await expect(page.getByText('3 of 3 new words introduced today')).toBeVisible();
 
@@ -67,14 +66,13 @@ test.describe('today', () => {
   }) => {
     await resetApp(page);
     await page.goto('/');
-    await expect(page.getByTestId('today-new-count')).toHaveText('10', { timeout: 60_000 });
+    await expectTodayCounts(page, { fresh: 10 }, { timeout: 60_000 });
 
     await practice(page);
     expect(await gradeAllNew(page)).toBe(10);
 
     await page.goto('/');
-    await expect(page.getByTestId('today-new-count')).toHaveText('0');
-    await expect(page.getByTestId('today-due-count')).toHaveText('0');
+    await expectTodayCounts(page, { fresh: 0, practice: 0, write: 0 });
     await expect(page.getByTestId('today-new-list')).toHaveCount(0);
     // Graded, not deleted: FSRS scheduled them a day or more out.
     expect(await page.evaluate(() => window.__tangram.repo.allCards())).toHaveLength(10);
@@ -109,7 +107,7 @@ test.describe('today', () => {
     }
 
     await page.goto('/');
-    await expect(page.getByTestId('today-new-count')).toHaveText('4', { timeout: 60_000 });
+    await expectTodayCounts(page, { fresh: 4 }, { timeout: 60_000 });
     await practice(page);
     const cards = await page.evaluate(() => window.__tangram.repo.allCards());
     expect(cards).toHaveLength(4);
@@ -122,12 +120,12 @@ test.describe('today', () => {
     await resetApp(page, { newPerDay: 0 });
     await page.goto('/');
     await ready(page);
-    await expect(page.getByTestId('today-new-count')).toHaveText('0', { timeout: 60_000 });
+    await expectTodayCounts(page, { fresh: 0 }, { timeout: 60_000 });
     await expect(page.getByTestId('start-review')).toBeDisabled();
 
     await page.evaluate(() => window.__tangram.repo.setSettings({ newPerDay: 2 }));
     await page.reload();
-    await expect(page.getByTestId('today-new-count')).toHaveText('2', { timeout: 60_000 });
+    await expectTodayCounts(page, { fresh: 2 }, { timeout: 60_000 });
     await page.getByTestId('start-review').click();
     await expect(page).toHaveURL(/\/practice$/);
   });

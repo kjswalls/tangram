@@ -21,11 +21,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { getRepository } from '@/lib/db/get-db';
 import { getEntrySource } from '@/lib/lists/entry-source';
 import { buildReaderIndex, type ReaderIndex } from '@/lib/reader/states';
-import { HSK_BANDS, type EntryId, type HskBand } from '@/lib/types';
+import { HSK_BANDS, type EntryId, type HskBand, type KnownBand } from '@/lib/types';
 
 interface Bands {
   /** The `knownBand` these were fetched for — a stale set colours the wrong words. */
-  band: HskBand;
+  band: KnownBand;
   map: ReadonlyMap<EntryId, HskBand>;
 }
 

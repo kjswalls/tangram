@@ -22,6 +22,25 @@
  *   under the chart instead of vanishing.
  */
 
+/**
+ * **The one-sentence test, run** (docs/plans/core.md C8; STACK §5.2).
+ *
+ * STACK §5.2 left this panel under "Open decisions — genuinely unsettled" and
+ * ended with an instruction rather than a verdict: *try to write the panel's
+ * one-sentence explanation for a beginner; if it cannot be written, it does not
+ * ship.* Nobody had recorded an attempt. This is the attempt:
+ *
+ *   "When the app says you have a 9-in-10 chance of remembering a word, this is
+ *    whether you really remember about 9 of every 10."
+ *
+ * It can be written, so by C8's own rule the panel is relabelled with it and
+ * stays. **The sentence is the builder's, not the owner's**, and C8 says the
+ * owner writes it or declines to — so this ships as a draft that the owner
+ * accepts or rejects, and a rejection means cutting the four files STACK §5.2
+ * names, not editing this string. Recorded in HANDOFF.md, and the sentence is
+ * asserted by `tests/unit/stats/calibration-explainer.test.tsx` so it cannot be
+ * quietly dropped while the panel stays.
+ */
 import { ChartFrame, ChartTooltip, TableView, formatCount, useTooltip } from '@/components/stats/primitives';
 import { SERIES_1 } from '@/components/stats/chart-tokens';
 import { Badge } from '@/components/ui/badge';
@@ -29,6 +48,15 @@ import { Card } from '@/components/ui/card';
 import { NotEnough } from '@/components/stats/primitives';
 import type { CalibrationBucket, CalibrationSummary } from '@/lib/stats/calibration';
 import { formatRate } from '@/lib/stats/retention';
+
+/**
+ * The sentence. Exported so the test and the panel cannot disagree about it —
+ * and so that "the explanation exists" is a checkable fact rather than a claim
+ * in a commit message.
+ */
+export const CALIBRATION_EXPLAINER =
+  'When the app says you have a 9-in-10 chance of remembering a word, this is whether you ' +
+  'really remember about 9 of every 10.';
 
 const W = 264;
 const H = 258;
@@ -131,7 +159,7 @@ export function CalibrationChart({
 
   return (
     <Card
-      title="Calibration"
+      title="Is it guessing right?"
       // The retention card next to this one is badged "last 30 days", and an
       // unbadged neighbour reads as the same window. This one is every review
       // there is — deliberately, because calibration wants all of them — so it
@@ -139,6 +167,9 @@ export function CalibrationChart({
       aside={<Badge tone="neutral">all time</Badge>}
       data-testid="stats-calibration"
     >
+      <p data-testid="stats-calibration-explainer" className="mb-3 text-sm">
+        {CALIBRATION_EXPLAINER}
+      </p>
       {bias}
       {summary.enough ? (
         <>

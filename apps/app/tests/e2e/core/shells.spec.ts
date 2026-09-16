@@ -18,7 +18,6 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 
 import { DASUAN, openReview, seed } from '../p2/fixtures';
-import { baseText } from '../hanzi';
 
 const PHONE = { width: 390, height: 844 };
 const DESKTOP = { width: 1280, height: 900 };
@@ -38,8 +37,41 @@ const DESKTOP = { width: 1280, height: 900 };
  * compare two renders of an asynchronous screen, and it keeps the assertion
  * below meaning what C7 says it means.
  */
+/**
+ * The text a learner can actually **see**, with the ruby readings dropped.
+ *
+ * Deliberately not `baseText`, and that is the point of the whole file.
+ * `baseText` clones the node and reads `textContent`, which includes every
+ * element hidden by a responsive utility class — so a `hidden wide:inline` span
+ * reads identically at 390px and 1280px and the equality assertions below
+ * survive the exact drift they exist to catch. The pattern is already live in
+ * the compared subtree (`lookup-view.tsx` hides a whole panel column with
+ * `hidden md:block`), so this is not a hypothetical.
+ *
+ * Computed styles cannot be read off a detached clone, so this walks the live
+ * DOM instead and skips what the browser is not painting — plus `<rt>`/`<rp>`,
+ * which is what `baseText` was for.
+ */
+async function visibleBaseText(scope: Locator): Promise<string> {
+  return scope.evaluate((root) => {
+    const skip = new Set(['RT', 'RP', 'SCRIPT', 'STYLE', 'TEMPLATE']);
+    const read = (node: Node): string => {
+      if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? '';
+      if (node.nodeType !== Node.ELEMENT_NODE) return '';
+      const element = node as HTMLElement;
+      if (skip.has(element.tagName)) return '';
+      const style = getComputedStyle(element);
+      if (style.display === 'none' || style.visibility === 'hidden') return '';
+      let out = '';
+      for (const child of element.childNodes) out += read(child);
+      return out;
+    };
+    return read(root).replace(/\s+/g, ' ').trim();
+  });
+}
+
 async function settled(scope: Locator): Promise<string> {
-  const read = async () => (await baseText(scope)).replace(/\s+/g, ' ').trim();
+  const read = () => visibleBaseText(scope);
   // Three equal reads, not two. The library's band fill lands in batches with
   // gaps between them, and a single quiet interval is exactly what a batch
   // boundary looks like.
@@ -145,6 +177,34 @@ test.describe('the two shells', () => {
     expect(wide).toBe(phone);
   });
 
+  test('crossing the breakpoint keeps the screen, its state and its focus', async ({ page }) => {
+    /**
+     * A phone rotated to landscape crosses 45rem, and so does a desktop window
+     * being dragged. The first build chose between two *component types*, so
+     * every crossing destroyed and rebuilt the screen subtree: a half-typed
+     * answer was gone, focus was on `<body>`, and on the Practice tab
+     * `ReviewSession`'s unmount cleanup (`reset()`) threw the session's
+     * progress away. One component with a `wide` flag is what fixes it, and
+     * this is the assertion that says so.
+     */
+    await page.setViewportSize(PHONE);
+    await page.goto('/');
+    const input = page.getByTestId('lookup-input');
+    await input.click();
+    await input.fill('打算');
+    await expect(page.getByTestId('search-result').first()).toBeVisible({ timeout: 20_000 });
+
+    await page.setViewportSize(DESKTOP);
+    await expect(page.getByTestId('wide-shell')).toBeVisible();
+
+    // The same box, still holding what was typed, still focused.
+    await expect(input).toHaveValue('打算');
+    expect(await page.evaluate(() => document.activeElement?.getAttribute('data-testid'))).toBe(
+      'lookup-input',
+    );
+    await expect(page.getByTestId('search-result').first()).toBeVisible();
+  });
+
   test('tab state survives navigating away and back', async ({ page }) => {
     // The reader's text is the state that has to survive: it lives in the store
     // rather than in the component, which is what makes a trip to Practice and
@@ -166,6 +226,48 @@ test.describe('the two shells', () => {
       'data-hanzi',
       '我打算明天去北京。',
     );
+  });
+
+  test('the phone shell never puts the tab bar over the grade buttons', async ({ page }) => {
+    /**
+     * The tab bar is `fixed bottom-0`; the practice screen's grade dock is
+     * `sticky bottom-0`. Before `--tab-bar-height` the dock pinned to the
+     * bottom of the *viewport*, under the bar, and a tap on the centre of "Got
+     * it" at 390px hit the Look up tab link and left the session. So this
+     * asserts the thing a learner does: that the point they press belongs to
+     * the button they pressed.
+     */
+    // **A short viewport on purpose.** The dock is `sticky`, so on a page that
+    // fits it sits in normal flow above `main`'s bottom padding and the overlap
+    // cannot happen — a test on a tall viewport passes without touching the
+    // bug. 500px guarantees the card back overflows and the dock is pinned.
+    await page.setViewportSize({ width: 390, height: 500 });
+    await openReview(page);
+    await seed(page, [{ entry: DASUAN, gradedDaysAgo: 30 }]);
+    await expect(page.getByTestId('reveal')).toBeVisible();
+    await page.keyboard.press('Space');
+    await expect(page.getByTestId('grade-bar')).toBeVisible();
+    // The dock is genuinely pinned: the document is taller than the viewport.
+    expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBeGreaterThan(500);
+
+    const bar = (await page.getByTestId('tab-bar').boundingBox())!;
+    for (const rating of [1, 2, 3, 4]) {
+      const button = page.getByTestId(`grade-${rating}`);
+      const box = (await button.boundingBox())!;
+      // Wholly above the bar, with nothing of it underneath.
+      expect(box.y + box.height, `grade-${rating} runs under the tab bar`).toBeLessThanOrEqual(
+        bar.y + 1,
+      );
+      // …and the browser agrees about who owns the pixel.
+      const owner = await page.evaluate(
+        ({ x, y }) => {
+          const element = document.elementFromPoint(x, y);
+          return element?.closest('[data-testid]')?.getAttribute('data-testid') ?? null;
+        },
+        { x: box.x + box.width / 2, y: box.y + box.height / 2 },
+      );
+      expect(owner, `something else owns the centre of grade-${rating}`).toBe(`grade-${rating}`);
+    }
   });
 
   test('the wide shell puts the tabs in the header, not under the thumb', async ({ page }) => {

@@ -24,7 +24,7 @@
 import { useEffect, useRef } from 'react';
 import { useLocation, useNavigate, useNavigationType } from 'react-router';
 
-import { TABS } from '@/components/shell/nav';
+import { TABS, TAB_PATHS } from '@/components/shell/nav';
 import { isAndroid } from '@/lib/platform/native';
 import {
   closeTopOverlay,
@@ -45,6 +45,21 @@ import {
  * It stays a prop with a default because A1's tests drive it directly.
  */
 const DEFAULT_TABS = TABS.map((tab) => tab.path);
+
+/**
+ * Sub-paths that belong to a tab without being its root.
+ *
+ * `/read` is a page inside **Look up** — it has a path so a text can be
+ * bookmarked and returned to — and `'/'` matches only itself in the model's
+ * prefix rule, so without this `/read` belongs to no tab. A cold start there
+ * was then never recorded at all, and the first back press after moving to
+ * another tab minimised the app instead of returning to the text. Derived from
+ * `TAB_PATHS` rather than typed out, so a phase that adds a sub-path to a tab
+ * has one place to declare it.
+ */
+const DEFAULT_SUB_PATHS: Readonly<Record<string, string>> = {
+  [TAB_PATHS.texts]: TAB_PATHS.lookup,
+};
 
 /**
  * The plugin module, fetched once for the life of the page.
@@ -68,9 +83,14 @@ function loadAppPlugin(): Promise<typeof import('@capacitor/app')> {
 export interface HardwareBackButtonProps {
   /** Tab roots in order. Defaults to the shell's current nav. */
   tabs?: readonly string[];
+  /** Paths that belong to a tab without being its root. See `DEFAULT_SUB_PATHS`. */
+  belongsTo?: Readonly<Record<string, string>>;
 }
 
-export function HardwareBackButton({ tabs = DEFAULT_TABS }: HardwareBackButtonProps = {}) {
+export function HardwareBackButton({
+  tabs = DEFAULT_TABS,
+  belongsTo = DEFAULT_SUB_PATHS,
+}: HardwareBackButtonProps = {}) {
   const location = useLocation();
   const navigationType = useNavigationType() as NavigationKind;
   const navigate = useNavigate();
@@ -95,10 +115,10 @@ export function HardwareBackButton({ tabs = DEFAULT_TABS }: HardwareBackButtonPr
    * text and reported the whole component as `Bin 4564 -> 6316 bytes` in the
    * diff. A separator that has to be escaped is a separator worth not having.
    */
-  const key = JSON.stringify([...tabs]);
+  const key = JSON.stringify([[...tabs], belongsTo]);
   const modelRef = useRef<{ key: string; model: BackNavigation } | null>(null);
   if (modelRef.current === null || modelRef.current.key !== key) {
-    modelRef.current = { key, model: createBackNavigation(tabs) };
+    modelRef.current = { key, model: createBackNavigation(tabs, { belongsTo }) };
   }
   const model = modelRef.current.model;
 

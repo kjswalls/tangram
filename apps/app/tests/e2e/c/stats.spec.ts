@@ -67,7 +67,11 @@ test.describe('/library', () => {
     await resetApp(page);
     await page.goto('/?seed=demo');
     await expect(page).toHaveURL(/\/$/, { timeout: 120_000 });
-    await expect(page.getByTestId('today-due-count')).not.toHaveText('—', { timeout: 120_000 });
+    // Wait for the summary rather than for the element: the sentence says it is
+    // counting until `loadToday` lands.
+    await expect(page.getByTestId('today-sentence')).not.toContainText('Counting', {
+      timeout: 120_000,
+    });
 
     await page.goto('/library');
     await expect(page.getByRole('heading', { level: 1, name: 'Library' })).toBeVisible();

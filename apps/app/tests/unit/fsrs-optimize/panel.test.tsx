@@ -65,15 +65,52 @@ async function mount() {
 }
 
 describe('the optimizer panel', () => {
-  it('will not run below the floor, and says the floor is a floor for signal', async () => {
+  it('is absent below the floor — not disabled, absent (core.md C8)', async () => {
+    // The fit needs 1,000 scorable reviews, which for a new learner is months
+    // away. A greyed-out button and a paragraph explaining the grey is a
+    // promise the app cannot keep, parked on the settings screen for all of
+    // those months. C8's rule is that the surface is not there at all.
     await seedReviews({ w: KNOWN, cards: 20, per: 5, seed: 4 });
     await mount();
+
+    // Absent *after* the count has landed, not merely before it. There is
+    // nothing in the DOM to wait on — that is the assertion — so the wait is
+    // for the effect's own read to settle; the sibling test below is the
+    // control that the panel does appear once the count says it may.
+    await getRepository().allReviewsChronological();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.queryByTestId('optimizer-panel')).toBeNull();
+    expect(screen.queryByTestId('optimizer-run')).toBeNull();
+    expect(screen.queryByTestId('optimizer-floor')).toBeNull();
+  });
+
+  it('…but stays reachable once a fit has been applied, so Revert is not stranded', async () => {
+    // A reset wipes the reviews and not `fsrsWeights`. Hiding the panel then
+    // would leave a learner on fitted parameters with no way back to the
+    // defaults — which is the one case where "absent" is the wrong answer.
+    await seedReviews({ w: KNOWN, cards: 20, per: 5, seed: 4 });
+    const settings = await getRepository().getSettings();
+    render(
+      <Harness
+        initial={{
+          ...settings,
+          fsrsWeights: {
+            w: [...KNOWN],
+            fittedAt: Date.UTC(2026, 2, 3),
+            reviewCount: 1240,
+            heldOutLogLoss: 0.31,
+            baselineLogLoss: 0.34,
+          },
+        }}
+      />,
+    );
 
     await waitFor(() => expect(screen.getByTestId('optimizer-floor')).toBeInTheDocument());
     expect(screen.getByTestId('optimizer-floor')).toHaveTextContent(
       /floor for signal rather than a guarantee/,
     );
     expect(screen.getByTestId('optimizer-run')).toBeDisabled();
+    expect(screen.getByTestId('optimizer-revert')).toBeEnabled();
     expect(screen.getByTestId('optimizer-review-count')).toHaveTextContent(
       /\d+ of your \d+ reviews can be scored/,
     );
@@ -203,10 +240,15 @@ describe('the optimizer panel', () => {
     expect(settings.fsrsWeights).toBeNull();
     render(<Harness initial={settings} />);
 
-    await waitFor(() =>
-      expect(screen.getByTestId('optimizer-review-count')).toHaveTextContent(/0 of your 0/),
-    );
+    // Since C8 the whole panel is absent below the floor, which answers the
+    // reviewer's reproduction more completely than a missing button would:
+    // there is no "Revert to the previous fit" because there is nothing here
+    // at all. The assertion is kept as both — the button specifically, and the
+    // panel — so that restoring the panel would not silently restore the bug.
+    await getRepository().allReviewsChronological();
+    await new Promise((resolve) => setTimeout(resolve, 50));
     expect(screen.queryByTestId('optimizer-revert')).toBeNull();
+    expect(screen.queryByTestId('optimizer-panel')).toBeNull();
   });
 
   it('names the floor it enforces', () => {

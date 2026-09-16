@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 /**
  * The ask panel (PLAN.md §3.4) — the half of the lookup answer a dictionary
@@ -20,22 +20,22 @@
  *    question.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from "react";
 
-import type { AskRouteInfo, AskRouteResponse } from '@/app/api/ask/route';
-import { HanziWord } from '@/components/hanzi/hanzi-text';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Chip } from '@/components/ui/chip';
-import { EmptyState } from '@/components/ui/empty-state';
+import type { AskRouteInfo, AskRouteResponse } from "@/app/api/ask/route";
+import { HanziWord } from "@/components/hanzi/hanzi-text";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Chip } from "@/components/ui/chip";
+import { EmptyState } from "@/components/ui/empty-state";
 import {
   ASK_OFFLINE_CHIP,
   ASK_UNGROUNDED_BODY,
   ASK_UNGROUNDED_TITLE,
   type AskStateName,
   type AskUnavailableReason,
-} from '@/components/lookup/ask-state';
-import { askCacheKey } from '@/lib/ai/cache-key';
+} from "@/components/lookup/ask-state";
+import { askCacheKey } from "@/lib/ai/cache-key";
 import {
   entryLookup,
   groundedAskResponseSchema,
@@ -43,14 +43,18 @@ import {
   type PhraseScript,
   type GroundedAskResponse,
   type RenderedPhrase,
-} from '@/lib/ai/ground';
-import { cn } from '@/lib/cn';
-import type { PhraseToken } from '@/lib/db/schema';
-import { getRepository } from '@/lib/db/get-db';
-import { getDictStore } from '@/lib/dict/browser-store';
-import { addCardChecked, addPhraseCardChecked, phraseCardFor } from '@/lib/lists/looked-up';
-import { getLearnerProfile } from '@/lib/srs/profile';
-import { orderGlosses } from '@/lib/srs/presentation';
+} from "@/lib/ai/ground";
+import { cn } from "@/lib/cn";
+import type { PhraseToken } from "@/lib/db/schema";
+import { getRepository } from "@/lib/db/get-db";
+import { getDictStore } from "@/lib/dict/browser-store";
+import {
+  addCardChecked,
+  addPhraseCardChecked,
+  phraseCardFor,
+} from "@/lib/lists/looked-up";
+import { getLearnerProfile } from "@/lib/srs/profile";
+import { orderGlosses } from "@/lib/srs/presentation";
 
 /**
  * Entries by id, through `DictStore` (core.md C4a), in the
@@ -65,15 +69,16 @@ import { orderGlosses } from '@/lib/srs/presentation';
 async function resolveEntries(ids: readonly string[]) {
   const store = getDictStore();
   const entries = await store.entries(ids);
-  const version = store.status.state === 'ready' ? store.status.version : '';
+  const version = store.status.state === "ready" ? store.status.version : "";
   return { meta: { version }, entries };
 }
-import { hskBandLabel, type CardContext, type Entry } from '@/lib/types';
+import { hskBandLabel, type CardContext, type Entry } from "@/lib/types";
 
 /** Long enough that typing a sentence is one ask, short enough to feel answered. */
 const DEBOUNCE_MS = 500;
 
-const OFFLINE_BADGE = 'Offline dictionary mode — set ANTHROPIC_API_KEY for AI answers';
+const OFFLINE_BADGE =
+  "Offline dictionary mode — set ANTHROPIC_API_KEY for AI answers";
 
 /**
  * Longer than the route's own answer deadline (30 s), so a slow provider
@@ -84,10 +89,10 @@ const OFFLINE_BADGE = 'Offline dictionary mode — set ANTHROPIC_API_KEY for AI 
 const ASK_TIMEOUT_MS = 35_000;
 
 type AskState =
-  | { status: 'idle' }
-  | { status: 'loading' }
+  | { status: "idle" }
+  | { status: "loading" }
   | {
-      status: 'ready';
+      status: "ready";
       response: GroundedAskResponse;
       entries: Entry[];
       dictVersion?: string;
@@ -101,7 +106,7 @@ type AskState =
        */
       answered: { query: string; contextJson: string };
     }
-  | { status: 'error'; message: string; reason: AskUnavailableReason };
+  | { status: "error"; message: string; reason: AskUnavailableReason };
 
 /**
  * The panel's own four internal statuses, mapped onto the five the rest of the
@@ -118,22 +123,22 @@ type AskState =
  * answer is, to the learner, the next word's answer not being ready yet.
  */
 export function askUiState(input: {
-  readonly status: AskState['status'];
+  readonly status: AskState["status"];
   /** The rendered answer belongs to a previous question. */
   readonly stale?: boolean;
   /** `ready` only: something survived grounding and is on screen. */
   readonly grounded?: boolean;
 }): AskStateName {
-  if (input.stale) return 'thinking';
+  if (input.stale) return "thinking";
   switch (input.status) {
-    case 'idle':
-      return 'idle';
-    case 'loading':
-      return 'thinking';
-    case 'error':
-      return 'unavailable';
-    case 'ready':
-      return input.grounded ? 'answered' : 'ungrounded';
+    case "idle":
+      return "idle";
+    case "loading":
+      return "thinking";
+    case "error":
+      return "unavailable";
+    case "ready":
+      return input.grounded ? "answered" : "ungrounded";
   }
 }
 
@@ -143,19 +148,20 @@ export function askUiState(input: {
  * say "rate-limited" without re-deriving it from a message string.
  */
 export function unavailableReason(error: unknown): AskUnavailableReason {
-  if (isTimeout(error)) return 'timeout';
+  if (isTimeout(error)) return "timeout";
   // A fetch that never reached a server throws a TypeError, and the browser
   // already knows the likeliest reason.
-  if (typeof navigator !== 'undefined' && navigator.onLine === false) return 'offline';
-  if (error instanceof TypeError) return 'offline';
-  return 'server';
+  if (typeof navigator !== "undefined" && navigator.onLine === false)
+    return "offline";
+  if (error instanceof TypeError) return "offline";
+  return "server";
 }
 
 /** The same, for a response that did arrive. */
 export function statusReason(status: number): AskUnavailableReason {
-  if (status === 429) return 'rate-limited';
-  if (status === 401 || status === 403) return 'no-key';
-  return 'server';
+  if (status === 429) return "rate-limited";
+  if (status === 401 || status === 403) return "no-key";
+  return "server";
 }
 
 /**
@@ -165,7 +171,7 @@ export function statusReason(status: number): AskUnavailableReason {
  */
 let infoRequest: Promise<AskRouteInfo> | undefined;
 
-const FALLBACK_INFO: AskRouteInfo = { provider: 'fake', promptVersion: 'v1' };
+const FALLBACK_INFO: AskRouteInfo = { provider: "fake", promptVersion: "v1" };
 
 /**
  * A *failed* handshake is never memoised. Guessing "fake" once and keeping the
@@ -174,7 +180,7 @@ const FALLBACK_INFO: AskRouteInfo = { provider: 'fake', promptVersion: 'v1' };
  * badge over an answer a model wrote. One transient error must not do that.
  */
 function askInfo(): Promise<AskRouteInfo> {
-  infoRequest ??= fetch('/api/ask', { headers: { accept: 'application/json' } })
+  infoRequest ??= fetch("/api/ask", { headers: { accept: "application/json" } })
     .then((res) => {
       if (res.ok) return res.json() as Promise<AskRouteInfo>;
       infoRequest = undefined;
@@ -188,19 +194,20 @@ function askInfo(): Promise<AskRouteInfo> {
 }
 
 function isAbort(error: unknown): boolean {
-  return error instanceof DOMException && error.name === 'AbortError';
+  return error instanceof DOMException && error.name === "AbortError";
 }
 
 /** Our own deadline, not the learner navigating away: this one is worth saying. */
 function isTimeout(error: unknown): boolean {
-  return error instanceof DOMException && error.name === 'TimeoutError';
+  return error instanceof DOMException && error.name === "TimeoutError";
 }
 
 function citedIds(response: GroundedAskResponse): string[] {
   const ids = new Set<string>();
   for (const match of response.matches) ids.add(match.entryId);
   for (const phrase of response.sayIt) {
-    for (const token of phrase.tokens) if (token.entryId) ids.add(token.entryId);
+    for (const token of phrase.tokens)
+      if (token.entryId) ids.add(token.entryId);
   }
   return [...ids];
 }
@@ -232,19 +239,24 @@ function askContextFor(
     sentence !== undefined &&
     offset !== undefined &&
     length !== undefined &&
-    targets.some((target) => target.length > 0 && sentence.slice(offset, offset + length) === target);
+    targets.some(
+      (target) =>
+        target.length > 0 && sentence.slice(offset, offset + length) === target,
+    );
 
   // "From the question: 看" is not a question — it is the word itself, and a
   // card back that quotes its own headword as provenance says nothing while
   // offering a "Peek context" that reveals ＿. A bare-headword ask carries no
   // question; `resolveContext` then finds nothing to show, which is honest.
-  const isHeadword = targets.some((target) => target.length > 0 && target === query.trim());
+  const isHeadword = targets.some(
+    (target) => target.length > 0 && target === query.trim(),
+  );
 
   return {
     ...(isHeadword ? {} : { question: query }),
     ...(sentence ? { sentence } : {}),
     ...(spanReads ? { offset, length } : {}),
-    source: 'ask',
+    source: "ask",
     addedAt: Date.now(),
   };
 }
@@ -254,11 +266,11 @@ function headwordForms(entry: Entry): string[] {
   return entry.simp === entry.trad ? [entry.simp] : [entry.simp, entry.trad];
 }
 
-type AddState = 'idle' | 'saving' | 'added' | 'existing' | 'error';
+type AddState = "idle" | "saving" | "added" | "existing" | "error";
 
 function addLabel(state: AddState, added: string, idle: string): string {
-  if (state === 'saving') return 'Adding…';
-  if (state === 'added' || state === 'existing') return added;
+  if (state === "saving") return "Adding…";
+  if (state === "added" || state === "existing") return added;
   return idle;
 }
 
@@ -273,9 +285,9 @@ function MatchCard({
   entry: Entry;
   senseIndex: number;
   whyThisOne: string;
-  onAdd: (entry: Entry, senseIndex: number) => Promise<'added' | 'existing'>;
+  onAdd: (entry: Entry, senseIndex: number) => Promise<"added" | "existing">;
 }) {
-  const [state, setState] = useState<AddState>('idle');
+  const [state, setState] = useState<AddState>("idle");
   const glosses = orderGlosses(entry.glosses, senseIndex);
 
   return (
@@ -286,13 +298,19 @@ function MatchCard({
       className="rounded-lg border border-border px-3 py-2"
     >
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        <HanziWord text={entry.simp} pinyinNum={entry.pinyinNum} className="text-lg font-medium" />
-        <span className="text-sm text-accent">{entry.pinyinMarked || '—'}</span>
-        {entry.hskBand ? <Badge tone="accent">HSK {hskBandLabel(entry.hskBand)}</Badge> : null}
+        <HanziWord
+          text={entry.simp}
+          pinyinNum={entry.pinyinNum}
+          className="text-lg font-medium"
+        />
+        <span className="text-sm text-accent">{entry.pinyinMarked || "—"}</span>
+        {entry.hskBand ? (
+          <Badge tone="accent">HSK {hskBandLabel(entry.hskBand)}</Badge>
+        ) : null}
       </div>
 
       <p data-testid="ask-match-sense" className="mt-1 text-sm">
-        {glosses.chosen.join('; ')}
+        {glosses.chosen.join("; ")}
       </p>
       {glosses.others.length > 0 ? (
         <details className="mt-1">
@@ -316,25 +334,27 @@ function MatchCard({
           data-testid="ask-match-add"
           size="sm"
           variant="secondary"
-          disabled={state === 'saving' || state === 'added' || state === 'existing'}
+          disabled={
+            state === "saving" || state === "added" || state === "existing"
+          }
           onClick={() => {
-            setState('saving');
-            onAdd(entry, senseIndex).then(setState, () => setState('error'));
+            setState("saving");
+            onAdd(entry, senseIndex).then(setState, () => setState("error"));
           }}
         >
-          {addLabel(state, 'In your cards', 'Add this sense')}
+          {addLabel(state, "In your cards", "Add this sense")}
         </Button>
-        {state === 'added' ? (
+        {state === "added" ? (
           <span data-testid="ask-match-state" className="text-xs text-accent">
             Added — the card carries your question and shows this sense first.
           </span>
         ) : null}
-        {state === 'existing' ? (
+        {state === "existing" ? (
           <span data-testid="ask-match-state" className="text-xs text-muted">
             Already in your cards.
           </span>
         ) : null}
-        {state === 'error' ? (
+        {state === "error" ? (
           <span data-testid="ask-match-state" className="text-xs text-warning">
             Could not save that card.
           </span>
@@ -355,9 +375,11 @@ export interface WordsAdded {
 function wordsMessage(result: WordsAdded): string {
   const parts: string[] = [];
   if (result.added > 0) parts.push(`${result.added} added`);
-  if (result.existing > 0) parts.push(`${result.existing} already in your cards`);
-  if (result.known.length > 0) parts.push(`${result.known.join(' · ')} already known`);
-  return parts.length > 0 ? parts.join(' · ') : 'Nothing to add.';
+  if (result.existing > 0)
+    parts.push(`${result.existing} already in your cards`);
+  if (result.known.length > 0)
+    parts.push(`${result.known.join(" · ")} already known`);
+  return parts.length > 0 ? parts.join(" · ") : "Nothing to add.";
 }
 
 function PhraseCard({
@@ -377,14 +399,16 @@ function PhraseCard({
    * The reading and the ids are identical between the two.
    */
   stored: RenderedPhrase;
-  onAddPhrase: (phrase: RenderedPhrase) => Promise<'added' | 'existing'>;
+  onAddPhrase: (phrase: RenderedPhrase) => Promise<"added" | "existing">;
   onAddWords: (phrase: RenderedPhrase) => Promise<WordsAdded>;
   onProbe: (phrase: RenderedPhrase) => Promise<boolean>;
 }) {
-  const [state, setState] = useState<AddState>('idle');
-  const [wordsState, setWordsState] = useState<AddState>('idle');
+  const [state, setState] = useState<AddState>("idle");
+  const [wordsState, setWordsState] = useState<AddState>("idle");
   const [wordsResult, setWordsResult] = useState<WordsAdded>();
-  const words = phrase.tokens.filter((token) => token.entryId && !token.missing);
+  const words = phrase.tokens.filter(
+    (token) => token.entryId && !token.missing,
+  );
 
   /**
    * A phrase card the learner already has. `addPhraseCardChecked` is idempotent,
@@ -395,7 +419,7 @@ function PhraseCard({
     let cancelled = false;
     onProbe(stored).then(
       (existing) => {
-        if (!cancelled && existing) setState('existing');
+        if (!cancelled && existing) setState("existing");
       },
       () => undefined,
     );
@@ -420,7 +444,7 @@ function PhraseCard({
   return (
     <li
       data-testid="ask-sayit"
-      data-unverified={phrase.unverified ? 'true' : 'false'}
+      data-unverified={phrase.unverified ? "true" : "false"}
       className="rounded-lg border border-border px-3 py-2"
     >
       <p className="flex flex-wrap items-end gap-x-3 gap-y-1">
@@ -428,16 +452,16 @@ function PhraseCard({
           <span
             key={`${token.entryId ?? token.text}-${index}`}
             data-testid="ask-token"
-            data-unverified={token.unverified ? 'true' : 'false'}
-            data-ai-generated={token.aiGenerated ? 'true' : 'false'}
+            data-unverified={token.unverified ? "true" : "false"}
+            data-ai-generated={token.aiGenerated ? "true" : "false"}
             className="flex flex-col items-center"
             title={
               token.aiGenerated
-                ? 'AI-generated: no dictionary entry stands behind this token.'
+                ? "AI-generated: no dictionary entry stands behind this token."
                 : token.unverified
-                  ? 'Unverified: these characters are not a word this dictionary lists.'
+                  ? "Unverified: these characters are not a word this dictionary lists."
                   : token.polyphone
-                    ? 'This character has more than one reading — check the one you want before adding.'
+                    ? "This character has more than one reading — check the one you want before adding."
                     : undefined
             }
           >
@@ -455,13 +479,13 @@ function PhraseCard({
               guessed per-character one. Recorded in HANDOFF.md.
             */}
             <HanziWord
-              text={token.text || '?'}
+              text={token.text || "?"}
               {...(token.pinyin ? { pinyinMarked: token.pinyin } : {})}
               force
               className={cn(
-                'text-2xl',
+                "text-2xl",
                 (token.unverified || token.aiGenerated) &&
-                  'decoration-warning decoration-dotted underline underline-offset-4',
+                  "decoration-warning decoration-dotted underline underline-offset-4",
               )}
             />
             {/*
@@ -470,9 +494,13 @@ function PhraseCard({
               rather than vanishing with the pinyin.
             */}
             {token.pinyin ? null : (
-              <span className="text-xs text-warning">{token.aiGenerated ? 'AI' : '—'}</span>
+              <span className="text-xs text-warning">
+                {token.aiGenerated ? "AI" : "—"}
+              </span>
             )}
-            {token.polyphone ? <span className="text-xs text-muted">polyphone</span> : null}
+            {token.polyphone ? (
+              <span className="text-xs text-muted">polyphone</span>
+            ) : null}
           </span>
         ))}
       </p>
@@ -481,12 +509,15 @@ function PhraseCard({
       <p className="text-xs text-muted">{phrase.register}</p>
 
       {phrase.unverified ? (
-        <p data-testid="ask-sayit-warning" className="mt-1 text-xs text-warning">
-          Marked tokens are not verified against the dictionary — treat them as a suggestion, not a
-          reading.{' '}
+        <p
+          data-testid="ask-sayit-warning"
+          className="mt-1 text-xs text-warning"
+        >
+          Marked tokens are not verified against the dictionary — treat them as
+          a suggestion, not a reading.{" "}
           {words.length > 0
-            ? `This phrase cannot become a card, because its front would show characters no dictionary row stands behind; the ${words.length} cited ${words.length === 1 ? 'word' : 'words'} can.`
-            : 'This phrase cannot become a card.'}
+            ? `This phrase cannot become a card, because its front would show characters no dictionary row stands behind; the ${words.length} cited ${words.length === 1 ? "word" : "words"} can.`
+            : "This phrase cannot become a card."}
         </p>
       ) : null}
 
@@ -495,47 +526,63 @@ function PhraseCard({
           data-testid="ask-sayit-add"
           size="sm"
           variant="secondary"
-          disabled={blocked || state === 'saving' || state === 'added' || state === 'existing'}
+          disabled={
+            blocked ||
+            state === "saving" ||
+            state === "added" ||
+            state === "existing"
+          }
           title={
             blocked
-              ? 'This phrase contains characters the dictionary could not verify.'
+              ? "This phrase contains characters the dictionary could not verify."
               : undefined
           }
           onClick={() => {
-            setState('saving');
-            onAddPhrase(stored).then(setState, () => setState('error'));
+            setState("saving");
+            onAddPhrase(stored).then(setState, () => setState("error"));
           }}
         >
           {blocked
-            ? 'Not verified — cannot add'
-            : addLabel(state, state === 'existing' ? 'Already in your cards' : 'Phrase added', 'Add as a phrase card')}
+            ? "Not verified — cannot add"
+            : addLabel(
+                state,
+                state === "existing" ? "Already in your cards" : "Phrase added",
+                "Add as a phrase card",
+              )}
         </Button>
         {words.length > 0 ? (
           <Button
             data-testid="ask-sayit-add-words"
             size="sm"
             variant="ghost"
-            disabled={wordsState === 'saving' || wordsState === 'added'}
+            disabled={wordsState === "saving" || wordsState === "added"}
             onClick={() => {
-              setWordsState('saving');
+              setWordsState("saving");
               onAddWords(stored).then(
                 (result) => {
                   setWordsResult(result);
-                  setWordsState('added');
+                  setWordsState("added");
                 },
-                () => setWordsState('error'),
+                () => setWordsState("error"),
               );
             }}
           >
-            {addLabel(wordsState, 'Words added', `add ${words.length} words individually`)}
+            {addLabel(
+              wordsState,
+              "Words added",
+              `add ${words.length} words individually`,
+            )}
           </Button>
         ) : null}
-        {wordsState === 'added' && wordsResult ? (
-          <span data-testid="ask-sayit-words-state" className="text-xs text-muted">
+        {wordsState === "added" && wordsResult ? (
+          <span
+            data-testid="ask-sayit-words-state"
+            className="text-xs text-muted"
+          >
             {wordsMessage(wordsResult)}
           </span>
         ) : null}
-        {state === 'error' || wordsState === 'error' ? (
+        {state === "error" || wordsState === "error" ? (
           <span data-testid="ask-sayit-state" className="text-xs text-warning">
             Could not save that card.
           </span>
@@ -556,16 +603,16 @@ export interface AskPanelProps {
 }
 
 export function AskPanel({ query, context, className }: AskPanelProps) {
-  const [state, setState] = useState<AskState>({ status: 'idle' });
-  const [provider, setProvider] = useState<AskRouteInfo['provider']>();
+  const [state, setState] = useState<AskState>({ status: "idle" });
+  const [provider, setProvider] = useState<AskRouteInfo["provider"]>();
   // The learner's script, read once. Display only: ids, readings and everything
   // a card stores are the same row either way.
-  const [script, setScript] = useState<PhraseScript>('simp');
+  const [script, setScript] = useState<PhraseScript>("simp");
 
   // The context is an object literal from a store, so it is a new reference on
   // every render. Serialising it makes the effect fire when the provenance
   // actually changes — which is also the thing that changes the cache key.
-  const contextJson = context ? JSON.stringify(context) : '';
+  const contextJson = context ? JSON.stringify(context) : "";
   const trimmed = query.trim();
 
   useEffect(() => {
@@ -592,16 +639,24 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
     // Nothing else ever ends the wait: the panel's own abort fires on unmount
     // and on a new question, and the provider call has no deadline of its own
     // that the browser can see.
-    const deadline = setTimeout(() => controller.abort(new DOMException('timeout', 'TimeoutError')), ASK_TIMEOUT_MS);
+    const deadline = setTimeout(
+      () => controller.abort(new DOMException("timeout", "TimeoutError")),
+      ASK_TIMEOUT_MS,
+    );
 
     const answered = { query: trimmed, contextJson };
 
     const run = async (): Promise<void> => {
-      setState({ status: 'loading' });
-      const askContext = contextJson ? (JSON.parse(contextJson) as CardContext) : undefined;
+      setState({ status: "loading" });
+      const askContext = contextJson
+        ? (JSON.parse(contextJson) as CardContext)
+        : undefined;
       try {
         const repo = getRepository();
-        const [info, profile] = await Promise.all([askInfo(), getLearnerProfile(repo)]);
+        const [info, profile] = await Promise.all([
+          askInfo(),
+          getLearnerProfile(repo),
+        ]);
         if (cancelled) return;
         setProvider(info.provider);
 
@@ -614,7 +669,9 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
         });
 
         const row = await repo.askCache.get(key).catch(() => undefined);
-        const cached = row ? groundedAskResponseSchema.safeParse(row.response) : undefined;
+        const cached = row
+          ? groundedAskResponseSchema.safeParse(row.response)
+          : undefined;
         if (cached?.success) {
           // Ids and indexes are all the cache holds, so the dictionary text is
           // fetched fresh rather than redistributed from IndexedDB.
@@ -622,23 +679,28 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
           const resolved =
             ids.length > 0
               ? await resolveEntries(ids)
-              : { meta: { version: '' }, entries: [] };
+              : { meta: { version: "" }, entries: [] };
           if (cancelled) return;
           setState({
-            status: 'ready',
+            status: "ready",
             response: cached.data,
             entries: resolved.entries,
-            ...(resolved.meta.version ? { dictVersion: resolved.meta.version } : {}),
+            ...(resolved.meta.version
+              ? { dictVersion: resolved.meta.version }
+              : {}),
             cached: true,
             answered,
           });
           return;
         }
 
-        const res = await fetch('/api/ask', {
-          method: 'POST',
+        const res = await fetch("/api/ask", {
+          method: "POST",
           signal: controller.signal,
-          headers: { 'content-type': 'application/json', accept: 'application/json' },
+          headers: {
+            "content-type": "application/json",
+            accept: "application/json",
+          },
           body: JSON.stringify({
             query: trimmed,
             ...(askContext ? { context: askContext } : {}),
@@ -646,12 +708,20 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
           }),
         });
         if (!res.ok) {
-          const body = (await res.json().catch(() => null)) as { error?: string; hint?: string } | null;
+          const body = (await res.json().catch(() => null)) as {
+            error?: string;
+            hint?: string;
+          } | null;
           const message =
-            body?.error === 'dict-data-missing'
-              ? 'Dictionary data is missing — run pnpm data.'
+            body?.error === "dict-data-missing"
+              ? "Dictionary data is missing — run pnpm data."
               : (body?.hint ?? `The ask service answered HTTP ${res.status}.`);
-          if (!cancelled) setState({ status: 'error', message, reason: statusReason(res.status) });
+          if (!cancelled)
+            setState({
+              status: "error",
+              message,
+              reason: statusReason(res.status),
+            });
           return;
         }
         const body = (await res.json()) as AskRouteResponse;
@@ -661,12 +731,15 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
         // handshake was real rather than the offline guess, and the provider
         // that answered is the one the key was derived for.
         const trustworthy =
-          body.cacheable !== false && info !== FALLBACK_INFO && body.provider === info.provider;
-        if (trustworthy) await repo.askCache.set(key, body.response).catch(() => undefined);
+          body.cacheable !== false &&
+          info !== FALLBACK_INFO &&
+          body.provider === info.provider;
+        if (trustworthy)
+          await repo.askCache.set(key, body.response).catch(() => undefined);
         if (cancelled) return;
         setProvider(body.provider);
         setState({
-          status: 'ready',
+          status: "ready",
           response: body.response,
           entries: body.entries,
           ...(body.dictVersion ? { dictVersion: body.dictVersion } : {}),
@@ -676,10 +749,10 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
       } catch (error) {
         if (cancelled || isAbort(error)) return;
         setState({
-          status: 'error',
+          status: "error",
           message: isTimeout(error)
-            ? 'The ask took too long and was given up on.'
-            : 'The ask panel could not answer that one.',
+            ? "The ask took too long and was given up on."
+            : "The ask panel could not answer that one.",
           reason: unavailableReason(error),
         });
       }
@@ -690,7 +763,7 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
     // error), and nothing here needs to be synchronous with the keystroke.
     const timer = setTimeout(() => {
       if (!trimmed) {
-        setState({ status: 'idle' });
+        setState({ status: "idle" });
         return;
       }
       void run();
@@ -707,30 +780,60 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
   // The answer on screen answers the *previous* question for as long as the
   // debounce runs. Deriving staleness in render (rather than resetting the
   // state in an effect) keeps this a pure read of what is already known.
-  const answer = state.status === 'ready' ? state : undefined;
+  const answer = state.status === "ready" ? state : undefined;
   const stale =
     answer !== undefined &&
-    (answer.answered.query !== trimmed || answer.answered.contextJson !== contextJson);
+    (answer.answered.query !== trimmed ||
+      answer.answered.contextJson !== contextJson);
   const ready = stale ? undefined : answer;
-  const thinking = state.status === 'loading' || stale;
+  const thinking = state.status === "loading" || stale;
 
-  const lookup = useMemo(() => entryLookup(ready?.entries ?? []), [ready?.entries]);
+  const lookup = useMemo(
+    () => entryLookup(ready?.entries ?? []),
+    [ready?.entries],
+  );
   const phrases = useMemo(
-    () => (ready ? ready.response.sayIt.map((phrase) => renderPhrase(phrase, lookup, script)) : []),
+    () =>
+      ready
+        ? ready.response.sayIt.map((phrase) =>
+            renderPhrase(phrase, lookup, script),
+          )
+        : [],
     [ready, lookup, script],
   );
   // What a card would keep, which is always simplified — see `PhraseCard`.
   const storedPhrases = useMemo(
     () =>
-      ready && script !== 'simp'
+      ready && script !== "simp"
         ? ready.response.sayIt.map((phrase) => renderPhrase(phrase, lookup))
         : phrases,
     [ready, lookup, script, phrases],
   );
+  /**
+   * The matches that will actually render.
+   *
+   * A cited id that is not in the resolved entries renders **nothing** — the
+   * map below returns `null` for it, which is PLAN.md §3.4 working — but
+   * `response.matches.length` still counted it. An answer whose every proposal
+   * failed grounding therefore reported itself as `answered` and drew a heading
+   * over an empty section, which is the one outcome §3.4 forbids and precisely
+   * what the `ungrounded` state exists to say instead. Derived once here and
+   * used for both the decision and the rendering, so the two cannot disagree.
+   */
+  const matches = useMemo(
+    () =>
+      ready
+        ? ready.response.matches.filter(
+            (match) => lookup(match.entryId) !== undefined,
+          )
+        : [],
+    [ready, lookup],
+  );
+
   const empty =
     ready !== undefined &&
     ready.response.interpretation.length === 0 &&
-    ready.response.matches.length === 0 &&
+    matches.length === 0 &&
     phrases.length === 0;
 
   /**
@@ -746,7 +849,10 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
     grounded: !empty,
   });
 
-  const addMatch = async (entry: Entry, senseIndex: number): Promise<'added' | 'existing'> => {
+  const addMatch = async (
+    entry: Entry,
+    senseIndex: number,
+  ): Promise<"added" | "existing"> => {
     // Snapshot the provenance the moment the button is pressed: an answer that
     // lands mid-click must not pair this entry with the next question's words.
     const provenance = askContextFor(trimmed, context, headwordForms(entry));
@@ -757,7 +863,7 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
       senseIndex,
       ready?.dictVersion,
     );
-    return result.created ? 'added' : 'existing';
+    return result.created ? "added" : "existing";
   };
 
   /** Tokens of a phrase as the card layer stores them. */
@@ -774,9 +880,11 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
   const probePhrase = async (phrase: RenderedPhrase): Promise<boolean> =>
     (await phraseCardFor(getRepository(), phraseTokens(phrase))) !== undefined;
 
-  const addPhrase = async (phrase: RenderedPhrase): Promise<'added' | 'existing'> => {
+  const addPhrase = async (
+    phrase: RenderedPhrase,
+  ): Promise<"added" | "existing"> => {
     const tokens = phraseTokens(phrase);
-    if (tokens.length === 0) return 'existing';
+    if (tokens.length === 0) return "existing";
     // A phrase is never the tapped token, so it never inherits the tap's span.
     const result = await addPhraseCardChecked(
       getRepository(),
@@ -787,7 +895,7 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
       // records the dictionary behind it exactly as a word card does.
       ready?.dictVersion,
     );
-    return result.created ? 'added' : 'existing';
+    return result.created ? "added" : "existing";
   };
 
   /**
@@ -798,7 +906,10 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
    */
   const addWords = async (phrase: RenderedPhrase): Promise<WordsAdded> => {
     const repo = getRepository();
-    const [known, settings] = await Promise.all([repo.knownEntryIds(), repo.getSettings()]);
+    const [known, settings] = await Promise.all([
+      repo.knownEntryIds(),
+      repo.getSettings(),
+    ]);
     const knownIds = new Set(known);
     const result: WordsAdded = { added: 0, existing: 0, known: [] };
 
@@ -806,14 +917,19 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
       if (!token.entryId) continue;
       const entry = lookup(token.entryId);
       if (!entry) continue;
-      if (knownIds.has(entry.id) || (entry.hskBand !== undefined && entry.hskBand <= settings.knownBand)) {
+      if (
+        knownIds.has(entry.id) ||
+        (entry.hskBand !== undefined && entry.hskBand <= settings.knownBand)
+      ) {
         result.known.push(entry.simp);
         continue;
       }
       // A word that is also one of the answer's matches is added at *that*
       // sense: cards are keyed on (entryId, senseIndex), so a sense-less add
       // beside a sense-specific one is the same word twice.
-      const match = ready?.response.matches.find((candidate) => candidate.entryId === entry.id);
+      const match = ready?.response.matches.find(
+        (candidate) => candidate.entryId === entry.id,
+      );
       const added = await addCardChecked(
         repo,
         entry,
@@ -830,54 +946,70 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
   return (
     <section
       data-testid="ask-panel"
-      data-status={stale ? 'loading' : state.status}
+      data-status={stale ? "loading" : state.status}
       data-ask-state={uiState}
-      data-provider={provider ?? 'unknown'}
-      data-cached={ready?.cached ? 'true' : 'false'}
-      className={cn('flex flex-col gap-3', className)}
+      data-provider={provider ?? "unknown"}
+      data-cached={ready?.cached ? "true" : "false"}
+      className={cn("flex flex-col gap-3", className)}
     >
       <header className="flex flex-wrap items-baseline justify-between gap-2">
         <h3 className="text-xs font-semibold tracking-wide text-muted uppercase">
           Ask — which sense, and what to say
         </h3>
-        {provider === 'fake' ? (
-          <span data-testid="ask-offline-badge" className="text-xs text-warning">
+        {provider === "fake" ? (
+          <span
+            data-testid="ask-offline-badge"
+            className="text-xs text-warning"
+          >
             {OFFLINE_BADGE}
           </span>
         ) : null}
       </header>
 
-      {state.status === 'idle' ? (
-        <p data-testid="ask-status" className="text-sm text-muted">
-          Ask in your own words — “how do I say I’m just browsing” — or look a word up and this
-          answers which sense the sentence wants.
-        </p>
-      ) : null}
-      {thinking ? (
-        <div className="flex flex-col items-start gap-1">
-          <Chip tone="lookup" data-testid="ask-ai-chip">
-            AI
-          </Chip>
+      {/*
+        **The three states are announced, not only drawn** (C8's review).
+        `thinking`, `unavailable` and `ungrounded` swap in asynchronously with
+        no focus move, so without a live region a screen-reader learner is never
+        told that no AI was reachable or that grounding rejected everything —
+        the two states product-decisions §5 calls the visible face of the
+        grounding promise. `polite` because none of them interrupts anything,
+        and it wraps all of them so the region is present before the first
+        change (an `aria-live` element inserted *with* its content is often not
+        announced at all).
+      */}
+      <div role="status" aria-live="polite" className="contents">
+        {state.status === "idle" ? (
           <p data-testid="ask-status" className="text-sm text-muted">
-            Thinking about “{trimmed}”…
+            Ask in your own words — “how do I say I’m just browsing” — or look a
+            word up and this answers which sense the sentence wants.
           </p>
-        </div>
-      ) : null}
-      {uiState === 'unavailable' && state.status === 'error' ? (
-        <div className="flex flex-col items-start gap-1">
-          {/*
+        ) : null}
+        {thinking ? (
+          <div className="flex flex-col items-start gap-1">
+            <Chip tone="lookup" data-testid="ask-ai-chip">
+              AI
+            </Chip>
+            <p data-testid="ask-status" className="text-sm text-muted">
+              Thinking about “{trimmed}”…
+            </p>
+          </div>
+        ) : null}
+        {uiState === "unavailable" && state.status === "error" ? (
+          <div className="flex flex-col items-start gap-1">
+            {/*
             The whole visible face of "no AI is reachable" (product-decisions
             §5): one quiet chip, and everything else on the page still works.
             The reason lives on the state, not on the chip.
           */}
-          <Chip tone="neutral" data-testid="ask-offline-chip">
-            {ASK_OFFLINE_CHIP}
-          </Chip>
-          <p data-testid="ask-status" className="text-sm text-muted">
-            {state.message} The dictionary result above is unaffected.
-          </p>
-        </div>
-      ) : null}
+            <Chip tone="neutral" data-testid="ask-offline-chip">
+              {ASK_OFFLINE_CHIP}
+            </Chip>
+            <p data-testid="ask-status" className="text-sm text-muted">
+              {state.message} The dictionary result above is unaffected.
+            </p>
+          </div>
+        ) : null}
+      </div>
 
       {ready ? (
         <>
@@ -890,7 +1022,10 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
               made of are still addable from the dictionary card above, which is
               why this replaces only the answer.
             */
-            <EmptyState data-testid="ask-ungrounded" title={ASK_UNGROUNDED_TITLE}>
+            <EmptyState
+              data-testid="ask-ungrounded"
+              title={ASK_UNGROUNDED_TITLE}
+            >
               {ASK_UNGROUNDED_BODY}
             </EmptyState>
           ) : (
@@ -904,11 +1039,10 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
             </>
           )}
 
-          {ready.response.matches.length > 0 ? (
+          {matches.length > 0 ? (
             <ul className="flex flex-col gap-2" data-testid="ask-matches">
-              {ready.response.matches.map((match) => {
-                const entry = lookup(match.entryId);
-                if (!entry) return null;
+              {matches.map((match) => {
+                const entry = lookup(match.entryId)!;
                 return (
                   <MatchCard
                     key={`${match.entryId}-${match.senseIndex}`}
@@ -924,7 +1058,9 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
 
           {phrases.length > 0 ? (
             <div className="flex flex-col gap-2">
-              <h4 className="text-xs font-semibold tracking-wide text-muted uppercase">Say it</h4>
+              <h4 className="text-xs font-semibold tracking-wide text-muted uppercase">
+                Say it
+              </h4>
               <ul className="flex flex-col gap-2" data-testid="ask-sayits">
                 {phrases.map((phrase, index) => (
                   <PhraseCard

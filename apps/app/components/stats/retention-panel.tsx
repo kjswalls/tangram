@@ -33,7 +33,10 @@ export function RetentionPanel({ window, allTime, windowDays }: RetentionPanelPr
 
   return (
     <Card
-      title="True retention"
+      // C8: plain English. "True retention" is the SRS community's term for
+      // this number and it means nothing to a learner; what they want to know
+      // is whether the words are staying put.
+      title="How well it’s sticking"
       aside={<Badge tone="neutral">{span}</Badge>}
       data-testid="stats-retention"
     >
@@ -54,8 +57,8 @@ export function RetentionPanel({ window, allTime, windowDays }: RetentionPanelPr
           have={window.reviews}
           needed={window.needed}
         >
-          Only reviews of cards already in the Review state count, and in the {span} you have{' '}
-          {formatCount(window.reviews)} of those.
+          Only words you were coming back to after a day or more count, and in the {span} you
+          have {formatCount(window.reviews)} of those.
         </NotEnough>
       )}
 
@@ -74,14 +77,17 @@ export function RetentionPanel({ window, allTime, windowDays }: RetentionPanelPr
           label="Not counted"
           testId="stats-retention-excluded"
           value={formatCount(allTime.excluded)}
-          hint="learning-step reviews, all time"
+          hint="same-sitting tries, all time"
         />
       </div>
 
+      {/* C8's rule, applied to the one paragraph on this panel: the old copy
+          named the four buttons by their old names, so it was both jargon and
+          out of date the moment `RATING_LABELS` changed. */}
       <p className="mt-3 text-sm text-muted">
-        Again is the only failure; Hard, Good and Easy all count as recalled. Reviews of cards
-        still inside their learning steps are left out — they measure how many times you pressed a
-        button in a session, not whether the interval held.
+        “Forgot it” is the only miss; the other three all count as remembered. Words you were
+        still working through in the same sitting are left out — they say how many times you
+        pressed a button that day, not whether the word stayed with you.
       </p>
     </Card>
   );

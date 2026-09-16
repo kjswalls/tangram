@@ -75,7 +75,8 @@ test('the loop: look up 打算, add it, meet it on Today, review it, grade it', 
 
   // --- Today counts it (P3) ------------------------------------------------
   await page.goto('/');
-  await expect(page.getByTestId('today-new-count')).toHaveText('1');
+  // C8: Today is a sentence, not two number tiles.
+  await expect(page.getByTestId('today-sentence')).toContainText('1 new word to learn');
   await expectBaseText(page.getByTestId('today-new-list'), '打算');
 
   // --- review it (P2) ------------------------------------------------------
@@ -342,7 +343,6 @@ test('the whole product: demo → ask → phrase card → read → mine → revi
   await ready(page);
   // Everything on offer was graded and rescheduled forward, and the spine is
   // off, so there is nothing left for today.
-  await expect(page.getByTestId('today-due-count')).toHaveText('0');
-  await expect(page.getByTestId('today-new-count')).toHaveText('0');
+  await expect(page.getByTestId('today-sentence')).toContainText('Nothing waiting');
   await expect(page.getByTestId('start-review')).toBeDisabled();
 });

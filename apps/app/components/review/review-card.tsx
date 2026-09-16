@@ -103,6 +103,19 @@ export function ReviewCard({
         }
         aria-label={revealed ? undefined : 'Show the answer'}
       >
+        {/*
+          The question, said out loud (docs/plans/core.md C8). A first-time
+          learner meeting a large character and four buttons has to infer what
+          is being asked; one line removes the inference. It is gone once the
+          answer is showing, because by then it is asking about something the
+          learner can already see.
+        */}
+        {!revealed ? (
+          <p data-testid="card-prompt" className="text-xs tracking-wide text-muted uppercase">
+            Do you remember it?
+          </p>
+        ) : null}
+
         {phrase ? (
           <PhraseFace card={card} />
         ) : (

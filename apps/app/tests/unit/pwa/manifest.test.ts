@@ -169,6 +169,33 @@ describe('sw.js', () => {
     expect(sw).not.toContain("cache.match('/')");
   });
 
+  /**
+   * The offline page may only link where the offline page can actually go
+   * (found by C7's adversarial review).
+   *
+   * It shipped for one commit offering `/review`, `/lists` and `/settings` —
+   * paths core.md C7 had deleted. That is two failures in one link: offline,
+   * the worker has nothing cached for the path and serves *this same page*
+   * again, so the link visibly does nothing; online, the SPA fallback lands the
+   * learner on the not-found screen. Deriving the check from `SHELL` is what
+   * makes it stay fixed, because the next phase that moves a tab moves `SHELL`.
+   */
+  it('links only to paths the worker precaches', () => {
+    const page = readFileSync(resolve(root, 'public/offline.html'), 'utf8');
+    const shell = /const SHELL = \[([^\]]*)\]/.exec(sw)?.[1] ?? '';
+    const precached = new Set(
+      [...shell.matchAll(/'([^']+)'/g)].map((match) => match[1]).concat('/offline.html'),
+    );
+    const links = [...page.matchAll(/href="([^"]+)"/g)].map((match) => match[1]);
+    expect(links.length).toBeGreaterThan(0);
+    expect(links.filter((href) => !precached.has(href))).toEqual([]);
+    // …and the three it does offer are the three tabs, named as the tabs are.
+    expect(links).toEqual(['/', '/practice', '/library']);
+    for (const gone of ['/review', '/lists', '/settings', '/today', '/lookup', '/stats']) {
+      expect(page, `offline.html still links ${gone}`).not.toContain(`href="${gone}"`);
+    }
+  });
+
   it('only ever stores a same-origin, ok response', () => {
     expect(sw).toMatch(
       /function storable\(response\) \{[\s\S]*?response\.ok && response\.type === 'basic'/,

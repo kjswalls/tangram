@@ -33,7 +33,10 @@ describe('collectDrawCandidates', () => {
     const repo = setup();
     const lists = await ensureSystemLists(repo);
     const source = dictEntrySource();
-    const settings = await repo.getSettings();
+    // Stated rather than inherited: core.md C8 moved the defaults to
+    // `spineStartBand: 1, knownBand: 0`, and this case is about a learner who
+    // has set them somewhere else.
+    const settings = await repo.setSettings({ spineStartBand: 3, knownBand: 2 });
 
     const candidates = await collectDrawCandidates({ repo, settings, lists, limit: 5, source });
     expect(candidates).toHaveLength(5);
@@ -117,7 +120,10 @@ describe('collectDrawCandidates', () => {
         return [];
       },
     };
-    const settings = await repo.getSettings();
+    // The cap below counts asks per band, so the band the spine starts at is
+    // part of the fixture: `spineStartBand: 3` leaves five bands to walk, which
+    // is where `2 * 5` comes from. Stated since core.md C8 moved the default.
+    const settings = await repo.setSettings({ spineStartBand: 3, knownBand: 2 });
 
     // Nothing is eligible, so the draw exhausts the band; it must come back.
     const candidates = await collectDrawCandidates({ repo, settings, lists, limit: 3, source });

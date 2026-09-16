@@ -1,14 +1,16 @@
 /**
  * The route table (docs/plans/web.md W1).
  *
- * **This file is `web.md`'s and `core.md` C7 changes it.** W1 creates it with
- * today's eight routes because W1 must keep today's suite green; C7 collapses
- * them to three tabs (product-decisions §1), and C7's commit re-runs
+ * **This file is `web.md`'s and `core.md` C7 changed it.** W1 created it with
+ * the eight routes of the day because W1 had to keep that day's suite green;
+ * C7 collapsed them to three tabs (product-decisions §1) and re-ran
  * `pnpm smoke` and the service-worker specs against the collapsed table.
  *
- * `NAV_ITEMS` stays the source of the seven nav routes — the nav, the smoke
- * cases and the phase notes all read it — so this table and the nav cannot
- * disagree. `/lists/:id` is the eighth and is not in the nav.
+ * **`TAB_PATHS` is the source** — `components/shell/nav.ts` — and the nav, the
+ * smoke cases, the service worker's precache list and the phase notes all read
+ * it, so this table and the tab bar cannot disagree. That is the job `NAV_ITEMS`
+ * did for the seven, and `NAV_ITEMS` no longer exists.
+ * `/library/lists/:id` is the fourth path and is not itself a tab.
  *
  * **`/gallery` is the ninth, and never in a production build**
  * (docs/plans/core.md C1). The guard is the BUILD MODE, and that choice is

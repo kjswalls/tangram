@@ -62,16 +62,37 @@ test.describe('lists', () => {
   });
 
   test('opening a list shows its words with their state', async ({ page }) => {
-    await resetApp(page);
+    // **The band assumption, stated.** core.md C8 made `knownBand` default to
+    // 0 — "assume nothing known" — because the old default of 2 silently
+    // cancelled the new `spineStartBand: 1`. So a band-1 word now reads `new`
+    // on a fresh database, and a spec about the *known* state has to say which
+    // learner it is about.
+    await resetApp(page, { knownBand: 2 });
     await page.goto('/library');
     await page.locator('[data-list-name="HSK 1"]').getByRole('link', { name: 'Open' }).click();
     await expect(page).toHaveURL(/\/library\/lists\/[0-9a-f-]+$/);
 
     const members = page.getByTestId('list-member');
     await expect(members.first()).toBeVisible({ timeout: 60_000 });
-    // knownBand is 2 by default, so every band-1 word already reads as known.
+    // With `knownBand: 2`, every band-1 word already reads as known.
     await expect(members.first()).toHaveAttribute('data-state', 'known');
     await expect(page.getByTestId('member-total')).toContainText('words');
+  });
+
+  test('…and with nothing assumed known, the same words read as new', async ({ page }) => {
+    // The default a new learner actually gets. Worth its own case: "known by
+    // assumption" and "known because you said so" look identical on screen,
+    // and C8's whole point is that a beginner should not open HSK 1 to find
+    // the app has already decided they know it.
+    await resetApp(page);
+    expect(await page.evaluate(() => window.__tangram.repo.getSettings())).toMatchObject({
+      knownBand: 0,
+    });
+    await page.goto('/library');
+    await page.locator('[data-list-name="HSK 1"]').getByRole('link', { name: 'Open' }).click();
+    const members = page.getByTestId('list-member');
+    await expect(members.first()).toBeVisible({ timeout: 60_000 });
+    await expect(members.first()).toHaveAttribute('data-state', 'new');
   });
 
   test('a custom list can be created, filled by search, and queued from', async ({ page }) => {

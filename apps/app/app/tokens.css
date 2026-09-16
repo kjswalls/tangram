@@ -193,6 +193,21 @@
   --font-hanzi:
     'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'STSong', 'Noto Serif CJK SC', 'PingFang SC',
     'Microsoft YaHei', ui-serif, serif;
+
+  /*
+   * How tall the phone shell's tab bar is, including the home-indicator inset.
+   *
+   * Named because three things have to agree about it and, before C8's review,
+   * two of them did not: the bar's own box, the bottom padding `main` leaves so
+   * the last row of a screen is not hidden under it, and **the practice
+   * screen's sticky grade dock**, which is pinned to the bottom of the
+   * *viewport* rather than the bottom of the column. `sticky bottom-0` under a
+   * `fixed bottom-0` bar painted "Got it" and "Instant" behind the tab links: a
+   * tap on the centre of "Got it" at 390px hit the Look up tab and left the
+   * session. Not a colour, so it is not one of the tiers the swatch list
+   * reviews.
+   */
+  --tab-bar-height: calc(3.25rem + env(safe-area-inset-bottom, 0px));
 }
 
 /*
@@ -296,4 +311,12 @@
    * renders phone-shaped chrome, which is R7 in miniature.
    */
   --breakpoint-wide: 45rem;
+}
+
+/*
+ * Zero where there is no bar at the bottom of anything — the wide arrangement
+ * puts the tabs in the header. See `--tab-bar-height` above.
+ */
+[data-shell='wide'] {
+  --tab-bar-height: 0px;
 }

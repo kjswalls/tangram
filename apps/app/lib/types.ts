@@ -81,6 +81,18 @@ export type DecompFile = Record<string, DecompEntry>;
 
 export const HSK_BANDS: readonly HskBand[] = [1, 2, 3, 4, 5, 6, 7];
 
+/**
+ * `settings.knownBand`: an HSK band, or **0 for "assume nothing known"**
+ * (docs/plans/core.md C8).
+ *
+ * A band, plus a value below the lowest one. It is not an `HskBand` because 0
+ * is not a band — nothing is in it — and the comparisons that read it
+ * (`hskBand <= knownBand`) are all true-by-arithmetic at zero, which is the
+ * behaviour a learner who is starting wants. Additive to this file rather than
+ * a change to anything in it.
+ */
+export type KnownBand = HskBand | 0;
+
 /** Label for a band; 7 is the combined "7–9" band. */
 export function hskBandLabel(band: HskBand): string {
   return band === 7 ? '7–9' : String(band);

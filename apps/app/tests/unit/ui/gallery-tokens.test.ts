@@ -50,13 +50,21 @@ describe('the gallery names only tokens that exist', () => {
 
   it('the swatch list covers every tier-2 colour token, so none goes unreviewed', () => {
     const tier1 = `--${'t1'}-`;
+    /**
+     * Tokens that are not colours, so there is nothing for a swatch to show.
+     * The prefixes above cover the families; this is the list of one-offs, and
+     * it is a list rather than a prefix because each one has to be argued for:
+     * a colour token that ends up here is a colour nobody reviews.
+     */
+    const notColours = new Set(['--tab-bar-height']);
     const tier2 = [...declared].filter(
       (token) =>
         !token.startsWith(tier1) &&
         !token.startsWith('--color-') &&
         !token.startsWith('--font-') &&
         !token.startsWith('--r-') &&
-        !token.startsWith('--breakpoint-'),
+        !token.startsWith('--breakpoint-') &&
+        !notColours.has(token),
     );
     const shown = new Set(SWATCHES.map((swatch) => swatch.token));
     expect([...tier2].filter((token) => !shown.has(token))).toEqual([]);

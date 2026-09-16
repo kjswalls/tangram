@@ -4,7 +4,7 @@
  */
 
 import type { FsrsCardState } from '@/lib/db/schema';
-import type { HskBand } from '@/lib/types';
+import type { HskBand, KnownBand } from '@/lib/types';
 import { State, toFsrsCard, toStoredCard } from '@/lib/srs/card';
 
 export type WordState = 'new' | 'learning' | 'known';
@@ -24,7 +24,7 @@ export interface WordStateInput {
   known?: boolean;
   hskBand?: HskBand;
   /** `settings.knownBand` — bands at or below it are assumed known. */
-  knownBand: HskBand;
+  knownBand: KnownBand;
 }
 
 /**

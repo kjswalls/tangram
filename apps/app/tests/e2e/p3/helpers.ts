@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 
 import type { SettingsRow } from '@/lib/db';
 
@@ -35,4 +35,61 @@ export async function gradeAllNew(page: Page, rating: 1 | 2 | 3 | 4 = 3): Promis
     for (const card of fresh) await repo.grade(card.id, value);
     return fresh.length;
   }, rating);
+}
+
+/**
+ * Today's counts, read back out of the sentence (docs/plans/core.md C8).
+ *
+ * C8 replaced the two number tiles with one line of English, and a clause whose
+ * count is zero **is not in the sentence at all** — "8 words to practice, 0 new
+ * words to learn" is the tile grid with commas. So a missing clause reads as
+ * zero here, which is what the old `toHaveText('0')` assertions meant.
+ *
+ * `practice` is the recognition cards waiting, `write` the production ones, and
+ * `fresh` the new words the session will introduce; together they are what the
+ * two tiles used to say, split the way Phase 8 asked for.
+ */
+export interface TodayCounts {
+  practice: number;
+  fresh: number;
+  write: number;
+}
+
+function countIn(sentence: string, phrase: string): number {
+  return Number(new RegExp(`(\\d+)[^,.]*${phrase}`).exec(sentence)?.[1] ?? '0');
+}
+
+export async function todayCounts(page: Page): Promise<TodayCounts> {
+  const sentence = (await page.getByTestId('today-sentence').textContent()) ?? '';
+  // "Counting what is waiting…" — the summary has not landed, and reporting
+  // three zeroes here would let a caller assert an empty day that is merely
+  // an unfinished read.
+  if (sentence.includes('Counting')) return { practice: -1, fresh: -1, write: -1 };
+  return {
+    practice: countIn(sentence, 'to practice'),
+    fresh: countIn(sentence, 'new word'),
+    write: countIn(sentence, 'to write'),
+  };
+}
+
+/** Poll until Today says exactly this. Partial: unnamed counts are not checked. */
+export async function expectTodayCounts(
+  page: Page,
+  expected: Partial<TodayCounts>,
+  options: { timeout?: number } = {},
+): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const counts = await todayCounts(page);
+        return Object.fromEntries(
+          Object.keys(expected).map((key) => [key, counts[key as keyof TodayCounts]]),
+        );
+      },
+      {
+        message: `Today's sentence should report ${JSON.stringify(expected)}`,
+        ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
+      },
+    )
+    .toEqual(expected);
 }

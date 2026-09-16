@@ -4,7 +4,7 @@
  */
 import { expect, test } from '@playwright/test';
 
-import { resetApp } from './helpers';
+import { resetApp, todayCounts } from './helpers';
 
 test.describe('?seed=demo', () => {
   test('loads a worked example and hands Today a real queue', async ({ page }) => {
@@ -13,9 +13,13 @@ test.describe('?seed=demo', () => {
 
     // The handler seeds, then drops the parameter and starts over on the result.
     await expect(page).toHaveURL(/\/$/, { timeout: 120_000 });
-    const due = page.getByTestId('today-due-count');
-    await expect(due).not.toHaveText('—', { timeout: 120_000 });
-    expect(Number(await due.innerText())).toBeGreaterThanOrEqual(3);
+    await expect(page.getByTestId('today-sentence')).not.toContainText('Counting', {
+      timeout: 120_000,
+    });
+    const counts = await todayCounts(page);
+    // The demo's due cards, read out of C8's sentence: recognition and writing
+    // are two clauses now, and "due" was the sum of them.
+    expect(counts.practice + counts.write, JSON.stringify(counts)).toBeGreaterThanOrEqual(3);
 
     const state = await page.evaluate(async () => {
       const { repo, db } = window.__tangram;

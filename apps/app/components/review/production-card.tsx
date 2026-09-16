@@ -118,7 +118,11 @@ export function ProductionCard({
         }
         aria-label={revealed ? undefined : 'Show the answer'}
       >
-        <p className="text-xs tracking-wide text-muted uppercase">Write this in Chinese</p>
+        {/* The same slot as the recognise card's question (C8), so the two
+            directions ask in the same voice and in the same place. */}
+        <p data-testid="card-prompt" className="text-xs tracking-wide text-muted uppercase">
+          Write it from memory
+        </p>
 
         <ol
           data-testid="production-prompt"

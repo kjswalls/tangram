@@ -79,7 +79,7 @@ async function seedLog(page: Page, cards: number): Promise<number> {
 }
 
 test.describe('/settings — fitting FSRS to this learner', () => {
-  test('refuses below the floor, and says why in the learner’s own terms', async ({ page }) => {
+  test('is absent below the floor — not a disabled button (core.md C8)', async ({ page }) => {
     await resetApp(page);
     await seedLog(page, 10);
     // The optimizer panel is in **Library** since core.md C7, and `resetApp`
@@ -88,14 +88,14 @@ test.describe('/settings — fitting FSRS to this learner', () => {
     await page.goto('/library');
     await ready(page);
 
-    await expect(page.getByTestId('optimizer-panel')).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByTestId('optimizer-review-count')).toContainText(
-      /\d+ of your 60 reviews can be scored/,
-    );
-    await expect(page.getByTestId('optimizer-floor')).toContainText(
-      'floor for signal rather than a guarantee',
-    );
-    await expect(page.getByTestId('optimizer-run')).toBeDisabled();
+    // The rest of Library is up, so this is "the panel is not here", not "the
+    // page has not loaded yet".
+    await expect(page.getByTestId('settings-new-per-day')).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByTestId('optimizer-panel')).toHaveCount(0);
+    await expect(page.getByTestId('optimizer-run')).toHaveCount(0);
+    // …and the floor paragraph goes with it. A learner months from 1,000
+    // reviews should not be reading about a threshold they cannot act on.
+    await expect(page.getByTestId('optimizer-floor')).toHaveCount(0);
   });
 
   test('runs without locking the tab, and applies nothing on its own', async ({ page }) => {
@@ -109,6 +109,11 @@ test.describe('/settings — fitting FSRS to this learner', () => {
     await page.goto('/library');
     await ready(page);
 
+    // The other half of C8's pair: above the floor the surface is present.
+    await expect(page.getByTestId('optimizer-panel')).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByTestId('optimizer-review-count')).toContainText(
+      /\d+ of your [\d,]+ reviews can be scored/,
+    );
     const run = page.getByTestId('optimizer-run');
     await expect(run).toBeEnabled({ timeout: 60_000 });
     await expect(page.getByTestId('optimizer-floor')).toHaveCount(0);

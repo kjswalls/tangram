@@ -112,8 +112,18 @@ test.describe('the Look up tab’s three answer states', () => {
   }) => {
     await page.route('**/api/ask', async (route) => {
       if (route.request().method() !== 'POST') return route.continue();
-      // Every proposal rejected: this is the body the route would have built
-      // if its own echo fallback had also grounded to nothing.
+      /**
+       * **Every proposal fails grounding** — which is not the same as an empty
+       * answer, and the difference is the finding that rewrote this fixture.
+       *
+       * The body below *cites* two entries and proposes a phrase; none of the
+       * cited ids is in `entries`, so grounding drops all of them and the panel
+       * renders nothing from the answer. An earlier draft sent an empty
+       * `matches` array instead, which never exercised grounding at all — and
+       * the panel, counting raw `response.matches.length`, reported a body of
+       * dropped citations as `answered` and drew a heading over an empty
+       * section. That is what §3.4 forbids and what `ungrounded` exists to say.
+       */
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -122,7 +132,16 @@ test.describe('the Look up tab’s three answer states', () => {
           promptVersion: 'v1',
           query: QUERY,
           dictVersion: 'test',
-          response: { interpretation: '', matches: [], sayIt: [], notes: [] },
+          response: {
+            interpretation: '',
+            matches: [
+              { entryId: '沒有這個|没有这个[mei2 you3 zhe4 ge5]', senseIndex: 0, whyThisOne: 'invented' },
+              { entryId: '也沒有|也没有[ye3 mei2 you3]', senseIndex: 1, whyThisOne: 'also invented' },
+            ],
+            sayIt: [],
+            notes: [],
+          },
+          // The entries the client can render from: none of the cited ids.
           entries: [],
           retrieved: 0,
           cacheable: false,

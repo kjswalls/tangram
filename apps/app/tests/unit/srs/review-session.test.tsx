@@ -75,7 +75,7 @@ describe('the review session', () => {
     render(<ReviewSession />);
     const first = await screen.findByTestId('review-card');
     const firstId = first.getAttribute('data-card-id');
-    expect(screen.getByTestId('review-progress')).toHaveTextContent('Card 1 of 2');
+    expect(screen.getByTestId('review-progress')).toHaveTextContent('0 of 2 done');
 
     fireEvent.keyDown(window, { key: ' ' });
     await screen.findByTestId('card-back');
@@ -84,7 +84,7 @@ describe('the review session', () => {
     await waitFor(() => {
       expect(screen.getByTestId('review-card').getAttribute('data-card-id')).not.toBe(firstId);
     });
-    expect(screen.getByTestId('review-progress')).toHaveTextContent('Card 2 of 2');
+    expect(screen.getByTestId('review-progress')).toHaveTextContent('1 of 2 done');
     // The card that was graded is out of the session, and the fresh one is face down.
     expect(screen.queryByTestId('card-back')).toBeNull();
   });
@@ -217,7 +217,7 @@ describe('the review session', () => {
 
     render(<ReviewSession />);
     const empty = await screen.findByTestId('review-empty');
-    expect(empty).toHaveTextContent(/Nothing due — next card in \d+ (hours?|days?)\./);
+    expect(empty).toHaveTextContent(/All done — the next word comes back in \d+ (hours?|days?)\./);
     expect(screen.queryByTestId('review-card')).toBeNull();
     // Nothing is coming back inside the horizon, so no timer is armed and the
     // page does not ask the learner to wait for one: the links are the answer.
@@ -235,7 +235,7 @@ describe('the review session', () => {
 
     render(<ReviewSession />);
     const empty = await screen.findByTestId('review-empty');
-    expect(empty).toHaveTextContent(/^Nothing due — 1 card comes back in \d+ minutes?\.$/);
+    expect(empty).toHaveTextContent(/^All done for now — 1 word comes back in \d+ minutes?\.$/);
     // The refresh timer is armed, so the page will refill itself — and it says
     // so. Both links in this state unmount the session (leaving the route
     // resets it), so a learner who took one walked away from a page that was
@@ -266,7 +266,7 @@ describe('the review session', () => {
     // The card is due at this instant — it is out of the session because the
     // session set it aside, not because the clock has not caught up.
     const empty = await screen.findByTestId('review-empty');
-    expect(empty).toHaveTextContent('1 card you kept missing is set aside until next time.');
+    expect(empty).toHaveTextContent('1 word you kept missing is set aside until next time.');
     expect(screen.queryByTestId('review-card')).toBeNull();
     // Six grades, six review rows: the cap ends the session, it does not
     // silently drop the last answer, and the card is not deleted.
@@ -322,6 +322,6 @@ describe('the review session', () => {
   it('says so when there is nothing scheduled at all', async () => {
     render(<ReviewSession />);
     const empty = await screen.findByTestId('review-empty');
-    expect(empty).toHaveTextContent('Nothing due — no cards are scheduled yet.');
+    expect(empty).toHaveTextContent('Nothing to practise yet — look a word up and it joins the next session.');
   });
 });

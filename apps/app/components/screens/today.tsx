@@ -10,7 +10,9 @@ import { getRepository } from '@/lib/db/get-db';
 import { isPhraseSnapshot, type CardRow } from '@/lib/db/schema';
 import { loadDemo } from '@/lib/dev/seed';
 import { loadToday, type TodaySummary } from '@/lib/lists/today';
-import { countByDirection, isProduction } from '@/lib/srs/direction';
+import { todaySentence } from '@/lib/lists/today-sentence';
+import { countByDirection, DIRECTION_LABELS, isProduction } from '@/lib/srs/direction';
+import { DEFAULT_SECONDS_PER_REVIEW, medianSecondsPerReview } from '@/lib/srs/pace';
 
 /** `?seed=demo` runs once per page load, not once per effect (StrictMode). */
 let seeding: Promise<unknown> | undefined;
@@ -39,7 +41,8 @@ function front(card: CardRow): { simp: string; pinyin: string; gloss: string } {
  * closed it had spent the day's ten. `wave-zero.md` §9 makes **Practice the
  * only place any of the three is reached**, so this passes `introduce: false`
  * and reports what the session *will* offer: the new cards that already exist
- * plus what today's cap still allows (`TodaySummary.newAvailable`). The number
+ * plus what today's cap allows and the spine can supply
+ * (`TodaySummary.newToOffer`). The number
  * is the same number; what changed is that reading it costs nothing.
  *
  * C8 turns the two tiles below into one sentence. This phase moved the file and
@@ -50,6 +53,13 @@ export function TodayView() {
   const [summary, setSummary] = useState<TodaySummary>();
   const [error, setError] = useState<string>();
   const [demo, setDemo] = useState(false);
+  /**
+   * The learner's own median seconds per item, once there is one
+   * (`lib/srs/pace.ts`). Undefined means "not enough of their history yet" and
+   * the sentence falls back to the named placeholder — C8 is explicit that the
+   * duration must be derived rather than invented.
+   */
+  const [pace, setPace] = useState<number>();
 
   useEffect(() => {
     let cancelled = false;
@@ -71,8 +81,13 @@ export function TodayView() {
       }
       try {
         // See the header: reporting, not introducing.
-        const next = await loadToday({ repo: getRepository(), introduce: false });
+        const repo = getRepository();
+        const next = await loadToday({ repo, introduce: false });
         if (!cancelled) setSummary(next);
+        // After the summary, never before it: the sentence's counts are what
+        // the screen is for, and the review log is the slower read of the two.
+        const reviews = await repo.allReviewsChronological().catch(() => []);
+        if (!cancelled) setPace(medianSecondsPerReview(reviews));
       } catch (cause) {
         if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
       }
@@ -98,13 +113,35 @@ export function TodayView() {
   // What Practice will offer, not what has already been created: with the
   // introduction moved into the session, `newCount` alone reads 0 on a fresh
   // database while the cap is holding ten words for the learner.
-  const fresh = summary?.newAvailable ?? 0;
+  const fresh = summary?.newToOffer ?? 0;
   const ready = due + fresh > 0;
-  // The two directions, counted apart (Phase 8). A learner who has turned
-  // production on has signed up for a second card per word, and the one number
-  // that used to stand for "cards" now hides which half is which. Shown only
-  // once there is a production card to show: before that it is noise.
-  const split = countByDirection(summary?.queue.cards ?? []);
+  /**
+   * **Today is a sentence** (docs/plans/core.md C8; product-decisions §2).
+   *
+   * The two tiles were the most prominent thing on the screen and are not the
+   * most important thing on it. The counts are the same counts — the split by
+   * direction is the one that was already here — and `lib/lists/today-sentence.ts`
+   * is where the wording lives so it can be tested without a browser.
+   *
+   * `write` is the *due* production cards only. New words are counted once, as
+   * new: a word the learner has never met is not yet a word they are being
+   * asked to write.
+   */
+  const dueSplit = countByDirection(summary?.due ?? []);
+  const newSplit = countByDirection(summary?.newCards ?? []);
+  const counts = {
+    practice: dueSplit.recognition,
+    // Every card the learner will be asked to *write*, new or waiting: a
+    // production card is a production card whether or not it has been met
+    // before, and Phase 8's reason for counting the directions apart is that
+    // one number for both stopped meaning anything.
+    write: dueSplit.production + newSplit.production,
+    // …so the new-word clause is the new words that are *not* already counted
+    // as writing. `newToOffer` is what exists plus what today's cap still
+    // allows, and the cap only ever draws recognition cards.
+    fresh: Math.max(0, fresh - newSplit.production),
+  };
+  const sentence = summary ? todaySentence(counts, pace ?? DEFAULT_SECONDS_PER_REVIEW) : '';
 
   return (
     <div className="flex flex-col gap-4">
@@ -115,34 +152,14 @@ export function TodayView() {
           </p>
         ) : null}
 
-        <div className="flex flex-wrap items-stretch">
-          <p className="flex min-w-20 flex-col pr-6">
-            <span data-testid="today-due-count" className="text-3xl font-semibold tabular-nums">
-              {summary ? due : '—'}
-            </span>
-            <span className="text-sm text-muted">due</span>
-          </p>
-          {/* A rule between them: "0" and "10" side by side read as one number. */}
-          <p className="flex min-w-20 flex-col border-l border-border pl-6">
-            <span data-testid="today-new-count" className="text-3xl font-semibold tabular-nums">
-              {summary ? fresh : '—'}
-            </span>
-            <span className="text-sm text-muted">new</span>
-          </p>
-        </div>
-
-        {split.production > 0 ? (
-          <p data-testid="today-direction-split" className="mt-3 text-sm text-muted">
-            <span data-testid="today-recognition-count" className="tabular-nums">
-              {split.recognition}
-            </span>{' '}
-            hanzi → meaning ·{' '}
-            <span data-testid="today-production-count" className="tabular-nums">
-              {split.production}
-            </span>{' '}
-            meaning → hanzi
-          </p>
-        ) : null}
+        {/*
+          One sentence, and **the two tiles are gone** — not hidden inside it as
+          spans. `today-due-count`, `today-new-count` and `today-direction-split`
+          no longer exist; the specs that read them read `today-sentence`.
+        */}
+        <p data-testid="today-sentence" className="text-base">
+          {summary ? sentence : 'Counting what is waiting…'}
+        </p>
 
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <Button
@@ -159,9 +176,15 @@ export function TodayView() {
           ) : null}
         </div>
 
+        {/*
+          The way out, when there is nothing to do. The sentence above already
+          says "Nothing waiting" — this used to repeat it, which is the tile
+          grid's habit of stating the same fact twice in two registers. Only
+          the part the sentence cannot carry survives: a place to go.
+        */}
         {summary && !ready ? (
           <p className="mt-3 text-sm text-muted">
-            Nothing waiting. Look a word up, or raise the daily new count in{' '}
+            You can also raise the daily new count in{' '}
             <button
               type="button"
               className="text-accent underline underline-offset-2"
@@ -201,13 +224,16 @@ export function TodayView() {
                   className="flex items-baseline justify-between gap-3 py-2"
                 >
                   <span className="min-w-0">
-                    {reverse ? <span className="text-sm text-muted">write </span> : null}
                     <span className="hanzi text-lg">{simp}</span>{' '}
                     {reverse ? null : <span className="text-sm text-muted">{pinyin}</span>}
                     <span className="block truncate text-sm text-muted">{gloss}</span>
                   </span>
                   {reverse ? (
-                    <Badge tone="accent">reverse</Badge>
+                    // The direction, in C8's words — "Write", not "reverse",
+                    // which described the *operation that made the card* rather
+                    // than what it asks of the learner. Named once, in
+                    // `lib/srs/direction.ts`.
+                    <Badge tone="accent">{DIRECTION_LABELS.production}</Badge>
                   ) : card.context ? (
                     <Badge tone={card.context.source === 'list' ? 'neutral' : 'accent'}>
                       {card.context.source}

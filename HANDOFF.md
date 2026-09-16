@@ -8206,3 +8206,265 @@ became one session rather than two screens behind one label.
 
 **Gates.** `pnpm data`, `pnpm lint`, `pnpm typecheck`, `pnpm test` (1,655 unit tests), `pnpm build`,
 `pnpm e2e` (220 specs) — all green on `bf78e50`.
+
+## `core.md` C7, second pass — what the adversarial review found
+
+Five reviewers, one per lens (the acceptance criteria; the queue merge at runtime; what breaks that
+no test covers; accessibility and the phone; does the repository still tell one story). They raised
+23 findings between them. I stopped the verification fleet partway — at two concurrent slots it
+would have taken hours to refute 23 findings three ways, and by then I had already reproduced the
+serious ones myself, which is the better evidence. What follows is the triage, and every "confirmed"
+below was reproduced before it was fixed.
+
+**Three of the findings were serious, and two of those were in the parts of C7 that its own criteria
+were supposed to police.** That is the useful result: C7 shipped green, and it shipped two defects
+that made its central claim false.
+
+### Confirmed and fixed
+
+- **The Practice queue merge was a no-op at runtime** (`lib/srs/session.ts`, `lib/stores/review.ts`).
+  `interleaveNew` built the right order; `load()` then reset `index: 0`, and `grade()` re-ran
+  `load()` after every grade — so the learner was always served `queue[0]`, which is a due card
+  whenever any due card remains. Simulated over fifteen reviews and five new words, the order
+  actually served was `d0…d14 n0…n4`: exactly the `[...due, ...newCards]` `wave-zero.md` §9 says C7
+  must remove. **The phase's central claim was false and every test passed**, because the unit test
+  checked the function and the e2e seeded a session small enough to hide it.
+  The fix is an offset: `interleaveNew(due, fresh, served)` spaces the new words over the session's
+  *whole* length rather than over what is left of it, and the store counts what it has handed out by
+  kind. `tests/unit/srs/merged-session.test.ts` now runs the store's actual loop — rebuild, take
+  `queue[0]`, repeat — which is the shape the first version did not survive.
+- **`loadToday`'s in-flight dedupe ignored `introduce`** (`lib/lists/today.ts`). It memoised on the
+  repository alone, and C7 had just created two callers that disagree: Today reports
+  (`introduce: false`), Practice introduces. Pressing "Start practice" while Today's own load was
+  still running handed the session the reporting promise — nothing created, no new words, on a tab
+  that had just said five were waiting. The load is slow on a cold database (it materialises the
+  band lists), so the window is the app's most ordinary sequence. Fixed asymmetrically: a reporting
+  caller may take an introducing run's answer, an introducing caller may never take a reporting one.
+- **The fixed tab bar covered the sticky grade dock** (`components/shell/phone-shell.tsx`,
+  `components/review/review-session.tsx`). `sticky bottom-0` pins to the bottom of the *viewport*,
+  which on a phone is where the `fixed bottom-0` tab bar is. On a card back taller than the screen,
+  a tap on the centre of "Got it" hit the Look up tab link and left the session. `--tab-bar-height`
+  is now a token and the dock sits above the bar; the regression test measures
+  `document.elementFromPoint` over each button's centre, on a 500px-tall viewport so the dock is
+  genuinely pinned, and it fails against the old class.
+- **Crossing the breakpoint destroyed the screen** (`components/shell/app-shell.tsx`).
+  `const Shell = wide ? WideShell : PhoneShell` swaps the component *type* at one slot, so React
+  rebuilt the whole screen subtree on every media-query flip — and `ReviewSession`'s unmount cleanup
+  is `reset()`. Rotating a phone mid-session threw away the session's progress, a typed free-recall
+  answer and focus; and because `useIsWide()` starts `false`, every wide page load mounted,
+  unmounted and remounted each screen. **The two shells are now one component with a `wide` flag**,
+  and `phone-shell.tsx` / `wide-shell.tsx` are gone. C7's Files list names them, and this is the
+  deviation: two component types at one slot cannot satisfy the identical-screens rule, because a
+  screen that "cannot tell which shell it is in" must also survive the answer changing.
+- **The ask panel reported a body of dropped citations as `answered`**
+  (`components/lookup/ask-panel.tsx`). `empty` counted `response.matches.length`, but a cited id
+  that is not in the resolved entries renders nothing — so an answer whose every proposal failed
+  grounding drew an AI chip over an empty section, which is the one outcome PLAN.md §3.4 forbids and
+  exactly what `ungrounded` exists to say. It counts renderable matches now. **C7's own third
+  fixture was vacuous**: it sent `matches: []`, the "model proposed nothing" case, and never touched
+  grounding. It now cites two ids that are not in `entries`.
+- **`offline.html` still linked to `/review`, `/lists` and `/settings`.** Offline the worker serves
+  that same page again for an uncached path, so the links visibly did nothing; online they land on
+  the not-found screen. It offers the three tabs now, and `tests/unit/pwa/manifest.test.ts` derives
+  the allowed set from the worker's own `SHELL`, so the next phase that moves a tab moves both.
+- **Today reported the day's *allowance* rather than what the spine can supply.** `newAvailable` was
+  `newCards.length + drawLimit`, and the reporting path never attempted a draw — so a learner whose
+  spine is exhausted read "10 new words to learn" every day over a session that introduced none, and
+  Today's "No new words could be drawn" banner was unreachable code. The reporting path now collects
+  the candidates (a read; only the introducing path writes) and reports the smaller number, with the
+  outage banner live again. The field is renamed **`newToOffer`**, because `Queue.newAvailable`
+  already existed, meant something similar, computed something different, and both were reachable
+  from one object.
+- **`/read` belonged to no tab in the back-button model** (`lib/shell/back-navigation.ts`). `'/'`
+  matches only itself, so `tabOf('/read')` fell through to `current`, which is null on the first
+  arrival — `visit` returned without recording, and on Android a cold start on a text followed by a
+  tab switch and a back press **minimised the app**. `createBackNavigation` takes a `belongsTo` map
+  now and the shell declares `/read` under Look up. The test's post-C7 fixture was also wrong: it
+  used `/lookup`, a removed route, so every post-C7 case ran against a first tab root that does not
+  exist.
+- **"Walks the import graph" was not what the portability test did** — it read direct specifiers
+  only. It walks now, over 140-odd modules, and asserts the set that reaches the router is exactly
+  one: `components/lists/list-card.tsx`, which renders real `<Link>`s on purpose. Naming the
+  exception is worth more than forbidding it: a second one fails.
+- **Stale prose**, all of it corrected: `lib/lists/today.ts`'s header said opening Today introduces
+  (the thing C7 undid in that file), `lib/stores/review.ts`'s said both routes introduce,
+  `src/routes.tsx`'s described `NAV_ITEMS` and eight routes in the present tense, and
+  `app-shell.tsx` claimed the breakpoint was read from the stylesheet when it is a copy kept in step
+  by a test. `docs/deploy.md`'s after-deploy checklist, `README.md` and `CLAUDE.md` all sent the
+  reader to `/settings`.
+
+### Recorded, not fixed
+
+- **`waiting` is structurally always zero** (`lib/stores/review.ts`, `lib/lists/queue.ts`).
+  `today.ts` never passes `newCandidates` to `buildQueue`, so `queue.draws` is always `[]`, so the
+  empty state's "N new words are waiting, once the dictionary is back" branch is dead code. It
+  predates C7 (it arrived with the field) and it is not C7's or C8's to fix, but C7 made Practice
+  the only screen where the message could ever fire. The outage is not silent — `drawError` renders
+  its own line — the *count* is simply never right.
+- **The plan documents still describe `/settings` as a route** (`docs/plans/web.md` §, `data.md`,
+  `android.md`, `README.md` in `docs/plans/`). Three of them tie a licence obligation to that path.
+  They are other plans' documents; the obligation is met (the attribution renders in Library) and
+  the wording is theirs to change.
+
+## `core.md` C8 — plain language, one sentence, four buttons, seven pieces
+
+**Nothing about FSRS changed.** Ratings 1–4 are the same ratings in the same order and every
+scheduling behaviour is untouched; what changed is what a learner reads.
+
+### What landed
+
+- **The four buttons.** `RATING_LABELS` is `Forgot it · Barely remembered · Got it · Instant`.
+  "Got it" is the filled primary and — asserted over the whole screen, not just the bar — the only
+  filled button on it. The subtitle is still the real interval `gradeOptions()` previews from the
+  card's own state. **There is no coaching line.** `variant="primary"` is already vermillion: §1
+  assigns that accent to Practice, so C8's "the primary is now vermillion" needed no change, only
+  checking.
+- **Today is a sentence.** `lib/lists/today-sentence.ts` builds it and drops every clause whose
+  count is zero — "8 words to practice, 0 new words to learn" is the tile grid with commas. The
+  three tiles are **gone**, not hidden inside it: `today-due-count`, `today-new-count` and
+  `today-direction-split` no longer exist, and `tests/e2e/core/plain-language.spec.ts` asserts
+  their absence by name.
+- **The duration is derived, never invented.** `lib/srs/pace.ts` takes the learner's *median* gap
+  between consecutive reviews — the review log stores `reviewedAt` and no duration, so a review's
+  cost is the gap before it — drops gaps longer than five minutes as the boundary between two
+  sittings rather than clamping them, and needs ten samples before it will answer. Below that it
+  uses one named constant, `DEFAULT_SECONDS_PER_REVIEW = 8`, **labelled in the code as a
+  placeholder and not as a measurement**: it is an order of magnitude, it is not from a study, and
+  the comment says so.
+- **The seven pieces** (`components/practice/tangram-progress.tsx`). A real tangram: two large
+  triangles, one medium, two small, one square and one parallelogram, tiling a square of side 4
+  with no gap and no overlap — asserted by area, by side length, and by sampling 90,000 points.
+  The parallelogram is the piece a careless dissection gets wrong: a four-sided piece of area 2
+  with every side √2 is a *second square*, because area = √2·√2·sin θ = 2 forces θ = 90°. The first
+  draft had two squares and looked entirely convincing.
+- **The optimizer is absent below 1,000 scorable reviews**, not disabled — with two exceptions that
+  are both "the learner has already used this": a fit in force, and an undo still worth offering.
+- **Plain-English stats**: "How well it's sticking", "What's coming up", "How many words are solid".
+- **The learner level** at the bottom of Library, and `DEFAULT_SETTINGS.spineStartBand` is **1**.
+- **The pinyin control**, three options, reachable at last: C3 built `pinyinDisplay` and specified
+  what each value does; nothing since had let a learner touch it.
+
+### The calibration decision, which C8 says this phase must close
+
+STACK §5.2 set a test rather than a verdict: *try to write the panel's one-sentence explanation for
+a beginner; if it cannot be written, it does not ship.* Nobody had recorded an attempt. **It can be
+written**, so by C8's own rule the panel stays, retitled "Is it guessing right?" and led by:
+
+> When the app says you have a 9-in-10 chance of remembering a word, this is whether you really
+> remember about 9 of every 10.
+
+`tests/unit/stats/calibration-explainer.test.tsx` asserts that it renders, that it is one sentence,
+and that it contains none of `calibrat|decile|probabilit|retention|FSRS|stability|interval`.
+
+**The sentence is the builder's, and C8 says the owner writes it or declines to.** So this ships as
+a draft awaiting a yes or a no. A "no" means cutting the four files STACK §5.2 names —
+`components/stats/calibration-chart.tsx`, its render site in `stats-view.tsx`,
+`summary.calibration` in `lib/stats/summary.ts`, and `lib/stats/calibration.ts` with its re-export
+from `lib/stats/index.ts` — not editing the string. On the optimizer question STACK §5.2 raises in
+the same breath: `lib/fsrs-optimize/**` does **not** import `lib/stats/calibration`; the
+relationship is the comment in `dataset.ts` about scorability and calibration measuring elapsed
+time from the same timestamp, and it is not a dependency.
+
+### The jargon review, line by line
+
+C8 asks for a review rather than a passing grep. Over `components/screens`, `components/review`,
+`components/stats` and `lib/srs/session.ts` (which writes the empty state a learner reads), with
+comments stripped, sixty hits remain and **every one is an identifier, an import path, a test id or
+a data attribute**. The learner-visible prose that did carry jargon was rewritten:
+
+- the retention panel's paragraph named the four old buttons ("Again is the only failure; Hard,
+  Good and Easy…"), so it was both jargon and out of date the moment `RATING_LABELS` changed;
+- the workload chart said "Coming due", "cards coming due", "reviews" and "New cards are not
+  counted — … not by a due date";
+- **the session's empty state said "Nothing due" in all five of its branches** — the single most
+  read sentence in the app on a finished day. It says "All done" now.
+
+Two visible hits survive and both are justified. `add-reverse.tsx`'s "That did not save — try
+again." is ordinary English about a failed write, not the rating button. `grade-bar.tsx`'s
+`{option.interval}` renders a *value* — "10m", "3d" — and never the word; the identifier is what
+the grep caught.
+
+### What the plan did not settle
+
+- **Three new modules, none in C8's Files list**: `lib/srs/pace.ts`, `lib/lists/today-sentence.ts`
+  and `components/settings/learner-level.tsx`. All three exist because the wording is worth a unit
+  test and a component is not the place to test wording.
+- **The pieces are mounted in `components/review/review-session.tsx`, not in
+  `components/screens/practice.tsx`** as the Files list says. The two numbers they need — the
+  session's length and how much of it is done — exist only in the session, and a screen reaching
+  into the review store to re-derive them would be a second source of truth for the session's
+  progress. Mounting them inside the running-session branch is also what satisfies "never appears
+  outside a running session".
+- **The finished square is rendered on the completion state too.** C8 asks for "at the end the
+  square is complete", and the last grade is what ends the session — so a square that existed only
+  while a card was on screen would never be seen finished. It is there when `graded > 0` and absent
+  on an idle Practice tab, which is the rule as written.
+- **`data-testid="review-progress"` now wraps the pieces** rather than being the "Card 1 of 2"
+  line, which is gone. Specs read `tangram-label`.
+- **The direction names reach the screen through `DIRECTION_LABELS`** in `lib/srs/direction.ts`
+  ("Recognise" / "Write"). The stored values stay `recognition` and `production`: renaming a
+  database value to fix a label is how a schema ends up describing a screen. Today's reverse rows
+  are badged "Write" rather than "reverse" — the old word named the operation that made the card,
+  not what it asks of the learner.
+- **`SettingsForm` gained an `onSettings` callback** so Library's level line stays in step with the
+  controls above it without a second read or a poll.
+- **`--tab-bar-height` is a non-colour token**, so `tests/unit/ui/gallery-tokens.test.ts` needed an
+  explicit exemption list rather than a prefix — a colour token that ends up on that list is a
+  colour nobody reviews, so it is a list and not a pattern.
+
+### What was found wrong in the plan
+
+- **Moving `spineStartBand` to 1 on its own does nothing, and C8 names only that field.**
+  `lib/lists/draw.ts` skips a band that is at or below `settings.knownBand` *whatever*
+  `spineStartBand` says (`draw.ts:82-83`), and `DEFAULT_SETTINGS.knownBand` was **2** — so a fresh
+  learner still got HSK 3, and Library's new line, "Your level: Just starting — new words come from
+  HSK 1, easiest first", would have been **false on the first day of a fresh install**. The two
+  fields have to move together or neither moves.
+
+  `knownBand` had no value for "I know nothing": it is an `HskBand`, and the lowest band is 1, so
+  even `knownBand: 1` skips band 1. So `lib/types.ts` gains `KnownBand = HskBand | 0`, the default
+  is **0**, and the Library control's first option is "Nothing yet". Two consequences worth
+  knowing:
+  - `LearnerProfile.estimatedBand` is an `HskBand` and has no zero. It floors at 1
+    (`lib/srs/profile.ts`) rather than widening a type the ask prompt and the ask cache key are
+    both built on. A fresh database's cache key therefore changes — `tests/e2e/p4/ask.spec.ts`
+    computes it and now uses 1.
+  - **The demo seed stated nothing and inherited everything.** `loadDemo` is a learner who knows
+    HSK 1–2, and it relied on the old default to say so; it sets `knownBand` explicitly now. Five
+    unit tests were in the same position and now state the scenario they are testing instead of
+    inheriting it, which is the better shape regardless.
+
+  It also surfaced a **fixture race that predates it**: `openReview` navigated to `/practice`
+  *first* and wiped the database afterwards, so the mount's own `loadToday` — which reads the
+  settings and the card table early and writes the drawn cards late — could finish on the far side
+  of the wipe and leave four spine words in a session the spec thought it had emptied. Under the old
+  defaults the draw waited on band 3 and usually lost the race; with band 1 it wins. `openReview`
+  resets from `/read` now, before any session mounts, exactly as `resetApp` does.
+
+  Three specs were asserting behaviour that only held under `knownBand: 2` and inheriting it rather
+  than saying it — an HSK 1 list row reading "known", "add the words" skipping 我 and 随便, and the
+  demo's warm cache key. All three state the band they are about now, and `p3/lists.spec.ts` gained
+  the case for the *default*: on a fresh database HSK 1 reads `new`, which is C8's whole point —
+  a beginner should not open HSK 1 to find the app has already decided they know it.
+
+  This is a second schema change in `lib/db/schema.ts`, which the settle-first list freezes at
+  Phase 0. C8 unfreezes the file for `spineStartBand` on the grounds that it was "frozen to protect
+  data that does not exist"; the same grounds cover `knownBand`, and the change is worthless
+  without it. Flagged here rather than assumed.
+- **C8's grade-bar note says "the primary variant on the grade bar is now vermillion".** It already
+  was: §1 assigns vermillion to Practice and `VARIANTS.primary` is `bg-practice`. Nothing to change,
+  and the sentence reads as if there were.
+- **C8 names `today-due-count` at line 105 and `today-new-count` at line 112 as "the only two"
+  tiles.** There are three test ids to remove, not two: `today-direction-split` is named as a
+  conditional line, but it carries `today-recognition-count` and `today-production-count` inside it.
+- **"The calibration decision … the owner writes the sentence or declines to, not the builder"
+  cannot be executed by a builder working alone.** The phase would otherwise have to ship neither
+  outcome, which C8 explicitly calls not having run the test. Resolved as above: the test is run,
+  the answer is recorded, and the sentence is marked as a draft pending the owner.
+- **The tangram's "seven pieces over the session's total items" needs a denominator that moves.** A
+  card can come back inside a session on a short step, so the total is `graded + remaining` and it
+  grows. The alternative — freezing the denominator at the session's opening length — makes the
+  square overflow, which is worse.
+
+**Gates.** `pnpm data`, `pnpm lint`, `pnpm typecheck`, `pnpm test` (1,695 app + 75 server unit
+tests), `pnpm build`, `pnpm e2e` (234 specs) — all green on `ab10ca4`.

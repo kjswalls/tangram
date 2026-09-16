@@ -500,15 +500,31 @@ Unified Ideographs Extension G** (`𰦭` U+309AD, `𰻝` U+30EDD, `𱃲` U+310F2
    `DictStore` for another reason** — `entries_simp` already indexes it, so it is cheap when the
    surface next opens. It is not worth opening the surface on its own.
 2. **The Extension G characters are a different defect and are not accepted.** They are Chinese, and
-   they are misrouted because `CJK_PATTERN` stops at U+2FA1F: it covers Ext A, Ext B
-   (U+20000–U+2A6DF), Ext C–F (U+2A700–U+2EBEF) and compat, and **has no range for Ext G
-   (U+30000–U+3134F)**, nor for Ext H or I. That is a one-line change to `lib/dict/rank.ts` plus a
-   test, and it is not a `DictStore` shape question at all — D6 filed it under a frozen surface it
-   does not belong to.
+   they are misrouted because `CJK_PATTERN` covers Ext A, Ext B (U+20000–U+2A6DF), Ext C–F
+   (U+2A700–U+2EBEF) and compat, and **has no range for Ext G (U+30000–U+3134F)**. It is not a
+   `DictStore` shape question at all, so D6 filed it under a frozen surface it does not belong to.
 
-**Owner for part 2: the next phase that touches `lib/dict/**`.** Not urgent and not blocking; a
-learner reaching an Ext G character is rare. But it is a correctness bug with a trivial fix, and it
-should not be re-derived from the same 274-shaped note a third time.
+> **Correction, made the same day by the author of this section.** Two things above were wrong when
+> first written, and a third was already known to the repository.
+>
+> - **It is twelve entries, not seven.** Eleven single-character Ext G headwords plus `𱌶𱌹`. I
+>   listed seven codepoints from a truncated read of my own output. Seventeen headwords contain an
+>   Ext G character in total; the other five (`土𱇏鱼`, `𬶂𱇏鱼`, `𰻝𰻝面`, `𱉝𫛡`, `𱉵𬸩`) also carry a
+>   URO character, so they pass `hasCjk` already and are not affected.
+> - **Ext H and Ext I are irrelevant here.** This artifact contains **zero** headwords in either
+>   block, so naming them as missing ranges was padding. Ext G is the whole of it.
+> - **`lib/dict/rank.ts` already says all of this**, in the doc comment directly above
+>   `CJK_PATTERN`: it names the U+2EBEF stop, names Ext G and H as uncovered, counts *twelve*
+>   single-character headwords — which is right and my seven was not — and says **"widening it is a
+>   behavioural change to segmentation and search routing and is nobody's yet"**. So "a one-line
+>   change plus a test" was wrong too. Widening the pattern re-routes any text containing those
+>   characters from the English path to the CJK path, which changes segmentation, and it wants
+>   `data.md`'s differential oracle run against it rather than a drive-by edit.
+
+**Owner for part 2: a `data.md` phase, not the next passer-by.** The fix is correct in direction and
+small in diff, but it is a segmentation change and D1's author was right to flag it as one. Not
+urgent, not blocking, and a learner reaching an Ext G character is rare. It is recorded here so the
+next session finds the measurement instead of the 274-shaped note.
 
 ## 11. `ios.md`'s contested-surfaces table — DELETE IT (issue 4)
 

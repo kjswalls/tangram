@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { DEFAULT_SETTINGS, isPhraseSnapshot } from '@/lib/db/schema';
+import { DEFAULT_SETTINGS, isPhraseSnapshot, STORES } from '@/lib/db/schema';
 import { isExplicitAdd } from '@/lib/lists/queue';
 import { context, DASUAN, freshRepository, KANKAN } from './fixtures';
 
@@ -391,15 +391,20 @@ describe('texts, ask cache and reset', () => {
  * nothing; a `changedSince` that resolves `[]` is a sync engine that silently
  * pushes nothing. Both look healthy in every test that does not assert content.
  *
- * So: until someone writes a body, each of the seven must reject. `web.md` W5
- * owns the first two, `backend.md` B5 the other five, and **each of them deletes
- * its own rows from the table below as it implements them** — a red line here
- * after a real implementation lands is this test being out of date, not a bug.
+ * So: until someone writes a body, each of the remaining members must reject,
+ * and **each plan deletes its own rows from the table below as it implements
+ * them** — a red line here after a real implementation lands is this test being
+ * out of date, not a bug.
+ *
+ * **`web.md` W5 has done exactly that.** `exportAll` and `importAll` are gone
+ * from this table because they are written; what replaces them is not silence
+ * but `tests/unit/db/backup.test.ts`, which holds the same line by asserting
+ * *content* — a full round trip through the seam, tombstones included, with an
+ * explicit case for the empty-value failure this guard was built around.
+ * `backend.md` B5's five are still stubs and still belong here.
  */
-describe('the wave-0 sync and backup members', () => {
+describe('the wave-0 sync members', () => {
   const unimplemented: readonly [name: string, call: (r: ReturnType<typeof setup>) => Promise<unknown>][] = [
-    ['exportAll', (r) => r.exportAll()],
-    ['importAll', (r) => r.importAll({ format: 1, dbVersion: 3, createdAt: 0, rows: {} as never })],
     ['changedSince', (r) => r.changedSince('cards', 0)],
     ['applyRemote', (r) => r.applyRemote('cards', [])],
     ['syncState', (r) => r.syncState()],
@@ -412,17 +417,38 @@ describe('the wave-0 sync and backup members', () => {
     await expect(call(repo)).rejects.toThrow(new RegExp(`^${name}: not implemented`));
   });
 
-  it('names all seven, so a member added to the interface is not silently unguarded', () => {
-    // Mirrors wave-zero.md §5's table. If this fails, the diff grew — which is a
-    // frozen-surface change, and the rule is to stop and write it into HANDOFF.md.
+  it('names all five that are left, so a member added to the interface is not silently unguarded', () => {
+    // Mirrors wave-zero.md §5's table, minus the two `web.md` W5 implemented.
+    // If this fails, the diff grew — which is a frozen-surface change, and the
+    // rule is to stop and write it into HANDOFF.md.
     expect(unimplemented.map(([name]) => name)).toEqual([
-      'exportAll',
-      'importAll',
       'changedSince',
       'applyRemote',
       'syncState',
       'setSyncState',
       'resetAccount',
     ]);
+  });
+
+  it('carries the other two members of the wave-0 diff, which W5 implemented', async () => {
+    /**
+     * Deliberately NOT titled "exactly seven": it cannot check that, because
+     * `Repository` is a type and its members are gone at runtime. What it does
+     * is name the two that left the table above, so that deleting a row from
+     * `unimplemented` without writing a body is still caught — and it asserts
+     * something about the result rather than only that a function exists,
+     * because "resolves to *something*" is the vacuous shape this whole
+     * describe block exists to refuse. The real content assertions are in
+     * `tests/unit/db/backup.test.ts`; W5's adversarial review caught the first
+     * version of this case claiming more than it did.
+     */
+    const repo = setup();
+    expect(typeof repo.exportAll).toBe('function');
+    expect(typeof repo.importAll).toBe('function');
+
+    const snapshot = await repo.exportAll();
+    expect(snapshot.format).toBe(1);
+    // Every store the schema declares, present — not `{}`, and not a subset.
+    expect(Object.keys(snapshot.rows).sort()).toEqual(Object.keys(STORES).sort());
   });
 });

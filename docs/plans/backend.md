@@ -67,9 +67,9 @@ every device is an island, and the three model-backed routes run inside the Next
 |---|---|---|
 | The Vite build, the router, the workspace layout, the client's API base and the gate's client half | [`web.md`](web.md) (W0, W1, W4) | This plan produces something behind a base URL. How the client reaches it, and the `?key=`→header exchange in the browser, are transport. |
 | The **local** export/import (`lib/db/export.ts`, `lib/db/import.ts`) | [`web.md`](web.md) W5 | It ships before this plan does and must not wait for it. This plan adds an account-level export **over the same row shapes** and depends on W5's round-trip test; it does not rebuild it. W5's `exportAll`/`importAll` and this plan's five sync members are **one interface diff, landed in wave 0** ([`wave-zero.md`](wave-zero.md) §5), so neither plan widens `lib/db/repository.ts` itself. See §5, B5. |
-| The SQLite dictionary, `DictStore`, and the client-side retrieval helpers (`packages/ai/retrieve.ts`) | [`data.md`](data.md) (D1–D4; **`retrieve.ts` lands in D3**, `data.md:674`, not in D6) | The contract flip in B2 consumes them. `data.md` D3 already names the async-`segment` adapter this plan needs, and D6 only deletes. |
+| The SQLite dictionary, `DictStore`, and the client-side retrieval helpers (`packages/ai/retrieve.ts`) | [`data.md`](data.md) (D1–D4; **`retrieve.ts` lands in D3**, `data.md` §5 D3, not in D6) | The contract flip in B2 consumes them. `data.md` D3 already names the async-`segment` adapter this plan needs, and D6 only deletes. |
 | Every screen, including the sign-in screen's visual design and the "backup is on" copy | [`core.md`](core.md) | This plan supplies the auth flow, the client modules and unstyled functional UI where a screen does not exist yet. That is named debt, not a design. |
-| **Every state of the ask panel** — thinking, offline, nothing-verifiable — and `components/lookup/ask-state.ts` | [`core.md`](core.md) C7 | `core.md:191` says it designs those states "against a client-side ask module whose shape C7 defines" and that B2 "fills `answered`". So B2 changes the **module**, not the panel's states, and touches `ask-panel.tsx` / `example-sentences.tsx` only at the call site. Neither plan may claim the other's half. |
+| **Every state of the ask panel** — thinking, offline, nothing-verifiable — and `components/lookup/ask-state.ts` | [`core.md`](core.md) C7 | `core.md` §4's gate table says it designs those states "against a client-side ask module whose shape C7 defines" and that B2 "fills `answered`". So B2 changes the **module**, not the panel's states, and touches `ask-panel.tsx` / `example-sentences.tsx` only at the call site. Neither plan may claim the other's half. |
 | `tests/unit/server/routes.test.ts` and `docs/deploy.md` | [`web.md`](web.md) W2 rewrites both | Both were listed here as deletions or rewrites and both are W2's. This plan appends to what W2 produced; it does not delete a page-coverage guard it does not own. See B2 and B7. |
 | Capacitor projects and the WebView origin string | [`ios.md`](ios.md) I1, [`android.md`](android.md) A1 | Both plans already promise this plan exactly one fact: the origin their WebView runs from, for the CORS allowlist. |
 | A second `Repository` implementation on `@capacitor-community/sqlite` (STACK §2.8 option 2) | [`ios.md`](ios.md) / [`android.md`](android.md), if it happens | This plan makes the change feed part of the interface, so a second implementation has to satisfy it. It does not write one. |
@@ -269,7 +269,7 @@ sandbox, and pretending otherwise is how a criterion gets quietly reinterpreted 
 | B0 | `web.md` W0 (the workspace) plus §4 item 4's domain, host account and Postgres decision. It otherwise runs in the container. |
 | B1 | `web.md` W1 (the app builds under Vite and has a configurable API base) and W4 (the client sends `X-Tangram-Access`, `lib/server/access.ts` has moved to a shared package), plus wave 0's `packages/ai/` — B1 imports it and does not create it. B1 is what lets `web.md` delete its dev/preview API adapter, so W1 must land first and the adapter must not be treated as a product. |
 | **B2, first commit** (the contract module, `packages/ai/schemas.ts`) | B1 and nothing else. It is a type declaration with nothing behind it, and freezing it is what unblocks `data.md` D6 and `core.md` C7. It must be a **separate commit**, landed early, precisely so the two gates below do not form a cycle. |
-| **B2, the rest** (the rewrite and the deletion) | `data.md` **D1–D4** — D1's frozen interfaces, D2/D3's query layer, **D3's `packages/ai/retrieve.ts`** (`data.md:674` builds it there, not in D6; wave 0's `packages/ai/` is where it lands), and **D4's browser store**, without which B2's e2e criteria have no dictionary in a browser to render from. Plus `core.md` **C4a**, which re-points every `lib/dict/client.ts` consumer at `DictStore` — `data.md` §4 makes that a gate on D6 and this plan inherits it. |
+| **B2, the rest** (the rewrite and the deletion) | `data.md` **D1–D4** — D1's frozen interfaces, D2/D3's query layer, **D3's `packages/ai/retrieve.ts`** (`data.md` §5 D3 builds it there, not in D6; wave 0's `packages/ai/` is where it lands), and **D4's browser store**, without which B2's e2e criteria have no dictionary in a browser to render from. Plus `core.md` **C4a**, which re-points every `lib/dict/client.ts` consumer at `DictStore` — `data.md` §4 makes that a gate on D6 and this plan inherits it. |
 | B3 | B0 for the server half (JWT verification); `web.md` **W0 and W1** for the client half, because B3 writes `apps/app/src/auth/**` and `apps/app/src/routes/account.tsx` and `apps/app/src/` does not exist until W1 creates it. Independent of `data.md` and `core.md`; the sign-in screen may be unstyled. |
 | B4, B5 | B3, and §4 item 4's reachable Postgres. **B5 gates on wave 0's `lib/db/repository.ts` interface diff** — the types-only commit that declares `changedSince`, `applyRemote`, `syncState`/`setSyncState` and `resetAccount` alongside `web.md` W5's `exportAll`/`importAll` — and on W5's export/import round-trip test, because the account-level export is built over W5's serializer. |
 | B6 | B3, and a **yes** on the provider-terms check. A **no**, or an unclear answer, stops B6 and leaves the single-account shape in place (§5, B6). |
@@ -279,7 +279,8 @@ sandbox, and pretending otherwise is how a criterion gets quietly reinterpreted 
 dictionary routes until this plan's ask/answer contract is settled, and B2's rewrite cannot happen
 until `data.md` has given the client a dictionary. Both plans resolve it the same way and the
 resolution is load-bearing: **B2's first commit is the contract alone**, `data.md` D6 gates on *that
-commit* rather than on the phase (`data.md:145`), and `retrieve.ts` lands in D3, inside wave 0's
+commit* rather than on the phase (`data.md` §4's gate table, the D6 row), and `retrieve.ts` lands
+in D3, inside wave 0's
 `packages/ai/`. If a build session reads either gate as whole-phase, it deadlocks.
 
 **What other plans may start against, and when.** The API base URL and path names are settle-first
@@ -538,7 +539,7 @@ taken the wrong branch.
 The client skips `propose` when `needsProposals(query)` is false — that function is 4 lines in
 `app/api/ask/route.ts` and moves to `packages/ai/retrieve.ts` with `mergedSearch`, `candidateEntries`,
 `mergeRetrieved`, `RETRIEVED_CAP` and `SEARCH_HEAD` (`data.md` **D3** assigns that move, at
-`data.md:674`). So a
+`data.md` §5 D3). So a
 hanzi query is one round trip, as today; an English question is two. **The second round trip is
 invisible** because the dictionary card renders immediately and independently and the ask panel fills
 a slot asynchronously — PLAN.md §3.4's last paragraph and product-decisions §5's "while the AI is
@@ -603,7 +604,7 @@ standing.** Deleting a guard this plan does not own is how a page ships with no 
 **only** module left under `apps/app/lib/ai/` after wave 0's move, and browser-side because it calls
 the server: the two round trips, the `needsProposals` skip, the retrieval call into
 `packages/ai/retrieve.ts`, the awaited segmentation map, the local `ground()`, the fallback above and
-the cache read/write. That module is the provider interface `core.md` C7 renders — `core.md:191` says
+the cache read/write. That module is the provider interface `core.md` C7 renders — `core.md` §4's gate table says
 C7 "designs and tests [the three answer states] against a client-side ask module whose shape C7
 defines" and that B2 "fills `answered`". **B2 therefore changes the module and the two call sites, and no state of the panel.**
 If C7 has already landed, B2 wires `ask-client.ts` behind C7's `ask-state.ts`; if it has not, B2

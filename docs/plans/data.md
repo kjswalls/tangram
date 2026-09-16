@@ -98,9 +98,10 @@ retrieval step that would move to the client.
 what makes client-side grounding validation possible without touching `ground.ts`. One catch, worth
 knowing before it is discovered: `segment` there is **synchronous**, `(text: string) => Token[]`,
 and a `DictStore` is async. **The resolution is in phase D3**, with `packages/ai/retrieve.ts`.
-(Earlier drafts of this document, and `core.md`'s gate table, cite "`data.md` §5.7" for this; §5 has
-seven phases and no §5.7, and the material moved from D6 to D3 when the `backend.md` gate cycle was
-broken. D3 is the reference.)
+(Earlier drafts of this document cited "`data.md` §5.7" for this. There is no §5.7 — §5 has seven
+phases — and the material moved from D6 to D3 when the `backend.md` gate cycle was broken. **D3 is
+the reference.** `core.md` carried the same stale citation and no longer does, so this note is kept
+only so the dangling reference stays findable, not because anything still makes it.)
 
 **`lib/ai/**` has already moved by the time this plan writes into it.** Wave 0 creates
 `packages/ai/` and moves all ten existing `lib/ai/**` modules into it in one commit
@@ -159,7 +160,7 @@ commit of D1** — `lib/dict/sql.ts`, `lib/dict/store.ts`, `lib/dict/decomp-stor
 and `lib/dict/schema.sql`, type declarations with nothing behind them — and are frozen from then on.
 `core.md` may code against `DictStore` from that commit, with a hand-written fake first and the
 in-Node implementation from D2/D3 as its test double, long before D4, D5a or D5b exist. `core.md`
-(line 184) and `ios.md` (§4) both gate on exactly this commit, so D1 is not allowed to reorder it
+(§4's gate table) and `ios.md` (§4) both gate on exactly this commit, so D1 is not allowed to reorder it
 behind the builder.
 
 ---
@@ -174,7 +175,7 @@ each independent of the others' hardware; D6 is the cleanup that can only run la
 **What it builds.** Two things, in two commits, in this order. **The first commit lands the frozen
 interfaces**: `lib/dict/sql.ts`, `lib/dict/store.ts` and `lib/dict/decomp-store.ts` as type
 declarations with no implementation behind them, plus `lib/dict/schema.sql`. That commit is what
-`core.md` (its gate table, line 184) and `ios.md` (§4) wait on, and nothing in it needs the builder
+`core.md` (its §4 gate table) and `ios.md` (§4) wait on, and nothing in it needs the builder
 to exist. **The rest of the phase** is the builder, the verifier and the size/latency report. At the
 end of the phase `data/` holds a `.sqlite` file that provably contains the same dictionary
 `data/dict.json` does, and no *behaviour* has changed anywhere in the app — but several files
@@ -686,7 +687,7 @@ about the wire, so they can move to `packages/ai/retrieve.ts` over `DictStore` t
 and `segment` exist — which is the end of this phase. `packages/ai/` and the ten modules beside it
 were created and moved in wave 0 ([wave-zero.md](wave-zero.md) §5), so this file is written into a
 directory that already exists and nothing here waits on `backend.md` B1. Leaving them in D6
-deadlocks two documents: `backend.md:180` gates B2 on "`data.md` D2 and D3 … **and D6's
+deadlocks two documents: `backend.md` §4's gate table gates B2 on "`data.md` D2 and D3 … **and D6's
 `retrieve.ts`**", while D6 gates on `backend.md`'s contract. Building it here breaks the cycle in
 the direction the dependency actually runs. The `GroundContext.segment` mismatch (§3) is resolved
 here too, and resolving it is this file's job. **`GroundContext.segment` is synchronous**
@@ -1210,8 +1211,9 @@ fix. Everything else keeps its shape: `SearchResult`, `SegmentResult`, `EntriesR
 **What this plan owes the three model routes** was **built in D3**, not here: `packages/ai/retrieve.ts`,
 the `GroundContext.segment` adapter, and their acceptance criteria are D3's, for the gate reason in
 §4. All D6 does about them is delete the server-side originals in `app/api/ask/route.ts` once
-`backend.md`'s frozen contract says what replaces the route. `core.md`'s gate table cites
-"`data.md` §5.7" for the sync/async resolution; that material is D3.
+`backend.md`'s frozen contract says what replaces the route. The sync/async resolution is **D3**;
+"`data.md` §5.7", which earlier drafts of this plan and of `core.md` both cited for it, never
+existed and is no longer cited anywhere.
 
 **`data/dict.json`'s fate.** Keep emitting it through D6, because it is the differential-test oracle
 for every phase above and it is `verify-data.ts`'s input. Then decide: either `pnpm data` stops

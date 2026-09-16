@@ -14,6 +14,15 @@
  * a hit that cost something, and it is what the scheduler's own forgetting
  * curve is fitted against, so counting it as a miss would report a retention
  * the algorithm is not aiming for.
+ *
+ * **Again / Hard / Good / Easy are the scheduler's names, and this file speaks
+ * to the scheduler.** `docs/plans/core.md` C8 renamed the *buttons* — a learner
+ * presses Forgot it · Barely remembered · Got it · Instant — and the ratings
+ * behind them are unchanged, 1 to 4 in the same order. The panel this file
+ * feeds (`components/stats/retention-panel.tsx`) says "Forgot it is the only
+ * miss"; here, where the subject is ts-fsrs, ts-fsrs's vocabulary is the
+ * clearer one. `lib/srs/card.ts`'s `RATING_LABELS` is the single mapping
+ * between the two.
  */
 
 import type { FsrsStateValue, ReviewRow } from '@/lib/db/schema';

@@ -34,6 +34,12 @@ import { getRepository } from '@/lib/db/get-db';
 import { getLearnerProfile } from '@/lib/srs/profile';
 import type { CardContext, Entry } from '@/lib/types';
 
+// `apiFetch`, not `fetch` (docs/plans/web.md W4). It applies the configured
+// API base and attaches `X-Tangram-Access`; without it this call 401s on any
+// deployment with `TANGRAM_ACCESS_SECRET` set, and goes to the wrong origin
+// once `backend.md` moves the route off this one.
+import { apiFetch } from '@/src/access/client';
+
 export interface ContextGlossProps {
   /** The entry the sheet is showing. The line may only name one of its senses. */
   entry: Entry | undefined;
@@ -106,7 +112,7 @@ export function useContextGloss(
     void (async () => {
       try {
         const profile = await getLearnerProfile(getRepository());
-        const res = await fetch('/api/ask', {
+        const res = await apiFetch('/api/ask', {
           method: 'POST',
           signal: controller.signal,
           headers: { 'content-type': 'application/json', accept: 'application/json' },

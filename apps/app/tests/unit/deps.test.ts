@@ -31,6 +31,11 @@ const loaders: Record<string, () => Promise<Record<string, unknown>>> = {
   '@capacitor/keyboard': () => import('@capacitor/keyboard'),
   '@capacitor/splash-screen': () => import('@capacitor/splash-screen'),
   '@capacitor/status-bar': () => import('@capacitor/status-bar'),
+  // A workspace package, and worth the same proof as a published one: it is
+  // TypeScript source behind an `exports` map, which resolves only because pnpm
+  // symlinks it (see its package.json's note on the type-stripping debt). If
+  // that ever stops being true, it stops being true here first.
+  '@tangram/access': () => import('@tangram/access'),
   clsx: () => import('clsx'),
   dexie: () => import('dexie'),
   'dexie-react-hooks': () => import('dexie-react-hooks'),

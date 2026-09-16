@@ -7,9 +7,9 @@
     "node": ">=22.22"
   },
   "scripts": {
-    "dev": "vite",
-    "build": "pnpm -w run sw && vite build",
-    "build:e2e": "pnpm -w run sw && vite build --mode e2e",
+    "dev": "pnpm -w run dict:copy:optional && vite",
+    "build": "pnpm -w run dict:copy && vite build && pnpm -w run sw",
+    "build:e2e": "pnpm -w run dict:copy && vite build --mode e2e && pnpm -w run sw",
     "preview": "pnpm -w run preview",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
@@ -24,6 +24,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "0.124.0",
     "@capacitor-community/sqlite": "8.1.1",
+    "@tangram/access": "workspace:*",
     "@capacitor-community/text-to-speech": "8.0.2",
     "@capacitor/app": "8.1.1",
     "@capacitor/core": "8.5.2",

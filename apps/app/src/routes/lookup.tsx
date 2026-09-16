@@ -2,9 +2,12 @@ import { DictGate } from '@/components/dict/dict-gate';
 import { LookupView } from '@/components/lookup/lookup-view';
 import { PageHeader } from '@/components/shell/page-header';
 
+import { RouteMarker } from './route-marker';
+
 export function LookupRoute() {
   return (
     <>
+      <RouteMarker path="/lookup" />
       <PageHeader title="Lookup">
         Hanzi, pinyin or English — one box, no mode picker.
       </PageHeader>

@@ -19,6 +19,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { appRoot, workspaceRoot } from '@/lib/server/roots';
+import { precacheList } from '../../../../../scripts/build-sw';
 
 import { NAV_ITEMS } from '@/components/shell/nav';
 
@@ -118,6 +119,16 @@ describe('sw.js', () => {
     expect(sw).toMatch(/names\.filter\(\(name\) => name !== CACHE\)/);
   });
 
+  it('returns before `respondWith` for anything cross-origin', () => {
+    // From `web.md` W4 the API base is another origin, so this line — not the
+    // `/api/` one below — is what keeps a paid, profile-dependent answer out of
+    // an HTTP cache. `tests/e2e/c/sw-version.spec.ts` exercises it against a
+    // real second origin on the one path the worker would otherwise cache.
+    expect(sw).toContain('if (url.origin !== self.location.origin) return;');
+    const bail = sw.indexOf('if (url.origin !== self.location.origin) return;');
+    expect(bail).toBeLessThan(sw.indexOf(`startsWith('${ASSET_DIR}')`));
+  });
+
   it('bails out of every /api request before it can respond', () => {
     // The guard has to `return` — an /api path that reaches respondWith is a
     // second, dumber cache in front of a grounded, profile-dependent answer.
@@ -128,7 +139,7 @@ describe('sw.js', () => {
     expect(staticIndex).toBeGreaterThan(apiIndex);
   });
 
-  it('caches the hashed static chunks and precaches every nav route', () => {
+  it('caches the hashed static chunks', () => {
     expect(sw).toContain('cacheFirst(event)');
     // Not a literal: the rule has to name the directory THIS BUILD emits. It
     // said '/_next/static/' through the whole of W1 and matched nothing, so the
@@ -136,11 +147,46 @@ describe('sw.js', () => {
     // rendered a blank page. Every gate stayed green. Read the prefix off the
     // build config so the two cannot drift again.
     expect(sw).toContain(`url.pathname.startsWith('${ASSET_DIR}')`);
-    // Read off the nav rather than listed here: `/stats` arrived in Phase 8 and
-    // a hand-copied list is how a nav destination quietly stops being offline.
+  });
+
+  it('precaches a GENERATED list, not the nav — there is one document now', () => {
+    // W3. The list was the seven nav routes; under the SPA fallback those are
+    // seven copies of one document, and precaching a document without the
+    // assets it references is what made an offline navigation render blank.
+    // `scripts/build-sw.ts` substitutes `/`, `/offline.html` and this build's
+    // entry chunk and stylesheet, read out of Vite's manifest — so `core.md`
+    // C7's collapse to three tabs costs this file nothing, and no nav route is
+    // named here to go stale.
+    expect(sw).toContain('const SHELL = __TANGRAM_PRECACHE__');
     for (const item of NAV_ITEMS) {
-      expect(sw).toContain(`'${item.href}'`);
+      if (item.href === '/') continue;
+      expect(sw, `${item.href} must not be a literal in the worker any more`).not.toContain(
+        `'${item.href}'`,
+      );
     }
+  });
+
+  it('denies the dictionary artifact outright, brotli sibling included', () => {
+    // It is imported into OPFS (`data.md` D4); an HTTP-cache copy is the same
+    // 43 MB again on an origin the browser is willing to evict wholesale.
+    const rule = "if (/^\\/dict-.+\\.sqlite(\\.br)?$/.test(url.pathname)) return;";
+    expect(sw).toContain(rule);
+    // Anchored on the RULE, not on the first `.sqlite` in the file — which is
+    // in the header comment on line 20, so the old version of this assertion
+    // compared a prose position against a code position and was true wherever
+    // the real rule sat.
+    const deny = sw.indexOf(rule);
+    const assets = sw.indexOf(`startsWith('${ASSET_DIR}')`);
+    expect(deny).toBeGreaterThan(-1);
+    // Before the cache-first rules, so nothing can reach `respondWith` first.
+    expect(deny).toBeLessThan(assets);
+  });
+
+  it('gives /decomp.json the one runtime rule the asset prefix cannot cover', () => {
+    // It is copied verbatim out of `public/`, so it carries no content hash and
+    // `/assets/` does not match it. Cache-first is safe only because its bytes
+    // are an input to the cache's NAME (`scripts/build-sw.ts`).
+    expect(sw).toContain("url.pathname === '/decomp.json'");
   });
 
   it('answers a navigation from the network first, cache second', () => {
@@ -160,10 +206,17 @@ describe('sw.js', () => {
     expect(existsSync(resolve(root, 'public/offline.html'))).toBe(true);
     expect(sw).toContain("const OFFLINE_URL = '/offline.html'");
     expect(sw).toContain('cache.match(OFFLINE_URL)');
-    // Precached, or the fallback is a 503 the first time it is needed.
-    expect(sw).toMatch(/const SHELL = \[[^\]]*OFFLINE_URL/);
-    // The old fallback served the cached home page under the requested URL.
-    expect(sw).not.toContain("cache.match('/')");
+    // Precached, or the fallback is a 503 the first time it is needed. The
+    // list is generated now, so the assertion is on the generator's output.
+    expect(precacheList('/nonexistent/dist')).toContain('/offline.html');
+    // W3 REVERSES one earlier rule. Under Next each route had its own HTML, so
+    // serving one route's document under another's URL would have been a lie.
+    // Under the SPA fallback there is one document for every path — handing it
+    // to a never-visited route offline is exactly what the host does, and it is
+    // the difference between the app rendering and an apology rendering.
+    const body = sw.slice(sw.indexOf('async function shell('), sw.indexOf("addEventListener('fetch"));
+    expect(body).toContain("cache.match('/')");
+    expect(body.indexOf("cache.match('/')")).toBeLessThan(body.indexOf('cache.match(OFFLINE_URL)'));
   });
 
   it('only ever stores a same-origin, ok response', () => {

@@ -5,7 +5,18 @@
  * A missing data build is not an exception the UI should crash on — it is a state
  * with a banner — so the 503 is surfaced as `DictRequestError` with
  * `dataMissing === true` rather than an empty result.
+ *
+ * **The browser path goes through `apiUrl` now (docs/plans/web.md W4).** These
+ * were root-absolute `/api/…` strings, which W1's review caught: a subpath
+ * build (`vite build --base=/sub/`) booted correctly and then sent its
+ * dictionary calls to `/api/dict/hsk` rather than `/sub/api/dict/hsk`. W4 owns
+ * "the configured API base", and it is the same change — one place decides
+ * where `/api/**` is, for the gated routes and the ungated ones alike. An
+ * explicit `baseUrl` still wins, because a server or test caller naming an
+ * origin means it.
  */
+import { apiUrl } from '@/src/access/client';
+
 import type { DecompResponse } from './decomp';
 import type { SearchResult } from './search';
 import type { SegmentResult } from './segment';
@@ -34,8 +45,19 @@ export interface DictFetchOptions {
   signal?: AbortSignal;
 }
 
+/**
+ * The URL for one dictionary path.
+ *
+ * `baseUrl` is the explicit override a server or test caller passes; with none,
+ * the configured API base applies — which is `''`, i.e. same-origin, in every
+ * build that has not been given a `VITE_API_BASE`.
+ */
+function urlFor(path: string, options: DictFetchOptions): string {
+  return options.baseUrl === undefined ? apiUrl(path) : `${options.baseUrl}${path}`;
+}
+
 async function getJson<T>(path: string, options: DictFetchOptions = {}): Promise<T> {
-  const res = await fetch(`${options.baseUrl ?? ''}${path}`, {
+  const res = await fetch(urlFor(path, options), {
     signal: options.signal,
     headers: { accept: 'application/json' },
   });
@@ -110,7 +132,7 @@ export async function fetchSegment(
   text: string,
   options: DictFetchOptions & { script?: 'simp' | 'trad' } = {},
 ): Promise<SegmentResult> {
-  const res = await fetch(`${options.baseUrl ?? ''}/api/dict/segment`, {
+  const res = await fetch(urlFor('/api/dict/segment', options), {
     method: 'POST',
     signal: options.signal,
     headers: { 'content-type': 'application/json', accept: 'application/json' },

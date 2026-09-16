@@ -50,6 +50,15 @@ export default [
         URL: 'readonly',
         console: 'readonly',
         skipWaiting: 'readonly',
+        // The precache list, substituted by `scripts/build-sw.ts` (W3). The
+        // build id's placeholder sits inside a string literal and needs no
+        // declaration; this one is a bare expression, because the substituted
+        // value is a JSON array and wrapping it in a string would mean a
+        // `JSON.parse` at worker startup whose failure mode is a worker that
+        // installs and caches nothing. Declared here so the template still
+        // lints as the real worker it becomes — which is the whole reason W0
+        // put this block back.
+        __TANGRAM_PRECACHE__: 'readonly',
       },
     },
   },

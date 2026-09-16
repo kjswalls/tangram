@@ -12,10 +12,28 @@ import { createRoot } from 'react-dom/client';
 import { createBrowserRouter, RouterProvider } from 'react-router';
 
 import '@/app/globals.css';
+import { initAccess } from './access/client';
 import { routes } from './routes';
 
 const container = document.getElementById('root');
 if (!container) throw new Error('index.html is missing #root');
+
+/**
+ * The `?key=` exchange, **before the first render** (docs/plans/web.md W4).
+ *
+ * It has to run before anything can reach the API: a component that fires a
+ * gated request during its first effect would send it without the credential
+ * that is sitting in the URL bar. It also rewrites the address bar, and doing
+ * that before the router is constructed means `createBrowserRouter` reads the
+ * URL the learner is meant to be on rather than the one carrying the secret.
+ *
+ * Not awaited. The key is stripped and stored synchronously, before the first
+ * `await` inside; what the promise carries is the server's verdict, which lands
+ * a round trip later and only decides whether the credential is kept. Blocking
+ * the first render on a network round trip would put a blank screen in front of
+ * every learner who has a key, to answer a question none of them asked.
+ */
+void initAccess();
 
 /**
  * `basename` comes from the build's own base, not from a literal.

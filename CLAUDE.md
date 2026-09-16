@@ -31,7 +31,8 @@ Run from the **workspace root** unless a command says otherwise. `pnpm -F app <s
 script inside `apps/app/`.
 
 ```bash
-pnpm dev          # the app's dev server
+pnpm dev          # the app's dev server — does NOT serve /api/** any more
+pnpm dev:api      # apps/server beside it (port 8787); .env.development points the app at it
 pnpm build        # pnpm data:ensure (root) && the app's build
 pnpm preview      # serve the production build
 pnpm lint         # eslint
@@ -41,7 +42,8 @@ pnpm e2e          # playwright test                   (tests/e2e/**, builds then
 pnpm data         # generate data/*.json from upstream sources, into the ROOT data/
 pnpm data:ensure  # generate only if the artifact is missing
 pnpm sw           # generate the service worker, stamped with the build id
-pnpm smoke        # hit every route of a built, running server; fails on any non-2xx
+pnpm smoke        # the app half; needs --api-base <url> or --no-api, and says what it skipped
+                  # the API half is `pnpm -F server smoke --base-url <url>`
 ```
 
 **`pnpm data` writes to the workspace-root `data/`, always.** Two files decide that:
@@ -54,7 +56,9 @@ Neither is cwd-relative, deliberately: a cwd-relative default reads `apps/app/da
 matching default writes there, and **the two agree with each other in the wrong place while every
 test still passes.** If you touch either file, check the invariant by running it, not by reading it
 — and note that a bundler or a deployment that does not carry `pnpm-workspace.yaml` alongside
-`data/` breaks the marker walk, which is why `apps/app/tracing.config.ts` traces both.
+`data/` breaks the marker walk. `apps/app/tracing.config.ts` used to trace both and is deleted
+(`backend.md` B1/B2); the point still stands and is now `apps/server`'s, written up in
+`docs/deploy.md` §5a.
 
 Node **>= 22.22** (React Router 8's floor); pnpm 10. Playwright uses the container's Chromium via
 `executablePath: /opt/pw-browsers/chromium` — **never run `playwright install`**. `pnpm e2e` occupies
@@ -78,13 +82,13 @@ Node **>= 22.22** (React Router 8's floor); pnpm 10. Playwright uses the contain
 > - **The native dictionary stores are unproven**, and so is the web one on Apple platforms. D5a and
 >   D5b need an Android phone and a Mac with a physical iOS 26 device; register #4 (the reported
 >   10 MB per-file OPFS cap in WKWebView) is unanswered because the container has no Safari.
-> - **There are no accounts and no sync.** The AI proxy exists — B1 moved the three model routes
->   into `apps/server`, so `apps/app` has no API at all and the client calls `VITE_API_BASE`. What is
->   left is `backend.md` B2's remainder (the contract flip, and `ask-client.ts`, which §5 keeps out
->   of `packages/ai` and which is still unwritten) and B3–B7. Those need a Supabase project, a
->   domain, a host account and an SMTP sender, which `backend.md` §4 item 4 says the owner brings;
->   **no phase provisions them**, and every criterion that needs one is marked *(deploy)* and is
->   committed-and-flagged rather than run.
+> - **There are no accounts and no sync.** The AI proxy is done: B1 moved the three model routes
+>   into `apps/server` and B2 flipped the contract, so the client retrieves and grounds and **the
+>   server holds no dictionary** — `pnpm -F server smoke` is 8/8 with no `data/` and no
+>   `TANGRAM_DATA_DIR` anywhere. What is left is `backend.md` **B3–B7**, which need a Supabase
+>   project, a domain, a host account and an SMTP sender; `backend.md` §4 item 4 says the owner
+>   brings them, **no phase provisions them**, and every criterion that needs one is marked
+>   *(deploy)* and is committed-and-flagged rather than run.
 > - **Sync is declared, not implemented.** `web.md` W5 wrote `exportAll`/`importAll`, so the local
 >   backup round trip works and survives tombstones. The other **five** of wave 0's members —
 >   `changedSince`, `applyRemote`, `syncState`, `setSyncState`, `resetAccount` — still throw, and

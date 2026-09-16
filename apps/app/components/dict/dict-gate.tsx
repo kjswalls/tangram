@@ -32,29 +32,30 @@ import type { DictStatus, DictStore } from '@/lib/dict/store';
  * lost — the open resolves in a microtask and a read-then-subscribe would miss
  * a store that was already warm.
  *
- * **A silent 14 MB download is what the mount now means, and that is an open
- * question rather than a decision.** Until `data.md` D6 this call was
+ * **A silent 14 MB download is what this mount now means, and that is a known
+ * defect rather than a design.** Until `data.md` D6 this call was
  * `HttpDictStore.open()` — one HSK query against a route, the cheap successor to
- * the old `HEAD` banner probe. D6 pointed the app at the OPFS store, so the same
- * line came to mean *download the artifact*, and the `absent` screen below —
- * the one with the size on it and a start button, which
- * `components/dict/dict-status.tsx` says exists because "a silent 14 MB download
- * on a metered connection is a hostile default" — stopped being reachable on the
- * web: the effect moves the store to `preparing` on the first render.
+ * the old `HEAD` banner probe, free to make from anywhere. D6 pointed the app at
+ * the OPFS store, so the same line came to mean *download the artifact*. The
+ * line did not change; what it costs did.
  *
- * D6 did **not** change it, and the reason is that the repository contains both
- * intentions and resolving them is not a builder's call. `dict-status.tsx` and
- * `tests/e2e/core/dict-states.spec.ts` say `absent` is an explicit ask; D4 built
- * a determinate progress bar *for a 43 MB first load*, which reads as a download
- * that starts on its own; and `tests/e2e/smoke.spec.ts`'s "no gate when the
- * dictionary answers" asserts a first visit shows no gate at all. The `absent`
- * screen may also be aimed at the native first-launch copy (`asset-absent`,
- * `ios.md` register #18), where a start affordance is unambiguous.
+ * The consequence is that the `absent` screen below — the one with the size on
+ * it and a start button, which `components/dict/dict-status.tsx` says exists
+ * because "a silent 14 MB download on a metered connection is a hostile
+ * default" — is **unreachable**: the effect moves the store to `preparing` on
+ * the first render, so `onStart` has no production path that reaches it. This is
+ * asserted, not merely described: `tests/unit/dict/dict-gate.test.tsx`'s third
+ * case pins it against the real store, and whoever fixes this deletes that case.
  *
- * The machinery to implement the ask exists and is one line:
- * `getDictHandle().openStored()` here instead of `store.open()`, with the
- * button's `onStart` calling `download()`. HANDOFF.md under D6 carries this,
- * and whoever owns the product decision can spend that line.
+ * **The fix is small here and large everywhere else, which is the whole reason
+ * D6 left it.** `getDictHandle().openStored()` instead of `store.open()`, with
+ * the button's `onStart` calling `download()`, reconciles the three intentions
+ * the repository holds rather than choosing between them — a learner who has the
+ * artifact gets it back silently and sees no gate, a learner who does not gets
+ * the ask, and D4's determinate bar draws during the download the button starts.
+ * What it also does is invalidate the first-visit assumption of about 120 tests
+ * across 19 spec files, each of which opens a gated route on an origin with an
+ * empty OPFS. HANDOFF.md under D6 carries the full reckoning.
  */
 export function useDictStatus(store: DictStore = getDictStore()): DictStatus {
   const [status, setStatus] = useState<DictStatus>(() => store.status);

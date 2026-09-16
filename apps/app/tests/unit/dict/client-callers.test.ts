@@ -22,19 +22,33 @@
  * walk is what an earlier review caught, because `components/screens/today.tsx`
  * and `app/settings/settings-form.tsx` were outside it.
  *
- * **Two scope notes, both deliberate and both recorded in HANDOFF.md.**
+ * **Two scope notes, both deliberate and both recorded in HANDOFF.md's D6
+ * section.**
  *
  * *Comments count.* D6's criterion 1 is a plain `grep`, so a stale comment
  * naming a deleted route fails it. That is the right reading: a comment
  * pointing at a route that does not exist is how the next session learns
- * something false.
+ * something false. Two comments in files D6 itself wrote failed it and were
+ * corrected rather than exempted.
  *
  * *The walk stops at `apps/app`.* D6 wrote its grep as `.` at a time when the
- * repository was one deployable. It is now three, and two of the others name
- * those paths on purpose: `packages/ai/schemas.ts` — a **frozen** surface — cites
- * the deletion in its header, and `apps/server` asserts that asking the server
- * for one of them is a 404 rather than a 401, which `wave-zero.md` §10a requires
- * and which cannot be written without the string.
+ * repository was one deployable. It is now three, and **the literal grep across
+ * the workspace still returns hits** — this list is exhaustive, so a reader
+ * running the criterion as written can check it off rather than conclude the
+ * phase is unfinished:
+ *
+ *  - `packages/ai/schemas.ts` — a **frozen** surface, citing the deletion in its
+ *    header;
+ *  - `apps/server`, asserting that asking the server for one of those paths is a
+ *    404 rather than a 401, which `wave-zero.md` §10a requires and which cannot
+ *    be written without the string;
+ *  - `scripts/smoke.ts`, explaining in the past tense which deleted case used to
+ *    supply `SMOKE_ENTRY_ID`;
+ *  - `CLAUDE.md` and `HANDOFF.md`, which are prose and are not `.ts` anyway.
+ *
+ * Widening this walk past `apps/app` would therefore fail on files that are
+ * correct. The substance of the criterion — **the app** names no dictionary
+ * route — is what is enforced here.
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';

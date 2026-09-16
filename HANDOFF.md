@@ -9520,22 +9520,61 @@ exists so that an upstream data change reports as one named failure rather than 
   still doing something useful: `pnpm data` run against a live dev server is served from `data/`
   without a restart.
 
-- **The `absent` screen is still unreachable, the machinery to reach it is built and unused, and
-  that is a product question I am handing over rather than answering.** `<DictGate>`'s mount calls
-  `store.open()`. Before D6 that was one HSK query against a route; after D6 the same line means a
-  **14 MB brotli download, started without asking**. The repository holds three intentions and they
-  do not agree: `components/dict/dict-status.tsx` was drawn with an `absent` state carrying the
-  size and a button, which reads as an explicit ask; `data.md` D4 specifies a determinate progress
-  bar in front of "a 43 MB first load", which reads as automatic; and
-  `tests/e2e/smoke.spec.ts`'s "no gate when the dictionary answers" pins that a learner who has it
-  sees no gate at all. Choosing between them is not a builder's call mid-phase, so D6 kept the
-  behaviour the code already had. **What D6 did build is the one line that would change it**:
-  `WasmDictStoreHandle.openStored()` opens only if this origin already has the artifact and
-  fetches nothing (resolving to `absent` when there is nothing stored — that is a state, not an
-  error), and `download()` is the full open. Wiring the ask is `openStored()` at the mount and
-  `download()` in the button's `onStart`. The headers of `components/dict/dict-gate.tsx` and
-  `lib/dict/browser-store.ts` both point here. It is dead code until somebody spends that line,
-  deliberately and with the reason written down, rather than a half-built feature nobody documented.
+- **THE ONE DEFECT D6 SHIPS: the first 14 MB download is never asked for, and the `absent` screen
+  that exists to ask is unreachable.** Read this as a defect with a named fix, not as a design I am
+  defending. Three independent review lenses raised it and all three were right.
+
+  **What changed and why nobody noticed.** `<DictGate>`'s mount calls `store.open()`. Before D6 that
+  was `HttpDictStore.open()` — one `hskBand(1)` probe, the cheap successor to the old `HEAD` banner
+  probe, free to call from anywhere. D6 repointed `browser-store.ts` at `createWasmDictStore()`, so
+  **the same line now means "download the artifact"**. The line did not change; what it costs did.
+
+  **It is worse off the gate than on it.** `openDictStore()` is called by
+  `lib/lists/entry-source.ts` and `components/review/example-sentences.tsx`, which are deliberately
+  **outside** `<DictGate>` because PLAN.md says the learner's own data keeps working without a
+  dictionary. So a fresh install on cellular data that never opens Look up still starts the download:
+  tapping **Library** runs `ListsView`'s mount effect → `ensureMembers` → `source.band(1)` →
+  `openDictStore()`, and the Practice queue's draw does the same. Those screens have no gate, no
+  progress bar and no cancel — there is nothing on screen saying it is happening.
+
+  **What it contradicts, in this repository's own words.** `components/dict/dict-status.tsx`'s header:
+  "`absent` is an explicit ask, with the size in it … a silent 14 MB download on a metered connection
+  is a hostile default". `tests/e2e/core/dict-states.spec.ts:34` repeats it. And `dict-start`, the
+  button that ask is drawn around, has **no production path that reaches it** — the only other
+  renderers are gallery literals.
+
+  **It is also why D6's acceptance criterion 5 is only half met.** The criterion asks for a test that
+  the app boots with no dictionary and shows **`absent`** rather than throwing. `absent` is the state
+  *before* `open()`, so mounting the gate leaves it immediately and the app cannot settle there. The
+  substance — banner, not crash — is met and tested (`dict-states.spec.ts`'s "with the dictionary
+  down" block, `tests/e2e/d/dict-offline.spec.ts`, `smoke.spec.ts`'s gating case): the settled
+  no-dictionary screen is `failed`, with a reason and a retry. The literal wording is not met.
+  `apps/app/tests/unit/dict/dict-gate.test.tsx` is new and is where this stops being prose: it
+  renders the **real** `SqliteDictStore`, never opened, through the **real** gate (everything that
+  asserted `absent` before did it against a literal or the gallery's hand-written fake), proves the
+  store starts in `absent` and that mounting does not throw, and then **pins the defect** — its third
+  case asserts that the first observable frame is already `preparing` and that `dict-start` is not
+  rendered. Whoever fixes this deletes that case.
+
+  **The fix, and why D6 did not take it.** The machinery is built and tested:
+  `WasmDictStoreHandle.openStored()` opens only if this origin already has the artifact and fetches
+  nothing, resolving to `absent` when there is nothing stored (a state, not an error), and
+  `download()` is the full open. The change is `openStored()` at the gate's mount and in
+  `openDictStore()`, with `download()` in the button's `onStart` — a handful of lines, and it
+  reconciles all three intentions the repository holds rather than choosing between them: a learner
+  who has the artifact gets it back silently and sees no gate (`smoke.spec.ts`'s "no gate when the
+  dictionary answers"), a learner who does not gets the ask with the size on it
+  (`dict-status.tsx`), and D4's determinate bar draws during the download the button starts.
+
+  What stopped it is not the app code. **About 120 tests across 19 spec files open a gated route**
+  (`/` or `/read`) on a fresh origin, and they pass today only because the artifact arrives unasked
+  within a second on this box. Under an ask, each one that expects a working lookup box, a reader,
+  an ask panel or a card back has to start the download itself, because Playwright gives every test
+  an empty OPFS. That is a rewrite spanning `core.md`'s suite and most of the P-series, landing in a
+  branch that has to merge with a parallel `packages/ai/` move — a change neither D6 nor C4a would
+  be reviewed as. So: it is written here, it is pinned by a test, and it is one focused commit for
+  whoever owns it, where the spec churn is the point rather than a side effect.
+
 - **`supportEntries` loses the 274 CC-CEDICT headwords that contain no CJK, and this is a frozen
   surface I am not touching.** `readingsOf()` reaches "every row under this simplified headword"
   through `DictStore.search`, which routes on whether the query contains CJK; `OK`, `3Q`, `ACG`,
@@ -9581,10 +9620,20 @@ exists so that an upstream data change reports as one named failure rather than 
 
 ### What the adversarial review caught
 
-Two reviewers read the diff cold and in parallel — one against D6's five acceptance criteria one at
-a time, one asking only "what breaks that no test covers". Each finding below was reproduced before
-it was acted on; several others did not survive that check and are not listed. Two of these were
-real bugs in shipped behaviour and one was a test that could not fail.
+Two rounds. The first was two reviewers reading the diff cold and in parallel — one against D6's
+five acceptance criteria one at a time, one asking only "what breaks that no test covers". The
+second was a five-lens workflow, sixty-eight agents, every finding put to three independent
+skeptics prompted to refute it: twenty-one findings raised, five surviving refutation. Each
+finding below was reproduced before it was acted on; the ones that did not survive that check are
+not listed.
+
+Three of the second round's five had already been fixed by the first (the pinyin fixture, the
+smoke guards, the stale comments). The two that were new are the consent defect above — raised
+independently by two of the five lenses, which is why that entry is written the way it is — and
+the criterion-5 gap below. What is worth recording about the consent finding is that I had already
+written it down as "an open question, not a builder's call", and that framing was too soft: it is
+a defect with a named one-line fix, and the honest reason it is not fixed here is the e2e churn,
+not the ambiguity.
 
 - **The dictionary could not open offline from a cold start, which is acceptance criterion 3, and
   nothing asserted it.** `wasmRunner` fetched `dict-manifest.json` *before* touching OPFS, so with
@@ -9618,6 +9667,14 @@ real bugs in shipped behaviour and one was a test that could not fail.
   field supplies — so a store that lost 90% of its pinyin index would still have passed. Replaced
   with the full `expectFrozenList` (count, head and the ordered digest) that the hanzi side already
   used; mutation-tested by reversing the scan order, which now produces five failures.
+- **Nothing asserted D6's acceptance criterion 5 against the real store.** Everything that asserted
+  `absent` did it against a literal (`dict-status.test.tsx`) or against the gallery's hand-written
+  fake (`dict-states.spec.ts`), so a `SqliteDictStore` that started in the wrong state or threw
+  before its first frame would have left a fresh install with a blank Look up tab and every suite
+  green. `tests/unit/dict/dict-gate.test.tsx` is new and closes it: the real store class, never
+  opened, through the real gate. Writing it is also what turned the consent question above from a
+  judgement call into a measurement — the second case was written expecting `absent` and got
+  `preparing`, which is the proof that the ask is unreachable rather than merely unlikely.
 - **A second fixture lookup fell through to "nothing lost".** `gloss.test.ts`'s 200-query
   differential read `goldenSearch.gloss[query]`, and a query with no frozen answer became an empty
   expected set — nothing lost, nothing to explain, case green with no oracle at all, which is the
@@ -9649,11 +9706,16 @@ real bugs in shipped behaviour and one was a test that could not fail.
   ("the dictionary is not on this device yet" is actionable where an empty box reads as "no such
   word"), so the behaviour stands and the comment now says what the scan does still cover: a store
   that opens and then fails this one query.
+- **`client-callers.test.ts`'s header cited a HANDOFF entry that did not exist yet** and listed the
+  places outside `apps/app` that legitimately name a dictionary route without including `scripts/`,
+  which had two. Both corrected, and the list is now exhaustive and marked as such, so a reader
+  running criterion 1's literal grep can check the remaining hits off instead of concluding the
+  phase is unfinished.
 
 ### Gates
 
-`pnpm lint`, `pnpm typecheck`, `pnpm build`, `pnpm test`, `PORT=3000 pnpm preview` + `pnpm smoke`
-and `PORT=3000 pnpm e2e` — all green, 265 Playwright tests. Two ordering facts, both learned by
+`pnpm lint`, `pnpm typecheck`, `pnpm build`, `pnpm test` (1819 app + 75 server),
+`PORT=3000 pnpm preview` + `pnpm smoke` (21 ok) and `PORT=3000 pnpm e2e` (265) — all green. Two ordering facts, both learned by
 getting them wrong:
 
 - **Run `pnpm build` before `pnpm test`.** Several guards assert the bytes in `apps/app/public/`.
@@ -9663,6 +9725,24 @@ getting them wrong:
   left listening on `$PORT` from the smoke step is reused as-is, and every gallery-driven spec then
   fails against a route that is not in that build. It reads exactly like a regression in the gate
   component and is not one.
+
+**One intermittent e2e failure, recorded rather than buried.**
+`tests/e2e/full-loop.spec.ts`'s "the whole loop with i+1 sentences and free recall on" failed once
+in three full runs, at `full-loop.spec.ts:166` — a `waitForFunction` polling
+`repo.getSettings()` until three settings rows have persisted. It took 37.7 s to hit the predicate's
+**default 30 s** timeout in the suite, and passes in 11.7 s when the spec is run alone; the other
+two full runs and the isolated re-run were green. Nothing in the run that failed differed from the
+run before it except comments and one new unit test, so it is not a logic change.
+
+It is left alone, with two things written down for whoever sees it again. First, that predicate is
+the only `waitForFunction` in the file without an explicit timeout, inside a spec that sets its own
+budget to 300 s — the 30 s default is a fragility independent of D6, and `full-loop.spec.ts` is not
+this plan's file. Second, and the reason it is under D6's section at all: **the eager-open defect
+above is a plausible contributor.** That walk goes through Library and Practice, both of which now
+call `openDictStore()` and start a 43 MB OPFS import in the background, so a Dexie read is competing
+for I/O with a dictionary import in a way it was not before this phase. That is a suspicion
+supported by the code path, not a measurement — nobody has profiled it — and it is one more thing
+that the two-phase open would remove.
 
 `pnpm data` and `pnpm data:verify` were re-run from an empty `data/` after the move, and the
 artifact's sha256 is unchanged — `685ecf4c5be76933e3fdbe8a5abaae6db9774147d29e7a1b0e910f55d8a65f58`,

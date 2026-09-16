@@ -70,7 +70,7 @@ export function getDictStore(): DictStore {
 }
 
 /**
- * The app's store, opened **from storage only**.
+ * The app's store, opened, for the two consumers that are not behind the gate.
  *
  * `SqliteDictStore` refuses a query before `open()` — "the dictionary is not
  * open" — and that is right: a SQLite connection is a thing you have or do not
@@ -84,12 +84,17 @@ export function getDictStore(): DictStore {
  * data keeps working without a dictionary, so gating Practice to open one would
  * be the wrong fix; opening it where it is used is the right one.
  *
- * It is the **full** open — the same one `<DictGate>` does — and whether that is
- * right is the open question recorded in `dict-gate.tsx` and in HANDOFF.md: on
- * the web it means these two can start a 14 MB download that nobody asked for.
- * `getDictHandle().openStored()` is the one-line alternative, and it is not
- * taken here because a card back that silently has no dictionary while the
- * lookup tab downloads one would be a third behaviour nobody chose.
+ * It is the **full** open — the same one `<DictGate>` does — and that is the
+ * sharper half of the defect recorded in `dict-gate.tsx` and in HANDOFF.md.
+ * These two callers sit *outside* the gate, so there is no banner, no progress
+ * bar and no cancel anywhere on screen: a fresh install on cellular data that
+ * taps **Library** and never opens Look up still downloads 14 MB, because
+ * `ListsView`'s mount effect fills an HSK list through `source.band(1)`. The
+ * Practice queue's draw is the same path. `getDictHandle().openStored()` is the
+ * alternative and it is not taken here only because it has to be taken in both
+ * places at once, together with the e2e churn HANDOFF.md accounts for — a card
+ * back that silently has no dictionary while the lookup tab downloads one would
+ * be a third behaviour nobody chose.
  *
  * `open()` is idempotent and shares one in-flight attempt across every caller,
  * so this costs a resolved promise once the dictionary is up. It **rejects**

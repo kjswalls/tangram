@@ -11749,8 +11749,8 @@ today means the dictionary is absent, so it is **the first sentence a new learne
 
 **2 and 3. One surface for "the dictionary is not on this device yet".**
 
-It reached three tabs in three shapes, and 1,959 unit tests and 295 e2e specs passed with all three
-present, because they assert presence and not sense:
+It reached three tabs in three shapes, and **1,941 unit tests and 282 e2e specs** — the suite as it
+stood before this phase — passed with all three present, because they assert presence and not sense:
 
 | tab | what it said | where |
 |---|---|---|

@@ -74,9 +74,34 @@ function toned(pinyinNum: string): { toneless: string; toned: string } {
   return { toneless: parsed.toneless, toned: parsed.toned };
 }
 
-/** `simp|toned reading`, lower-cased, ü folded — what makes two entries "the same reading". */
+/**
+ * `simp|trad|toned reading`, lower-cased, ü folded — what makes two entries the
+ * same *word under the same reading*, which is what a picker option is.
+ *
+ * **`abe6793` keyed this on `simp|toned` and it was wrong, in a way that lost
+ * words silently.** Its comment justified the fold as "CC-CEDICT's extra rows
+ * for the same word and reading — a traditional variant, a capitalised proper
+ * noun". Measured against the shipped artifact, that is not what it folded.
+ * 面 `mian4` is **three** rows: 面 (face), 麵 (flour, noodles) and 麪 (a variant
+ * of 麵). The first two are different words with different traditional
+ * headwords and `is_variant = 0` on both. Under the old key all three collapsed
+ * to one option — and because `import-list.tsx` only renders the picker when
+ * `options.length > 1`, the learner was not merely defaulted to "face", they
+ * were given **no way to choose "noodles" at all**, and the list stored the
+ * wrong `entryId` without saying so. 历 (calendar / history) and 里 (lining /
+ * a li, neighbourhood) collapse the same way; 台 loses platform, desk and
+ * typhoon to "(classical) you".
+ *
+ * Keying on the traditional headword as well separates the words and still
+ * folds what the comment meant: `里|里[Li3]` (the surname) and `里|里[li3]` share
+ * a key because `readingKeys` lower-cases, and so do `干|干[Gan1]` and
+ * `干|干[gan1]`.
+ *
+ * The key is an `<option>` value and nothing reads it for meaning, so the shape
+ * is free to be whatever makes two options distinct.
+ */
 export function optionKey(entry: Entry): string {
-  return `${entry.simp}|${toned(entry.pinyinNum).toned}`;
+  return `${entry.simp}|${entry.trad}|${toned(entry.pinyinNum).toned}`;
 }
 
 /**
@@ -86,6 +111,15 @@ export function optionKey(entry: Entry): string {
  * `alt` is the other script from a `simp[trad]` headword: candidates that do
  * not spell it are dropped, unless that would leave nothing — a Pleco export
  * that disagrees with CC-CEDICT about a variant still deserves a match.
+ *
+ * **A shadowed variant is dropped**, and this is the fold `optionKey`'s comment
+ * used to claim. CC-CEDICT carries cross-reference rows — 麪 "variant of 麵",
+ * 裏 "variant of 裡", 歴 "old variant of 歷" — and offering one as a choice asks
+ * the learner to decide something the dictionary has already decided. So a row
+ * with `isVariant` is dropped **only when a non-variant row survives under the
+ * same headword and reading**; a word that exists in CC-CEDICT *only* as a
+ * variant still resolves, because dropping it would lose the word rather than
+ * the bookkeeping.
  */
 export function optionsFor(entries: readonly Entry[], alt?: string): ReadingOption[] {
   let pool = entries;
@@ -93,9 +127,12 @@ export function optionsFor(entries: readonly Entry[], alt?: string): ReadingOpti
     const spelled = entries.filter((entry) => entry.simp === alt || entry.trad === alt);
     if (spelled.length > 0) pool = spelled;
   }
+  const shadow = (entry: Entry) => `${entry.simp}|${toned(entry.pinyinNum).toned}`;
+  const covered = new Set(pool.filter((entry) => !entry.isVariant).map(shadow));
   const seen = new Set<string>();
   const options: ReadingOption[] = [];
   for (const entry of pool) {
+    if (entry.isVariant && covered.has(shadow(entry))) continue;
     const key = optionKey(entry);
     if (seen.has(key)) continue;
     seen.add(key);

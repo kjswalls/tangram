@@ -729,7 +729,7 @@ export class SqliteDictStore implements DictStore {
     if (asks.length === 0) return { dictVersion: opened.meta.dictVersion, results: [] };
 
     return this.#cache.take(
-      `resolve:${asks.map((ask) => ask.word).join(' ')}`,
+      `resolve:${asks.length}:${asks.map((ask) => ask.word).join('\u0000')}`,
       async () => {
         const hanzi = [...new Set(asks.filter((ask) => ask.kind === 'hanzi').map((a) => a.word))];
         const tonedKeys = [...new Set(asks.flatMap((ask) => (ask.toned ? [ask.toned] : [])))];

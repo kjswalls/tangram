@@ -46,7 +46,7 @@ test.describe('import a list', () => {
     // 了 is a polyphone: a picker, defaulting to the most frequent reading (le).
     const picker = page.getByLabel('Reading for 了');
     await expect(picker).toBeVisible();
-    await expect(picker).toHaveValue('了|le');
+    await expect(picker).toHaveValue('了|了|le');
     expect(await picker.locator('option').count()).toBeGreaterThan(1);
     // The non-word has no picker and is named as unmatched in the summary.
     await expect(page.getByLabel('Reading for xyzzyq')).toHaveCount(0);
@@ -94,7 +94,7 @@ test.describe('import a list', () => {
     await page.getByTestId('import-preview').click();
     await expect(page.getByTestId('import-row')).toHaveCount(2, { timeout: 60_000 });
     await expect(page.getByTestId('import-summary')).toContainText('Pleco');
-    await expect(page.getByLabel('Reading for 了')).toHaveValue('了|liao3');
+    await expect(page.getByLabel('Reading for 了')).toHaveValue('了|了|liao3');
     await page.getByTestId('import-submit').click();
     await expect(page.getByTestId('import-result')).toContainText('Added 2 words');
     await expect(page.getByTestId('list-member')).toHaveCount(2);

@@ -1,7 +1,7 @@
 'use client';
 
 import { Link } from 'react-router';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 
 import { Badge, type BadgeTone } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -25,6 +25,21 @@ const FORMAT_LABELS: Record<ImportFormat, string> = {
   pleco: 'a Pleco flashcard export',
   anki: 'an Anki notes export',
 };
+
+/**
+ * How many preview rows are drawn at once.
+ *
+ * Nothing bounds a paste. `RESOLVE_MAX_WORDS` and `RESOLVE_CHUNK` bound what
+ * reaches SQLite, but a 5,000-line Pleco export used to render 5,000 `<li>`s,
+ * many of them carrying a `<select>` of a dozen `<option>`s — and `planImport`
+ * re-ran over all 5,000 on every pick. The page, not the plan: the plan still
+ * covers every row, so the counts, the Import button and the write are about
+ * the whole paste however few of it is on screen.
+ *
+ * 50, and "Show more", is what `components/lists/list-detail.tsx` already does
+ * with HSK 7–9's 5,622 members. One pattern for "too many rows to draw".
+ */
+const PREVIEW_PAGE = 50;
 
 const STATUS_LABELS: Record<RowStatus, { label: string; tone: BadgeTone }> = {
   add: { label: 'Ready', tone: 'accent' },
@@ -82,6 +97,7 @@ export function ImportList({ target, lists = [], onImported, resolver }: ImportL
   const [busy, setBusy] = useState<'preview' | 'import' | null>(null);
   const [error, setError] = useState<string>();
   const [result, setResult] = useState<ImportResult>();
+  const [shown, setShown] = useState(PREVIEW_PAGE);
 
   const chosenExisting =
     target ?? (mode === 'existing' ? customLists.find((list) => list.id === existingId) : undefined);
@@ -92,34 +108,70 @@ export function ImportList({ target, lists = [], onImported, resolver }: ImportL
   );
   const ambiguous = preview?.rows.filter((row) => row.options.length > 1).length ?? 0;
 
+  /**
+   * **A preview describes one paste and one target, and it has to keep doing
+   * so while it is in flight.**
+   *
+   * A lookup is not instant — on a cold page it waits for the dictionary to
+   * open — and everything that decides what a preview *means* stays editable
+   * while it runs: the textarea, the new/existing radios, and the list to add
+   * to. Without this counter an answer that started against list A landed
+   * against list B, carrying A's membership with it, and every word B already
+   * shared with A was marked "Already in list" and left out of the write. The
+   * learner was then told "skipped 6 already there" about a list that had none
+   * of them. The same shape applied to the textarea: `resetPreview` only fired
+   * `if (preview)`, so an edit made during the **first** lookup changed nothing
+   * and the stale answer described the old paste.
+   *
+   * So every lookup takes a token, anything that invalidates a preview bumps
+   * it, and an answer that comes back stale is dropped rather than shown. It is
+   * a counter rather than an `AbortController` because `Resolver` is a plain
+   * function by design (it is what makes the preview testable against a map),
+   * and the work being abandoned is one already-issued query.
+   */
+  const previewRun = useRef(0);
+
   const resetPreview = () => {
+    previewRun.current += 1;
     setPreview(undefined);
     setSelections({});
     setResult(undefined);
+    setShown(PREVIEW_PAGE);
+    // An Import failure has to clear with the paste that caused it, or a banner
+    // about the last attempt sits over a preview that succeeded.
+    setError(undefined);
+    setBusy(null);
   };
 
   const runPreview = async () => {
+    const token = (previewRun.current += 1);
+    const current = () => previewRun.current === token;
     setError(undefined);
     setResult(undefined);
-    const parsed = parseImport(text);
-    if (parsed.rows.length === 0) {
-      setError('Nothing to import — paste one word per line.');
-      return;
-    }
     setBusy('preview');
     try {
+      // Inside the `try`: the parsers are pure and linear, but a throw out here
+      // would be an unhandled rejection with no banner rather than a message.
+      const parsed = parseImport(text);
+      if (parsed.rows.length === 0) {
+        setError('Nothing to import — paste one word per line.');
+        return;
+      }
       const [built, members] = await Promise.all([
         buildPreview(parsed, resolver ?? getImportResolver()),
         chosenExisting ? getRepository().listMembers(chosenExisting.id) : Promise.resolve([]),
       ]);
+      if (!current()) return;
       setPresent(new Set(members.map((member) => member.entryId)));
       setSelections({});
+      setShown(PREVIEW_PAGE);
       setPreview(built);
     } catch (cause) {
+      if (!current()) return;
       // The dictionary's absence is said once, by the page. See the header.
       setError(isDictUnavailable(cause) ? undefined : errorText(cause));
     } finally {
-      setBusy(null);
+      if (current()) setBusy(null);
     }
   };
 
@@ -189,7 +241,9 @@ export function ImportList({ target, lists = [], onImported, resolver }: ImportL
         spellCheck={false}
         onChange={(event) => {
           setText(event.target.value);
-          if (preview) resetPreview();
+          // Unconditional. The old `if (preview)` guard did nothing during the
+          // first lookup, which is exactly when it was needed.
+          resetPreview();
         }}
         className="w-full rounded-lg border border-border bg-surface p-3 font-mono text-sm placeholder:text-muted focus:border-accent focus:outline-none"
       />
@@ -289,7 +343,7 @@ export function ImportList({ target, lists = [], onImported, resolver }: ImportL
           </p>
 
           <ul className="flex flex-col divide-y divide-border">
-            {preview.rows.map((row) => {
+            {preview.rows.slice(0, shown).map((row) => {
               const planned = plan.rows[row.index];
               const selectedKey = selections[row.index] ?? row.defaultKey;
               const option =
@@ -352,6 +406,19 @@ export function ImportList({ target, lists = [], onImported, resolver }: ImportL
               );
             })}
           </ul>
+
+          {shown < preview.rows.length ? (
+            <div>
+              <Button
+                variant="ghost"
+                size="sm"
+                data-testid="import-show-more"
+                onClick={() => setShown((value) => value + PREVIEW_PAGE)}
+              >
+                Show more ({preview.rows.length - shown} left)
+              </Button>
+            </div>
+          ) : null}
 
           <div className="flex flex-wrap items-center gap-2">
             <Button

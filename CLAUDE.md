@@ -112,10 +112,12 @@ Node **>= 22.22** (React Router 8's floor); pnpm 10. Playwright uses the contain
 >   89–100 ms) and are pinned by name at a 200 ms ceiling. `wave-zero.md` §10e is why the cap was
 >   not lowered; any *other* interactive query over 50 ms fails the suite.
 >
-> - **The list importer is written, and it is not in this tree.** `main`'s `abe6793` carries 1,654
->   lines of it — paste, Pleco and Anki — landed after the migration forked and never ported.
->   `wave-zero.md` §8a says what ports, what is a rewrite, and what to delete. Still deferred for
->   v1; start from `git show abe6793` rather than from nothing.
+> - **The list importer is in this tree now** — `wave-zero.md` §8a's port of `main`'s `abe6793`,
+>   which the owner reinstated for v1 on 2026-09-18. Paste, Pleco and Anki exports resolve through
+>   `DictStore.resolve`, which is implemented; it is **not** one of the members that still throws.
+>   Two things a reader of `abe6793` should not carry over: its `/api/dict/*` round trip is gone
+>   (the client queries the dictionary in-process), and its picker folded two different words under
+>   one option — 面 could not be chosen as "noodles" — which the port fixes. See HANDOFF.md.
 >
 > `HANDOFF.md` has the full list with what each phase owes. Check `package.json` rather than
 > assuming.

@@ -31,6 +31,7 @@ import {
   RESOLVE_MAX_WORD_CHARS,
   ResolveLimitError,
 } from '@/lib/dict/resolve';
+import { getDictIndex, type DictIndex } from './json-oracle';
 import { dictArtifactPath, requireDictData } from './data-required';
 
 requireDictData();
@@ -48,6 +49,11 @@ beforeAll(async () => {
 afterAll(async () => {
   await store.close?.();
 });
+
+/** The JSON index, for the one case that needs the busiest reading keys. */
+function index(): DictIndex {
+  return getDictIndex();
+}
 
 /** One word's answer, for the cases that ask about exactly one. */
 async function one(word: string) {
@@ -233,6 +239,60 @@ describe('the whole paste at once', () => {
   });
 });
 
+describe('what a pathological paste costs, measured rather than assumed', () => {
+  /**
+   * **The one number `wave-zero.md` §8b's bridge argument would have wanted and
+   * did not have.** `resolve` caps how many words it takes; it puts no `LIMIT`
+   * on how many entries come back, because a limit here would be exactly the
+   * silent truncation the caps exist to prevent — a candidate dropped from a
+   * picker is a reading the learner is never offered.
+   *
+   * So the cost is bounded by the data instead, and this records it. The worst
+   * possible request is the thousand commonest toneless reading keys — a paste
+   * of a thousand bare syllables, `shi`, `li`, `yi` — which is not a list
+   * anybody has, but it is the ceiling.
+   *
+   * Measured on this artifact: **18,551 entries, ≈4.7 MB of JSON, ~200 ms** in
+   * Node. A realistic seven-line paste is 5.8 KB and ~1 ms. Two things make the
+   * ceiling survivable rather than merely rare: the importer chunks at
+   * `RESOLVE_CHUNK` (500), so it never asks for the whole cap at once, and this
+   * is a button press behind "Looking up…", not the keystroke path `data.md`
+   * D4's 50 ms interactive budget governs.
+   *
+   * The ceiling here is generous on purpose — it is a tripwire for a schema or
+   * projection change that makes the payload grow by an order of magnitude, not
+   * a performance assertion. If it fires, the lever nobody has pulled is a
+   * two-pass query: rank on narrow columns, then fetch full rows for the
+   * survivors. It costs a second round trip, which is the budget §8b is written
+   * around, so measure before believing it.
+   */
+  it('answers the worst possible paste, and its size is on the record', async () => {
+    const keys = [...index().byPinyinToneless.keys];
+    const worst = keys
+      .map((key, i) => ({ key, n: index().byPinyinToneless.ids[i].length }))
+      .sort((a, b) => b.n - a.n)
+      .slice(0, RESOLVE_MAX_WORDS)
+      .map((row) => row.key);
+    expect(worst).toHaveLength(RESOLVE_MAX_WORDS);
+
+    const answer = await store.resolve(worst);
+    const entries = answer.results.reduce((total, row) => total + row.entries.length, 0);
+    // Every word answered, none truncated.
+    expect(answer.results).toHaveLength(RESOLVE_MAX_WORDS);
+    expect(entries).toBeGreaterThan(10_000);
+    const megabytes = Buffer.byteLength(JSON.stringify(answer), 'utf8') / 1e6;
+    expect(megabytes, `the worst paste now serialises to ${megabytes.toFixed(1)} MB`).toBeLessThan(
+      8,
+    );
+  });
+
+  it('and a realistic paste costs almost nothing', async () => {
+    const answer = await store.resolve(['你好', '打算', '学习', '謝謝', 'dasuan', 'le', '跑步']);
+    const kilobytes = Buffer.byteLength(JSON.stringify(answer), 'utf8') / 1e3;
+    expect(kilobytes, `a seven-line paste is ${kilobytes.toFixed(1)} kB`).toBeLessThan(64);
+  });
+});
+
 describe('the caps reject rather than truncate', () => {
   /**
    * A silent truncation is a half-import the learner finds out about by
@@ -268,6 +328,26 @@ describe('cancellation', () => {
   it('rejects an already-aborted request before it reaches the database', async () => {
     const aborted = AbortSignal.abort();
     await expect(store.resolve(['你好'], { signal: aborted })).rejects.toThrow();
+  });
+
+  /**
+   * And it rejects **even when the answer is warm**, which is the property the
+   * up-front check actually buys. A call that rejects when cold and resolves
+   * when cached is the worst kind of flake: right on the first paste and wrong
+   * on the second. `search` is guarded the same way for the same reason.
+   *
+   * The paste is deliberately its own, and asked for once first, so the cache
+   * hit is the thing under test rather than an accident of what an earlier case
+   * happened to leave in a 64-entry LRU.
+   */
+  it('rejects an aborted request even when the answer is already cached', async () => {
+    const paste = ['謝謝', '再见', 'zaijian'];
+    const warm = await store.resolve(paste);
+    expect(warm.results.some((row) => row.entries.length > 0)).toBe(true);
+
+    const controller = new AbortController();
+    controller.abort();
+    await expect(store.resolve(paste, { signal: controller.signal })).rejects.toThrow();
   });
 
   /**

@@ -14,7 +14,7 @@
  *
  * The dictionary is injected, so this runs in jsdom with no artifact.
  */
-import { fireEvent, render, screen, waitFor } from '../render';
+import { act, fireEvent, render, screen, waitFor } from '../render';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ImportList } from '@/components/lists/import-list';
@@ -101,7 +101,7 @@ describe('nothing is written until the preview has been read', () => {
     // 了 is the ambiguous one and the learner can see it *and* change it before
     // anything is added — criterion 4, and the reason there is a preview at all.
     const picker = screen.getByLabelText('Reading for 了');
-    expect((picker as HTMLSelectElement).value).toBe('了|le');
+    expect((picker as HTMLSelectElement).value).toBe('了|了|le');
     expect(picker.querySelectorAll('option')).toHaveLength(2);
     expect(screen.queryByLabelText('Reading for xyzzyq')).toBeNull();
     expect(screen.getByTestId('import-summary').textContent).toContain('1 not in the dictionary');
@@ -116,7 +116,7 @@ describe('nothing is written until the preview has been read', () => {
     render(<ImportList target={list} resolver={resolver} />);
 
     await preview('了');
-    fireEvent.change(screen.getByLabelText('Reading for 了'), { target: { value: '了|liao3' } });
+    fireEvent.change(screen.getByLabelText('Reading for 了'), { target: { value: '了|了|liao3' } });
     fireEvent.click(screen.getByTestId('import-submit'));
 
     await waitFor(() => expect(screen.getByTestId('import-result')).toBeTruthy());
@@ -275,5 +275,145 @@ describe('choosing where it goes', () => {
     render(<ImportList target={await customList()} resolver={resolver} />);
     expect(screen.queryByTestId('import-open')).toBeNull();
     expect(screen.getByLabelText('Words to import')).toBeTruthy();
+  });
+});
+
+describe('a preview describes the paste and the target it was asked for', () => {
+  /** A resolver that does not answer until the test says so. */
+  function deferred() {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const calls: string[][] = [];
+    const resolve: Resolver = async (words) => {
+      calls.push(words);
+      await gate;
+      return {
+        dictVersion: 'test-snapshot',
+        results: words.map((word) => ({
+          word,
+          via: DICT[word] ? ('hanzi' as const) : ('none' as const),
+          entries: DICT[word] ?? [],
+        })),
+      };
+    };
+    return { resolve, release, calls };
+  }
+
+  /**
+   * Let every pending promise land.
+   *
+   * These cases assert that something does **not** appear, and "not yet" is not
+   * "never": a bare `waitFor` returns the moment its own condition holds, which
+   * can be before the stale answer has even been delivered. So the test drains
+   * the queue first and then asserts — otherwise it passes against the very bug
+   * it is written for, which is what the first draft of it did.
+   */
+  async function settle() {
+    for (let i = 0; i < 5; i += 1) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+  }
+
+  /**
+   * The one that silently dropped words. A lookup started against list A, the
+   * learner switched the target to B while it ran, and the answer landed
+   * carrying **A's** membership — so every word B happened to share with A was
+   * marked "Already in list" and left out of the write, and the result line
+   * said "skipped 1 already there" about a list that had none of them.
+   */
+  it('drops an answer whose target changed while it was in flight', async () => {
+    const repo = getRepository();
+    const a = await customList('A');
+    const b = await customList('B');
+    await repo.addListMembers(a.id, [NIHAO.id]);
+
+    const { resolve, release } = deferred();
+    render(<ImportList lists={[a, b]} resolver={resolve} />);
+    fireEvent.click(screen.getByTestId('import-open'));
+    fireEvent.click(screen.getByLabelText('Add to an existing list'));
+    fireEvent.change(screen.getByLabelText('Add to list'), { target: { value: a.id } });
+    fireEvent.change(screen.getByLabelText('Words to import'), { target: { value: '你好' } });
+    fireEvent.click(screen.getByTestId('import-preview'));
+
+    // Mid-flight, the learner picks the other list.
+    fireEvent.change(screen.getByLabelText('Add to list'), { target: { value: b.id } });
+    release();
+    await settle();
+    // A's membership never reached the screen. Nothing is shown, so nothing
+    // can be submitted against the wrong list.
+    expect(screen.queryAllByTestId('import-row')).toHaveLength(0);
+    expect((screen.getByTestId('import-preview') as HTMLButtonElement).disabled).toBe(false);
+
+    // Previewing again against B says what is true of B: 你好 is not in it.
+    fireEvent.click(screen.getByTestId('import-preview'));
+    await waitFor(() => expect(screen.getAllByTestId('import-row')).toHaveLength(1));
+    expect(screen.getAllByTestId('import-row')[0].getAttribute('data-status')).toBe('add');
+  });
+
+  /**
+   * The same shape on the textarea, and the reason the old `if (preview)` guard
+   * did not cover it: during the **first** lookup there is no preview yet, so
+   * the guard did nothing and the stale answer described the old paste.
+   */
+  it('drops an answer whose paste changed while it was in flight', async () => {
+    const list = await customList();
+    const { resolve, release } = deferred();
+    render(<ImportList target={list} resolver={resolve} />);
+
+    fireEvent.change(screen.getByLabelText('Words to import'), { target: { value: '你好' } });
+    fireEvent.click(screen.getByTestId('import-preview'));
+    fireEvent.change(screen.getByLabelText('Words to import'), { target: { value: '了' } });
+    release();
+    await settle();
+
+    expect(screen.queryAllByTestId('import-row')).toHaveLength(0);
+    expect(screen.queryByTestId('import-submit')).toBeNull();
+    expect((screen.getByTestId('import-preview') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('clears a previous failure when the paste changes', async () => {
+    const list = await customList();
+    const broken: Resolver = () => Promise.reject(new Error('the artifact is schema 0'));
+    render(<ImportList target={list} resolver={broken} />);
+    fireEvent.change(screen.getByLabelText('Words to import'), { target: { value: '你好' } });
+    fireEvent.click(screen.getByTestId('import-preview'));
+    await waitFor(() => expect(screen.getByTestId('import-error')).toBeTruthy());
+    fireEvent.change(screen.getByLabelText('Words to import'), { target: { value: '了' } });
+    expect(screen.queryByTestId('import-error')).toBeNull();
+  });
+});
+
+describe('a paste too long to draw', () => {
+  /**
+   * Nothing bounds a paste, and a 5,000-line Pleco export used to render 5,000
+   * rows — many of them carrying a `<select>` — and re-plan all of them on
+   * every pick. The page is bounded; the **plan** is not, so the counts and the
+   * write are still about the whole paste.
+   */
+  it('draws a page of rows but plans and imports all of them', async () => {
+    const list = await customList();
+    const repo = getRepository();
+    // 120 distinct words: 你好 and 了 resolve, the rest do not.
+    const words = ['你好', '了', ...Array.from({ length: 118 }, (_, i) => `词${i}`)];
+    render(<ImportList target={list} resolver={resolver} />);
+    await preview(words.join('\n'));
+
+    expect(screen.getAllByTestId('import-row')).toHaveLength(50);
+    expect(screen.getByTestId('import-summary').textContent).toContain('2 to add');
+    expect(screen.getByTestId('import-summary').textContent).toContain('118 not in the dictionary');
+
+    fireEvent.click(screen.getByTestId('import-show-more'));
+    expect(screen.getAllByTestId('import-row')).toHaveLength(100);
+
+    // And the write covers the whole paste, not the drawn page.
+    fireEvent.click(screen.getByTestId('import-submit'));
+    await waitFor(() => expect(screen.getByTestId('import-result')).toBeTruthy());
+    expect((await repo.listMembers(list.id)).map((row) => row.entryId).sort()).toEqual(
+      [LE.id, NIHAO.id].sort(),
+    );
   });
 });

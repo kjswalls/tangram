@@ -30,7 +30,34 @@ in a file is reviewable and a rule in a text box is not.
 | Root directory | `apps/app` | `vercel.json` lives there, and Vercel reads it from the root directory |
 | Include files outside the root directory | **on** | `data/`, `scripts/` and `packages/` are at the workspace root and the build reads all three |
 | Framework preset | **Other** / none | `vercel.json` sets `"framework": null`. There is no framework |
-| Node.js version | 22.x | `engines` is `>=22.22`; `.nvmrc` says 22.22 |
+| Node.js version | **22.x** | Set it in the dashboard. See the warning below: neither `engines` nor `.nvmrc` sets it for you |
+
+> **The two settings Vercel will get wrong on its own, and how each one fails.**
+>
+> **Node.** Vercel picks the build image's Node from the dashboard setting or from
+> `engines.node` — but only when `engines.node` is a bare major range it
+> recognises (`22.x`, `>=22`). Ours is `>=22.22`, because 22.22 is React Router
+> 8's actual floor and a major range cannot express it, so Vercel does not read
+> it and falls back to the project setting. On a project created before Node 22
+> was the default, that setting is 20.x, and the build dies during install with
+>
+> ```
+> ERR_PNPM_UNSUPPORTED_ENGINE  Unsupported environment (bad pnpm and/or Node.js version)
+> ```
+>
+> which is `.npmrc`'s `engine-strict=true` doing exactly the job its comment
+> claims — the guard fired, the message just does not name the setting to change.
+> **Set Node.js Version to 22.x in Project Settings.** 24.x also satisfies
+> `>=22.22` but nothing in this repo has been run on it.
+>
+> **pnpm.** `pnpm-lock.yaml` says `lockfileVersion: '9.0'`, which both pnpm 9
+> and pnpm 10 write, so Vercel breaks the tie on the project's creation date:
+> projects created before pnpm 10 support get **pnpm 9**. The `packageManager`
+> field in the root `package.json` is ignored by the builder unless Corepack is
+> on, so pin it by setting `ENABLE_EXPERIMENTAL_COREPACK=1` as a project
+> environment variable. This is hygiene, not a blocker — pnpm 9 ignores
+> `pnpm-workspace.yaml`'s `onlyBuiltDependencies` rather than rejecting it, and
+> runs every build script, so `esbuild` and `unrs-resolver` still compile.
 
 Install is the detected `pnpm install` at the workspace root. The build command
 and the output directory come from `vercel.json`:

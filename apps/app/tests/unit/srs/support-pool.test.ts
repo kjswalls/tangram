@@ -193,6 +193,9 @@ describe('the band read is bounded', () => {
       search: (query, options) => store.search(query, options),
       segment: (text, options) => store.segment(text, options),
       readingCount: (simp) => store.readingCount(simp),
+      resolve: () => {
+        throw new Error('wave-zero.md §8b: declared, not implemented');
+      },
       wordsContaining: (ch, options) => store.wordsContaining(ch, options),
       hskBand: async (band, options) => {
         const rows = await store.hskBand(band, options);

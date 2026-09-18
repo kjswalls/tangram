@@ -73,6 +73,10 @@ export class FakeDictStore implements DictStore {
   async readingCount(): Promise<number> {
     return 0;
   }
+  async resolve(): Promise<never> {
+    throw new Error('wave-zero.md §8b: declared, not implemented');
+  }
+
   async wordsContaining(): Promise<DictEntry[]> {
     return [];
   }

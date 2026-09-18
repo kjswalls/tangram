@@ -685,6 +685,22 @@ export class SqliteDictStore implements DictStore {
     });
   }
 
+  /**
+   * Declared, not implemented — `wave-zero.md` §8b.
+   *
+   * It throws rather than returning `{ dictVersion, results: [] }` for the same
+   * reason the five unimplemented `Repository` members throw (wave 0 §5): a
+   * plausible empty value is an importer that silently resolves nothing, and a
+   * paste of 300 words that finds none of them looks like a bad dictionary
+   * rather than like missing code. The guard in
+   * `tests/unit/dict/resolve-frozen.test.ts` holds this.
+   */
+  readonly resolve: DictStore['resolve'] = async () => {
+    throw new Error(
+      'DictStore.resolve is declared but not implemented — the list importer port owns it (wave-zero.md §8b)',
+    );
+  };
+
   // -------------------------------------------------------------------------
   // Search
   // -------------------------------------------------------------------------

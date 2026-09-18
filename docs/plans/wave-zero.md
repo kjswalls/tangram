@@ -302,15 +302,67 @@ repository and had to be looked at.
 | `app/api/dict/resolve/route.ts` (56) + `lib/dict/client.ts` (28) | **Delete.** There are no Next route handlers, and since D6 the client queries the dictionary in-process. The round trip these exist to make is gone |
 | `tests/e2e/p3/import-list.spec.ts` (85) | Ports; rehomed, and it joins the census in `tests/unit/shell/tab-routes.test.ts` |
 
-**The ruling.** Still deferred for v1 — §8 stands, and nothing here is a reason to widen the current
-wave. But it is a port of reviewed, tested code against one new seam, not a feature to write from
-nothing, and `core.md` is where it belongs when it is scheduled. Whoever picks it up starts from
-`git show abe6793`, reachable forever through the merge that made the workspace tree `main`'s.
+**The ruling, as first written.** *Still deferred for v1 — §8 stands.* **Reversed by the owner the
+same day**, on being shown that the code exists: *"we should keep the list importer."* §8 and the
+first half of this section are superseded on that point. It is scheduled; §8b is the seam it needs.
+Whoever builds it starts from `git show abe6793`, reachable forever through the merge that made the
+workspace tree `main`'s.
 
 **The process failure, since it is the second of its kind.** The provenance note at the foot of this
 file says a ruling is landed only when it reaches the branch builders cut from. This is the same
 failure pointed the other way: **work landed on a branch the build had stopped reading, and no one
 compared the two trees for eleven weeks.** A fork is not a cutover. The cutover is the merge.
+
+## 8b. `DictStore.resolve` — a frozen surface widened, deliberately — SETTLED 2026-09-18
+
+Keeping the importer needs one thing no build session is allowed to do: `DictStore` is frozen by
+`data.md` D1's first commit, and the importer cannot be built on what is there.
+
+**Why not `search`.** `search` ranks *across* headwords and pages at `SEARCH_PAGE_SIZE` (50). That is
+exactly right for a person typing and exactly wrong for a 300-line paste, where every line needs its
+own candidate set and `打` must not become 打算. `wordsContaining` can be abused into the hanzi half
+— take every headword containing the first character and filter — but it has its own `limit`, it
+costs a posting-list decode per word, and there is no pinyin equivalent at all. `entries` needs
+`EntryId`s, which is what the importer is trying to find. There is no existing member that answers
+the question.
+
+**Why bulk.** On the OPFS worker and the Capacitor bridge a per-word call makes a paste hundreds of
+round trips. `data.md` D6 already refused to serialise an HSK band whole for the same reason.
+
+**The declaration, landed alone and first** (`lib/dict/store.ts`), with `ResolveVia`, `ResolvedWord`
+and `ResolveResult` beside it:
+
+```ts
+resolve(
+  words: readonly string[],
+  options?: { signal?: AbortSignal },
+): Promise<ResolveResult>;
+```
+
+`signal` rides in the options rather than as a third parameter, for the same reason `SearchOptions`
+carries it: the arity of a frozen member is part of the freeze.
+
+**`SqliteDictStore.resolve` throws.** Not `{ dictVersion, results: [] }` — that type-checks, passes
+any shape assertion, and ships an importer that finds nothing in every paste, which reads on screen
+as a broken dictionary rather than as missing code. Same reasoning as wave 0 §5's five `Repository`
+members, and the same kind of guard: `tests/unit/dict/resolve-frozen.test.ts`. That guard was
+mutation-tested — replacing the throw with an empty result fails two of its three cases — because a
+freeze nobody can falsify is a freeze that has already thawed.
+
+**The caps are settled too, and they are not in `store.ts`.** `RESOLVE_MAX_WORDS` (1,000) and
+`RESOLVE_MAX_WORD_CHARS` (200) come over from `abe6793` unchanged, because a port that picks its own
+numbers silently changes how a large paste is batched. They live in `lib/dict/resolve.ts`, not beside
+the declaration they belong to, because `store.ts` is a **types-only** module: 
+`tests/unit/dict/store-contract.test.ts` asserts it emits nothing at runtime, so importing the
+dictionary's contract can never pull code into a browser bundle. Two `export const`s were enough to
+break that, and putting them there is exactly what this session did — the test caught it on the
+first full run. Worth recording, because the invariant is not obvious from reading the file.
+
+**What this costs everyone else:** eight fakes gained a throwing `resolve`. None of them call it.
+
+**What the porting phase owns:** `SqliteDictStore.resolve` for real, the parsers and their 311 lines
+of tests moved almost unchanged, the picker UI, the Library wiring, and the e2e spec — which also
+joins the census in `tests/unit/shell/tab-routes.test.ts`. It does **not** own this signature.
 
 ## 9. The Practice-queue merge — ASSIGNED (issue 10)
 

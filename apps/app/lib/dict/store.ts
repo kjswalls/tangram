@@ -36,6 +36,27 @@ export type DictStatus =
   | { state: 'ready'; version: string }
   | { state: 'failed'; reason: 'download' | 'import' | 'storage' | 'corrupt'; message: string };
 
+/**
+ * Which rule matched a word the list importer asked about (`wave-zero.md` §8b).
+ * `none` means the dictionary does not have it under any reading.
+ */
+export type ResolveVia = 'hanzi' | 'pinyin' | 'none';
+
+export interface ResolvedWord {
+  /** The word as asked, trimmed — so a picker can show what the learner wrote. */
+  word: string;
+  via: ResolveVia;
+  /** Every candidate, most frequent first; empty when `via` is `none`. */
+  entries: DictEntry[];
+}
+
+export interface ResolveResult {
+  /** The artifact version the entries came from, for the same reason `search` carries it. */
+  dictVersion: string;
+  /** One per word asked, in the order asked. */
+  results: ResolvedWord[];
+}
+
 export interface DictStore {
   readonly status: DictStatus;
   subscribe(listener: (status: DictStatus) => void): () => void;
@@ -58,4 +79,29 @@ export interface DictStore {
     ch: string,
     options?: { script?: SegmentScript; limit?: number },
   ): Promise<DictEntry[]>;
+  /**
+   * Bulk headword resolution for the list importer (`wave-zero.md` §8b).
+   *
+   * One word in, every entry it could mean out — deliberately **not** `search`.
+   * `search` ranks across headwords and pages at 50, which is right for a person
+   * typing and wrong for a 300-word paste where each line must resolve to its own
+   * candidate set. The rule is the importer's, and it is the part of `abe6793`
+   * worth keeping:
+   *
+   *   1. anything with a hanzi in it matches **exactly** against both scripts, so
+   *      a simplified list and a traditional one resolve alike and a prefix never
+   *      counts (`打` must not become 打算);
+   *   2. otherwise, if it parses as pinyin, tone-exact first and toneless as the
+   *      fallback (`nǐhǎo`, `ni3hao3` and `nihao` all find 你好);
+   *   3. otherwise nothing — English is not a way to name a word for a list.
+   *
+   * Bulk rather than per-word because on the Capacitor bridge and the OPFS worker
+   * a paste would otherwise be hundreds of round trips. Over `RESOLVE_MAX_WORDS`
+   * or `RESOLVE_MAX_WORD_CHARS` (`lib/dict/resolve.ts`) is the caller's error,
+   * not a truncation.
+   */
+  resolve(
+    words: readonly string[],
+    options?: { signal?: AbortSignal },
+  ): Promise<ResolveResult>;
 }

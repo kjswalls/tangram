@@ -43,6 +43,9 @@ const fake: DictStore = {
   segment: async (text) => ({ text, script: 'simp', tokens: [] }),
   hskBand: async () => [],
   readingCount: async () => 0,
+  resolve: async () => {
+    throw new Error('wave-zero.md §8b: declared, not implemented');
+  },
   wordsContaining: async () => [],
 };
 

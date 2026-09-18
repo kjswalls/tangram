@@ -288,6 +288,9 @@ describe('groundWithStore — the same answer, reached asynchronously', () => {
       segment: (text, options) => store.segment(text, options),
       hskBand: async () => [],
       readingCount: async () => 0,
+      resolve: async () => {
+        throw new Error('wave-zero.md §8b: declared, not implemented');
+      },
       wordsContaining: async () => [],
     };
     const grounded = await groundWithStore(

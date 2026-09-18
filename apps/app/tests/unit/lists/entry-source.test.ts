@@ -112,6 +112,9 @@ function fakeStore(
     async readingCount() {
       return 0;
     },
+    async resolve(): Promise<never> {
+      throw new Error('wave-zero.md §8b: declared, not implemented');
+    },
     async wordsContaining() {
       return [];
     },

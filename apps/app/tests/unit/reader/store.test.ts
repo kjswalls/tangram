@@ -43,6 +43,7 @@ function installStore(): void {
     search: refuse,
     hskBand: refuse,
     readingCount: refuse,
+    resolve: refuse,
     wordsContaining: refuse,
   });
 }

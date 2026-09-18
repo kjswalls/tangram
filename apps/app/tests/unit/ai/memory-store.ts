@@ -162,6 +162,9 @@ export function memoryStore(
     async readingCount(simp) {
       return rows.filter((entry) => entry.simp === simp).length;
     },
+    async resolve(): Promise<never> {
+      throw new Error('wave-zero.md §8b: declared, not implemented');
+    },
     async wordsContaining(ch) {
       return rows.filter((entry) => entry.simp.includes(ch));
     },

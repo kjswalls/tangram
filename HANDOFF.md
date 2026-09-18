@@ -12505,3 +12505,16 @@ is in it"* failed once under the full suite and passed alone and on a full re-ru
 `/` to Practice to `/` and touches neither Library nor any file this phase changed; the failure is
 focus landing on the route announcer's heading instead of the lookup box, which is a race between
 the announcer and the shortcut. Pre-existing, `web.md` W8a's, and not investigated here.
+
+> **Correction to the paragraph above, made by its author before pushing.** I called the Mod+K
+> failure a flake on the evidence that it passed alone and on a full re-run. That was the wrong
+> conclusion from the right observation, and `claude/integration`'s `087368a` — landed while this
+> branch was building — has the real diagnosis: it is a **coin flip**, reproducing two runs in five
+> under `--repeat-each=5`, between `focusLookupInput`'s retry across animation frames and
+> `RouteAnnouncer`'s effect focusing the route heading. Whichever lands last wins, so for the only
+> kind of person who presses Mod+K the shortcut does nothing about half the time. W8a's 315/315 and
+> the W8a+W9 325/325 were both luck, and so was my re-run. The diagnosis of *what* was happening
+> (the announcer's heading taking focus from the lookup box) was right; "pre-existing" was right;
+> "flake" and "not investigated here" were a way of not looking. **A green re-run is not evidence
+> that a red run was noise** — `--repeat-each` is what settles it, and it costs one command.
+> Nothing in this phase depends on it and the fix is already on the branch this one merges into.

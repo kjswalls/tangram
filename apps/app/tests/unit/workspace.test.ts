@@ -126,9 +126,28 @@ describe('the Node floor', () => {
     if (major === 22) expect(minor).toBeGreaterThanOrEqual(22);
   });
 
-  it('is enforced at install time, not merely documented', () => {
-    // `engines` is a comment unless engine-strict is on, and there is no CI.
-    expect(readFileSync(resolve(WORKSPACE, '.npmrc'), 'utf8')).toMatch(/^engine-strict=true$/m);
+  /**
+   * **This used to assert `engine-strict=true`, and it was right to.** `engines`
+   * is a comment unless something enforces it and there is no CI. The instrument
+   * changed, not the rule: engine-strict honours every publisher's `engines`,
+   * and `cedict-json` pins a bare `node: "22"` on 16 MB of JSON we never
+   * execute. That pin refused Node 24 while react-router refused Vercel's 22.x
+   * image, so no Node a Vercel build can run satisfied both and every deploy
+   * died in `pnpm install`. `scripts/check-node.ts` states the real floor
+   * instead, and `tests/unit/build/node-floor.test.ts` holds it — including that
+   * it runs first in `pnpm build` and that engine-strict stays off.
+   */
+  it('is enforced by the floor check, and engine-strict stays off', () => {
+    const root = JSON.parse(readFileSync(resolve(WORKSPACE, 'package.json'), 'utf8')) as {
+      scripts: Record<string, string>;
+    };
+    expect(root.scripts.build).toMatch(/^pnpm run node:check &&/);
+
+    const active = readFileSync(resolve(WORKSPACE, '.npmrc'), 'utf8')
+      .split('\n')
+      .filter((line) => !line.trimStart().startsWith('#'))
+      .join('\n');
+    expect(active).not.toMatch(/engine-strict\s*=\s*true/);
   });
 
   it('agrees with .nvmrc', () => {

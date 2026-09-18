@@ -12594,3 +12594,61 @@ the announcer and the shortcut. Pre-existing, `web.md` W8a's, and not investigat
 > "flake" and "not investigated here" were a way of not looking. **A green re-run is not evidence
 > that a red run was noise** — `--repeat-each` is what settles it, and it costs one command.
 > Nothing in this phase depends on it and the fix is already on the branch this one merges into.
+
+---
+
+## Why no Vercel build could ever have worked, and the flake it uncovered — 2026-09-18
+
+**Two `engines.node` constraints with an empty intersection over what Vercel offers.** With
+`engine-strict=true`, pnpm validates every dependency's `engines`, and two of them disagreed:
+
+| Package | `engines.node` | Rejects |
+|---|---|---|
+| `react-router@8.3.1` | `>=22.22.0` | Vercel's 22.x image, which is below it |
+| `cedict-json@1.3.20251213` | `22` (bare major) | Node 24 |
+
+Vercel offers 20.x, 22.x and 24.x. **No setting of that dropdown could pass.** Three rounds were
+spent theorising — an old project default, a pnpm 9/10 mismatch, an unparseable range — and each was
+wrong. The build log named the package on the line above the error the whole time. *Ask for the log.*
+
+**`cedict-json`'s pin is not a requirement.** 16 MB of `cedict.json` plus an 89-byte re-export, no
+Node API usage anywhere, and `scripts/build-data.ts` never imports it — it calls `require.resolve` to
+locate the directory and reads the JSON off disk. The publisher pinned their own dev box (their
+`@types/node` is `^22`). Measured properly against the lockfile with semver: of **318** packages
+declaring `engines.node`, Node 22.22.2 fails **0** and Node 24.19.0 fails exactly **one** — this.
+
+**What was tried and rejected**, so nobody repeats it:
+
+- `packageExtensions` in `pnpm-workspace.yaml` — pnpm records a `packageExtensionsChecksum` and does
+  **not** rewrite `engines` in the lockfile. A plain `pnpm install` passed; `--frozen-lockfile`, which
+  is what Vercel runs, still failed. It cannot override `engines`.
+- `installCommand` with `--config.engine-strict=false` in `vercel.json` — works, but leaves Node 24
+  the only thing that deploys and the one thing you cannot `pnpm install` locally. Incoherent.
+
+**What landed.** `.npmrc`'s `engine-strict=true` is gone, replaced by `scripts/check-node.ts`: the
+real floor, stated once, run first in `pnpm build` so a wrong Node fails before the 43 MB data build
+rather than after it. `tests/unit/build/node-floor.test.ts` holds it — the constant still equals what
+`react-router` declares, the near misses are rejected, the check is wired into `build` and
+`build:e2e`, and engine-strict stays off. `tests/unit/workspace.test.ts`'s existing assertion
+(`engine-strict=true`) caught the change and was rewritten rather than deleted; its comment says why
+the instrument changed and the rule did not.
+
+Verified on **both**: Node 22.22.2 and Node 24.21.0 each do a frozen install, `pnpm build`, lint, and
+2,050 app + 103 server tests.
+
+### The flake this uncovered, which is NOT fixed
+
+Adding one test file changed vitest's file-to-worker scheduling, and
+`tests/unit/pwa/data-safety.test.tsx` → *"says nothing alarming to a learner with no cards yet"*
+began failing. Measured: **two consecutive failures, then four consecutive clean runs**, and it
+passes every time in isolation.
+
+Not caused by this change — surfaced by it. The likely mechanism, and it is worth someone confirming:
+the test asserts `risk === 'unknown'` for an origin with no cards. The file's `afterEach` calls
+`closeDb()`, which **closes the connection without clearing the data**, and fake-indexeddb's store
+lives on `globalThis`, which vitest reuses across test files in a worker. So cards written by another
+file can still be there when this one runs, and which files share a worker varies per run. That
+explains the intermittency and why adding a file perturbed it.
+
+**Do not read four green runs as a fix.** Whoever touches the db test harness next should make
+teardown delete rather than close, and then re-run the suite several times rather than once.

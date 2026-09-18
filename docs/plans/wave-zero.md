@@ -276,6 +276,42 @@ v1 ships without it. product-decisions §9 specifies it fully and the repository
 "its own task, per STACK §7" sentence stays; STACK §6 records that the task is deliberately not
 scheduled for v1 rather than merely unwritten.
 
+## 8a. §8 was ruled without knowing the importer was already written — CORRECTED 2026-09-18
+
+§8 above says list import is "a clean later addition, not a hole." That is still the right call for
+v1, but it was made on a false premise and the premise matters to whoever schedules it.
+
+**The importer exists.** `main` carries commit `abe6793`, *"List importer: paste, Pleco and Anki
+exports resolved against the dictionary"* — **14 files, 1,654 insertions**, landed after the
+migration branch forked at `c852314` and therefore never seen by any plan in this set. It is not in
+the workspace tree: there is no `Pleco` outside plan documents and no `apps/app/lib/lists/import/`.
+Nobody dropped it; the fork simply predates it, and eight commits kept accruing on a branch the
+build had stopped reading.
+
+Found while diagnosing a Vercel build failure, because `main` was still the pre-migration Next.js
+repository and had to be looked at.
+
+**What ports and what does not.** Roughly two thirds is pure and should move almost unchanged:
+
+| From `abe6793` | Fate |
+|---|---|
+| `lib/lists/import/parse.ts` (342) + `tests/unit/lists/import-parse.test.ts` (173) | Pure text: paste, Pleco and Anki export shapes. Ports as-is |
+| `lib/lists/import/resolve.ts` (188) + its test (138) | Ports; its dependency does not |
+| `components/lists/import-list.tsx` (343) | Ports as a component; its data call changes |
+| `lib/dict/resolve.ts` (102) + `tests/unit/dict/resolve.test.ts` (105) | **Rewrite.** Reads `getDictIndex()` — the in-heap JSON index that `data.md` D1–D4 replaced with SQLite. The *rule* it documents (hanzi matches exactly against both scripts, else tone-exact pinyin then toneless, else nothing) is the valuable part and survives; the implementation becomes a `DictStore` query |
+| `app/api/dict/resolve/route.ts` (56) + `lib/dict/client.ts` (28) | **Delete.** There are no Next route handlers, and since D6 the client queries the dictionary in-process. The round trip these exist to make is gone |
+| `tests/e2e/p3/import-list.spec.ts` (85) | Ports; rehomed, and it joins the census in `tests/unit/shell/tab-routes.test.ts` |
+
+**The ruling.** Still deferred for v1 — §8 stands, and nothing here is a reason to widen the current
+wave. But it is a port of reviewed, tested code against one new seam, not a feature to write from
+nothing, and `core.md` is where it belongs when it is scheduled. Whoever picks it up starts from
+`git show abe6793`, reachable forever through the merge that made the workspace tree `main`'s.
+
+**The process failure, since it is the second of its kind.** The provenance note at the foot of this
+file says a ruling is landed only when it reaches the branch builders cut from. This is the same
+failure pointed the other way: **work landed on a branch the build had stopped reading, and no one
+compared the two trees for eleven weeks.** A fork is not a cutover. The cutover is the merge.
+
 ## 9. The Practice-queue merge — ASSIGNED (issue 10)
 
 `core.md` C7 gains `lib/lists/today.ts`, `lib/lists/introduce.ts` and `lib/srs/session.ts` in its

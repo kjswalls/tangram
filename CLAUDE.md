@@ -64,15 +64,21 @@ Node **>= 22.22** (React Router 8's floor); pnpm 10. Playwright uses the contain
 `executablePath: /opt/pw-browsers/chromium` — **never run `playwright install`**. `pnpm e2e` occupies
 `$PORT` (default 3000).
 
-> **Migration state, as of `web.md` W4 and `data.md` D4.** Landed: the workspace and the Vite swap
-> (W0, W1), the host config and the dictionary's web delivery (W2), the service worker's real cache
-> name (W3), the access gate (W4), the SQLite dictionary and its Node and browser stores (D1–D4),
-> the server and the frozen ask contract (`backend.md` B0 and B2's first commit), and wave 0's
-> `Repository` interface diff. **The three debts this block used to name are discharged** — the gate
-> is `packages/access` reading `X-Tangram-Access`, the worker's cache name is a hash of Vite's
+> **Migration state, as of `web.md` W9.** Landed: `web.md` **W0–W6, W8a and W9** — the workspace and
+> the Vite swap, the host config and the dictionary's web delivery, the service worker's real cache
+> name, the access gate, install/persist/backup, the self-hosted fonts, the `?q=` URL model and the
+> keyboard registry, and the desktop decision record. `data.md` **D1–D6** — the SQLite dictionary,
+> its Node and browser stores, and the cutover that left the server holding no dictionary.
+> `core.md` **C0–C8**, `backend.md` **B0–B2**, `ios.md` **I0–I2**, `android.md` **A0–A3**, and all
+> five of wave 0's deliverables. **The three debts this block used to name are discharged** — the
+> gate is `packages/access` reading `X-Tangram-Access`, the worker's cache name is a hash of Vite's
 > output, and `pnpm smoke` asserts content rather than status.
 >
-> Five things a builder must not read a green gate as having finished:
+> Not landed, and deliberately so: **W7** (the marketing site — the owner deferred it on 2026-09-17)
+> and **W8b** (the command palette — `wave-zero.md` §10c ships it with the desktop application, and
+> W8's acceptance criteria are written in two sets for exactly this case).
+>
+> Seven things a builder must not read a green gate as having finished:
 >
 > - **`pnpm smoke` needs to be told where the API is.** Since B1 the app's own origin 404s every
 >   `/api/**` path, so the command refuses to run without `--api-base <origin>` or `--no-api` rather
@@ -105,6 +111,11 @@ Node **>= 22.22** (React Router 8's floor); pnpm 10. Playwright uses the contain
 > - **Two gloss searches exceed the 50 ms interactive budget** in wasm (`to` and `the`, at
 >   89–100 ms) and are pinned by name at a 200 ms ceiling. `wave-zero.md` §10e is why the cap was
 >   not lowered; any *other* interactive query over 50 ms fails the suite.
+>
+> - **The list importer is written, and it is not in this tree.** `main`'s `abe6793` carries 1,654
+>   lines of it — paste, Pleco and Anki — landed after the migration forked and never ported.
+>   `wave-zero.md` §8a says what ports, what is a rewrite, and what to delete. Still deferred for
+>   v1; start from `git show abe6793` rather than from nothing.
 >
 > `HANDOFF.md` has the full list with what each phase owes. Check `package.json` rather than
 > assuming.

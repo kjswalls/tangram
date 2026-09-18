@@ -11866,3 +11866,207 @@ Not edited here, per the rule that a builder records rather than rewrites someon
 server), `pnpm e2e` (**295**), `pnpm smoke --no-api` (41 ok — 29 assets including all 25 font slices,
 6 paths, 6 API cases skipped and said so), and `apps/server`'s own smoke against a running
 `pnpm -F server dev` (**8/8**, with no `TANGRAM_DATA_DIR` and no `data/`).
+
+## `web.md` W8a — the URL model and the keyboard model, with no palette
+
+**What landed.** The lookup query lives in the URL as `?q=`; the keyboard bindings are rows in a
+table rather than listeners scattered through components; and a route change moves focus and says
+where it went. **No palette.** `wave-zero.md` §10c ships that with the desktop application, W8's own
+acceptance criteria are written in two sets for exactly this case, and W8b was not started — what is
+here is the scope mechanism it plugs into.
+
+- **`?q=`, through a typed wrapper.** `src/url/lookup-query.ts` owns the parameter's name, its
+  200-character cap, its canonical form (whitespace alone is nothing) and the two-way sync with
+  `lib/stores/lookup.ts`. `<LookupQueryUrl />` is mounted by the Look up **route module**, never by
+  the screen: `components/lookup/**` is reachable from `components/screens/**`, and C7 forbids
+  anything on that side of the seam to import the router. STACK §2.3 names this wrapper as the
+  compromise it took in place of TanStack Router's typed search params; if typed URL state ever
+  becomes central, §2.3's reversal condition is the thing to read, not this file.
+- **The registry.** `src/keys/registry.ts` is the table — id, scope, one or more key combinations, a
+  human-readable description, and `source` (`product` / `plan` / `core`) so a fresh session can tell
+  product-decisions §10's bindings from this plan's. `src/keys/use-shortcuts.ts` is the one `keydown`
+  listener and the only module that decides anything. `src/keys/shortcut-help.tsx` maps over the
+  table, so a binding added to it appears in the sheet and a description spelled inside the component
+  fails a test.
+- **Scope is a property of the binding.** Each scope declares `overridesFocusedElement`; a binding
+  carrying `Mod` is exempt because it is not a character anybody can type. The palette's scope is the
+  exception W8 rule 1 names — its own input owns arrows, Enter and Escape by design — so C9 registers
+  a scope with that flag set and nothing else in the mechanism changes.
+- **The practice session's six keys moved into the table**, out of a hand-written `window` listener
+  whose text-input guard was an `if`. `ratingFromKey` and `isRevealKey` are **deleted** from
+  `lib/srs/session.ts`, and the two cases that covered them are gone from
+  `tests/unit/srs/session.test.ts` with a note pointing at their replacement: two places spelling the
+  same four keys is two places that can disagree, and only one of them can be checked for collisions.
+- **Focus and the announcement.** `src/shell/route-announcer.tsx` moves focus to the new view's
+  heading — `components/ui/page-header.tsx`'s `<h1>` carries `data-route-heading` and `tabIndex={-1}`
+  now — and puts the route's name in a polite live region.
+- **Scroll restoration** already worked; `src/shell/scroll-restoration.tsx` is a one-line re-export
+  that exists to carry the note about what `<ScrollRestoration>` actually does (see below).
+
+### What this phase decided that the plan did not settle
+
+- **The shape of the registry, and why scope is a property rather than a condition.** W8 says the
+  bindings must be declared data and gives three reasons; it does not say what a binding *is*. A
+  binding here is `{ id, scope, keys[], description, source }` and a scope is
+  `{ id, title, overridesFocusedElement, priority, blocking? }`. Two things follow from making the
+  scope a value rather than an `if`: the "never while typing" rule cannot be forgotten by the next
+  handler somebody writes, and the palette becomes additive — it registers one more scope and one
+  more group of rows.
+- **`priority` and shadowing.** Two live scopes could claim the same combination. The shipped table
+  has no such pair and a unit test says so, but the dispatcher has to answer the question somehow, so
+  it does: the most specific live scope wins and the key stops there. Declaration order decides
+  nothing.
+- **`blocking`, and the `dialog` scope.** Added after the review (below). A modal `<Sheet>` registers
+  a scope that claims nothing and stops everything under it. This is the mechanism a palette will
+  want too.
+- **`Mod` is ⌘ on Apple and Ctrl elsewhere, in *matching* and not only in display.** The first
+  version accepted either modifier on either platform. That takes `Ctrl+K` — macOS's system-wide
+  kill-to-end-of-line — away inside the lookup box and the recall box.
+- **No tab-jump bindings.** W8a's keyboard criterion is "reach every tab and every primary action",
+  and the tabs are real links in a real tab order: Tab and Enter reach them. Inventing `g l` chords
+  would have added a key system to pass a test the DOM already passes.
+- **A help sheet exists (`?`), and it is W8's own justification for the table.** W8 lists "a help
+  sheet can be generated from it" as reason one and makes an undescribed binding a bug *because* the
+  sheet is generated. A description nothing renders is decoration, so the sheet is here. It is **not**
+  the palette: it lists shortcuts, it searches nothing and it does nothing.
+- **`?q=` survives a tab change, on purpose.** The lookup store is a module singleton and always
+  restored the box when the learner came back to the tab; the URL now says so too. The alternative —
+  a URL reading `/` while the box shows `dasuan` — is precisely the split this phase exists to close,
+  because the link somebody copies would describe a page nobody is looking at. The restoring write is
+  a `replace`, so it leaves no history entry.
+- **The mount is its own case in the sync.** Two situations arrive at the same instant and want
+  opposite things: a shared link (`/?q=打算` on a cold load) and a return to the tab (box full, URL
+  empty). Whichever side has something wins, and the URL wins a tie. `pnpm e2e` found this: the first
+  version seeded the agreed value from the URL, so a shared link opened on an empty search — the
+  whole point of the feature, broken, with every unit test green because they all navigated *after*
+  mounting.
+- **A refinement replaces, everything else pushes.** A refinement is "one query is a prefix of the
+  other and neither is empty". Back therefore walks back through 打算, 好, 喜欢 one at a time and not
+  through every keystroke.
+- **The announcer keys on `pathname`, not on the whole location**, or `?q=` would rip focus out of
+  the lookup box on every settled keystroke, and **focuses with `preventScroll`**, or it would undo
+  the scroll restoration criterion 3 asks for.
+
+### What was found wrong
+
+Two adversarial reviewers read the diff cold and in parallel — one against the four criteria, one for
+"what breaks that no test covers". Between them they raised 23 findings. Everything below was
+reproduced before it was fixed.
+
+**Fixed, and each was a real defect:**
+
+- **A shared `/?q=X` link opened on an empty box.** Caught by `pnpm e2e`, not by review: `synced` was
+  seeded from the URL at the first render, so the two sides "already agreed" and the store was never
+  filled. The mount is its own case now, with two unit tests that navigate *before* mounting, because
+  a `MemoryRouter` that always starts at `/` cannot otherwise reach a cold load.
+- **`/` or `Mod+K` while the shortcuts sheet was open stranded the dialog.** The binding fired,
+  navigated, and moved focus out of the panel — leaving the sheet mounted, the page scroll-locked,
+  and Escape dead, because in modal mode `Sheet` keeps Escape on the panel's own `onKeyDown` and
+  focus had just left it. This falsified `shortcut-help.tsx`'s own claim that "Escape always leaves".
+- **`3` graded the card *behind* the sheet.** Same cause, worse consequence: a card the learner could
+  not see was rated and the queue advanced. Both are fixed by the `dialog` scope.
+- **Enter on a tab link was swallowed whenever a card was face down**, so a keyboard-only learner
+  could not leave the Practice tab — the criterion this phase wrote. `review.reveal` binds Enter, the
+  dispatcher prevents the default of every firing binding, and the link's activation died with it.
+  Pre-existing (the deleted listener did the same), invisible because `keyboard.spec.ts` walked the
+  tabs from `/`. The fix is a rule, not a special case: **a shortcut never takes a key the focused
+  control already owns** — a text entry owns every character, a link or button owns Enter and Space.
+- **The scroll-restoration e2e could not pass as written**, and the product was fine. Playwright
+  scrolls a target into view before clicking; the wide shell's header is not sticky, so clicking a
+  tab at `scrollY=600` scrolled to the top *first* and React Router saved 0 for the page being left.
+  Diagnosed by tracing `window.scrollTo` and reading the saved map. The spec follows the link
+  programmatically now, and says why.
+- **The announcer announced on the first load under StrictMode**, i.e. in every `pnpm dev` session.
+  A `useRef(true)` flag flipped inside the effect is consumed by the discarded pass of StrictMode's
+  mount → cleanup → mount. The sentinel is the pathname it mounted on now. `tests/unit/render.tsx`
+  has no StrictMode, so nothing else would have caught it.
+- **Two routes with the same heading announced nothing.** `/library` and one list inside it are both
+  headed "Library", and a live region speaks on *mutation* — writing the same string is not one. The
+  region is cleared and refilled a tick later.
+- **`Alt` was treated as exempt from the focus rule** alongside `Mod`. On macOS Option+letter *is* a
+  character (Option+K is ˚), and so is AltGr+letter. No binding uses Alt; the door is shut anyway.
+- **Criterion 1's collision test could not see one class of collision.** It compared canonical ids,
+  and `comboId` distinguishes `?` from `Shift+?` while `matchesCombo` deliberately does not (a
+  one-character key carries its own shift state). A second case now asks the *matcher*: for every
+  combination in the table, no two bindings in a scope may answer the same synthesized event.
+- **A real search typed within 300 ms of returning to the tab was written as a `replace`**, so Back
+  left the app instead of returning to the empty page. `restoring` is the restored *value* now, not a
+  flag that outlived its case.
+- **`pnpm lint` was red on the first commit** (an unused import in a new test), and an untracked
+  diagnostic spec was breaking the spec-count guard. Both gone.
+- **The no-pointer guard greps only the spec**, so a pointer call could move into a helper and take
+  the claim with it. It now also pins the file's import list, which makes a fourth helper a decision.
+- **"Every primary action" did not include Library's.** A keyboard case opens a list now.
+
+**Recorded, not fixed:**
+
+- **The wide shell's header is not sticky**, so at any scroll depth the tab bar is off screen and a
+  pointer user must scroll up to change tabs. That is what made the scroll-restoration spec
+  self-defeating. It is `core.md`'s call, not this phase's, and the phone shell has no such problem
+  (its tab bar is `fixed bottom-0`).
+- **`Shift+Enter` no longer reveals a card, and the legacy `'Spacebar'` key spelling is gone.**
+  `matchesCombo` asserts `shiftKey` for named keys, and `isRevealKey` accepted `'Spacebar'` for
+  engines that have not shipped in a decade. Both are silent behaviour deltas from the migration and
+  neither seems worth a special case; they are written down so the next person is not surprised.
+- **`<main>` keeps a `tabindex="-1"` the announcer set imperatively**, if a route ever has no
+  heading. No shipped route does — every screen opens with a `PageHeader` — so this is latent.
+- **Navigating between two lists still announces the same word twice** (both are headed "Library").
+  The clear-and-refill makes it *audible*, but "Library" is not a useful name for one list. Giving
+  the list route its own heading is `core.md` C7's file and its call.
+- **One unit test flaked once across three full runs** — `tests/unit/pwa/data-safety.test.tsx`,
+  "says nothing alarming to a learner with no cards yet" — and passes in isolation and on every
+  re-run. It predates this phase's files and nothing here touches it. Named so that the next person
+  who sees it knows it has been seen.
+
+### What other plans should know
+
+- **`core.md` C9, when the palette is built:** register one scope with
+  `overridesFocusedElement: true` and `priority` above `dialog`'s, and add its rows to `BINDINGS`
+  with `source: 'product'`. `Enter`, `Mod+Enter` and `Tab` are product-decisions §10's and are all
+  palette-input bindings, which is why none of them is in the table today. Nothing else in
+  `use-shortcuts.ts` should need to change; if it does, that is a finding worth writing down.
+  `shortcut-help.tsx` lists the scopes it prints by name, so add the palette to `SCOPE_ORDER`.
+- **Anything that writes a search param must pass `preventScrollReset: true`.** React Router's
+  `<ScrollRestoration>` scrolls to the top of every navigation that is not a POP with a saved
+  position, and a settled keystroke is a navigation. `src/url/lookup-query.ts` is the only writer
+  today.
+- **`components/ui/sheet.tsx` gained one line** — `useShortcuts('dialog', {}, { enabled: open && modal })`.
+  It is C1's file; the change is additive and is why a modal sheet is now modal to the keyboard.
+- **`components/ui/page-header.tsx` gained two attributes** on its `<h1>`. Any new screen that does
+  not use `PageHeader` will fall back to `main h1` and then to `<main>`.
+- **`tests/e2e/**` files touched, for the W9 merge:** two new files, `tests/e2e/core/keyboard.spec.ts`
+  and `tests/e2e/core/routing.spec.ts`. No existing spec was edited. `tests/unit/shell/tab-routes.test.ts`'s
+  count moved to **54 / 46 / 47**.
+
+### What this makes false in CLAUDE.md
+
+Not edited here, per the rule that a builder records rather than rewrites someone else's file:
+
+- **The migration-state block should say the keyboard model exists.** There is now one registry and
+  one `keydown` listener, and a component that wants a binding declares it rather than adding a
+  listener. A second `window.addEventListener('keydown', …)` in this app is a bug.
+- **`lib/srs/session.ts` no longer exports `ratingFromKey` or `isRevealKey`.** Anything that
+  described the practice keys as living there is stale.
+- **Nothing else changes.** No frozen surface was touched, no schema moved, and the five things the
+  block says a green gate must not be read as having finished are all still true.
+
+### Gates
+
+All green after the review fixes: `pnpm lint`, `pnpm typecheck`, `pnpm build`, `pnpm test`
+(**2,039** app + **103** server), `pnpm e2e` (**315** specs, 8.4 min) and `pnpm smoke --no-api`
+(41 ok — 29 assets, 6 paths, 6 API cases skipped and said so).
+
+**Three traps this phase paid for, written down because the next person will hit them.**
+
+- **`page.keyboard.press` is one shot and has no handshake with the page.** A key that lands before
+  the app is listening is simply gone, and the assertion after it then waits five seconds for
+  something that will never happen — which reads as a product bug and is not one. `pressUntil` in
+  `tests/e2e/core/keyboard.spec.ts` is the answer, and only for keys whose effect is idempotent.
+- **An assertion that nothing happened passes just as well against a key that never arrived.** Three
+  of those in a row is three vacuous assertions. The same spec installs a keydown recorder and
+  asserts both delivery and `defaultPrevented: false`, which is what turned a wrong guess into the
+  real finding.
+- **Playwright scrolls a target into view before clicking it.** The wide shell's header is not
+  sticky, so a click on a tab at `scrollY=600` scrolls to the top first and the router saves a scroll
+  position of **0** for the page being left. Every scroll-restoration test has to navigate without
+  that — see `followTab` in `tests/e2e/core/routing.spec.ts`.

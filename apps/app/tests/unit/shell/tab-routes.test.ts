@@ -153,10 +153,15 @@ describe('the seven routes are gone', () => {
     // and `d/dict-missing-surface.spec.ts` (one error surface for the missing
     // dictionary, on all three tabs — the spec that would have caught the three
     // shapes the owner found by looking at the app).
+    //
+    // `web.md` W8 adds two, both specs and both navigating:
+    // `core/keyboard.spec.ts` (the keyboard model, driven with no pointer) and
+    // `core/routing.spec.ts` (focus and the announcer on a route change, scroll
+    // restoration on Back, and `?q=`).
     expect({ files: files.length, specs: specs.length, navigating: navigating.length }).toEqual({
-      files: 52,
-      specs: 44,
-      navigating: 45,
+      files: 54,
+      specs: 46,
+      navigating: 47,
     });
   });
 

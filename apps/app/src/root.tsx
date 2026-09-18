@@ -8,7 +8,7 @@
  */
 import type { ReactNode } from 'react';
 
-import { Outlet, ScrollRestoration } from 'react-router';
+import { Outlet } from 'react-router';
 
 import { PinyinDisplayProvider } from '@/components/hanzi/pinyin-display';
 import { RegisterServiceWorker } from '@/components/pwa/register-sw';
@@ -16,14 +16,27 @@ import { AppShell } from '@/components/shell/app-shell';
 import { HardwareBackButton } from '@/components/shell/hardware-back-button';
 import { TestHooks } from '@/components/shell/test-hooks';
 
+import { AppShortcuts } from './keys/app-shortcuts';
+import { RouteAnnouncer } from './shell/route-announcer';
+import { AppScrollRestoration } from './shell/scroll-restoration';
+
 /**
  * `children` is for the router's `errorElement`, which renders outside the
  * `<Outlet />` and would otherwise lose the header and the nav.
  *
- * `<ScrollRestoration />` is not decoration: `history.scrollRestoration` is
+ * `<AppScrollRestoration />` is not decoration: `history.scrollRestoration` is
  * `auto` by default and cannot work in an SPA, because the browser restores the
  * offset at popstate — before React has re-rendered the page it belongs to. Next
- * handled this; a data-mode router does it only if asked.
+ * handled this; a data-mode router does it only if asked. It is imported through
+ * `src/shell/scroll-restoration.tsx` since `web.md` W8, which records the part
+ * of its contract that surprises people: it scrolls to the top of *every*
+ * navigation that is not a POP with a saved position, including the ones `?q=`
+ * makes while somebody types.
+ *
+ * `<AppShortcuts />` and `<RouteAnnouncer />` are W8's, and they are
+ * mounted-once for the same reason as the three above: there is exactly one
+ * keyboard and exactly one live region, and a second of either would fire twice
+ * and announce twice.
  */
 export function Root({ children }: { children?: ReactNode }) {
   return (
@@ -40,12 +53,19 @@ export function Root({ children }: { children?: ReactNode }) {
       */}
       <HardwareBackButton />
       {/*
+        The `app` scope's keyboard bindings, and the sheet that lists every
+        binding in the registry (docs/plans/web.md W8). Renders nothing until
+        the sheet is asked for.
+      */}
+      <AppShortcuts />
+      {/*
         The shell owns the header, the tab bar and the `<main>` column now
         (core.md C7): which of the two it is depends on the width, and both put
         the screen in exactly one place.
       */}
       <AppShell>{children ?? <Outlet />}</AppShell>
-      <ScrollRestoration />
+      <RouteAnnouncer />
+      <AppScrollRestoration />
     </PinyinDisplayProvider>
   );
 }

@@ -51,6 +51,7 @@ import {
 } from 'react';
 
 import { cn } from '@/lib/cn';
+import { useShortcuts } from '@/src/keys/use-shortcuts';
 
 /** Everything focusable, in DOM order. `:not([tabindex="-1"])` keeps the trap honest. */
 const FOCUSABLE =
@@ -108,6 +109,22 @@ export function Sheet({
   const panel = useRef<HTMLDivElement>(null);
   const opener = useRef<Element | null>(null);
   const titleId = useId();
+
+  /**
+   * **A modal sheet is modal to the keyboard too** (docs/plans/web.md W8).
+   *
+   * The `dialog` scope claims no bindings and blocks every scope beneath it, so
+   * while this is open nothing else hears a keystroke. Both halves of that were
+   * real, reproduced by W8a's adversarial review: `3` graded the review card
+   * *behind* the shortcuts sheet, and `/` navigated out from under an open
+   * sheet and left it mounted with the page still scroll-locked and its Escape
+   * handler on a panel focus had just left — a dialog a keyboard user could not
+   * close.
+   *
+   * Only when `modal`. The reader's word sheet is deliberately non-modal: the
+   * passage behind it stays usable, and so do its keys.
+   */
+  useShortcuts('dialog', {}, { enabled: open && modal });
 
   /**
    * `onClose` through a ref, so the open/close effect does not depend on it.

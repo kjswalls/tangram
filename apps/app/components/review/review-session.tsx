@@ -20,13 +20,12 @@ import { isProduction, productionRecallRequest } from '@/lib/srs/direction';
 import {
   emptyStateMessage,
   gradeOptions,
-  isRevealKey,
   MAX_SESSION_REPEATS,
-  ratingFromKey,
   sessionRefreshDelay,
 } from '@/lib/srs/session';
 import { TangramProgress } from '@/components/practice/tangram-progress';
 import { useReviewStore } from '@/lib/stores/review';
+import { useShortcuts } from '@/src/keys/use-shortcuts';
 
 /**
  * The review session (PLAN.md §4, P2).
@@ -149,30 +148,34 @@ export function ReviewSession() {
     [grade],
   );
 
-  useEffect(() => {
-    if (!card) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.metaKey || event.ctrlKey || event.altKey) return;
-      const target = event.target as HTMLElement | null;
-      const tag = target?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return;
-
-      if (!revealed) {
-        if (!isRevealKey(event.key)) return;
-        event.preventDefault();
-        reveal();
-        return;
-      }
-
-      const rating = ratingFromKey(event.key);
-      if (rating === null) return;
-      event.preventDefault();
-      if (grading) return;
-      void grade(rating);
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [card, revealed, grading, reveal, grade]);
+  /**
+   * The session's six bindings (docs/plans/web.md W8).
+   *
+   * They used to be a hand-written `window` listener right here, with the
+   * text-input guard written out as an `if` — which is the shape W8 replaces,
+   * because the rule then holds only for as long as everybody remembers to
+   * write it. The bindings are rows in `src/keys/registry.ts` under the
+   * `review` scope now, and the scope is what refuses to fire them while the
+   * free-recall box has focus. The behaviour is unchanged and deliberately so:
+   * a handler that is `undefined` is a key nothing takes, which is exactly what
+   * the old early-returns produced.
+   *
+   * `grading` is checked *inside* the handler rather than by withholding it,
+   * because the old listener called `preventDefault()` before that check: a
+   * second Space while a grade is in flight must be swallowed, not passed to
+   * the page to scroll with.
+   */
+  const gradeWith = (rating: StoredRating) => () => {
+    if (grading) return;
+    void grade(rating);
+  };
+  useShortcuts('review', {
+    'review.reveal': card && !revealed ? () => reveal() : undefined,
+    'review.grade.1': card && revealed ? gradeWith(1) : undefined,
+    'review.grade.2': card && revealed ? gradeWith(2) : undefined,
+    'review.grade.3': card && revealed ? gradeWith(3) : undefined,
+    'review.grade.4': card && revealed ? gradeWith(4) : undefined,
+  });
 
   if (!loaded) {
     return (

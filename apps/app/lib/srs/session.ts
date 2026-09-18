@@ -336,26 +336,14 @@ export function gradeOptions(
   });
 }
 
-/** Keyboard 1–4 → `Rating` 1–4 (§3.3). Every other key is ignored. */
-export function ratingFromKey(key: string): StoredRating | null {
-  switch (key) {
-    case '1':
-      return 1;
-    case '2':
-      return 2;
-    case '3':
-      return 3;
-    case '4':
-      return 4;
-    default:
-      return null;
-  }
-}
-
-/** Space or Enter flips the card; tapping it does the same thing. */
-export function isRevealKey(key: string): boolean {
-  return key === ' ' || key === 'Spacebar' || key === 'Enter';
-}
+/*
+ * `ratingFromKey` and `isRevealKey` used to live here and are gone
+ * (docs/plans/web.md W8). The keys they described — Space or Enter to reveal,
+ * 1–4 to grade — are rows in `src/keys/registry.ts` under the `review` scope
+ * now, with the descriptions the generated help sheet shows. Two places
+ * spelling the same four keys is two places that can disagree, and the registry
+ * is the one a test can check for collisions.
+ */
 
 export interface EmptyState {
   /** `nextDueAt` — when the soonest card the session would offer comes back. */

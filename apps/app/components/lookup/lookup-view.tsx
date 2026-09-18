@@ -26,6 +26,16 @@ import { useLookupStore } from '@/lib/stores/lookup';
 /** Long enough that a fast typist makes one request per word, short enough to feel live. */
 const DEBOUNCE_MS = 200;
 
+/**
+ * The lookup box's DOM id, exported because the keyboard model has to find it
+ * (docs/plans/web.md W8): `Mod+K` and `/` mean "jump to the lookup box" from
+ * anywhere, and the module that implements that may not be the one that renders
+ * the box — it navigates, and `core.md` C7 forbids anything reachable from a
+ * screen to know what a route is. One exported constant is the whole of the
+ * coupling, and it is a string the `<label>` already had to agree with.
+ */
+export const LOOKUP_INPUT_ID = 'lookup-query';
+
 function isAbort(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'AbortError';
 }
@@ -113,11 +123,11 @@ export function LookupView({ askSlot }: { askSlot?: ReactNode }) {
   return (
     <div className="flex flex-col gap-4">
       <div>
-        <label htmlFor="lookup-query" className="sr-only">
+        <label htmlFor={LOOKUP_INPUT_ID} className="sr-only">
           Look up a word
         </label>
         <Input
-          id="lookup-query"
+          id={LOOKUP_INPUT_ID}
           data-testid="lookup-input"
           type="search"
           autoComplete="off"

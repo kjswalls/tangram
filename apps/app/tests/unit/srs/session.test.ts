@@ -11,10 +11,8 @@ import {
   formatDelay,
   formatInterval,
   gradeOptions,
-  isRevealKey,
   MAX_SESSION_REPEATS,
   nextDueAt,
-  ratingFromKey,
   returningWithin,
   sessionQueue,
   sessionRefreshDelay,
@@ -222,24 +220,13 @@ describe('gradeOptions', () => {
   });
 });
 
-describe('the keyboard', () => {
-  it('maps 1–4 to the four ratings and ignores everything else', () => {
-    expect(ratingFromKey('1')).toBe(1);
-    expect(ratingFromKey('2')).toBe(2);
-    expect(ratingFromKey('3')).toBe(3);
-    expect(ratingFromKey('4')).toBe(4);
-    for (const key of ['0', '5', '9', 'a', 'g', 'Escape', 'ArrowRight', '', ' ']) {
-      expect(ratingFromKey(key)).toBeNull();
-    }
-  });
-
-  it('flips on space or enter only', () => {
-    expect(isRevealKey(' ')).toBe(true);
-    expect(isRevealKey('Enter')).toBe(true);
-    expect(isRevealKey('f')).toBe(false);
-    expect(isRevealKey('3')).toBe(false);
-  });
-});
+/*
+ * The keyboard cases that were here moved with their subject: `ratingFromKey`
+ * and `isRevealKey` are gone, and the four grades and the reveal key are rows
+ * in `src/keys/registry.ts` (docs/plans/web.md W8). What replaces these two
+ * cases is `tests/unit/keys/registry.test.ts`, which checks the whole table for
+ * collisions rather than one function for a mapping.
+ */
 
 describe('emptyStateMessage', () => {
   it('counts minutes inside the hour — the short steps made that reachable', () => {

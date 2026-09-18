@@ -1,0 +1,194 @@
+@import 'tailwindcss';
+@import './tokens.css';
+@import '../components/hanzi/ruby.css';
+
+/*
+ * THE BASE BLOCK (docs/plans/core.md C0).
+ *
+ * The palette lives next door in `tokens.css` and nothing here may name a
+ * colour: every rule below reads a tier-2 semantic token. Keep it that way —
+ * a hex in this file is a colour outside the token layer just as much as a hex
+ * in a component is.
+ */
+
+html {
+  /*
+   * Inkstone is the default on every device, so the document declares `light`
+   * and only an explicit `dark` or a `system` preference flips it. Without
+   * this, a dark-preferring device would paint form controls, scrollbars and
+   * the canvas behind the page dark under a light palette.
+   */
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-theme='system'] {
+    color-scheme: dark;
+  }
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+}
+
+/*
+ * Hanzi at Latin sizes are unreadable; every Chinese run uses this. C3's
+ * `<HanziText>` renders through it and adds the per-character ruby.
+ */
+.hanzi {
+  font-family: var(--font-hanzi);
+  line-height: 1.35;
+  letter-spacing: 0.01em;
+}
+
+:focus-visible {
+  outline: 2px solid var(--lookup);
+  outline-offset: 2px;
+}
+
+/*
+ * The dictionary's indeterminate progress sweep (components/dict/dict-status.tsx).
+ * A keyframe rather than a native `<progress>`, because the element's own
+ * indeterminate animation does not run under this stylesheet and the bar read
+ * as stuck at 0% on the first screen of a first launch. Plain CSS, per §7, and
+ * the component carries `motion-reduce:animate-none`.
+ */
+@keyframes dict-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
+}
+
+/*
+ * The speaker's hold target (docs/plans/core.md C6).
+ *
+ * **`touch-action: none` is what keeps a hold alive.** The gesture holds a
+ * finger down for 500 ms plus the whole sequence — three seconds or more for a
+ * four-character word — on a 40x32 target. At the UA default, a thumb that
+ * drifts past the browser's touch slop (~8px in Chromium, ~10px on iOS) hands
+ * the touch to the scroller, which fires `pointercancel`: the reading stops
+ * mid-word and the page slides out from under the finger. Measured with real
+ * touch input; `page.mouse` never produces a pan, which is exactly why every
+ * gate was green without it.
+ *
+ * It is a rule rather than a utility because the two WebKit halves beside it
+ * have none — `-webkit-touch-callout` in particular, which is what stops a long
+ * press on a button summoning the iOS callout over the card being read.
+ *
+ * This is the opposite decision from `.hanzi-span-host`'s `pan-y`, and
+ * deliberately so: the passage IS the scroll surface and must keep vertical
+ * panning, while a 32px button is not one and taking the touch is free.
+ */
+.speak-hold {
+  touch-action: none;
+  -webkit-touch-callout: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/*
+ * The character being read aloud (docs/plans/core.md C6).
+ *
+ * `lib/tts/sequence.ts` enqueues one utterance per character and advances this
+ * on each utterance's `start`, so it changes about once a second — which is why
+ * it is a class on the character rather than a second Custom Highlight. See
+ * `components/hanzi/hanzi-text.tsx`'s `SPEAKING_CLASS` for the whole reasoning;
+ * the requirement C6 states is that the speaking mark and the selected-span
+ * mark **compose**, and a class and a `::highlight()` are different mechanisms
+ * that both apply.
+ *
+ * **Neutral, not one of the three accents.** §1 assigns vermillion to Practice
+ * and the single primary action, jade to Look up and "learning", gold to "new".
+ * A speaking mark in any of them would read as a word state the learner had
+ * earned. `--border` on `--paper` is the app's own "here, for a moment" tint,
+ * and it is a background rather than a colour change so the ruby above it stays
+ * exactly as legible as it was.
+ *
+ * **Unlayered, deliberately**, for the same reason `.span-selected` is: an
+ * unlayered rule beats a layered one whatever the specificity, so this wins
+ * over the Tailwind utilities a character carries — including the reader's
+ * known/learning/new colours.
+ */
+.char-speaking {
+  background-color: var(--border);
+  border-radius: var(--r-sm);
+}
+
+/*
+ * The passage a span is dragged over (docs/plans/core.md C5b).
+ *
+ * **The declaration the whole design rests on, and it was missing from the
+ * reader until the C5b review measured it.** The harness carried `select-none`
+ * on its own container; the production passage did not, so `getComputedStyle`
+ * on `[data-testid="reader-text"]` answered `user-select: auto` and three
+ * things followed. A triple-click still made a native selection, so C5b's
+ * criterion "with no span active, a copy over the passage yields nothing"
+ * was false — and the spec that claimed to prove it clicked once, which
+ * collapses a selection, so it passed either way and could not fail. With a
+ * span active, a double-click on a character (the app's own second-tap gesture)
+ * selected the invisible `<rt>` text; `useSpanClipboard` yields to a real
+ * selection by design, so Ctrl+C then wrote the empty string and *wiped* the
+ * learner's clipboard. And on WebKit it left native text interaction live on
+ * the reader — the double-tap-hold-drag path whose `UIEditMenuInteraction`
+ * crash `wave-zero.md` §10d rules out precisely because "the gesture that
+ * crashes is the one we do not implement".
+ *
+ * It lives here, applied by `<HanziText>` whenever a span handle is attached,
+ * so the harness and the reader cannot drift apart again. `-webkit-touch-callout`
+ * has no Tailwind utility and is the half that suppresses the iOS callout, which
+ * is why this is a rule rather than a class list on one call site.
+ */
+.hanzi-span-host {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/*
+ * The painted span (docs/plans/core.md C5a).
+ *
+ * The **CSS Custom Highlight API**: the harness registers ranges and the
+ * browser paints them, so a pointer move costs no DOM mutation — which is the
+ * whole reason the design survives a 500-character passage at 60fps.
+ *
+ * `::highlight()` accepts only a few properties by spec — colour, background,
+ * decoration, shadow — so this is the whole of it. It takes the **practice**
+ * accent rather than `--lookup-soft`: the reader already uses the jade tint for
+ * a word in learning, and a span the learner is dragging must not look like a
+ * word state they have earned.
+ */
+::highlight(span-select) {
+  background-color: var(--practice-soft);
+  color: var(--practice);
+}
+
+/*
+ * …and the **degrade**, for an engine with no Custom Highlight API (below
+ * Chrome 105 / Safari 17.2, and whichever way WebKit answers `ios.md` I2).
+ *
+ * core.md C5a specifies it: the fallback "paints with a class on the
+ * already-per-character DOM". Without it the harness selected invisibly — the
+ * span was computed and Copy was enabled and the learner saw nothing — because
+ * `paint()` returned early when the registry was missing and nothing else
+ * painted. Same two colours, so the two paths cannot drift apart visually.
+ *
+ * **Unlayered, deliberately.** An unlayered rule beats a layered one whatever
+ * the specificity, so this wins over the Tailwind utilities the passage's
+ * characters carry — including the reader's known/learning/new colours, which
+ * the span a learner is actively dragging must sit on top of. C0 and C3 were
+ * each bitten by the same cascade rule from the other side.
+ */
+.span-selected {
+  background-color: var(--practice-soft);
+  color: var(--practice);
+}

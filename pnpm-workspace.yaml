@@ -1,0 +1,17 @@
+# One workspace, three deployables (docs/plans/wave-zero.md §1).
+#
+#   apps/app     the Vite SPA            (web.md)
+#   apps/server  the Hono service        (backend.md B0)
+#   apps/site    the Astro marketing site (web.md W7)
+#   packages/*   what more than one of them needs — packages/ai, packages/access
+#
+# `packages/*` is declared now, while it is empty, because web.md W4 and
+# backend.md both name paths inside it. A workspace declared as `apps/*` alone
+# means a later phase either invents a layout or puts shared code in an app.
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+onlyBuiltDependencies:
+  - esbuild
+  - unrs-resolver

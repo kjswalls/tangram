@@ -3,59 +3,47 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@10.33.0",
   "engines": {
-    "node": ">=20.9"
+    "node": ">=22.22"
   },
   "scripts": {
-    "dev": "next dev",
-    "build": "pnpm data:ensure && next build && pnpm sw",
-    "start": "next start",
-    "lint": "eslint .",
-    "test": "vitest run",
-    "e2e": "playwright test",
-    "data": "tsx scripts/build-data.ts",
-    "data:ensure": "tsx scripts/build-data.ts --ensure",
+    "dev": "pnpm -F app dev",
+    "dev:api": "pnpm -F server dev",
+    "build": "pnpm run typecheck && pnpm run data:ensure && pnpm run font:ensure && pnpm -F app build && pnpm -F server build",
+    "build:e2e": "pnpm run typecheck && pnpm run data:ensure && pnpm run font:ensure && pnpm -F app build:e2e && pnpm -F server build",
+    "lint": "eslint . && pnpm -F app lint && pnpm -F server lint && pnpm -F @tangram/ai lint && pnpm -F @tangram/access lint",
+    "typecheck": "tsc --noEmit && pnpm -F app typecheck && pnpm -F server typecheck && pnpm -F @tangram/ai typecheck && pnpm -F @tangram/access typecheck",
+    "test": "pnpm run data:ensure && pnpm run font:ensure && pnpm -F app test && pnpm -F server test",
+    "e2e": "pnpm -F app e2e",
+    "data": "TANGRAM_DATA_DIR=\"$PWD/data\" tsx scripts/build-data.ts",
+    "data:ensure": "TANGRAM_DATA_DIR=\"$PWD/data\" tsx scripts/build-data.ts --ensure",
+    "data:verify": "TANGRAM_DATA_DIR=\"$PWD/data\" tsx scripts/verify-data.ts",
+    "dict:copy": "TANGRAM_DATA_DIR=\"$PWD/data\" tsx scripts/copy-dict.ts",
+    "dict:copy:optional": "TANGRAM_DATA_DIR=\"$PWD/data\" tsx scripts/copy-dict.ts --optional",
     "sw": "tsx scripts/build-sw.ts",
+    "font:fetch": "tsx scripts/font-fetch.ts",
+    "font:coverage": "TANGRAM_DATA_DIR=\"$PWD/data\" tsx scripts/font-coverage.ts",
+    "font:subset": "TANGRAM_DATA_DIR=\"$PWD/data\" tsx scripts/font-subset.ts",
+    "font:ensure": "TANGRAM_DATA_DIR=\"$PWD/data\" tsx scripts/font-subset.ts --ensure",
+    "font:check": "TANGRAM_DATA_DIR=\"$PWD/data\" tsx scripts/font-coverage-check.ts",
+    "android:sync": "pnpm run data:ensure && pnpm -F app build && pnpm -F app cap sync android",
+    "android:open": "pnpm -F app cap open android",
     "smoke": "tsx scripts/smoke.ts",
-    "coldstart": "tsx scripts/coldstart-probe.ts"
-  },
-  "dependencies": {
-    "@anthropic-ai/sdk": "0.124.0",
-    "clsx": "^2.1.1",
-    "dexie": "^4.4.5",
-    "dexie-react-hooks": "^4.4.0",
-    "lucide-react": "^1.42.0",
-    "next": "16.3.4",
-    "pinyin-pro": "^3.29.3",
-    "react": "19.2.8",
-    "react-dom": "19.2.8",
-    "ts-fsrs": "5.4.2",
-    "zod": "^3.25.76",
-    "zustand": "^5.0.15"
+    "preview": "tsx scripts/preview.ts"
   },
   "devDependencies": {
-    "@playwright/test": "^1.63.0",
-    "@tailwindcss/postcss": "^4.3.3",
-    "@testing-library/jest-dom": "^7.0.1",
-    "@testing-library/react": "^16.3.3",
-    "@types/node": "^22.19.0",
-    "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.2.4",
-    "@vitejs/plugin-react": "^6.1.1",
+    "@eslint/js": "^9.39.5",
+    "@tangram/access": "workspace:*",
+    "@types/fontkit": "^2.0.9",
+    "@types/node": "^22.20.1",
     "cedict-json": "1.3.20251213",
     "eslint": "^9.39.5",
-    "eslint-config-next": "16.3.4",
-    "fake-indexeddb": "^6.2.5",
-    "jsdom": "^30.0.1",
-    "tailwindcss": "^4.3.3",
+    "fontkit": "^2.0.4",
+    "subset-font": "^2.7.0",
     "tsx": "^4.23.13",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.11"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild",
-      "unrs-resolver"
-    ]
+    "typescript-eslint": "^8.70.0",
+    "vite": "8.3.0"
   }
 }

@@ -1,0 +1,24 @@
+{
+  "name": "@tangram/access",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.22"
+  },
+  "//": "docs/plans/web.md W4 moves apps/app/lib/server/access.ts here; docs/plans/backend.md B1's Files list already names packages/access/**. THE EXPORTS MAP POINTS AT TYPESCRIPT SOURCE AND THAT IS THE SAME DEBT packages/ai RECORDS, for the same reason: it exports runtime values, apps/server emits plain JavaScript that plain `node` loads, and it resolves today only because pnpm symlinks a workspace package so Node's type stripping is permitted. Against a deploy artifact where this is a real directory under node_modules the same emitted dist/index.js fails with ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING. Whoever fixes it for packages/ai fixes it here in the same commit. See HANDOFF.md.",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "eslint": "^9.39.5",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.70.0",
+    "@types/node": "^22.19.0"
+  }
+}

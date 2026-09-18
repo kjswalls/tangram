@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Offline · Tangram</title>
+    <style>
+      /* Inkstone, and only Inkstone. This page is served by the service worker
+         with no app running, so it cannot read `data-theme` — and since dark is
+         an explicit choice rather than a system default (wave-zero.md §10c), a
+         `prefers-color-scheme` block here would be the one surface in the app
+         that went dark on its own. The hexes are copies of the tier-1 palette
+         in app/tokens.css; a static page cached by the worker cannot import it. */
+      :root { color-scheme: light; }
+      body {
+        margin: 0;
+        min-height: 100dvh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 2rem 1.25rem;
+        background: #f8f4ec;
+        color: #1c1a17;
+        font: 16px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      main { max-width: 28rem; }
+      h1 { font-size: 1.25rem; margin: 0 0 0.5rem; }
+      p { margin: 0 0 1rem; color: #7a7469; }
+      ul { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 0.5rem; }
+      a {
+        display: inline-block;
+        padding: 0.4rem 0.75rem;
+        border: 1px solid #e0d8ca;
+        border-radius: 0.5rem;
+        color: #b93a26;
+        text-decoration: none;
+      }
+    </style>
+  </head>
+  <body>
+    <main data-testid="offline-page">
+      <h1>You're offline</h1>
+      <p>
+        This page was never cached, so there is nothing to show for it. Practice still works —
+        your words live in this browser.
+      </p>
+      <!--
+        The three tabs, and only the three tabs. These have to be paths the
+        service worker actually precaches (`SHELL` in scripts/sw.template.js):
+        a link to a path that is not in the cache serves this same page again
+        while offline, so the link visibly does nothing. This list offered
+        /review, /lists and /settings for one commit after core.md C7 deleted
+        them, which was both of those failures at once.
+      -->
+      <ul>
+        <li><a href="/">Look up</a></li>
+        <li><a href="/practice">Practice</a></li>
+        <li><a href="/library">Library</a></li>
+      </ul>
+    </main>
+  </body>
+</html>

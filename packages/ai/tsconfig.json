@@ -1,0 +1,22 @@
+{
+  "//": "`noEmit`, and nothing here is compiled by anyone: the app reads this package through Vite, apps/server through esbuild and tsc; all of them resolve the `.ts` source named in `exports`. See package.json's note for the debts that follow from that. The `@/*` mapping is one of them — several modules still read `@/lib/**` out of apps/app, so the package cannot typecheck without it. It points OUT of this package and into an app, which is backwards. After `backend.md` B1 moved the six Dexie-reading functions out and B2 took `retrieve.ts` out of the server's graph, ONE runtime edge is left — `sha1Hex` from `@/lib/dev/sha1` in `cache-key.ts` — plus type-only edges to `@/lib/types`. Closing those is what would let the mapping go; no phase owns it yet and the need is recorded in HANDOFF.md. `noUncheckedIndexedAccess` is still NOT set here, and the reason narrowed rather than went away. B1 turned it off in apps/server and left this package's own 23 errors (ground.ts 18, fake.ts 3, prompts.ts 2) for B2; `backend.md` B2 fixed all 23 and turned the flag back on in `apps/server/tsconfig.json`, which compiles every module of this package that the server imports — so those are checked under the flag now. Turning it on HERE as well would be better and costs 36 errors in `apps/app/lib/dict/**` (entries.ts 22, segment.ts 9, rank.ts 5), reached through `retrieve.ts`, which is `data.md`'s code and not B2's to churn. Measured, not guessed. `retrieve.ts` is the one module of this package that the server no longer compiles after B2's flip, so it is also the one the server's gate no longer covers; recorded in HANDOFF.md. `lib` is ES2023 with NO `DOM`, matching apps/server rather than apps/app, and `types: node` supplies what the moved modules actually reach for (crypto.subtle, TextEncoder, setTimeout, globalThis.fetch, AbortSignal, process.env). Adding DOM would let `document`, `window` and `localStorage` typecheck clean inside a package apps/server compiles with no DOM, which is the app-code-leaks-into-the-shared-package failure wave 0 deliverable 5 was about. docs/plans/backend.md B2 (schemas.ts and the contract flip), docs/plans/wave-zero.md §5 (everything else).",
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "esModuleInterop": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "incremental": true,
+    "types": ["node"],
+    "paths": {
+      "@/*": ["../../apps/app/*"]
+    }
+  },
+  "include": ["*.ts"],
+  "exclude": ["node_modules"]
+}

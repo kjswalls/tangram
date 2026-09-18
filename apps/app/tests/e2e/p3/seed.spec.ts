@@ -1,0 +1,79 @@
+/**
+ * The demo seed through the URL (PLAN.md §4 P3): `/?seed=demo` leaves a learner
+ * mid-course — cards waiting, provenance on them, something to read.
+ */
+import { expect, test } from '../dict';
+
+import { resetApp, todayCounts } from './helpers';
+
+/**
+ * **This spec needs a dictionary on the device**, so it accepts the ask once
+ * before each test — `tests/e2e/dict.ts`, which is also where the next person
+ * to change this behaviour changes it. The default there is `'ask'`, a fresh
+ * origin with nothing stored, because that is what a fresh origin really gets
+ * now that `<DictGate>`'s mount probes instead of downloading.
+ */
+test.use({ dictionary: 'installed' });
+
+test.describe('?seed=demo', () => {
+  test('loads a worked example and hands Today a real queue', async ({ page }) => {
+    await resetApp(page);
+    await page.goto('/?seed=demo');
+
+    // The handler seeds, then drops the parameter and starts over on the result.
+    await expect(page).toHaveURL(/\/$/, { timeout: 120_000 });
+    await expect(page.getByTestId('today-sentence')).not.toContainText('Counting', {
+      timeout: 120_000,
+    });
+    const counts = await todayCounts(page);
+    // The demo's due cards, read out of C8's sentence: recognition and writing
+    // are two clauses now, and "due" was the sum of them.
+    expect(counts.practice + counts.write, JSON.stringify(counts)).toBeGreaterThanOrEqual(3);
+
+    const state = await page.evaluate(async () => {
+      const { repo, db } = window.__tangram;
+      const now = Date.now();
+      const dueCards = await repo.listDue(now);
+      return {
+        due: dueCards.length,
+        withSentence: dueCards.filter((card) => card.context?.sentence).length,
+        sources: [...new Set((await repo.allCards()).map((card) => card.context?.source))],
+        known: (await repo.knownEntryIds()).length,
+        texts: (await repo.texts()).length,
+        askCache: await db.table('ask_cache').count(),
+        dictVersions: [
+          ...new Set((await repo.allCards()).map((card) => card.snapshot.dictVersion)),
+        ],
+      };
+    });
+
+    expect(state.due).toBeGreaterThanOrEqual(3);
+    // /review has provenance to show: a due card carrying the sentence it came from.
+    expect(state.withSentence).toBeGreaterThanOrEqual(1);
+    for (const source of ['lookup', 'ask', 'reader', 'list']) {
+      expect(state.sources).toContain(source);
+    }
+    expect(state.known).toBeGreaterThan(1000);
+    // Every seeded card names the snapshot it was cut from, as the lookup path
+    // already did — the seed is the state the demo runs on.
+    for (const version of state.dictVersions) expect(version).toMatch(/\d/);
+    expect(state.dictVersions).not.toContain('unknown');
+    expect(state.texts).toBe(1);
+    expect(state.askCache).toBe(2);
+  });
+
+  test('the settings page loads and wipes the same demo', async ({ page }) => {
+    await resetApp(page);
+    await page.goto('/library');
+    await page.getByTestId('load-demo').click();
+    await page.getByTestId('load-demo').click();
+    await expect(page.getByTestId('settings-status')).toContainText('Demo loaded', {
+      timeout: 120_000,
+    });
+
+    await page.getByTestId('reset-all').click();
+    await page.getByTestId('reset-all').click();
+    await expect(page.getByTestId('settings-status')).toContainText('wiped', { timeout: 60_000 });
+    expect(await page.evaluate(() => window.__tangram.repo.allCards())).toEqual([]);
+  });
+});

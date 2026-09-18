@@ -1,0 +1,36 @@
+{
+  "name": "server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.22"
+  },
+  "scripts": {
+    "dev": "NODE_ENV=development tsx watch src/index.ts",
+    "build": "tsx scripts/build.ts && tsx scripts/stamp.ts",
+    "start": "node dist/index.js",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "smoke": "tsx src/smoke.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "0.124.0",
+    "@hono/node-server": "2.1.1",
+    "hono": "4.13.7",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@tangram/access": "workspace:*",
+    "@tangram/ai": "workspace:*",
+    "@types/node": "^22.19.0",
+    "esbuild": "^0.28.2",
+    "eslint": "^9.39.5",
+    "tsx": "^4.23.13",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.70.0",
+    "vitest": "^4.1.11"
+  }
+}

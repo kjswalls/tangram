@@ -12356,3 +12356,32 @@ then went **8/8** under `--repeat-each=8`, from 3/5.
 **For whoever writes the next timing-sensitive feature:** `--repeat-each` is cheap and a single
 green run proves less than it looks. Two independent adversarial reviews did not find this; one run
 of the suite did, and only because it happened to lose the coin flip.
+
+---
+
+## Node 24 is verified, and 22.x cannot deploy this — 2026-09-18
+
+The owner set Vercel's Node.js Version to 22.x and got the same
+`ERR_PNPM_UNSUPPORTED_ENGINE`. Three things were established rather than guessed:
+
+- **The floor is `react-router@8.3.1`'s own**, not ours: it declares
+  `engines: { node: ">=22.22.0" }`. With `engine-strict=true`, pnpm validates every
+  dependency's `engines`, so removing our `>=22.22` changes nothing. Checked the whole tree: no
+  dependency anywhere declares an `engines.pnpm`, so the "bad pnpm" half of that message is pnpm's
+  generic wording, not a second cause.
+- **Node 24 works.** `pnpm build` and `pnpm test` (2,045 app + 103 server) both pass on Node
+  24.21.0.
+- **The dictionary artifact differs between Node 22 and Node 24 by exactly two bytes**, at offsets
+  98–99. That is the SQLite file header's `SQLITE_VERSION_NUMBER` — the version of the library that
+  last wrote the file. Node 22 bundles 3.51.2, Node 24 bundles 3.53.4. Every other byte of 43,208,704
+  is identical and every row count matches. `copy-dict.ts` verifies against a manifest written by the
+  same run, so they always agree. Two runs on the same Node reproduce the same hash, so the builder
+  is deterministic; it is just not deterministic *across* Node majors.
+
+**What is still not proven,** and one line of a build log would settle it: whether 22.x failed because
+Vercel's 22.x image is below 22.22 (likely — then 24.x fixes it) or because `engines.node: ">=22.22"`
+overrides the dashboard and Vercel cannot resolve a range carrying a minor (then the dashboard is
+being ignored entirely and 24.x will not help either). The line above the error names the Node it
+ran. Ask for it before theorising a third time.
+
+`docs/deploy.md` §1 now says 24.x.

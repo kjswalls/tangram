@@ -30,25 +30,37 @@ in a file is reviewable and a rule in a text box is not.
 | Root directory | `apps/app` | `vercel.json` lives there, and Vercel reads it from the root directory |
 | Include files outside the root directory | **on** | `data/`, `scripts/` and `packages/` are at the workspace root and the build reads all three |
 | Framework preset | **Other** / none | `vercel.json` sets `"framework": null`. There is no framework |
-| Node.js version | **22.x** | Set it in the dashboard. See the warning below: neither `engines` nor `.nvmrc` sets it for you |
+| Node.js version | **24.x** | Set it in the dashboard; neither `engines` nor `.nvmrc` sets it for you. **22.x does not work** — see below |
 
 > **The two settings Vercel will get wrong on its own, and how each one fails.**
 >
-> **Node.** Vercel picks the build image's Node from the dashboard setting or from
-> `engines.node` — but only when `engines.node` is a bare major range it
-> recognises (`22.x`, `>=22`). Ours is `>=22.22`, because 22.22 is React Router
-> 8's actual floor and a major range cannot express it, so Vercel does not read
-> it and falls back to the project setting. On a project created before Node 22
-> was the default, that setting is 20.x, and the build dies during install with
+> **Node: use 24.x, not 22.x.** The build dies during install with
 >
 > ```
 > ERR_PNPM_UNSUPPORTED_ENGINE  Unsupported environment (bad pnpm and/or Node.js version)
 > ```
 >
 > which is `.npmrc`'s `engine-strict=true` doing exactly the job its comment
-> claims — the guard fired, the message just does not name the setting to change.
-> **Set Node.js Version to 22.x in Project Settings.** 24.x also satisfies
-> `>=22.22` but nothing in this repo has been run on it.
+> claims. The message does not name the setting to change, so here it is.
+>
+> **The floor is not ours and cannot be softened.** `react-router@8.3.1` declares
+> `engines: { node: ">=22.22.0" }` itself, so `engine-strict` fails on the
+> *dependency* even with our own `engines` field removed. Deleting `engine-strict`
+> would only move the failure from install to runtime.
+>
+> **Vercel's 22.x build image is below 22.22**, so that dropdown can never satisfy
+> it — setting it was tried, on 2026-09-18, and produced the same error. 24.x
+> satisfies `>=22.22.0` and is **verified**: `pnpm build` and the full suite
+> (2,045 app + 103 server) pass on Node 24.21.0.
+>
+> One observed difference, and it is benign. The SQLite artifact built on Node 24
+> has a different sha256 from the one built on Node 22 — **two bytes**, at offsets
+> 98–99, which is the file header's record of the SQLite library version that
+> wrote it (Node 22 bundles 3.51.2, Node 24 bundles 3.53.4). Every other byte of
+> the 43 MB file is identical, and the row counts match exactly. `copy-dict.ts`
+> verifies the artifact against a `dict-manifest.json` written by the same run, so
+> the two always agree. The build is otherwise deterministic: two runs on the same
+> Node produce the same hash.
 >
 > **pnpm.** `pnpm-lock.yaml` says `lockfileVersion: '9.0'`, which both pnpm 9
 > and pnpm 10 write, so Vercel breaks the tie on the project's creation date:

@@ -12279,3 +12279,33 @@ control), and `pnpm smoke --no-api` (**41 ok** — 29 assets, 6 paths with host 
 skipped and said so). Two adversarial reviews ran in parallel over the diff; their survivors are
 fixed and named above, and the two mutation tests in "the boundary it documents" were run because of
 them.
+
+---
+
+## Integration gate after W8a and W9 — `b579c45`
+
+Both wave-8 branches merged into `claude/integration`. Two conflicts, both against W8a, both
+recorded in `d47394c`'s message: `HANDOFF.md` kept both sections because it is append-only, and
+`tests/unit/shell/tab-routes.test.ts`'s spec census reconciled to **55 files / 47 specs / 48
+navigating** — each phase counted from `8f34be4`, so each expectation was right alone and neither
+was right together. Ran the test rather than trusting the arithmetic.
+
+`pnpm lint`, `pnpm typecheck` (inside `pnpm build`), `pnpm build`, `pnpm test` (**2,039** app +
+**103** server), `pnpm e2e` (**325** in **8.2 min**), `pnpm smoke --no-api` (**41 ok** — 29 assets,
+6 paths with host rules, 6 API cases skipped and said so), and `apps/server`'s own smoke against a
+running `pnpm -F server dev` (**8/8**, no `TANGRAM_DATA_DIR`, no `data/`).
+
+**One thing worth copying, because it cost a full e2e run.** The first `pnpm e2e` here reported
+`113 passed, 183 did not run` and exited 1. Nothing was wrong with the code: I checked `main` out in
+another shell while the suite was running, and `main` has no `apps/` directory, so Playwright died
+on `Cannot find module '/home/user/tangram/apps/app/playwright.config.ts'`. The suite reads the
+working tree for eight minutes. **Do not switch branches while it runs** — and read the error before
+believing a phase broke something, because this one names the cause exactly.
+
+The server's health path is `/health`, not `/api/health`. A readiness loop polling the latter waits
+forever against a server that is already up.
+
+**What is left.** `web.md` **W7** (marketing site) and **W8b** (command palette) are deferred, not
+unfinished — `CLAUDE.md`'s migration state says which is which. `backend.md` **B3–B7** need artefacts
+no phase provisions. The list importer is `wave-zero.md` §8a.
+

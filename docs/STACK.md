@@ -391,6 +391,12 @@ risk.
 
 ### 2.4 Desktop shell: installed PWA now, Tauri 2 later, never Electron
 
+> **The operational form of this decision is [`docs/desktop.md`](desktop.md)** (`web.md` W9): the
+> trigger written as three conditions you can actually check, the pinned versions with what could and
+> could not be re-checked, the two storage hazards, the hedge on every storage claim below, and the
+> installed-PWA verification the owner still owes. This section stays the *why*; that page is what a
+> reader decides from.
+
 **Decision.** Ship desktop as the **installed PWA** from the same Vite build — zero additional
 build, zero additional code, the manifest already exists. Add a **Tauri 2.11.x** shell when the
 global hotkey is worth roughly **$120/year marginal** (Windows code signing at ~$9.99/month; Apple's

@@ -133,8 +133,19 @@ const SEMANTIC_TOKENS = [
 function sources(root: string, extensions: RegExp): string[] {
   const skip = new Set([
     'node_modules',
+    // Every build output, not only the default one. A spec that makes a second
+    // build removes it in `afterAll`, but an interrupted run leaves it — and a
+    // walk that reads `dist-*/assets/index-*.css` reports ~100 dangling
+    // `var(--…)` names from Tailwind's own output and looks like a token-layer
+    // regression with nothing pointing at e2e. `dist-gated` is
+    // `tests/e2e/d/access-gate.spec.ts`'s, `dist-sub` is
+    // `tests/e2e/d/origin-agnostic.spec.ts`'s (docs/plans/web.md W9), and the
+    // two `dist-*-check` directories are `core/gallery-excluded.spec.ts`'s.
     'dist',
-    'dist-no-gallery',
+    'dist-gated',
+    'dist-sub',
+    'dist-prod-check',
+    'dist-e2e-check',
     '.git',
     'vendor',
     'test-results',

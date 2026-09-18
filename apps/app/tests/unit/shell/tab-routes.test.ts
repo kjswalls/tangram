@@ -153,10 +153,16 @@ describe('the seven routes are gone', () => {
     // and `d/dict-missing-surface.spec.ts` (one error surface for the missing
     // dictionary, on all three tabs — the spec that would have caught the three
     // shapes the owner found by looking at the app).
+    //
+    // `web.md` W9 adds one, a spec and navigating: `d/origin-agnostic.spec.ts`,
+    // the standing check that the build assumes neither an origin nor a
+    // document root — it serves the default build from a second port and a
+    // `--base=/sub/` build from behind a prefix, which is what keeps a desktop
+    // or native shell a packaging job (docs/desktop.md).
     expect({ files: files.length, specs: specs.length, navigating: navigating.length }).toEqual({
-      files: 52,
-      specs: 44,
-      navigating: 45,
+      files: 53,
+      specs: 45,
+      navigating: 46,
     });
   });
 
@@ -171,6 +177,16 @@ describe('the seven routes are gone', () => {
     // path that is deliberately not a route is the one thing this check must
     // not treat as a stale one.
     const outsideTheShell = ['/gallery', '/span-select', '/dict-wasm', '/no/such/route'];
+    /**
+     * A deploy base is not a route (`web.md` W9).
+     *
+     * `d/origin-agnostic.spec.ts` serves a `vite build --base=/sub/` output
+     * behind that prefix, so its `goto` targets are the ordinary tabs one
+     * directory down. The base is stripped before the tab model sees the path
+     * rather than the paths being excused, so `/sub/nope` still fails here
+     * exactly as `/nope` would.
+     */
+    const deployBases = ['/sub'];
     const offenders: string[] = [];
     for (const spec of walk(join(appRoot, 'tests', 'e2e'))) {
       for (const match of code(spec).matchAll(/goto\(\s*[`'"]([^`'"]*)[`'"]/g)) {
@@ -181,8 +197,12 @@ describe('the seven routes are gone', () => {
           ? new URL(target.replace(/\$\{[^}]*\}/g, '0')).pathname
           : target.split('?')[0].split('#')[0];
         if (outsideTheShell.includes(path)) continue;
+        const rebased = deployBases.reduce(
+          (rest, base) => (rest === base || rest.startsWith(`${base}/`) ? rest.slice(base.length) || '/' : rest),
+          path,
+        );
         // A list id is interpolated, so the *shape* is what is checked.
-        const concrete = path.replace(/\$\{[^}]*\}/g, 'x');
+        const concrete = rebased.replace(/\$\{[^}]*\}/g, 'x');
         if (tabForPath(concrete) === undefined) {
           offenders.push(`${relative(appRoot, spec)} → ${target}`);
         }

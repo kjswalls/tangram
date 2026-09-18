@@ -34,42 +34,45 @@ in a file is reviewable and a rule in a text box is not.
 
 > **The two settings Vercel will get wrong on its own, and how each one fails.**
 >
-> **Node: use 24.x, not 22.x.** The build dies during install with
+> **Node: use 24.x, and the reason is not what it looks like.** Every build failed
+> in `pnpm install` with
 >
 > ```
 > ERR_PNPM_UNSUPPORTED_ENGINE  Unsupported environment (bad pnpm and/or Node.js version)
+> Your Node version is incompatible with "cedict-json@1.3.20251213".
+> Expected version: 22      Got: v24.19.0
 > ```
 >
-> which is `.npmrc`'s `engine-strict=true` doing exactly the job its comment
-> claims. The message does not name the setting to change, so here it is.
+> **Two constraints with an empty intersection over what Vercel offers.**
+> `react-router@8.3.1` declares `engines.node: ">=22.22.0"`, and Vercel's 22.x
+> image is below that. `cedict-json@1.3.20251213` declares a bare
+> `engines.node: "22"`, which rejects 24. Vercel offers 20.x, 22.x and 24.x, so
+> with `engine-strict=true` **no available Node satisfied both** and the dropdown
+> could not fix it at any setting.
 >
-> **The floor is not ours and cannot be softened.** `react-router@8.3.1` declares
-> `engines: { node: ">=22.22.0" }` itself, so `engine-strict` fails on the
-> *dependency* even with our own `engines` field removed. Deleting `engine-strict`
-> would only move the failure from install to runtime.
+> `cedict-json`'s pin is not a requirement. The package is 16 MB of `cedict.json`
+> plus an 89-byte re-export; it has no Node API usage, and `scripts/build-data.ts`
+> never imports it — it calls `require.resolve` to find the directory and reads
+> the JSON off disk. The publisher pinned their own dev box. Measured against the
+> lockfile with semver: of **318** packages declaring `engines.node`, Node 22.22.2
+> fails **0** and Node 24.19.0 fails exactly **one** — this.
 >
-> **Vercel's 22.x build image is below 22.22**, so that dropdown can never satisfy
-> it — setting it was tried, on 2026-09-18, and produced the same error. 24.x
-> satisfies `>=22.22.0` and is **verified**: `pnpm build` and the full suite
-> (2,045 app + 103 server) pass on Node 24.21.0.
+> So `engine-strict` is gone and `scripts/check-node.ts` replaced it: it states the
+> real floor, runs first in `pnpm build`, and is held by
+> `tests/unit/build/node-floor.test.ts`, which also asserts the floor still equals
+> what `react-router` declares and that engine-strict stays off.
+>
+> **Set Node.js Version to 24.x.** Verified on 24.21.0: frozen install, `pnpm
+> build`, and 2,050 app + 103 server tests. 22.x would also work on a 22.22+ image;
+> Vercel's is not one.
 >
 > One observed difference, and it is benign. The SQLite artifact built on Node 24
-> has a different sha256 from the one built on Node 22 — **two bytes**, at offsets
-> 98–99, which is the file header's record of the SQLite library version that
-> wrote it (Node 22 bundles 3.51.2, Node 24 bundles 3.53.4). Every other byte of
-> the 43 MB file is identical, and the row counts match exactly. `copy-dict.ts`
-> verifies the artifact against a `dict-manifest.json` written by the same run, so
-> the two always agree. The build is otherwise deterministic: two runs on the same
-> Node produce the same hash.
->
-> **pnpm.** `pnpm-lock.yaml` says `lockfileVersion: '9.0'`, which both pnpm 9
-> and pnpm 10 write, so Vercel breaks the tie on the project's creation date:
-> projects created before pnpm 10 support get **pnpm 9**. The `packageManager`
-> field in the root `package.json` is ignored by the builder unless Corepack is
-> on, so pin it by setting `ENABLE_EXPERIMENTAL_COREPACK=1` as a project
-> environment variable. This is hygiene, not a blocker — pnpm 9 ignores
-> `pnpm-workspace.yaml`'s `onlyBuiltDependencies` rather than rejecting it, and
-> runs every build script, so `esbuild` and `unrs-resolver` still compile.
+> has a different sha256 from the Node 22 one — **two bytes**, at offsets 98–99,
+> which is the file header's record of the SQLite library version that wrote it
+> (Node 22 bundles 3.51.2, Node 24 bundles 3.53.4). Every other byte of the 43 MB
+> file is identical and the row counts match. `copy-dict.ts` verifies against a
+> `dict-manifest.json` written by the same run, so the two always agree. The build
+> is deterministic within a Node major.
 
 Install is the detected `pnpm install` at the workspace root. The build command
 and the output directory come from `vercel.json`:

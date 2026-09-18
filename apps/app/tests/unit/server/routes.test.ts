@@ -164,8 +164,15 @@ function withoutComments(source: string): string {
 /** Every first-party `.ts`/`.tsx` under the app, excluding tests and the build output. */
 function sourceFiles(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    // `dist-gated` is `tests/e2e/d/access-gate.spec.ts`'s second build.
-    if (['node_modules', 'dist', 'dist-gated', 'tests', 'ios', 'android', '.vite'].includes(entry.name)) {
+    // `dist-gated` is `tests/e2e/d/access-gate.spec.ts`'s second build,
+    // `dist-sub` is `tests/e2e/d/origin-agnostic.spec.ts`'s, and the two
+    // `dist-*-check` directories are `core/gallery-excluded.spec.ts`'s. Each is
+    // removed by the spec that makes it; an interrupted run leaves one behind.
+    if (
+      ['node_modules', 'dist', 'dist-gated', 'dist-sub', 'dist-prod-check', 'dist-e2e-check', 'tests', 'ios', 'android', '.vite'].includes(
+        entry.name,
+      )
+    ) {
       continue;
     }
     const full = resolve(dir, entry.name);

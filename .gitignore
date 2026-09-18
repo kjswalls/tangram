@@ -79,3 +79,9 @@ apps/app/dist-e2e-check/
 # (docs/plans/backend.md B1). Same shape as the two above: throwaway, and never
 # something to commit.
 apps/app/dist-gated/
+
+# The `--base=/sub/` build `apps/app/tests/e2e/d/origin-agnostic.spec.ts` makes
+# so that W9's no-absolute-origin check has a real subpath deploy to boot
+# (docs/plans/web.md W9, docs/desktop.md). It carries a second copy of
+# `public/` — the 43 MB dictionary included — and the spec removes it again.
+apps/app/dist-sub/

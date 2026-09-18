@@ -12070,3 +12070,212 @@ All green after the review fixes: `pnpm lint`, `pnpm typecheck`, `pnpm build`, `
   sticky, so a click on a tab at `scrollY=600` scrolls to the top first and the router saves a scroll
   position of **0** for the page being left. Every scroll-restoration test has to navigate without
   that — see `followTab` in `tests/e2e/core/routing.spec.ts`.
+---
+
+## `web.md` W9 — desktop: the installed PWA is the product, and the Tauri trigger is written down
+
+One commit on `claude/build-web-9`, cut from `claude/integration` (8f34be4). A short phase: a
+decision record plus one standing check, so that adding a Tauri shell later is a packaging job and
+not a porting job. **It records the trigger; it does not pull it.** No Tauri work, no `src-tauri/`,
+no dependency added, and nothing under `apps/app/src`, `apps/app/lib` or `apps/app/components`
+touched.
+
+**What landed.**
+
+- **`docs/desktop.md`** — the page a reader who has never seen this conversation is meant to be able
+  to decide from: what the installed PWA is and the one thing it cannot do, the trigger as three
+  conditions you can actually check, the pinned Tauri versions with what could and could not be
+  re-checked, the two storage hazards, the hedge on every storage claim, register #14, and criterion
+  3's owner checklist.
+- **`apps/app/tests/e2e/d/origin-agnostic.spec.ts`** — the standing check. Ten tests: the default
+  build served from a second port, and a second `vite build --base=/sub/` served behind a `/sub/`
+  prefix.
+- Five small supporting edits, named because a parallel session is in this tree: `.gitignore` and
+  `apps/app/eslint.config.mjs` gain `dist-sub`; `apps/app/tests/unit/ui/tokens.test.ts` and
+  `apps/app/tests/unit/server/routes.test.ts` gain **every** throwaway build directory in their
+  walkers' skip lists (see "two bugs the reviews found"); `apps/app/tests/unit/shell/tab-routes.test.ts`'s
+  spec-count guard moves to **53 / 45 / 46** and learns to strip a deploy base before checking a
+  `goto` target; and `docs/STACK.md` §2.4 gains a five-line pointer at the new page, because an
+  orphaned decision record is the failure criterion 1 exists to prevent.
+
+### Criterion 3 is OUTSTANDING and it is the owner's *(owner)*
+
+**"The installed PWA verified on a real desktop platform — it installs, gets its own window, works
+offline" was not run and cannot be run here.** This container is headless Linux with Chromium for
+Playwright: no desktop browser session, no installed-app surface, no Safari. It is **not** downgraded
+into something Playwright can pass, and `docs/desktop.md` §7 carries the whole procedure so the check
+is cheap the day a machine exists.
+
+What the owner does: serve a production build over a secure context, install it (the Chrome/Edge
+install icon, or Safari *File → Add to Dock*), quit the browser, launch from the Dock/taskbar, use it
+(look up, get the dictionary, grade a card), then go offline, quit, relaunch, look a word up and run
+a practice session to completion, and read `navigator.storage.persisted()` and `estimate()` in the
+installed window's DevTools.
+
+**A pass is all five:** it installs and appears as its own application; it opens in a **standalone
+window with no browser chrome**; an offline relaunch renders the **app** and a practice session runs
+to completion (not `/offline.html`); a lookup still answers offline; and `persisted()` returns a
+value that is **written down** — `false` included, with the quota, the OS and the browser version.
+That would be this project's first data point from a real installed app.
+
+**What the container can prove, and does, so the boundary is not re-litigated:** the app boots, the
+service worker registers and serves a navigation offline (`tests/e2e/p6/pwa.spec.ts`,
+`tests/e2e/c/sw-offline.spec.ts`), and the `persist()` code path runs — W5 recorded
+`persisted()=false` from headless Chromium on `http://localhost`, which is expected and is not the
+measurement above. **None of that is an installed application in its own window.**
+
+### What the standing check checks — and the boundary it documents
+
+The `--base=/sub/` half is the one with teeth, and it was written to look at the things a "the
+document loaded" check would miss. Under the prefix, all of these are verified correct:
+
+- the entry chunk, the stylesheet and every same-origin request stay under `/sub/` (one escaped path
+  fails the test);
+- the router's `basename` — every in-app link is `/sub/…`, a click lands on `/sub/practice`, and a
+  **hard navigation to `/sub/library/lists/<id>`** boots from the fallback's own document, which is
+  the three-way base × SPA-fallback × depth case `vite.config.ts` spends fifteen lines on;
+- **the fonts W6 made relative**: 25 `url()`s in the built stylesheet, every one base-prefixed, plus
+  a real `.woff2` fetched under `/sub/assets/` at runtime (the runtime check sees only the two slices
+  `unicode-range` actually needs, which is why the stylesheet is read as well);
+- **the dictionary's content-addressed path**: `/sub/dict-manifest.json` is fetched, and the artifact
+  filename it names — a literal nowhere in the app — is then requested at `/sub/dict-1-….sqlite`.
+  The test's own host refuses that one with a 503 and records the pathname, so no megabytes move and
+  the evidence is a socket rather than an intention;
+- the sqlite wasm binary and its worker, both under `/sub/assets/`;
+- and, on the default build, that **no local origin beyond the configured `VITE_API_BASE` is baked
+  into any text file in `dist/`** — the entry document and the service worker included.
+
+**Four things are rooted at `/` by construction and are a documented boundary rather than a bug
+talked around**: `components/pwa/register-sw.tsx` (`SW_URL` `/sw.js`, `scope: '/'`);
+`scripts/sw.template.js` **and** `scripts/build-sw.ts` (the five path rules, `/offline.html`, the
+`cache.match('/')` document fallback, and `precacheList()`'s `['/', '/offline.html', '/<asset>']`);
+`public/manifest.webmanifest` (`id`, `start_url`, `scope` and all five `icons[].src`, copied
+verbatim so no `--base` reaches it); and **`apps/app/vercel.json`**, whose seven `source` patterns
+are all `/`-anchored. That last one is the one with a user-visible consequence: under a prefix the
+`no-cache` on `dict-manifest.json` matches nothing, so the pointer at a 43 MB content-addressed file
+becomes cacheable — exactly the failure the rule exists to prevent — and the artifact loses its
+`immutable` caching. None of the four reaches a native shell (the worker refuses to register inside
+one, no native shell reads a web manifest, `vercel.json` is the web host's) and none affects a root
+deploy, which is the only web deploy this project has.
+
+So the spec allows `/sw.js` **by name** and asserts nothing else escapes. **Both halves of that were
+mutation-tested rather than trusted**, each mutation applied to a copy-aside and restored:
+
+- removing `/sw.js` from the allowance turns the escape check red with `"/sw.js"` in the diff —
+  which also proves the request is *observed*, and it is only observed because the recorder listens
+  on `page.context()`. **Playwright reports a service worker's own script fetch on the context
+  only**; the first version listened on `page` and could not see the one root-absolute request this
+  build makes, so it would have passed by not looking.
+- making `SW_URL` and its scope base-relative turns "no service worker registers" red. That test
+  asserts `getRegistrations().length === 0` rather than `controller === null`, because a null
+  controller is also what a perfectly good worker looks like while it is still installing — the
+  weaker form would go green on a loaded container in the one direction that hides the change. The
+  positive control is in the first describe: at the root base a worker **must** register.
+
+### What the second build costs the suite
+
+Measured here: **`vite build --mode e2e --base=/sub/ --outDir dist-sub` is 1.3 s**, and the whole
+spec file — build, two in-process static servers, ten tests — is **23.5 s** inside a `pnpm e2e` that
+is 8.4 minutes. **`dist-sub` is 67 MB** while it exists, because `vite build` copies `public/` and
+`public/` holds the 43 MB dictionary and its 17 MB brotli sibling; `afterAll` removes it, the way
+`gallery-excluded.spec.ts` and `access-gate.spec.ts` dispose of theirs. The disk is not the real
+cost (the container had ~30 GB free) — a *leftover* is, which is the next section.
+
+### Two bugs the reviews found that were not in the new files
+
+1. **A leftover throwaway build breaks `pnpm test` with failures that name nothing.**
+   `tests/unit/ui/tokens.test.ts`'s walker skipped `dist` and a `dist-no-gallery` that no longer
+   exists — not `dist-gated`, not `dist-prod-check`, not `dist-e2e-check`, and not the new
+   `dist-sub`. A leftover (Ctrl-C, a killed worker, a cancelled run) puts a built stylesheet in the
+   walk, and the token tests then report ~100 dangling `var(--…)` names from Tailwind's own output —
+   which reads as a token-layer regression with no connection to e2e at all. Verified: the built CSS
+   carries 150 `var()` names. `tests/unit/server/routes.test.ts` had the same hole with a harmless
+   outcome. Both lists now name every build directory, and the stale one is gone.
+2. **A `pipe` with no `error` handler in the new static host.** `apps/app/vite-plugins/dict-assets.ts`
+   already carries the post-mortem for exactly this — an unhandled stream `error` **throws in the
+   Node process**, which here is the Playwright worker, taking every later spec with it and pointing
+   at nothing. Fixed, along with `response.on('close')` destroying the stream, a `try`/`catch` around
+   `decodeURIComponent` (a malformed `%zz` throws), and a 404 rather than an SPA fallback for any
+   path carrying a file extension — the leniency `vite-plugins/headers.ts` exists because of. The
+   spec also now fails loudly in `beforeAll` if `dist/` holds no build, which `reuseExistingServer:
+   true` makes possible.
+
+Also from the reviews and worth keeping: `test.setTimeout` **inside `beforeAll` raises only that
+hook**, so the tests were running at Playwright's 30 s default while every sibling spec in
+`tests/e2e/d/` raises its own; both describes now say it, and the two `expect.poll`s carry explicit
+timeouts rather than inheriting `expect`'s 5 s.
+
+### What I found wrong, or worth knowing, in the plan set and the repository
+
+- **`web.md` W9 says "W1 already asserts the separate `--base=/sub/` subpath build; this phase makes
+  it a standing check". W1 asserted it by hand, not in a spec.** W1's section of this file records
+  the subpath boot as "verified in a real browser behind a `/sub/` prefix"; nothing in `tests/e2e/**`
+  re-ran it, and `d/spa-fallback.spec.ts` covers the default base only. This phase wrote the check
+  rather than promoting one — which is what W9 intended, but a reader could think a spec existed.
+- **W9's acceptance criterion 3 invites the very downgrade the orchestrator warned about.** Its own
+  words are "Chromium in the container can prove most of this", which is not true of any of the three
+  things the criterion names: an install, a standalone window, and an offline relaunch of an
+  installed app. Recorded above as *(owner)* and outstanding.
+- **crates.io is egress-blocked through this container's proxy (403); the npm registry is not.** So
+  `STACK.md` §6's Tauri rows cannot be re-checked at their source. What could be checked was, on
+  2026-09-18: `@tauri-apps/cli` **2.11.4**, `@tauri-apps/plugin-sql` **2.4.1** and
+  `@tauri-apps/plugin-updater` **2.11.0** all match the pinned figures — corroboration from the
+  packages' npm distributions, not the crates themselves. **`tauri` core 2.11.5 remains unverified**,
+  and it is the row the two audits disagreed on (2.10.1 via a search snippet vs 2.11.5 on crates.io).
+  The 3.0.0 alpha line has also moved: npm's `next` tag is at **3.0.0-alpha.1** for the CLI against
+  `3.0.0-alpha.0` on 2026-09-13. The pin holds and its reason is a week stronger.
+- **This file's own W5 section overstates `storageRisk()`** — it says the function returns `at-risk`
+  "at **every** persistence state, `'unknown'` included". `src/pwa/persist.ts` returns `'safe'` first
+  when `state === 'persisted'` and again when `standalone`, and `'unknown'` when the learner has no
+  cards; `tests/unit/pwa/persist.test.ts` pins those branches. The pessimism is real and correct for
+  the case it is about — a non-installed WebKit tab holding cards — and `docs/desktop.md` §6 states
+  it that way. Appending rather than editing, per the append-only rule.
+- **`STACK.md` §2.4's storage paragraph and `web.md` W9's are the same claims with the same
+  provenance, and `docs/desktop.md` §6 says so where a reader will see it.** AUDIT 4 read both the
+  Safari ITP-exemption claim and the Chromium installed-plus-`persist()` claim from search summaries
+  with webkit.org and MDN egress-blocked (R1); register #13 is still unrun for want of a Mac. Nothing
+  in this phase moved either.
+
+### Frozen surfaces
+
+**None needed and none touched.** This phase added a spec and a document; it read
+`lib/dict/artifact.ts` and `lib/server/roots.ts` for their existing exports and changed neither.
+
+### Files another session may collide with
+
+`web.md` **W8a** is running in parallel on `claude/build-web-8` over `apps/app/src`, `apps/app/lib`,
+`apps/app/components/shell` and several `tests/e2e/**` files. This phase touched **one** file under
+`tests/e2e/**` and it is new: `apps/app/tests/e2e/d/origin-agnostic.spec.ts`. No existing spec was
+edited. The other edits are `.gitignore`, `apps/app/eslint.config.mjs`, `docs/STACK.md` §2.4 and
+three unit tests: `tests/unit/shell/tab-routes.test.ts`, `tests/unit/ui/tokens.test.ts`,
+`tests/unit/server/routes.test.ts`.
+
+**`tab-routes.test.ts` is the likely conflict**: W8a adds specs too, and both sessions will have
+moved the same three counts. The resolution is arithmetic — take both phases' additions — and the
+comment block above the numbers says which phase added what.
+
+### What this makes false, or missing, in `CLAUDE.md`
+
+Not edited here, per the rule that a builder records rather than rewrites someone else's file.
+
+- **The docs pointers are one short.** CLAUDE.md names `docs/STACK.md`, `docs/plans/` and
+  `docs/deploy.md`; **`docs/desktop.md` now exists** and is where the desktop decision, the Tauri
+  trigger, the pins and the storage hazards live. A reader asking "are we building a desktop app?"
+  should be sent there rather than to STACK §2.4 alone.
+- **"A Tauri shell is a later, optional addition whose only new capability is a global hotkey" is
+  still exactly right** — and now has a written trigger, three checkable conditions and a bill.
+- The migration-state block's list of things a green gate has not finished can gain one: **the
+  installed PWA has never been run as an installed application on any desktop platform.** W5 shipped
+  install and persistence and W9 wrote the desktop record; neither has seen a standalone window.
+- `tests/unit/shell/tab-routes.test.ts`'s spec counts are **53 / 45 / 46**, as that test asks every
+  phase that adds a spec to record.
+
+### Gates
+
+`pnpm lint`, `pnpm typecheck`, `pnpm build`, `pnpm test` (**1,959** app + **103** server, both
+unchanged), `pnpm e2e` (**305** in **7.9 min** — 295 before this phase, plus this spec's ten, of
+which two were added by the reviews: the deep route under the prefix and the service-worker
+control), and `pnpm smoke --no-api` (**41 ok** — 29 assets, 6 paths with host rules, 6 API cases
+skipped and said so). Two adversarial reviews ran in parallel over the diff; their survivors are
+fixed and named above, and the two mutation tests in "the boundary it documents" were run because of
+them.

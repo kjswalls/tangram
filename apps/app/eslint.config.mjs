@@ -18,6 +18,10 @@ const config = [
       // it again; a crashed run leaves it, and 700 kB of emitted bundle is not
       // something to lint.
       'dist-gated/**',
+      // The `--base=/sub/` build `tests/e2e/d/origin-agnostic.spec.ts` makes so
+      // the no-absolute-origin check has a subpath deploy to boot (docs/plans/web.md
+      // W9). Same shape as the one above, and the same reason.
+      'dist-sub/**',
       '.next/**',
       'node_modules/**',
       'playwright-report/**',

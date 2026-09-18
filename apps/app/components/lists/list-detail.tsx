@@ -6,6 +6,7 @@ import { TAB_PATHS } from '@/components/shell/nav';
 import { useEffect, useState } from 'react';
 
 import { DictNotice } from '@/components/dict/dict-gate';
+import { ImportList } from '@/components/lists/import-list';
 import { ProductionListToggle } from '@/components/lists/production-list-toggle';
 import { WordSearch } from '@/components/lists/word-search';
 import { WordStateBadge } from '@/components/lists/word-state';
@@ -230,6 +231,18 @@ export function ListDetail({ listId }: { listId: string }) {
               setReload((value) => value + 1);
             }}
           />
+        </Card>
+      ) : null}
+
+      {/*
+        Import into **this** list (`wave-zero.md` §8a). Not on an HSK band: its
+        membership is the band, derived from the dictionary, and adding to it by
+        hand would make the list something other than what its name claims — the
+        same reason the Add-a-word box above is `kind !== 'hsk'`.
+      */}
+      {list && list.kind !== 'hsk' ? (
+        <Card title="Import words">
+          <ImportList target={list} onImported={() => setReload((value) => value + 1)} />
         </Card>
       ) : null}
 

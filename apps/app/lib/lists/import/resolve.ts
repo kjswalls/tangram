@@ -5,9 +5,10 @@
  * The dictionary answers through a `Resolver` — `DictStore.resolve` in the
  * browser, a hand-built map in a test — so the grouping, the default reading and
  * the skip rules below are unit-tested without a 43 MB file behind them. It was
- * `POST /api/dict/resolve` in `abe6793`; since `data.md` D6 the client queries
- * the dictionary in-process and the app's own origin 404s every `/api/**` path,
- * so the round trip that route existed to make is gone (`wave-zero.md` §8a).
+ * a POST route in `abe6793`; since `data.md` D6 the client queries the
+ * dictionary in-process and the app's own origin 404s the whole `/api/**`
+ * prefix, so the round trip that route existed to make is gone
+ * (`wave-zero.md` §8a).
  *
  * Dictionary only, by design: nothing here calls a model, and the preview shows
  * the learner every ambiguity rather than guessing past it.

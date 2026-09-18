@@ -163,10 +163,15 @@ describe('the seven routes are gone', () => {
     // document root — it serves the default build from a second port and a
     // `--base=/sub/` build from behind a prefix, which is what keeps a desktop
     // or native shell a packaging job (docs/desktop.md).
+    //
+    // The list importer's port (`wave-zero.md` §8a) adds one, a spec and
+    // navigating: `p3/import-list.spec.ts`. It came from `main`'s `abe6793`,
+    // where it lived at the same path against `/lists`; §8a's table says it
+    // "ports; rehomed, and it joins the census here", which is this line.
     expect({ files: files.length, specs: specs.length, navigating: navigating.length }).toEqual({
-      files: 55,
-      specs: 47,
-      navigating: 48,
+      files: 56,
+      specs: 48,
+      navigating: 49,
     });
   });
 

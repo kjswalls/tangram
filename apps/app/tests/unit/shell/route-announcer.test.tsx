@@ -19,7 +19,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PageHeader } from '@/components/ui/page-header';
 import {
   ANNOUNCE_DELAY_MS,
+  claimRouteFocus,
   fallbackRouteName,
+  FOCUS_CLAIM_GRACE_MS,
   RouteAnnouncer,
   routeHeading,
 } from '@/src/shell/route-announcer';
@@ -57,6 +59,40 @@ function Fixture() {
   );
 }
 
+/** Like `Fixture`, but the destination carries a focusable box inside `<main>`. */
+function ClaimFixture() {
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
+  return (
+    <>
+      <button
+        data-testid="claim-and-go"
+        onClick={() => {
+          claimRouteFocus('/library');
+          navigate('/library');
+        }}
+      >
+        go
+      </button>
+      <button
+        data-testid="go-unclaimed"
+        onClick={() => {
+          navigate('/practice');
+        }}
+      >
+        go
+      </button>
+      <main>
+        <PageHeader title={pathname.startsWith('/library') ? 'Library' : 'Practice'}>
+          blurb
+        </PageHeader>
+        {pathname.startsWith('/library') ? <input data-testid="box" /> : null}
+      </main>
+      <RouteAnnouncer />
+    </>
+  );
+}
+
 /**
  * The announcement lands a tick after the navigation — the region is cleared
  * first so that the same name twice still speaks. See the component's header.
@@ -66,6 +102,70 @@ function settle() {
     vi.advanceTimersByTime(ANNOUNCE_DELAY_MS + 10);
   });
 }
+
+describe('a deliberate navigation can claim focus', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.runOnlyPendingTimers();
+    vi.useRealTimers();
+  });
+
+  /**
+   * The regression this exists for: `Mod+K` from another tab navigates *and*
+   * focuses the lookup box, and before the claim the announcer won two runs in
+   * five (`tests/e2e/core/keyboard.spec.ts`). A unit test is the guard because
+   * the e2e one passes three times in five on the broken code.
+   */
+  it('stands aside while the claimant focuses something inside the new view', () => {
+    render(<ClaimFixture />);
+    fireEvent.click(screen.getByTestId('claim-and-go'));
+    // What `focusLookupInput` does, once the route has rendered its box.
+    act(() => {
+      screen.getByTestId('box').focus();
+    });
+    act(() => {
+      vi.advanceTimersByTime(FOCUS_CLAIM_GRACE_MS + 10);
+    });
+    expect(document.activeElement).toBe(screen.getByTestId('box'));
+  });
+
+  /**
+   * Deferral, not cancellation. The box lives inside `<DictGate>` and is simply
+   * absent on an origin with no dictionary; if the announcer stood aside for
+   * good, focus would sit on `<body>` — the trap it exists to prevent.
+   */
+  it('takes focus back when the claimant never lands it', () => {
+    render(<ClaimFixture />);
+    fireEvent.click(screen.getByTestId('claim-and-go'));
+    act(() => {
+      (document.activeElement as HTMLElement | null)?.blur();
+    });
+    expect(document.activeElement).not.toBe(routeHeading());
+    act(() => {
+      vi.advanceTimersByTime(FOCUS_CLAIM_GRACE_MS + 10);
+    });
+    expect(document.activeElement).toBe(routeHeading());
+  });
+
+  /** A claim is spent by one route change and cannot silence a later one. */
+  it('does not outlive the navigation it was made for', () => {
+    render(<ClaimFixture />);
+    fireEvent.click(screen.getByTestId('claim-and-go'));
+    act(() => {
+      screen.getByTestId('box').focus();
+    });
+    act(() => {
+      vi.advanceTimersByTime(FOCUS_CLAIM_GRACE_MS + 10);
+    });
+    // A second, unclaimed navigation — to a *different* path, or there is no
+    // route change to test — must move focus at once, not stand aside.
+    fireEvent.click(screen.getByTestId('go-unclaimed'));
+    expect(document.activeElement).toBe(routeHeading());
+  });
+});
 
 describe('RouteAnnouncer', () => {
   beforeEach(() => {

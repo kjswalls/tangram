@@ -9,7 +9,7 @@
  * changed. W8 calls it "not optional polish; it is the thing SPAs are notorious
  * for getting wrong".
  *
- * Three decisions in here that the plan does not make:
+ * Five decisions in here that the plan does not make:
  *
  * - **It keys on `pathname`, never on the whole location.** `?q=` changes the
  *   location on every settled keystroke (`src/url/lookup-query.ts`), and an
@@ -33,6 +33,18 @@
  *   the same string is no mutation and says nothing at all. So the region is
  *   cleared first and filled a tick later, which is the standard way to repeat
  *   an announcement.
+ * - **A deliberate navigation can claim focus, and the claim is a deferral, not
+ *   a cancellation.** `Mod+K` from another tab navigates to Look up *and*
+ *   focuses the box; both this effect and `focusLookupInput`'s frame loop then
+ *   want focus on the same commit, and whichever lands last wins. It failed two
+ *   runs in five. So the claimant says so before navigating and this effect
+ *   stands aside — but only for `FOCUS_CLAIM_GRACE_MS`, after which it checks
+ *   whether focus actually landed inside the new view and takes it if not.
+ *   Cancelling outright would be worse than the race: the box lives inside
+ *   `<DictGate>` and is simply absent on an origin with no dictionary, so
+ *   `focusLookupInput` gives up silently, the element focus came from has
+ *   unmounted, and focus falls to `<body>` — which is exactly the screen-reader
+ *   trap this component exists to prevent.
  *
  * The heading is the route's name — every screen opens with one `PageHeader`
  * (`components/ui/page-header.tsx`), which carries `data-route-heading` for
@@ -69,6 +81,27 @@ export function routeHeading(doc: Document = document): HTMLElement | null {
  */
 export const ANNOUNCE_DELAY_MS = 60;
 
+/**
+ * How long a claimant has to land focus inside the new view before the
+ * announcer stops standing aside. Long enough for `focusLookupInput`'s frame
+ * loop to find a box that renders normally; short enough that a screen reader
+ * is not left on `<body>` for a noticeable beat when it never appears.
+ */
+export const FOCUS_CLAIM_GRACE_MS = 200;
+
+/**
+ * Set by whoever is about to navigate *and* move focus themselves. Read once,
+ * by the next route change, and cleared there whether or not it matched — a
+ * claim that outlived its navigation would silence the announcer's focus move
+ * on some later, unrelated one.
+ */
+let focusClaim: string | null = null;
+
+/** Claim focus for the navigation to `pathname`. See `FOCUS_CLAIM_GRACE_MS`. */
+export function claimRouteFocus(pathname: string): void {
+  focusClaim = pathname;
+}
+
 export function RouteAnnouncer() {
   const { pathname } = useLocation();
   const [announced, setAnnounced] = useState('');
@@ -79,20 +112,44 @@ export function RouteAnnouncer() {
     if (announcedFor.current === pathname) return;
     announcedFor.current = pathname;
 
+    const claimed = focusClaim === pathname;
+    focusClaim = null;
+
     const heading = routeHeading();
-    const target = heading ?? document.querySelector<HTMLElement>('main');
-    if (target) {
+    const moveFocus = () => {
+      const target = heading ?? document.querySelector<HTMLElement>('main');
+      if (!target) return;
       // A heading is not focusable by nature. `-1` makes it programmatically
       // focusable without putting it in the tab order, which is the whole of
       // what this needs and the standard spelling of it.
       if (!target.hasAttribute('tabindex')) target.setAttribute('tabindex', '-1');
       target.focus({ preventScroll: true });
+    };
+
+    let grace: ReturnType<typeof setTimeout> | undefined;
+    if (claimed) {
+      grace = setTimeout(() => {
+        const active = document.activeElement;
+        const landed =
+          active instanceof HTMLElement &&
+          active !== document.body &&
+          document.querySelector('main')?.contains(active) === true;
+        if (!landed) moveFocus();
+      }, FOCUS_CLAIM_GRACE_MS);
+    } else {
+      moveFocus();
     }
+
+    // The announcement is not affected by the claim: whoever pressed the key
+    // still needs to hear which route they are on.
     const name = heading?.textContent?.trim();
     const next = name && name !== '' ? name : fallbackRouteName(pathname);
     setAnnounced('');
     const timer = setTimeout(() => setAnnounced(next), ANNOUNCE_DELAY_MS);
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      if (grace !== undefined) clearTimeout(grace);
+    };
   }, [pathname]);
 
   return (

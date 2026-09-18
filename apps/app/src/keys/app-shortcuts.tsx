@@ -18,6 +18,8 @@ import { useLocation, useNavigate } from 'react-router';
 import { LOOKUP_INPUT_ID } from '@/components/lookup/lookup-view';
 import { TAB_PATHS } from '@/components/shell/nav';
 
+import { claimRouteFocus } from '@/src/shell/route-announcer';
+
 import { ShortcutHelp } from './shortcut-help';
 import { useShortcuts } from './use-shortcuts';
 
@@ -51,7 +53,15 @@ export function AppShortcuts() {
 
   useShortcuts('app', {
     'lookup.focus': () => {
-      if (pathname !== TAB_PATHS.lookup) navigate(TAB_PATHS.lookup);
+      if (pathname !== TAB_PATHS.lookup) {
+        // Both this and `<RouteAnnouncer>` want focus on the commit the
+        // navigation produces, and the announcer was winning two runs in five.
+        // The claim is a deferral with a grace period, not a cancellation —
+        // see `src/shell/route-announcer.tsx`. Claimed only when we really
+        // navigate, because no route change means nothing would clear it.
+        claimRouteFocus(TAB_PATHS.lookup);
+        navigate(TAB_PATHS.lookup);
+      }
       focusLookupInput();
     },
     'help.show': () => setHelpOpen(true),

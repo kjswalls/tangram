@@ -12309,3 +12309,50 @@ forever against a server that is already up.
 unfinished — `CLAUDE.md`'s migration state says which is which. `backend.md` **B3–B7** need artefacts
 no phase provisions. The list importer is `wave-zero.md` §8a.
 
+
+---
+
+## A focus race in W8a, found by the gate and fixed — `claude/integration`, 2026-09-18
+
+**What happened.** The declaration commit for `DictStore.resolve` ran the full gate and `pnpm e2e`
+came back **324 passed, 1 failed**: `core/keyboard.spec.ts` — *"Mod+K reaches the lookup box from
+another tab and selects what is in it"*. Focus was on the `h1`, not the box.
+
+The declaration commit adds a throwing method nobody calls and some prose. It cannot have caused
+this. **It is not a flake either**: `--repeat-each=5 --workers=1` failed **two of five**. W8a
+reported 315/315 and the W8a+W9 integration run reported 325/325; both got lucky. A test that passes
+three times in five passes most gates.
+
+**The bug, which is real and is an accessibility bug.** Two things want focus on the commit a
+navigation produces:
+
+- `focusLookupInput()` (`src/keys/app-shortcuts.tsx`) retries across animation frames until the box
+  exists — it has to, because `Mod+K` can arrive from another tab and because the box lives inside
+  `<DictGate>`;
+- `<RouteAnnouncer>`'s effect focuses the route heading, which is the whole reason it exists: a
+  client-side navigation moves neither focus nor scroll, and an SPA that skips it is a screen-reader
+  trap.
+
+Whichever lands last wins, and it is genuinely non-deterministic. For a keyboard user — the only
+kind who presses `Mod+K` — the shortcut silently does nothing about half the time.
+
+**The fix: a claim, and the claim is a deferral.** `claimRouteFocus(pathname)` is called before
+navigating; the announcer's effect reads it once, clears it whether or not it matched, and stands
+aside for `FOCUS_CLAIM_GRACE_MS` (200) — then checks whether focus actually landed inside `<main>`
+and takes it if not.
+
+**Cancelling outright would have been worse than the race, and this is the part worth carrying
+forward.** The box is absent on an origin with no dictionary, so `focusLookupInput` gives up
+silently; the element focus came from has unmounted; focus falls to `<body>`. That is precisely the
+trap the announcer exists to prevent, and it would have been *more* reproducible than the bug it
+replaced. The announcement itself is untouched — whoever pressed the key still needs to hear the
+route.
+
+**Guards.** Three cases in `tests/unit/shell/route-announcer.test.tsx`, mutation-tested both ways:
+ignoring the claim (the original bug) fails one, and cancelling instead of deferring fails one. The
+unit test is the real guard — the e2e one passes three times in five on the broken code. `Mod+K`
+then went **8/8** under `--repeat-each=8`, from 3/5.
+
+**For whoever writes the next timing-sensitive feature:** `--repeat-each` is cheap and a single
+green run proves less than it looks. Two independent adversarial reviews did not find this; one run
+of the suite did, and only because it happened to lose the coin flip.

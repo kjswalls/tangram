@@ -25,8 +25,21 @@ import {
   parseCombo,
   type ScopeId,
 } from '@/src/keys/registry';
+import { matchesCombo } from '@/src/keys/use-shortcuts';
 
 const appRoot = join(import.meta.dirname, '..', '..', '..');
+
+/** The keystroke a combination describes, as a matcher would see it. */
+function eventFor(combo: { key: string; mod: boolean; alt: boolean; shift: boolean }): KeyboardEvent {
+  return new KeyboardEvent('keydown', {
+    key: combo.key,
+    ctrlKey: combo.mod,
+    altKey: combo.alt,
+    // A one-character key carries its own shift state in the character, so the
+    // flag only matters for a named one.
+    shiftKey: combo.shift || (combo.key.length === 1 && combo.key !== combo.key.toLowerCase()),
+  });
+}
 
 describe('the shortcut registry', () => {
   it('has bindings in it, and every one names a scope that exists', () => {
@@ -107,7 +120,41 @@ describe('the shortcut registry', () => {
   it('declares no palette — `wave-zero.md` §10c ships it with the desktop app', () => {
     // W8b is not this phase. If a palette scope appears here without C9, the
     // phase boundary has been crossed by accident rather than by decision.
-    expect(Object.keys(SCOPES).sort()).toEqual(['app', 'review']);
+    // `dialog` is not a palette: it declares no bindings and exists only to
+    // block the scopes underneath an open modal sheet.
+    expect(Object.keys(SCOPES).sort()).toEqual(['app', 'dialog', 'review']);
+    expect(bindingsForScope('dialog')).toEqual([]);
+    expect(SCOPES.dialog.blocking).toBe(true);
+  });
+
+  /**
+   * Criterion 1, checked against what actually *fires* rather than against the
+   * canonical id.
+   *
+   * The adversarial review found the hole: `comboId` treats `?` and `Shift+?`
+   * as two different combinations, while `matchesCombo` deliberately ignores
+   * `shiftKey` for a one-character key (see `Combo.shift` — the character
+   * already encodes its own shift state). So a pair like that would pass the
+   * id-based case above and still both fire on one keystroke, which is the
+   * exact class of bug the criterion exists to catch. This case asks the
+   * matcher instead: for every combination in the table, no two bindings in a
+   * scope may answer the same synthesized event.
+   */
+  it('…and no two bindings in one scope answer the same keystroke', () => {
+    const events = BINDINGS.flatMap((binding) =>
+      binding.keys.map((spec) => ({ spec, event: eventFor(parseCombo(spec)) })),
+    );
+    for (const scope of Object.keys(SCOPES) as ScopeId[]) {
+      for (const { spec, event } of events) {
+        const claimants = bindingsForScope(scope).filter((binding) =>
+          binding.keys.some((candidate) => matchesCombo(parseCombo(candidate), event, false)),
+        );
+        expect(
+          claimants.length,
+          `${scope}: ${spec} is answered by ${claimants.map((b) => b.id).join(', ')}`,
+        ).toBeLessThanOrEqual(1);
+      }
+    }
   });
 
   it('generates the help sheet from the table rather than from a second list', () => {

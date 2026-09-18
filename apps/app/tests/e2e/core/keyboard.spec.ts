@@ -47,6 +47,8 @@ async function focus(page: Page): Promise<string> {
     if (el.dataset.testid) bits.push(`@${el.dataset.testid}`);
     if (el.dataset.tab) bits.push(`tab=${el.dataset.tab}`);
     if (el.hasAttribute('data-route-heading')) bits.push(`h1=${el.textContent?.trim() ?? ''}`);
+    const href = el.getAttribute('href');
+    if (href !== null) bits.push(href);
     return bits.join(' ');
   });
 }
@@ -74,6 +76,47 @@ async function tabUntil(
 }
 
 const onTab = (key: string) => (where: string) => where.includes(`tab=${key}`);
+
+/**
+ * Press a key until the app answers, or fail.
+ *
+ * `page.keyboard.press` is one shot and has no handshake with the page: a key
+ * that lands in a frame the app has not finished wiring up is simply gone, and
+ * the assertion after it then waits five seconds for something that will never
+ * happen. Measured rather than guessed — inserting *any* round trip before the
+ * press made the case below pass, and a recorder installed in the page showed
+ * the key arriving and being handled correctly once it did.
+ *
+ * Only for keys whose effect is idempotent: `?` opens the sheet and never
+ * closes it, so pressing it twice is pressing it once.
+ */
+async function pressUntil(page: Page, key: string, done: () => Promise<boolean>): Promise<void> {
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    await page.keyboard.press(key);
+    await page.waitForTimeout(100);
+    if (await done()) return;
+  }
+  throw new Error(`${key} never took effect`);
+}
+
+/** Record every keydown the page receives, and whether anything claimed it. */
+async function recordKeys(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    (window as unknown as Record<string, unknown>).__keys = [];
+    window.addEventListener('keydown', (event) => {
+      ((window as unknown as Record<string, unknown>).__keys as unknown[]).push([
+        event.key,
+        event.defaultPrevented,
+      ]);
+    });
+  });
+}
+
+function recordedKeys(page: Page): Promise<[string, boolean][]> {
+  return page.evaluate(
+    () => (window as unknown as Record<string, unknown>).__keys as [string, boolean][],
+  );
+}
 
 /**
  * Wait for the lookup box to be in the document before walking the tab order
@@ -136,6 +179,20 @@ test.describe('every tab and every primary action, with no pointer', () => {
     await tabUntil(page, (where) => where.includes('@open-texts'));
     await page.keyboard.press('Enter');
     await expect(page.locator('[data-route="/read"]')).toHaveCount(1);
+  });
+
+  test('a list inside Library opens from the keyboard', async ({ page }) => {
+    // The Library tab's own primary action. Raised by the adversarial review as
+    // coverage the phrase "every primary action" claimed and the spec did not
+    // have: it reached the three tabs, the lookup box and the practice keys,
+    // and stopped there.
+    await page.goto('/library');
+    await ready(page);
+    await expect(page.getByTestId('list-card').first()).toBeVisible({ timeout: 30_000 });
+
+    await tabUntil(page, (where) => where.includes('a ') && where.includes('lists/'), { max: 60 });
+    await page.keyboard.press('Enter');
+    await expect(page.locator('[data-route="/library/lists/:id"]')).toHaveCount(1);
   });
 
   test('the practice session is a keyboard session: Space reveals, 1–4 grade', async ({ page }) => {
@@ -225,6 +282,11 @@ test.describe('the modified bindings, which do fire while typing', () => {
     await tabUntil(page, onTab('practice'), { back: true });
     await page.keyboard.press('Enter');
     await expect(page.locator('[data-route="/practice"]')).toHaveCount(1);
+    // The route marker lands before the navigation has settled, and a key
+    // pressed in that window is lost. Focus on the new heading is the announcer
+    // saying the navigation is finished — which is a thing this phase built, so
+    // waiting on it is not a sleep in disguise.
+    await expect.poll(() => focus(page)).toContain('h1=Practice');
 
     await page.keyboard.press('ControlOrMeta+k');
     await expect(page.locator('[data-route="/"]')).toHaveCount(1);
@@ -253,6 +315,106 @@ test.describe('the modified bindings, which do fire while typing', () => {
 
     await page.keyboard.press('Escape');
     await expect(sheet).toBeHidden();
+  });
+});
+
+test.describe('a modal sheet is modal to the keyboard', () => {
+  /**
+   * Both halves were reproduced by W8a's adversarial review against a
+   * dispatcher that had no notion of an inert surface: with the shortcuts sheet
+   * open, `3` graded the card behind it, and `/` navigated out from under it
+   * and left it mounted with the page scroll-locked and its Escape handler on a
+   * panel focus had just left — a dialog a keyboard user could not close.
+   */
+  test('nothing underneath it hears a key, and Escape still leaves', async ({ page }) => {
+    await page.goto('/read');
+    await ready(page);
+    await page.evaluate(async () => {
+      await window.__tangram.repo.resetAll();
+      await window.__tangram.repo.setSettings({ newPerDay: 0 });
+    });
+    await seed(page, [{ entry: DASUAN, gradedDaysAgo: 30 }]);
+    await page.goto('/practice');
+    await ready(page);
+    // **The card, not the container.** `review-session` is in the DOM while the
+    // queue is still loading, and a key pressed in that window is simply lost —
+    // `page.keyboard.press` is one shot, so the assertion that follows then
+    // waits five seconds for something that will never happen. The reveal
+    // button is the honest signal that a card is face down and the session is
+    // listening.
+    await expect(page.getByTestId('reveal')).toBeVisible({ timeout: 30_000 });
+
+    const sheet = page.getByTestId('shortcut-help');
+    await recordKeys(page);
+    await pressUntil(page, '?', async () => (await sheet.count()) > 0);
+    await expect(sheet).toBeVisible();
+
+    /**
+     * `3` is the review session's, `/` is the app's. Neither may act.
+     *
+     * **Space is deliberately not in this list**, and finding out why was worth
+     * the run: the sheet puts focus on its Close button, and Space on a focused
+     * button presses it — by exactly the rule that keeps Enter on a tab link
+     * working. The key was delivered, nothing in the registry claimed it, the
+     * browser activated the control that owns it, and the sheet closed; the
+     * next key then reached the app, which is what a failing `defaultPrevented`
+     * on `/` showed. That is correct behaviour on both counts, and a test that
+     * pressed Space here was asserting the sheet should swallow its own Close
+     * button. The dispatcher's "a blocking scope stops the reveal binding" case
+     * lives in `tests/unit/keys/shortcuts.test.tsx`, where focus is not a
+     * button.
+     */
+    await page.keyboard.press('3');
+    await page.keyboard.press('/');
+
+    /**
+     * **The keys really arrived.** An assertion that nothing happened passes
+     * just as well against a key that was never delivered — and this file has
+     * seen exactly that failure mode. The recorder proves delivery, and
+     * `defaultPrevented: false` proves the reason nothing happened is that
+     * nothing *claimed* them: `resolveBinding` stops at the blocking `dialog`
+     * scope before any handler runs.
+     */
+    await expect
+      .poll(async () => (await recordedKeys(page)).filter(([key]) => key !== '?'))
+      .toEqual([
+        ['3', false],
+        ['/', false],
+      ]);
+    await expect(page.getByTestId('card-back')).toBeHidden();
+    await expect(page.locator('[data-route="/practice"]')).toHaveCount(1);
+    await expect(sheet).toBeVisible();
+
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('shortcut-help')).toBeHidden();
+    // The card is still there, still face down, and the keys work again.
+    await page.keyboard.press('Space');
+    await expect(page.getByTestId('card-back')).toBeVisible();
+  });
+});
+
+test.describe('a shortcut never takes a key the focused control owns', () => {
+  test('Enter on a tab link changes tabs even while a card is face down', async ({ page }) => {
+    // `review.reveal` binds Enter, and the dispatcher prevents the default of
+    // every firing binding — so before the focus rule, pressing Enter on the
+    // Library tab flipped the card and stayed on Practice. A keyboard-only
+    // learner could not leave the Practice tab. Measured by the adversarial
+    // review; criterion 4's "reach every tab" was false on exactly this page.
+    await page.goto('/read');
+    await ready(page);
+    await page.evaluate(async () => {
+      await window.__tangram.repo.resetAll();
+      await window.__tangram.repo.setSettings({ newPerDay: 0 });
+    });
+    await seed(page, [{ entry: DASUAN, gradedDaysAgo: 30 }]);
+    await page.goto('/practice');
+    await ready(page);
+    await expect(page.getByTestId('review-session')).toBeVisible({ timeout: 30_000 });
+
+    await tabUntil(page, onTab('library'));
+    await page.keyboard.press('Enter');
+    await expect(page.locator('[data-route="/library"]')).toHaveCount(1);
+    await expect(page.getByTestId('card-back')).toBeHidden();
   });
 });
 

@@ -21,9 +21,18 @@
  *   `<ScrollRestoration>` has just restored on a Back press. The two would
  *   fight, and the announcer would win, and criterion 3 would fail for a reason
  *   nothing in it mentions.
- * - **The first render announces nothing.** On a cold load the browser has
- *   already put the learner at the top of a freshly rendered document; moving
- *   focus and announcing there would be an SPA impersonating a page load.
+ * - **The first render announces nothing** — and the sentinel is the *pathname
+ *   it mounted on*, not a boolean. A `useRef(true)` flag flipped inside the
+ *   effect is consumed by StrictMode's mount → cleanup → mount in development,
+ *   so the real mount took the announcing branch and every `pnpm dev` session
+ *   opened with focus yanked to the heading. Found by W8a's adversarial review;
+ *   production React made it invisible, and `tests/unit/render.tsx` has no
+ *   StrictMode, so nothing else would have.
+ * - **The same name twice still announces.** `/library` and one list inside it
+ *   are both headed "Library", and a live region speaks on *mutation*: writing
+ *   the same string is no mutation and says nothing at all. So the region is
+ *   cleared first and filled a tick later, which is the standard way to repeat
+ *   an announcement.
  *
  * The heading is the route's name — every screen opens with one `PageHeader`
  * (`components/ui/page-header.tsx`), which carries `data-route-heading` for
@@ -54,16 +63,22 @@ export function routeHeading(doc: Document = document): HTMLElement | null {
   );
 }
 
+/**
+ * Long enough for React to paint the cleared region, short enough that the
+ * announcement still belongs to the navigation that caused it.
+ */
+export const ANNOUNCE_DELAY_MS = 60;
+
 export function RouteAnnouncer() {
   const { pathname } = useLocation();
   const [announced, setAnnounced] = useState('');
-  const first = useRef(true);
+  /** The path this mounted on. See the header — a boolean is not StrictMode-proof. */
+  const announcedFor = useRef(pathname);
 
   useEffect(() => {
-    if (first.current) {
-      first.current = false;
-      return;
-    }
+    if (announcedFor.current === pathname) return;
+    announcedFor.current = pathname;
+
     const heading = routeHeading();
     const target = heading ?? document.querySelector<HTMLElement>('main');
     if (target) {
@@ -74,7 +89,10 @@ export function RouteAnnouncer() {
       target.focus({ preventScroll: true });
     }
     const name = heading?.textContent?.trim();
-    setAnnounced(name && name !== '' ? name : fallbackRouteName(pathname));
+    const next = name && name !== '' ? name : fallbackRouteName(pathname);
+    setAnnounced('');
+    const timer = setTimeout(() => setAnnounced(next), ANNOUNCE_DELAY_MS);
+    return () => clearTimeout(timer);
   }, [pathname]);
 
   return (

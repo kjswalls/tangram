@@ -36,10 +36,16 @@
  *    a `?q=` write *is* a navigation. Without this, the page jumped to the top
  *    on every keystroke. Read `useScrollRestoration` in `react-router@8.3.1`
  *    before changing it; the reset is a layout effect keyed on `location`.
- * 3. **Push once, then replace.** A history entry per keystroke makes Back
- *    useless; never pushing makes Back skip the search entirely. So starting a
- *    search from a URL with no `q` pushes, and refining it replaces: Back from
- *    `/?q=打算` lands on the empty lookup page, and one more leaves it.
+ * 3. **A refinement replaces; anything else pushes.** A history entry per
+ *    keystroke makes Back useless; never pushing makes Back skip the search
+ *    entirely. A refinement is precisely *one query is a prefix of the other
+ *    and neither is empty* — `打` → `打算` is the same search still being
+ *    typed, and so is a backspace. Everything else is a new search and gets its
+ *    own entry, so Back walks back through `打算`, `好`, `喜欢` one at a time.
+ *    The first version pushed only when the URL had no `q` at all, which
+ *    collapsed three searches into one entry and made this module's own promise
+ *    — "Back undoes a search" — true of the last one only. Found by W8a's
+ *    adversarial review.
  * 4. **The mount is its own case, and it has to be.** Two situations arrive at
  *    the same moment and want opposite things: a shared link (`/?q=打算` on a
  *    cold load — the URL has a word, the box is empty) and a return to the tab
@@ -87,6 +93,12 @@ export function writeLookupQuery(params: URLSearchParams, query: string): URLSea
   return next;
 }
 
+/** One query is the other, still being typed. Neither may be empty. */
+function isRefinement(before: string, after: string): boolean {
+  if (before === '' || after === '') return false;
+  return before.startsWith(after) || after.startsWith(before);
+}
+
 /**
  * Push a history entry, or replace the current one — rule 3 above.
  *
@@ -102,8 +114,7 @@ export function lookupWriteMode(input: {
   restoring: boolean;
 }): 'push' | 'replace' {
   if (input.first && input.restoring) return 'replace';
-  if (input.urlQuery === '' && input.next !== '') return 'push';
-  return 'replace';
+  return isRefinement(input.urlQuery, input.next) ? 'replace' : 'push';
 }
 
 /**
@@ -131,7 +142,18 @@ export function LookupQueryUrl() {
   /** `null` until the mount case below has run. See rule 4. */
   const synced = useRef<string | null>(null);
   const first = useRef(true);
-  const restoring = useRef(false);
+  /**
+   * What was in the box at mount, when the URL had no `q` — and `null` when
+   * there is nothing to restore.
+   *
+   * The value rather than a flag, because the flag outlived its case: a learner
+   * who returns to the tab and retypes inside the 300 ms before the restoring
+   * write lands would have had their *real* search written as a replace, so
+   * Back left the app instead of returning to the empty page. Found by W8a's
+   * adversarial review. Comparing the value closes it — the restore is only
+   * ever the thing that was actually being restored.
+   */
+  const restoring = useRef<string | null>(null);
   // Through a ref: `useSearchParams` hands back a fresh setter whenever the
   // router's navigate identity changes, and a debounce that restarts on every
   // render is a debounce that never fires.
@@ -156,7 +178,7 @@ export function LookupQueryUrl() {
         // `q` in it. The other direction then writes the box back into it, and
         // `restoring` is what tells it to do so without a history entry.
         synced.current = '';
-        restoring.current = inTheBox !== '';
+        restoring.current = inTheBox === '' ? null : inTheBox;
       }
       return;
     }
@@ -186,7 +208,7 @@ export function LookupQueryUrl() {
         urlQuery: agreed,
         next,
         first: first.current,
-        restoring: restoring.current,
+        restoring: restoring.current !== null && restoring.current === next,
       });
       first.current = false;
       synced.current = next;

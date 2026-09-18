@@ -22,6 +22,28 @@ test.use({ dictionary: 'installed' });
 const announcer = (page: Page) => page.getByTestId('route-announcer');
 const scrollY = (page: Page) => page.evaluate(() => Math.round(window.scrollY));
 
+/**
+ * Follow a tab link **without letting Playwright scroll to it first**.
+ *
+ * `locator.click()` scrolls its target into view before pressing it, and the
+ * wide shell's header is not sticky — so at 600px down the page the tab bar is
+ * off screen, Playwright scrolls back to the top to reach it, and the router
+ * then saves a scroll position of **0** for the page being left. The scroll
+ * restoration case then fails for a reason that has nothing to do with scroll
+ * restoration: it was never given anything to restore. Diagnosed by patching
+ * `window.scrollTo` and reading the saved map, not by guessing.
+ *
+ * A programmatic `.click()` on the anchor is still a real click as far as React
+ * Router's `<Link>` is concerned, and it moves nothing.
+ */
+async function followTab(page: Page, tab: string): Promise<void> {
+  await page.evaluate((key) => {
+    const link = document.querySelector<HTMLAnchorElement>(`[data-tab="${key}"]`);
+    if (!link) throw new Error(`no tab link for ${key}`);
+    link.click();
+  }, tab);
+}
+
 test.describe('a route change moves focus and says where you are', () => {
   test('focus lands on the new heading and the live region names the route', async ({ page }) => {
     await page.goto('/');
@@ -68,7 +90,7 @@ test.describe('scroll position survives a back-navigation', () => {
     await page.evaluate(() => window.scrollTo(0, 600));
     await expect.poll(() => scrollY(page)).toBe(600);
 
-    await page.getByTestId('tab-link').filter({ hasText: 'Practice' }).click();
+    await followTab(page, 'practice');
     await expect(page.locator('[data-route="/practice"]')).toHaveCount(1);
     await expect.poll(() => scrollY(page)).toBe(0);
 
@@ -140,7 +162,13 @@ test.describe('?q= is the lookup', () => {
     await page.evaluate(() => window.scrollTo(0, 300));
     await expect.poll(() => scrollY(page)).toBe(300);
 
-    await page.getByTestId('lookup-input').fill('theatre');
+    // Focused without scrolling, for the same reason `followTab` exists: the box
+    // is at the top of the page and `fill()` would scroll to it, which is the
+    // jump this test is trying to prove does not happen.
+    await page.evaluate(() => {
+      document.getElementById('lookup-query')?.focus({ preventScroll: true });
+    });
+    await page.keyboard.type('atre');
     await expect(page).toHaveURL(/\?q=theatre/);
     expect(await scrollY(page)).toBeGreaterThan(0);
   });

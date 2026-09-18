@@ -66,17 +66,20 @@ describe('the navigations a lookup makes', () => {
     for (const options of captured) expect(options.preventScrollReset).toBe(true);
   });
 
-  it('pushes the first search and replaces every refinement of it', () => {
+  it('pushes a search and replaces every refinement of it', () => {
     render(<LookupQueryUrl />);
     type('打');
     expect(captured[0]?.replace).toBe(false);
     type('打算');
     expect(captured[1]?.replace).toBe(true);
+    // Clearing the box is not a refinement: Back should restore what was in it.
     type('');
-    expect(captured[2]?.replace).toBe(true);
-    // …and the next search after an emptied box is a new one, so it pushes.
+    expect(captured[2]?.replace).toBe(false);
+    // …and neither is a different word.
     type('好');
     expect(captured[3]?.replace).toBe(false);
+    type('好的');
+    expect(captured[4]?.replace).toBe(true);
   });
 
   it('replaces when it is only restoring a box that was already filled', () => {

@@ -63,22 +63,34 @@ describe('the typed wrapper', () => {
 });
 
 describe('lookupWriteMode', () => {
+  const mode = (urlQuery: string, next: string) =>
+    lookupWriteMode({ urlQuery, next, first: false, restoring: false });
+
   it('pushes when a search begins, so Back undoes it', () => {
-    expect(lookupWriteMode({ urlQuery: '', next: '打算', first: false, restoring: false })).toBe(
-      'push',
-    );
+    expect(mode('', '打算')).toBe('push');
   });
 
   it('replaces while the same search is refined, so Back is not a per-keystroke undo', () => {
-    expect(lookupWriteMode({ urlQuery: '打', next: '打算', first: false, restoring: false })).toBe(
-      'replace',
-    );
+    expect(mode('打', '打算')).toBe('replace');
+    // A backspace is a refinement too — the same search, still being typed.
+    expect(mode('打算', '打')).toBe('replace');
   });
 
-  it('replaces when the box is cleared', () => {
-    expect(lookupWriteMode({ urlQuery: '打算', next: '', first: false, restoring: false })).toBe(
-      'replace',
-    );
+  /**
+   * The rule the adversarial review corrected.
+   *
+   * The first version pushed only when the URL had no `q`, so 打算 → 好 → 喜欢
+   * was one history entry: one Back press landed on the empty page and the two
+   * earlier searches were unreachable, which made this module's own promise
+   * ("Back undoes a search") true of the last one only.
+   */
+  it('pushes a different word, because that is a new search and not a refinement', () => {
+    expect(mode('打算', '好')).toBe('push');
+    expect(mode('好', '喜欢')).toBe('push');
+  });
+
+  it('pushes when the box is cleared, so Back restores what was in it', () => {
+    expect(mode('打算', '')).toBe('push');
   });
 
   it('replaces the first write when it is only restoring the box into the URL', () => {
@@ -87,6 +99,15 @@ describe('lookupWriteMode', () => {
     // must not leave a history entry for Back to land on.
     expect(lookupWriteMode({ urlQuery: '', next: '打算', first: true, restoring: true })).toBe(
       'replace',
+    );
+  });
+
+  it('…but a real search typed before that write lands still pushes', () => {
+    // The race the review found: `restoring` used to be a flag that outlived
+    // its case, so retyping inside the 300 ms before the restoring write landed
+    // wrote the real search as a replace and Back left the app.
+    expect(lookupWriteMode({ urlQuery: '', next: '好', first: true, restoring: false })).toBe(
+      'push',
     );
   });
 });
@@ -195,6 +216,26 @@ describe('LookupQueryUrl', () => {
     }
     settle();
     expect(screen.getByTestId('search')).toHaveTextContent('?q=dasuan');
+  });
+
+  it('walks back through a sequence of different searches, one at a time', () => {
+    render(<Fixture />);
+    for (const word of ['打算', '好', '喜欢']) {
+      act(() => {
+        useLookupStore.getState().setQuery(word);
+      });
+      settle();
+    }
+    expect(decodeURIComponent(screen.getByTestId('search').textContent ?? '')).toBe('?q=喜欢');
+    act(() => {
+      fireEvent.click(screen.getByTestId('back'));
+    });
+    expect(decodeURIComponent(screen.getByTestId('search').textContent ?? '')).toBe('?q=好');
+    expect(useLookupStore.getState().query).toBe('好');
+    act(() => {
+      fireEvent.click(screen.getByTestId('back'));
+    });
+    expect(decodeURIComponent(screen.getByTestId('search').textContent ?? '')).toBe('?q=打算');
   });
 
   it('settles rather than echoing: one search is one history entry', () => {

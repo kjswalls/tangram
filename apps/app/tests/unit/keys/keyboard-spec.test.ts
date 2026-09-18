@@ -63,6 +63,18 @@ describe('tests/e2e/core/keyboard.spec.ts', () => {
     }
   });
 
+  it('reaches for no helper that could be hiding one', () => {
+    // The guard greps this file and nothing else, so a pointer call could move
+    // into a helper and take the claim with it. Raised by the adversarial
+    // review. The three modules below are the ones it may import, and the only
+    // pointer among them is `dict.ts`'s install fixture — which the spec's own
+    // header declares as setup, and which exists because there is no lookup box
+    // to put focus in until the dictionary is there. A fourth import is a
+    // decision somebody has to make on purpose.
+    const imports = [...body().matchAll(/from\s+'([^']+)'/g)].map((match) => match[1]);
+    expect(imports.sort()).toEqual(['../dict', '../p2/fixtures', '../p3/helpers']);
+  });
+
   it('does not let a locator focus an element for it', () => {
     const source = body();
     // `locator.press()` and `locator.focus()` both skip the tab order.

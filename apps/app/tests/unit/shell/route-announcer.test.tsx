@@ -10,14 +10,21 @@
  * `preventScroll`, which is the only thing keeping it from undoing the scroll
  * restoration criterion 3 asks for.
  */
+import { StrictMode } from 'react';
+
 import { useLocation, useNavigate } from 'react-router';
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PageHeader } from '@/components/ui/page-header';
-import { fallbackRouteName, RouteAnnouncer, routeHeading } from '@/src/shell/route-announcer';
+import {
+  ANNOUNCE_DELAY_MS,
+  fallbackRouteName,
+  RouteAnnouncer,
+  routeHeading,
+} from '@/src/shell/route-announcer';
 
-import { fireEvent, render, screen } from '../render';
+import { act, fireEvent, render, screen } from '../render';
 
 /**
  * A page with a heading, a button that changes the path, and one that changes
@@ -34,18 +41,41 @@ function Fixture() {
       <button data-testid="to-library" onClick={() => navigate('/library')}>
         library
       </button>
+      <button data-testid="to-list" onClick={() => navigate('/library/lists/abc')}>
+        list
+      </button>
       <button data-testid="search" onClick={() => navigate('/practice?q=%E6%89%93%E7%AE%97')}>
         search
       </button>
       <main>
-        <PageHeader title={pathname === '/library' ? 'Library' : 'Practice'}>blurb</PageHeader>
+        <PageHeader title={pathname.startsWith('/library') ? 'Library' : 'Practice'}>
+          blurb
+        </PageHeader>
       </main>
       <RouteAnnouncer />
     </>
   );
 }
 
+/**
+ * The announcement lands a tick after the navigation — the region is cleared
+ * first so that the same name twice still speaks. See the component's header.
+ */
+function settle() {
+  act(() => {
+    vi.advanceTimersByTime(ANNOUNCE_DELAY_MS + 10);
+  });
+}
+
 describe('RouteAnnouncer', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('says nothing on the first render', () => {
     render(<Fixture />);
     expect(screen.getByTestId('route-announcer')).toHaveTextContent('');
@@ -54,6 +84,7 @@ describe('RouteAnnouncer', () => {
   it('moves focus to the new heading AND announces its name', () => {
     render(<Fixture />);
     fireEvent.click(screen.getByTestId('to-library'));
+    settle();
 
     const heading = routeHeading();
     expect(heading).not.toBeNull();
@@ -78,10 +109,12 @@ describe('RouteAnnouncer', () => {
     // lookup box in the middle of a word.
     render(<Fixture />);
     fireEvent.click(screen.getByTestId('to-practice'));
+    settle();
     const box = document.createElement('input');
     document.body.append(box);
     box.focus();
     fireEvent.click(screen.getByTestId('search'));
+    settle();
     expect(document.activeElement).toBe(box);
     box.remove();
   });
@@ -93,6 +126,40 @@ describe('RouteAnnouncer', () => {
     fireEvent.click(screen.getByTestId('to-library'));
     expect(focus).toHaveBeenCalledWith({ preventScroll: true });
     focus.mockRestore();
+  });
+
+  it('says nothing on the first render under StrictMode either', () => {
+    // `src/main.tsx` wraps the app in StrictMode, whose development-mode
+    // mount → cleanup → mount consumed a `useRef(true)` sentinel on the
+    // discarded pass — so every `pnpm dev` session opened with focus yanked to
+    // the heading and the route announced as if it had been navigated to.
+    // Production React hid it; `tests/unit/render.tsx` has no StrictMode, so
+    // nothing else would have caught it. Found by W8a's adversarial review.
+    render(
+      <StrictMode>
+        <Fixture />
+      </StrictMode>,
+    );
+    settle();
+    expect(screen.getByTestId('route-announcer')).toHaveTextContent('');
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it('speaks again when two routes share a heading', () => {
+    // `/library` and one list inside it are both headed "Library". A live
+    // region announces on *mutation*, so writing the same string says nothing
+    // at all — the region is cleared first for exactly this. Found by W8a's
+    // adversarial review.
+    render(<Fixture />);
+    fireEvent.click(screen.getByTestId('to-library'));
+    settle();
+    expect(screen.getByTestId('route-announcer')).toHaveTextContent('Library');
+
+    fireEvent.click(screen.getByTestId('to-list'));
+    // Cleared first: this is the mutation that makes the next one audible.
+    expect(screen.getByTestId('route-announcer')).toHaveTextContent('');
+    settle();
+    expect(screen.getByTestId('route-announcer')).toHaveTextContent('Library');
   });
 
   it('falls back to <main> when a route somehow has no heading', () => {
@@ -111,6 +178,7 @@ describe('RouteAnnouncer', () => {
     }
     render(<Headless />);
     fireEvent.click(screen.getByTestId('go'));
+    settle();
     expect(document.activeElement).toBe(screen.getByTestId('main'));
     expect(screen.getByTestId('route-announcer')).toHaveTextContent('Practice');
   });

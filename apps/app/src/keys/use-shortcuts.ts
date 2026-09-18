@@ -9,7 +9,7 @@
  * which is a pure function over an event so that it can be tested without a
  * DOM's worth of scaffolding around it.
  *
- * ## Four things it refuses to do, each of which is a bug somebody has shipped
+ * ## Five things it refuses to do, each of which is a bug somebody has shipped
  *
  * 1. **Fire during IME composition.** This is a Mandarin app: the lookup box is
  *    where a learner types pinyin into a Chinese IME, and every keystroke of
@@ -19,14 +19,25 @@
  *    is the older one that WebKit and some Android IMEs still use; both are
  *    checked, because the cost of checking is a boolean and the cost of missing
  *    is silent.
- * 2. **Fire an unmodified binding while focus is in a text input** — unless the
- *    binding's own scope says otherwise (W8 rule 1). The scope decides, not the
- *    handler.
- * 3. **Fire twice because a component remounted.** Scopes are a stack: the
+ * 2. **Fire an unmodified binding when the focused element already owns that
+ *    key** — unless the binding's own scope says otherwise. W8 rule 1 is the
+ *    first half of this (a text input owns every character, so typing 中 into
+ *    the lookup box must not navigate). The second half was found by the
+ *    adversarial review: a link or a button owns **Enter and Space**, because
+ *    those are how a keyboard user presses it. Without it, `review.reveal`'s
+ *    Enter ate the tab links while a card was face down and a keyboard-only
+ *    learner could not leave the Practice tab.
+ * 3. **Fire anything underneath a modal sheet.** A scope may declare itself
+ *    `blocking`, and `'dialog'` — live while a modal `<Sheet>` is open — is
+ *    nothing but that. Both halves were reproduced by the review: `3` graded
+ *    the card behind the shortcuts sheet, and `/` navigated out from under the
+ *    sheet and left it open with its Escape handler on an element focus had
+ *    just left.
+ * 4. **Fire twice because a component remounted.** Scopes are a stack: the
  *    most recently mounted instance of a scope is the one that hears the key,
  *    and a second `<ReviewSession>` — a remount mid-render, a stale one that
  *    has not finished unmounting — cannot double-grade a card.
- * 4. **Fire on an event something else already handled.** `defaultPrevented`
+ * 5. **Fire on an event something else already handled.** `defaultPrevented`
  *    is checked, so an input's own Enter handling is never also a shortcut.
  */
 import { useEffect, useRef } from 'react';
@@ -34,6 +45,7 @@ import { useEffect, useRef } from 'react';
 import {
   BINDINGS,
   SCOPES,
+  isApplePlatform,
   parseCombo,
   type Binding,
   type Combo,
@@ -67,6 +79,9 @@ const NON_TEXT_INPUT_TYPES = new Set([
   'submit',
 ]);
 
+/** Elements a keyboard user presses with Enter or Space. */
+const ACTIVATES_ON_ENTER_OR_SPACE = new Set(['BUTTON', 'SUMMARY', 'SELECT']);
+
 /** Whether a key aimed at this element is a character somebody is typing. */
 export function isTextEntry(target: EventTarget | null): boolean {
   if (target === null || typeof target !== 'object') return false;
@@ -81,15 +96,40 @@ export function isTextEntry(target: EventTarget | null): boolean {
 }
 
 /**
+ * Whether the focused element already means something by this key.
+ *
+ * Two kinds do. A **text entry** owns every unmodified key, because every one
+ * of them is a character somebody may be typing — W8 rule 1. A **link, button,
+ * `<summary>` or `<select>`** owns Enter and Space specifically, because those
+ * are how a keyboard user presses it; taking them is how a shortcut silently
+ * disables the tab bar.
+ */
+export function focusOwnsKey(target: EventTarget | null, combo: Combo): boolean {
+  if (isTextEntry(target)) return true;
+  if (combo.key !== 'Enter' && combo.key !== ' ') return false;
+  const element = target as Partial<HTMLElement> & { href?: string };
+  if (typeof element?.tagName !== 'string') return false;
+  if (ACTIVATES_ON_ENTER_OR_SPACE.has(element.tagName)) return true;
+  if (element.tagName === 'A' && typeof element.href === 'string' && element.href !== '') return true;
+  return element.getAttribute?.('role') === 'button';
+}
+
+/**
  * Does this event *press* this combination?
  *
- * `mod` accepts ⌘ or Ctrl on every platform — see `registry.ts`. `shift` is
- * only consulted for named keys, for the reason recorded on `Combo.shift`.
+ * `mod` is ⌘ on Apple and Ctrl elsewhere, and matching asks which — see
+ * `isApplePlatform` in `registry.ts` for why the permissive "either modifier
+ * anywhere" rule was wrong. `shift` is only consulted for named keys, for the
+ * reason recorded on `Combo.shift`.
  */
-export function matchesCombo(combo: Combo, event: KeyboardEvent): boolean {
+export function matchesCombo(
+  combo: Combo,
+  event: KeyboardEvent,
+  apple = isApplePlatform(),
+): boolean {
   const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
   if (key !== combo.key) return false;
-  const mod = event.metaKey || event.ctrlKey;
+  const mod = apple ? event.metaKey : event.metaKey || event.ctrlKey;
   if (mod !== combo.mod) return false;
   if (event.altKey !== combo.alt) return false;
   if (combo.key.length > 1 && event.shiftKey !== combo.shift) return false;
@@ -97,15 +137,18 @@ export function matchesCombo(combo: Combo, event: KeyboardEvent): boolean {
 }
 
 /**
- * W8 rule 1, and the whole of it.
+ * W8 rule 1, generalised — see `focusOwnsKey`.
  *
- * A binding carrying a modifier is not a character anybody can type, so it
- * fires wherever focus is — which is what makes `Mod+K` reach the lookup box
- * *from* the lookup box. An unmodified one asks its scope.
+ * A binding carrying `Mod` is not a character anybody can type, so it fires
+ * wherever focus is: that is what makes `Mod+K` reach the lookup box *from* the
+ * lookup box. **`Alt` is not in that sentence**, and the first version of this
+ * file had it there: on macOS Option+letter *is* a character (Option+K is ˚),
+ * and on an AltGr layout so is AltGr+letter. Raised by the adversarial review;
+ * no binding uses Alt today, so this is closing a door rather than a bug.
  */
-export function firesWhileTyping(combo: Combo, scope: ShortcutScope): boolean {
-  if (combo.mod || combo.alt) return true;
-  return scope.firesWhileTyping;
+export function overridesFocusedElement(combo: Combo, scope: ShortcutScope): boolean {
+  if (combo.mod) return true;
+  return scope.overridesFocusedElement;
 }
 
 export interface LiveScope {
@@ -136,12 +179,16 @@ const combosOf = (() => {
  * Which binding this event presses, and what to run.
  *
  * **The first match in priority order wins and the search stops there**, even
- * if that binding turns out to be blocked by the typing rule or to have no
+ * if that binding turns out to be blocked by the focus rule or to have no
  * handler mounted. That is deliberate: a more specific live surface *shadows*
  * the one under it, so a palette that binds Enter takes Enter away from
  * whatever is behind it rather than firing both. The shipped table has no
  * cross-scope duplicate and `tests/unit/keys/registry.test.ts` says so; this
  * rule is what makes the day one arrives a decision rather than a race.
+ *
+ * A **blocking** scope stops the search whether or not it claims the key. That
+ * is the whole of `'dialog'`: while a modal sheet is open, nothing underneath
+ * it hears a keystroke.
  */
 export function resolveBinding(
   event: KeyboardEvent,
@@ -153,7 +200,6 @@ export function resolveBinding(
   // The IME guard. See the header.
   if (event.isComposing || event.keyCode === 229) return undefined;
 
-  const typing = isTextEntry(event.target);
   const ordered = [...live].sort(
     (a, b) => (scopes[b.scope]?.priority ?? 0) - (scopes[a.scope]?.priority ?? 0),
   );
@@ -165,10 +211,13 @@ export function resolveBinding(
       if (binding.scope !== entry.scope) continue;
       const combo = combosOf(binding).find((candidate) => matchesCombo(candidate, event));
       if (!combo) continue;
-      if (typing && !firesWhileTyping(combo, scope)) return undefined;
+      if (focusOwnsKey(event.target, combo) && !overridesFocusedElement(combo, scope)) {
+        return undefined;
+      }
       const handler = entry.handlers()[binding.id];
       return handler === undefined ? { binding } : { binding, handler };
     }
+    if (scope.blocking) return undefined;
   }
   return undefined;
 }
@@ -229,12 +278,20 @@ function subscribe(entry: LiveScope): () => void {
  * key falls through to the browser untouched, which is what it did before this
  * file existed.
  */
-export function useShortcuts(scope: ScopeId, handlers: ShortcutHandlers): void {
+export function useShortcuts(
+  scope: ScopeId,
+  handlers: ShortcutHandlers,
+  options: { enabled?: boolean } = {},
+): void {
+  const { enabled = true } = options;
   const latest = useRef(handlers);
   useEffect(() => {
     latest.current = handlers;
   });
-  useEffect(() => subscribe({ scope, handlers: () => latest.current }), [scope]);
+  useEffect(() => {
+    if (!enabled) return;
+    return subscribe({ scope, handlers: () => latest.current });
+  }, [scope, enabled]);
 }
 
 /** Test seam: forget every live scope. Not used by the app. */

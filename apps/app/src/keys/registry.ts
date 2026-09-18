@@ -45,25 +45,37 @@
  * A scope is a *surface*, and at most one instance of each is live at a time.
  *
  * `'app'` is always live. `'review'` is live while the practice session has a
- * card on screen. A palette would add a third with `firesWhileTyping: true`,
- * which is the only reason that field is a field rather than a constant.
+ * card on screen. `'dialog'` is live while a modal sheet is open and declares no
+ * bindings at all — it exists to *stop* the ones underneath it, which is what
+ * `blocking` is for. A palette would add a fourth with
+ * `overridesFocusedElement: true`, which is the only reason that field is a
+ * field rather than a constant.
  */
-export type ScopeId = 'app' | 'review';
+export type ScopeId = 'app' | 'review' | 'dialog';
 
 export interface ShortcutScope {
   id: ScopeId;
   /** What the help sheet calls this group. */
   title: string;
   /**
-   * Whether an **unmodified** binding in this scope fires while focus is in a
-   * text input.
+   * Whether an **unmodified** binding in this scope fires even when the focused
+   * element already owns that key.
    *
-   * `false` everywhere today, and that is W8 rule 1. The palette's scope is the
-   * exception the rule names — its input owns arrows, Enter and Escape by
-   * design — so when C9 lands it registers a scope with this set `true` and
-   * nothing else in the mechanism changes.
+   * Two elements own keys: a text input owns every printable character (W8
+   * rule 1 — otherwise typing 中 into the lookup box navigates), and a link or
+   * a button owns **Enter and Space**, because those are how a keyboard user
+   * presses it. The second half was found by the adversarial review and is not
+   * hypothetical: `review.reveal` binds Enter, so with this `false` and no such
+   * rule, pressing Enter on the Library tab link revealed the card instead of
+   * changing tabs — a keyboard-only learner could not leave the Practice tab
+   * while a card was face down.
+   *
+   * `false` everywhere today. The palette's scope is the exception the rule
+   * names — its input owns arrows, Enter and Escape by design, and its rows are
+   * not buttons — so when C9 lands it registers a scope with this set `true`
+   * and nothing else in the mechanism changes.
    */
-  firesWhileTyping: boolean;
+  overridesFocusedElement: boolean;
   /**
    * Higher wins when two live scopes declare the same combination.
    *
@@ -73,11 +85,40 @@ export interface ShortcutScope {
    * declaration order. A palette would sit above both.
    */
   priority: number;
+  /**
+   * While this scope is live, a key it does not claim reaches **nothing**
+   * underneath it.
+   *
+   * Only `'dialog'` sets it, and it is the whole of that scope. A modal sheet
+   * is modal: the review session must not grade a card the learner cannot see
+   * because it is behind the shortcuts sheet, and `/` must not navigate out
+   * from under an open dialog and leave it stranded with its Escape handler on
+   * an element focus has left. Both were found by the adversarial review, both
+   * reproduced.
+   */
+  blocking?: boolean;
 }
 
 export const SCOPES: Record<ScopeId, ShortcutScope> = {
-  app: { id: 'app', title: 'Anywhere', firesWhileTyping: false, priority: 0 },
-  review: { id: 'review', title: 'While practising', firesWhileTyping: false, priority: 10 },
+  app: { id: 'app', title: 'Anywhere', overridesFocusedElement: false, priority: 0 },
+  review: {
+    id: 'review',
+    title: 'While practising',
+    overridesFocusedElement: false,
+    priority: 10,
+  },
+  /**
+   * No bindings, no title anybody reads: a modal sheet is a wall, and this is
+   * the wall. `shortcut-help.tsx` lists the scopes it wants by name rather than
+   * everything in `SCOPES`, so nothing tries to print an empty section.
+   */
+  dialog: {
+    id: 'dialog',
+    title: 'While a sheet is open',
+    overridesFocusedElement: false,
+    priority: 100,
+    blocking: true,
+  },
 };
 
 export type BindingSource = 'product' | 'plan' | 'core';
@@ -219,11 +260,17 @@ export function comboId(combo: Combo): string {
 }
 
 /**
- * Apple keyboards, for the help sheet only.
+ * Whether this is an Apple platform, which decides two things.
  *
- * Matching never asks: `mod` accepts ⌘ or Ctrl on every platform, because a
- * learner on a Mac with an external PC keyboard is a real person and a table
- * that has to know which one they are holding is a table that will be wrong.
+ * The help sheet spells `Mod` as ⌘ rather than Ctrl — cosmetic. And matching
+ * **accepts ⌘ everywhere but accepts Ctrl only off Apple**, which is not
+ * cosmetic: `Ctrl+K` is macOS's system-wide kill-to-end-of-line in every text
+ * field, and a `Mod` that took either modifier on either platform quietly took
+ * that away inside the lookup box and the recall box. Raised by the adversarial
+ * review. An earlier version of this comment argued for taking either, on the
+ * grounds that a Mac with a PC keyboard is a real thing — but that is about
+ * which key is *printed* on the cap, and the Windows key is still ⌘ to macOS,
+ * so the platform answer is the right one after all.
  */
 export function isApplePlatform(): boolean {
   if (typeof navigator === 'undefined') return false;

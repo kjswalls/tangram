@@ -20,15 +20,17 @@ import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  focusOwnsKey,
   isTextEntry,
   resolveBinding,
   resetShortcutsForTests,
   useShortcuts,
   type LiveScope,
 } from '@/src/keys/use-shortcuts';
+import { parseCombo } from '@/src/keys/registry';
 import type { Binding, ShortcutScope } from '@/src/keys/registry';
 
-import { act, fireEvent, render, screen } from '../render';
+import { act, render, screen } from '../render';
 
 afterEach(() => {
   resetShortcutsForTests();
@@ -114,6 +116,105 @@ describe('resolveBinding — W8 rule 1', () => {
   });
 });
 
+describe('focusOwnsKey — the half the review found', () => {
+  const enter = parseCombo('Enter');
+  const space = parseCombo('Space');
+  const slash = parseCombo('/');
+
+  it('gives Enter and Space to a link, because that is how a keyboard presses one', () => {
+    const link = document.createElement('a');
+    link.href = '/practice';
+    expect(focusOwnsKey(link, enter)).toBe(true);
+    expect(focusOwnsKey(link, space)).toBe(true);
+    // …and nothing else. `/` on a focused link is still a shortcut.
+    expect(focusOwnsKey(link, slash)).toBe(false);
+  });
+
+  it('gives them to a button, a summary, a select and a role=button', () => {
+    for (const tag of ['button', 'summary', 'select']) {
+      expect(focusOwnsKey(document.createElement(tag), enter), tag).toBe(true);
+    }
+    const div = document.createElement('div');
+    div.setAttribute('role', 'button');
+    expect(focusOwnsKey(div, enter)).toBe(true);
+  });
+
+  it('does not give them to an anchor with no href, which is not a link', () => {
+    expect(focusOwnsKey(document.createElement('a'), enter)).toBe(false);
+  });
+
+  it('gives a text box everything unmodified', () => {
+    const box = document.createElement('input');
+    expect(focusOwnsKey(box, slash)).toBe(true);
+    expect(focusOwnsKey(box, enter)).toBe(true);
+  });
+});
+
+describe('resolveBinding — Enter on a tab link while a card is face down', () => {
+  it('leaves the link alone, so a keyboard user can still change tabs', () => {
+    // The defect this closes: `review.reveal` binds Enter, the dispatcher
+    // prevents the default of every firing binding, and so pressing Enter on
+    // the Library tab flipped the card and stayed on Practice. A keyboard-only
+    // learner could not leave the tab while a card was face down.
+    const link = document.createElement('a');
+    link.href = '/library';
+    document.body.append(link);
+    const event = press(link, { key: 'Enter' });
+    expect(resolveBinding(event, [live('review', { 'review.reveal': () => undefined })])).toBeUndefined();
+    link.remove();
+  });
+
+  it('…and Space on the same link is left alone too', () => {
+    const link = document.createElement('a');
+    link.href = '/library';
+    document.body.append(link);
+    const event = press(link, { key: ' ' });
+    expect(resolveBinding(event, [live('review', { 'review.reveal': () => undefined })])).toBeUndefined();
+    link.remove();
+  });
+
+  it('but a bare key the link does not own still fires', () => {
+    const link = document.createElement('a');
+    link.href = '/library';
+    document.body.append(link);
+    const event = press(link, { key: '/' });
+    expect(resolveBinding(event, [live('app', { 'lookup.focus': () => undefined })])?.binding.id).toBe(
+      'lookup.focus',
+    );
+    link.remove();
+  });
+});
+
+describe('resolveBinding — a modal sheet is modal to the keyboard', () => {
+  it('stops a review binding reaching the card behind the sheet', () => {
+    // Reproduced by the adversarial review: with the shortcuts sheet open,
+    // pressing 3 graded a card the learner could not see.
+    const event = press(document.body, { key: '3' });
+    expect(
+      resolveBinding(event, [
+        live('review', { 'review.grade.3': () => undefined }),
+        live('dialog', {}),
+      ]),
+    ).toBeUndefined();
+  });
+
+  it('stops an app binding navigating out from under it', () => {
+    // The other half: `/` navigated away and left the sheet mounted, scroll
+    // locked, with its Escape handler on a panel focus had just left.
+    const event = press(document.body, { key: '/' });
+    expect(
+      resolveBinding(event, [live('app', { 'lookup.focus': () => undefined }), live('dialog', {})]),
+    ).toBeUndefined();
+  });
+
+  it('and lets everything through again once it is gone', () => {
+    const event = press(document.body, { key: '/' });
+    expect(resolveBinding(event, [live('app', { 'lookup.focus': () => undefined })])?.binding.id).toBe(
+      'lookup.focus',
+    );
+  });
+});
+
 describe('resolveBinding — the IME', () => {
   it('fires nothing while a composition is in progress', () => {
     // A learner typing 出租车 through a pinyin IME produces keydowns whose
@@ -150,8 +251,8 @@ describe('resolveBinding — the rest of the rules', () => {
 
   it('lets the more specific live scope shadow the one under it', () => {
     const scopes: Record<string, ShortcutScope> = {
-      low: { id: 'app', title: 'low', firesWhileTyping: false, priority: 0 },
-      high: { id: 'review', title: 'high', firesWhileTyping: false, priority: 10 },
+      low: { id: 'app', title: 'low', overridesFocusedElement: false, priority: 0 },
+      high: { id: 'review', title: 'high', overridesFocusedElement: false, priority: 10 },
     };
     const bindings: Binding[] = [
       { id: 'low.enter', scope: 'app', keys: ['Enter'], description: 'low', source: 'plan' },
@@ -175,7 +276,7 @@ describe('resolveBinding — the rest of the rules', () => {
     // its own input owns arrows, Enter and Escape by design — so the mechanism
     // is tested here rather than being discovered to be broken later.
     const table = {
-      app: { id: 'app', title: 'palette-like', firesWhileTyping: true, priority: 0 } as ShortcutScope,
+      app: { id: 'app', title: 'palette-like', overridesFocusedElement: true, priority: 0 } as ShortcutScope,
     };
     const bindings: Binding[] = [
       { id: 'p.down', scope: 'app', keys: ['ArrowDown'], description: 'next row', source: 'plan' },

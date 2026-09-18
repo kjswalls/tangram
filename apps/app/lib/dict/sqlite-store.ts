@@ -18,6 +18,7 @@
  * | `open` | 1 | `meta` + the whole `chars` table |
  * | `entries`, `hskBand`, `readingCount` | 1 | |
  * | `wordsContaining` | 2 | the posting list is a BLOB only TypeScript can decode |
+ * | `resolve` | 1 | hanzi, toned keys and toneless keys in one batch |
  * | `search` | 2 | candidates, then every reading of the page's headwords |
  * | `segment` | 2 | candidate substrings, then the chosen words' entry ids |
  *
@@ -52,6 +53,7 @@ import { MAX_PINYIN_PREFIX_IDS, pinyinExact, pinyinPrefix } from './query/pinyin
 import { MAX_GLOSS_CANDIDATES, buildMatch, glossCandidates } from './query/gloss';
 import { candidateSubstrings, readingsOfWords, wordCandidates } from './query/segment';
 import { hskBandQuery } from './query/hsk';
+import { hanziExactMany, pinyinExactMany } from './query/resolve';
 import {
   entriesByIds,
   entriesByRowids,
@@ -64,7 +66,8 @@ import {
 import type { SearchOptions, SearchResult, SearchSection } from './search';
 import { attachIds, planSegments, type SegmentOptions, type SegmentResult, type SegmentScript } from './segment';
 import type { SqlQuery, SqlRunner, SqlValue } from './sql';
-import type { DictStatus, DictStore } from './store';
+import { checkResolveLimits, planResolve } from './resolve';
+import type { DictStatus, DictStore, ResolveResult, ResolvedWord } from './store';
 import type { DictEntry, EntryId, HskBand } from './types';
 
 // ---------------------------------------------------------------------------
@@ -686,20 +689,134 @@ export class SqliteDictStore implements DictStore {
   }
 
   /**
-   * Declared, not implemented — `wave-zero.md` §8b.
+   * Bulk headword resolution for the list importer (`wave-zero.md` §8a, §8b).
    *
-   * It throws rather than returning `{ dictVersion, results: [] }` for the same
-   * reason the five unimplemented `Repository` members throw (wave 0 §5): a
-   * plausible empty value is an importer that silently resolves nothing, and a
-   * paste of 300 words that finds none of them looks like a bad dictionary
-   * rather than like missing code. The guard in
-   * `tests/unit/dict/resolve-frozen.test.ts` holds this.
+   * The rule is `abe6793`'s and `planResolve` holds it; this is the SQL that
+   * executes the plan. **One round trip for the whole paste** — the hanzi
+   * words, the toned keys and the toneless keys are three statements in one
+   * batch — which is why the member is bulk rather than per-word: on the OPFS
+   * worker and the Capacitor bridge a 300-line paste would otherwise be 300
+   * JSON round trips (§8b, "Why bulk").
+   *
+   * Every match is **exact**. `search`'s prefix scans would make 打 mean 打算,
+   * which is right for someone typing and wrong for a list.
+   *
+   * `rowid` order is frequency order (`data.md` D1), so the candidates arrive
+   * ranked and `abe6793`'s hand-written `compareEntries` is not ported: the
+   * comparator existed to put the two scripts' index lists back in order after
+   * joining them, and one `ORDER BY rowid` over both columns does that.
    */
-  readonly resolve: DictStore['resolve'] = async () => {
-    throw new Error(
-      'DictStore.resolve is declared but not implemented — the list importer port owns it (wave-zero.md §8b)',
+  async resolve(
+    words: readonly string[],
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ResolveResult> {
+    const { opened } = this.#ready();
+    const { signal } = options;
+    // Before the cache, for the reason `search` states: a cached answer to a
+    // superseded request is still an answer the caller asked to stop caring
+    // about.
+    signal?.throwIfAborted();
+    // Before the cache for a second reason too — a rejection must not depend on
+    // whether an identical request happens to be warm.
+    checkResolveLimits(words);
+    const asks = planResolve(words);
+
+    // An empty ask is answered, not refused: nothing was asked about, so
+    // nothing is the true answer and it costs no round trip. This is *not* the
+    // empty-result stub the freeze existed to forbid — that one answered a real
+    // paste with nothing. `resolve(['打算'])` returns 打算 or the dictionary is
+    // broken, and `tests/unit/dict/resolve.test.ts` asserts exactly that.
+    if (asks.length === 0) return { dictVersion: opened.meta.dictVersion, results: [] };
+
+    return this.#cache.take(
+      `resolve:${asks.length}:${asks.map((ask) => ask.word).join('\u0000')}`,
+      async () => {
+        const hanzi = [...new Set(asks.filter((ask) => ask.kind === 'hanzi').map((a) => a.word))];
+        const tonedKeys = [...new Set(asks.flatMap((ask) => (ask.toned ? [ask.toned] : [])))];
+        const tonelessKeys = [
+          ...new Set(asks.flatMap((ask) => (ask.toneless ? [ask.toneless] : []))),
+        ];
+
+        // Three groups, one batch, and the statement counts are remembered
+        // because chunking makes them variable: a paste of 1,200 hanzi words is
+        // three hanzi statements, not one, and the reader below has to know
+        // where each group's results end.
+        const hanziQueries = hanzi.length > 0 ? hanziExactMany(hanzi) : [];
+        const tonedQueries = tonedKeys.length > 0 ? pinyinExactMany(tonedKeys, true) : [];
+        const tonelessQueries =
+          tonelessKeys.length > 0 ? pinyinExactMany(tonelessKeys, false) : [];
+        const batch = [...hanziQueries, ...tonedQueries, ...tonelessQueries];
+        // Nothing resolvable in the whole paste — every line was English or
+        // junk. Still a real answer, and still no round trip.
+        if (batch.length === 0) {
+          return {
+            dictVersion: opened.meta.dictVersion,
+            results: asks.map((ask) => ({ word: ask.word, via: 'none' as const, entries: [] })),
+          };
+        }
+
+        const results = await this.#run(batch, signal);
+        let at = 0;
+        const hanziRows = byRowid(results.slice(at, (at += hanziQueries.length)));
+        const tonedRows = byRowid(results.slice(at, (at += tonedQueries.length)));
+        const tonelessRows = byRowid(results.slice(at, at + tonelessQueries.length));
+
+        // Bucketed by what the word was asked *as*. A hanzi row is filed under
+        // both of its spellings, which is how a simplified list and a
+        // traditional one resolve alike (§8b, rule 1) — and why the two are
+        // deduped per bucket rather than globally: 你好's `simp` and `trad` are
+        // the same string, so the row would otherwise be dropped from its own
+        // bucket the second time it is filed.
+        const byHanzi = new Map<string, DictEntry[]>();
+        for (const row of hanziRows) {
+          const entry = rowToEntry(row);
+          for (const spelling of new Set([text(row.simp), text(row.trad)])) {
+            const bucket = byHanzi.get(spelling);
+            if (bucket) bucket.push(entry);
+            else byHanzi.set(spelling, [entry]);
+          }
+        }
+        const byKey = (rows: readonly SqlRow[], column: string): Map<string, DictEntry[]> => {
+          const out = new Map<string, DictEntry[]>();
+          for (const row of rows) {
+            const key = row[column];
+            // NULL is the `xx5` no-known-reading case, which `IN` never matches
+            // anyway; the guard is here so a schema that stopped guaranteeing
+            // that would be a dropped row rather than a thrown TypeError.
+            if (typeof key !== 'string') continue;
+            const bucket = out.get(key);
+            const entry = rowToEntry(row);
+            if (bucket) bucket.push(entry);
+            else out.set(key, [entry]);
+          }
+          return out;
+        };
+        const byToned = byKey(tonedRows, 'py_toned');
+        const byToneless = byKey(tonelessRows, 'py_toneless');
+
+        return {
+          dictVersion: opened.meta.dictVersion,
+          results: asks.map((ask): ResolvedWord => {
+            if (ask.kind === 'hanzi') {
+              const entries = byHanzi.get(ask.word) ?? [];
+              return { word: ask.word, via: entries.length > 0 ? 'hanzi' : 'none', entries };
+            }
+            if (ask.kind === 'pinyin') {
+              // Tone-exact first, toneless as the fallback — and the fallback
+              // only when the exact answer is *empty*, never merged into it.
+              // `da3suan4` must stay 打算 alone where `dasuan` may carry more.
+              const exact = ask.toned ? (byToned.get(ask.toned) ?? []) : [];
+              const entries =
+                exact.length > 0 ? exact : (byToneless.get(ask.toneless ?? '') ?? []);
+              return { word: ask.word, via: entries.length > 0 ? 'pinyin' : 'none', entries };
+            }
+            return { word: ask.word, via: 'none', entries: [] };
+          }),
+        };
+      },
+      signal === undefined,
     );
-  };
+  }
 
   // -------------------------------------------------------------------------
   // Search

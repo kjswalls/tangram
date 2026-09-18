@@ -1222,16 +1222,20 @@ id are in `docs/data-sources.md` and `.env.example`), and **list import** (clipb
 tab-separated export, Anki text export; `addListMembers(listId, entryIds[])` already exists on the
 repository, `.apkg` is out of scope).
 
-**List import is deliberately not scheduled for v1.** Every plan in the set pushes it out of scope
-with the same sentence — "its own task, per STACK §7" — and until now that sentence pointed at a
-task nobody had written, which reads as an oversight rather than a choice. It is a choice.
-product-decisions §9 specifies the feature fully (one word per line as hanzi or pinyin, Pleco's
-tab-separated export, Anki's text export, resolution against the dictionary, a preview listing
-unmatched lines with a reading picker for polyphones, then one bulk add), the repository already
-exposes the bulk-add call it ends in, and none of it touches a frozen surface or a schema. That is
-what makes it a clean later addition rather than a hole: nothing in v1 has to be built differently
-to accommodate it, and nothing in v1 is missing because it is absent. Write it when there is a list
-worth importing.
+**List import was deliberately not scheduled for v1, and then it was.** The paragraph that stood
+here argued the deferral was a choice rather than an oversight, and that argument still holds on its
+own terms: product-decisions §9 specifies the feature fully, the repository already exposed the
+bulk-add call it ends in, and none of it touches a schema. What it did not know is that the feature
+had **already been written** — `main`'s `abe6793`, 1,654 lines, landed after the migration branch
+forked and never ported. `wave-zero.md` §8a records the discovery and the owner's reversal on being
+shown it: *"we should keep the list importer."*
+
+It is built. The one thing it needed that this record did not anticipate is a **new member on a
+frozen surface** — `DictStore.resolve`, settled in `wave-zero.md` §8b — because `search` ranks
+across headwords and pages at fifty, which is right for a person typing and wrong for a paste where
+each line needs its own candidates and 打 must not become 打算. So the sentence to carry forward is
+narrower than the one it replaces: list import touched no *schema*, but it did open a frozen
+interface, and §8b is the record of why that was allowed.
 
 ### CLAUDE.md is superseded, and rewriting it is the first task
 

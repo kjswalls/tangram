@@ -881,6 +881,37 @@ describe('the round-trip budget', () => {
     expect(await trips((s) => s.search('龘龘龘'))).toBe(1);
   });
 
+  /**
+   * The reason `resolve` is bulk at all (`wave-zero.md` §8b): a per-word member
+   * would make a 300-line paste 300 bridge round trips. One is the budget, and
+   * it holds whether the paste is one word or a thousand — the chunked
+   * statements ride in the same batch, which is what a batch is for.
+   */
+  it('resolve is one, for one word and for a paste that has to chunk', async () => {
+    expect(await trips((s) => s.resolve(['打算']))).toBe(1);
+    expect(
+      await trips((s) =>
+        s.resolve(['打算', '你好', 'dasuan', 'ni3hao3', '學習', 'xyzzyq', 'le']),
+      ),
+    ).toBe(1);
+    // Past `RESOLVE_HANZI_CHUNK` (450): two hanzi statements, one round trip.
+    expect(await trips((s) => s.resolve(Array.from({ length: 500 }, (_, i) => `龘${i}`)))).toBe(1);
+    // …and past `MAX_BOUND_PARAMS` (900) on the pinyin side, which is the whole
+    // cap's worth of distinct reading keys.
+    const syllables = ['ba', 'pa', 'ma', 'fa', 'da', 'ta', 'na', 'la', 'ga', 'ka'];
+    const readings: string[] = [];
+    for (const a of syllables) for (const b of syllables) for (const c of syllables) {
+      readings.push(a + b + c);
+    }
+    expect(readings).toHaveLength(1000);
+    expect(await trips((s) => s.resolve(readings))).toBe(1);
+  });
+
+  it('resolve spends no round trip when nothing in the paste is resolvable', async () => {
+    expect(await trips((s) => s.resolve([]))).toBe(0);
+    expect(await trips((s) => s.resolve(['hello', 'xyzzyq', '  ']))).toBe(0);
+  });
+
   it('wordsContaining is two, and the first batch is one statement', async () => {
     const counting = countingRunner();
     const spied = new SqliteDictStore({ connect: async () => counting.runner });

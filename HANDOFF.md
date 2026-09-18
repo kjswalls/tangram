@@ -12385,3 +12385,212 @@ being ignored entirely and 24.x will not help either). The line above the error 
 ran. Ask for it before theorising a third time.
 
 `docs/deploy.md` §1 now says 24.x.
+
+---
+
+## `wave-zero.md` §8a/§8b — the list importer, ported off `abe6793` onto `DictStore.resolve`
+
+Paste a list, or a Pleco or Anki export, and the dictionary says what each line is; the learner
+fixes what is ambiguous; one `addListMembers` call writes it. `main`'s `abe6793` had written this
+once, against a Next route and an in-heap JSON index, and the migration branch forked before it
+landed. This is the port §8a's table describes.
+
+### What landed, in three commits
+
+1. **`SqliteDictStore.resolve`** and the freeze's replacement. The rule is `abe6793`'s and is
+   unchanged; the implementation is SQL against the artifact.
+2. **The parsers**, moved almost unchanged with their 311 lines of tests.
+3. **The screen**, the two places it hangs, and the e2e loop.
+
+### The seam, and what it cost
+
+`resolve` is **one round trip for a paste of any size** — the hanzi words, the toned reading keys
+and the toneless ones are three statements in one batch, chunked to stay under the oldest SQLite
+bind limit. `store.test.ts`'s budget table gained a row and asserts it for one word, for a mixed
+paste, past `RESOLVE_HANZI_CHUNK` (450) and past `MAX_BOUND_PARAMS` (900).
+
+Two things `abe6793` did that the port does not need. Its `compareEntries` existed to put the two
+scripts' index lists back in order after joining them; **rowid order is frequency order** in the
+artifact (`data.md` D1 assigned them from that same comparator), so one `ORDER BY rowid` over both
+columns does it and the candidates arrive ranked. And its dictionary-resolve route is gone — the
+route handler and `lib/dict/client.ts`'s fetch wrapper were deletions, not ports, per §8a.
+
+**The hanzi statement binds its list twice** (`simp IN (…) OR trad IN (…)`), so its chunk is half
+the bind budget. Numbered parameters would let one bind set be referenced twice, and `hanziExact`
+already uses `?1` that way — but only for a single value, and this is the statement that binds nine
+hundred of them across three SQLite builds nobody has checked. Binding twice costs one extra
+statement per 900 words and needs nothing proven.
+
+### What the brief did not settle, and what I decided
+
+- **`resolve([])` resolves `{results: []}` where the freeze guard required it to reject.** §8b's
+  guard had a case asserting an empty ask rejects "so no caller can read a pass out of it", which
+  was right while the member was a stub and is wrong now: nothing was asked about, so nothing is the
+  true answer, and it costs no round trip. The freeze's actual intent — *no stub can pass for this
+  feature* — is carried by cases that assert real ids by value. **This is a deliberate reversal of a
+  line in §8b and it is the one thing in this phase a reader of that section will not expect.**
+- **Over a cap throws `ResolveLimitError extends RangeError`**, carrying which cap fired. §8b said
+  "the caller's error, not a truncation" and named no type. `RangeError` so a caller that only knows
+  the standard hierarchy still classifies it as a bad argument rather than a dictionary failure —
+  which matters, because the screen shows one of those as a banner and not the other.
+- **`RESOLVE_CHUNK` stays 500**, `abe6793`'s number, with a test asserting it against
+  `RESOLVE_MAX_WORDS` so the two cannot drift.
+- **The preview is paged at 50 rows** with "Show more", which is what `list-detail.tsx` already does
+  for HSK 7–9's 5,622 members. The *plan* is never paged, so the counts and the write are about the
+  whole paste however little of it is drawn.
+- **Import is collapsed in Library, open on a list's own page.** A shelf should not lead with a
+  six-row textarea for the rarer of the two ways to make a list.
+- **Not offered on an HSK band.** Its membership is the band, derived from the dictionary; the
+  Add-a-word box next to it is already `kind !== 'hsk'` for the same reason.
+
+### What I found wrong, and fixed
+
+- **`abe6793`'s picker folded two different words into one option, and then did not render the
+  picker.** `optionKey` was `simp|tonedReading`, justified in its own comment as folding
+  "CC-CEDICT's extra rows for the same word and reading — a traditional variant, a capitalised
+  proper noun". Measured against the shipped artifact, that is not what it folded. 面 `mian4` is
+  three rows: 面 (face), 麵 (flour, **noodles**) and 麪 (a variant of 麵) — the first two different
+  words, different traditional headwords, `is_variant = 0` on both. All three collapsed to one
+  option, and because the component only draws the picker when `options.length > 1`, the learner
+  was not merely defaulted to "face" — there was **no way to choose "noodles" at all**, and the list
+  stored the wrong `entryId` silently. 历 (calendar / history) and 里 (lining / a li, neighbourhood)
+  collapse the same way; 台 loses platform, desk and typhoon to "(classical) you".
+
+  The key is now `simp|trad|tonedReading`, and a row with `isVariant` is dropped **only when a
+  non-variant row survives under the same headword and reading** — which is the fold the old comment
+  actually described, and it keeps a word that exists in CC-CEDICT only as a variant. The option key
+  is an `option` element's value and nothing reads it for meaning, so its shape was free.
+
+  **This was the fixture's fault as much as the code's.** `abe6793`'s test called 瞭 `LIAO_VARIANT`;
+  it is `is_variant = 0`, "(of eyes) bright; clear-sighted". Folding it away read as tidying up
+  bookkeeping when it was losing a word. The fixture is renamed and a real variant added beside it.
+
+- **A preview could land against a list it was not checked against, and silently drop words.**
+  `runPreview` captured the target at click time with no staleness guard, and the target radios and
+  the list picker stay editable while a lookup runs. Start a preview against list A, switch to B
+  while it runs, and the answer lands carrying **A's** membership: every word B happened to share
+  with A is marked "Already in list", left out of the write, and reported as "skipped N already
+  there" about a list that had none of them. The same shape applied to the textarea, where the guard
+  was `if (preview) resetPreview()` — which does nothing during the **first** lookup, exactly when
+  it is needed. Every lookup now takes a token, anything that invalidates a preview bumps it, and a
+  stale answer is dropped. A counter rather than an `AbortController` because `Resolver` is a plain
+  function by design.
+
+- **`abe6793` hard-coded `dictVersion` to the empty string** in the preview and dropped the route's
+  answer. A preview that cannot name its snapshot cannot say which dictionary a list was resolved
+  against.
+- **The parser carried a second copy of the dictionary's CJK ranges**, justified by a module that no
+  longer exists. It builds its run from `lib/dict/rank.ts`'s `CJK_PATTERN` now — one place to fix
+  when `wave-zero.md` §10f's missing Extension G range is someone's.
+
+### What the two adversarial reviews found
+
+Both ran cold over the whole diff, in parallel, one against the acceptance criteria and one asking
+what breaks that no test covers. **Both independently found a literal U+0000 byte** committed into
+`sqlite-store.ts` — the cache-key separator was written as a raw control character rather than the
+escape, which is invisible in `git diff` and makes `grep -rn` report the repository's largest
+dictionary module as "binary file matches" and skip it entirely. The choice of NUL is correct and
+load-bearing (a space would genuinely collide, because `cleanWord` preserves internal spaces on the
+pinyin path, so resolving `['da3 suan4']` and `['da3','suan4']` would share a key); the encoding was
+the defect. It is the escape now, and the key carries the word count as well.
+
+The criteria review confirmed all seven and additionally found: the differential test was
+**untracked and therefore not in the diff** (it is committed now); `lib/lists/import/resolver.ts`
+had **no unit coverage at all**, though it is the single line joining the UI to the real dictionary
+and its own header warns about the regression that matters — using `getDictStore()` instead of
+`openDictStore()` starts a 14 MB download from a button labelled "Preview", and no e2e on a device
+that already has the dictionary would notice; and the signal-beats-a-warm-cache property was
+asserted only by accident of LRU eviction. All three now have tests.
+
+The breakage review found the two preview races and the option fold above, plus the unbounded row
+rendering. Its negative results are worth as much and are recorded so nobody re-spends the effort:
+it drove 920 hanzi words **deliberately arranged so a word's `simp` and `trad` landed in different
+chunks** and found zero mismatches, likewise 950 toneless keys across two chunks; bind-parameter
+budgets, `xx5`/NULL handling, the abort-before-cache ordering, double-click on Import
+(`addListMembers` de-dupes independently) and the no-dictionary path all came back sound.
+
+**One thing I did not take at face value.** The breakage review reported the target-race test as
+caught; it was not. Under mutation the first draft of that test passed against the very bug it was
+written for, because it asserted "no rows" at a moment before the stale answer had been delivered.
+It drains the queue first now, and all three race cases were mutation-tested against the pre-fix
+behaviour: three fail, and pass again with the fix.
+
+### The measurement §8b's bridge argument wanted and did not have
+
+`resolve` caps how many **words** it takes and puts no limit on how many **entries** come back,
+because a limit there is exactly the silent truncation the caps exist to prevent — a candidate
+dropped from a picker is a reading the learner is never offered. So the cost is bounded by the data,
+and it is now on the record: the worst possible request, the thousand commonest toneless reading
+keys, is **18,551 entries, roughly 4.7 MB of JSON, about 200 ms** in Node. A realistic seven-line
+paste is **5.8 kB and about 1 ms**. Two things make the ceiling survivable rather than merely rare:
+the importer chunks at 500 so it never asks for the whole cap at once, and this is a button press
+behind "Looking up…", not the keystroke path `data.md` D4's 50 ms budget governs.
+
+`resolve.test.ts` pins it at a deliberately generous 8 MB — a tripwire for a projection or schema
+change that grows the payload by an order of magnitude, not a performance assertion. **The untried
+lever, named so it is not rediscovered:** a two-pass query, ranking on narrow columns and fetching
+full rows for the survivors. It costs a second round trip, which is the budget §8b is written
+around, so measure before believing it. This is `wave-zero.md` §10e's shape of answer, not a defect.
+
+### What another plan now owes
+
+- **`data.md` still owns widening `CJK_PATTERN` for Extension G** (`wave-zero.md` §10f part 2).
+  Unchanged by this phase, but it now has one more consumer: a paste containing one of the twelve
+  Ext G headwords routes down the pinyin path and resolves to nothing. `lib/lists/import/parse.ts`
+  reads the shared pattern rather than its own copy, so the fix reaches the importer for free.
+- **`abe6793`'s `scripts/smoke.ts` case is not ported** and must not be. It exercised a POST to a
+  dictionary route over HTTP; there is no such route, and `tests/unit/dict/client-callers.test.ts`
+  greps every source to keep it that way — it caught this phase's prose naming the old path, twice.
+- **The eight fakes that gained a throwing `resolve`** (§8b) still throw and still call nothing.
+  `components/gallery/fake-dict-store.ts` cites the freeze in its message, which is now stale prose
+  in an unreachable branch; whoever next touches the gallery can drop the citation.
+
+### Copy I was unsure about — the owner writes the app's voice
+
+Everything below is `abe6793`'s wording, kept rather than reinvented, except where noted. Flagged
+because none of it has been read by the owner:
+
+- The explainer above the box, verbatim from `abe6793`, including *"Anki `.apkg` files are not
+  supported — export the notes as plain text first."*
+- The four row badges: **Ready**, **Not found**, **Already in list**, **Duplicate**.
+- The summary line, which reads *"Read as a Pleco flashcard export: 12 to add · 3 with several
+  readings — check the picks · 1 not in the dictionary"*. It is the densest string in the feature
+  and the one most likely to want rewriting.
+- The result line: *"Added 2 words to Pasted, skipped 1 already there."*
+- **Mine, not `abe6793`'s:** *"Show more (N left)"* on the paged preview, which copies
+  `list-detail.tsx`'s existing wording exactly.
+- **A deliberate silence worth confirming.** With no dictionary on the device, pressing **Preview**
+  produces no feedback at all: the page's one card already names the fact and carries the button,
+  and a second sentence here is the duplicate `web.md` W6 part 2 removed. It is tested both ways —
+  but a reader of the screen sees a button that appears to do nothing, and if that reads wrong the
+  answer is to disable Preview while the dictionary is absent, not to add a second message.
+
+### Gates
+
+`pnpm lint`, `pnpm typecheck`, `pnpm build`, `pnpm test`, `pnpm e2e`, `pnpm smoke --no-api`
+(**41 ok** — 29 assets, 6 paths with host rules, 6 API cases skipped and said so). `pnpm smoke`
+needs a server and does **not** start one, so it is `pnpm preview` in another shell first; without
+that every case reports `fetch failed` and reads like a broken build rather than a missing server.
+
+`tests/unit/shell/tab-routes.test.ts`'s spec census is **56 / 48 / 49**, as that test asks every
+phase adding a spec to record.
+
+**One flake, named so the next session does not chase it.**
+`tests/e2e/core/keyboard.spec.ts` → *"Mod+K reaches the lookup box from another tab and selects what
+is in it"* failed once under the full suite and passed alone and on a full re-run. It navigates
+`/` to Practice to `/` and touches neither Library nor any file this phase changed; the failure is
+focus landing on the route announcer's heading instead of the lookup box, which is a race between
+the announcer and the shortcut. Pre-existing, `web.md` W8a's, and not investigated here.
+
+> **Correction to the paragraph above, made by its author before pushing.** I called the Mod+K
+> failure a flake on the evidence that it passed alone and on a full re-run. That was the wrong
+> conclusion from the right observation, and `claude/integration`'s `087368a` — landed while this
+> branch was building — has the real diagnosis: it is a **coin flip**, reproducing two runs in five
+> under `--repeat-each=5`, between `focusLookupInput`'s retry across animation frames and
+> `RouteAnnouncer`'s effect focusing the route heading. Whichever lands last wins, so for the only
+> kind of person who presses Mod+K the shortcut does nothing about half the time. W8a's 315/315 and
+> the W8a+W9 325/325 were both luck, and so was my re-run. The diagnosis of *what* was happening
+> (the announcer's heading taking focus from the lookup box) was right; "pre-existing" was right;
+> "flake" and "not investigated here" were a way of not looking. **A green re-run is not evidence
+> that a red run was noise** — `--repeat-each` is what settles it, and it costs one command.
+> Nothing in this phase depends on it and the fix is already on the branch this one merges into.

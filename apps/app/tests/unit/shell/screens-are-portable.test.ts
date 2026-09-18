@@ -124,11 +124,19 @@ describe('components/screens/**', () => {
      * `components/shell/nav` — for `listPath`, a pure string function with no
      * JSX in it. Both are deliberate and both are recorded in HANDOFF.md.
      *
+     * `components/lists/import-list.tsx` is here for exactly the same two
+     * reasons and no new one (`wave-zero.md` §8a). When an import finishes it
+     * says "Added 2 words to Pasted", and the list's name is a link, because
+     * the thing a learner wants next is the list they just made — in this tab
+     * or in another one. It takes `listPath` from the same module for the same
+     * reason. Argued for here rather than discovered later, which is what this
+     * allowlist is for.
+     *
      * Anything else appearing here is a screen that has quietly learned the
      * route table through a component, which is the drift this file exists to
      * catch.
      */
-    const ALLOWED = ['components/lists/list-card.tsx'];
+    const ALLOWED = ['components/lists/import-list.tsx', 'components/lists/list-card.tsx'];
 
     const seen = new Set<string>();
     const reaching = new Set<string>();

@@ -68,32 +68,70 @@ export const ACCESS_STORAGE_KEY = 'tangram.access.secret';
  */
 export const API_BASE: string = readApiBase();
 
+/**
+ * Whether this build has an API to talk to at all.
+ *
+ * **False means "not configured on this deployment"**: a production build made
+ * with `VITE_API_BASE` empty. It is decided at build time and nothing the
+ * learner does changes it, which is why it is a constant rather than something
+ * a surface discovers by trying — and why every AI surface can say so on first
+ * paint instead of after a request fails. The other way there can be no API,
+ * "configured but unreachable right now", is transient and can only be learnt
+ * by asking; `lib/api/availability.ts` reads that one off a failed request.
+ *
+ * Outside a production build an empty base is left alone: vitest and the unit
+ * suite stub `fetch` against relative paths, and `pnpm dev` always sets a base
+ * through `.env.development`.
+ */
+export const API_CONFIGURED: boolean = apiConfigured(import.meta.env as ApiEnv | undefined);
+
+/** The two build-time constants the decision reads. */
+export interface ApiEnv {
+  VITE_API_BASE?: string;
+  PROD?: boolean;
+}
+
+/** Pure, so the derivation has a unit test that is not a second build. */
+export function apiConfigured(env: ApiEnv | undefined): boolean {
+  const base = (env?.VITE_API_BASE ?? '').trim();
+  return base.length > 0 || env?.PROD !== true;
+}
+
+/**
+ * What `apiFetch` rejects with when there is no API to call, **without calling
+ * anything**. Distinct from the `TypeError` a refused connection produces, so a
+ * caller can tell "there is no server" from "the server did not answer".
+ */
+export class ApiNotConfiguredError extends Error {
+  constructor() {
+    super('This build has no API configured (VITE_API_BASE is empty).');
+    this.name = 'ApiNotConfiguredError';
+  }
+}
+
 function readApiBase(): string {
   // `import.meta.env` is Vite's, substituted at build time. The optional chain
   // is not defensive programming for its own sake: this module is reachable
   // from code that has run under plain Node, where `import.meta.env` does not
   // exist and a bare property read throws before anything can catch it.
-  const env = import.meta.env as { VITE_API_BASE?: string; PROD?: boolean } | undefined;
-  const base = (env?.VITE_API_BASE ?? '').replace(/\/$/, '');
+  const env = import.meta.env as ApiEnv | undefined;
+  const base = (env?.VITE_API_BASE ?? '').trim().replace(/\/$/, '');
 
-  // **An empty base in a production build is a dead app, and it used not to
-  // be.** Until `backend.md` B1 the dev and preview servers answered `/api/**`
-  // on the app's own origin, so same-origin was a working default. The three
-  // model routes are on `apps/server` now and this origin serves no API at all,
-  // so an unset `VITE_API_BASE` means ask, i+1 sentences and free recall all
-  // fail — and free recall fails *silently* by design, while `initAccess`'s
-  // probe reads the resulting 404 as `unverified` and a phone with a perfectly
-  // good key is told nothing useful forever.
+  // **An empty base in a production build is an app with no AI, and it says
+  // so.** Until `backend.md` B1 the dev and preview servers answered `/api/**`
+  // on the app's own origin; since B1 this origin serves no API at all. The
+  // app's answer is `API_CONFIGURED` above: `apiFetch` refuses without touching
+  // the network, and ask, example sentences and free recall each show the
+  // not-configured state instead of failing into a generic error.
   //
   // Nothing can fail the build over it: `pnpm build` is run locally by someone
-  // who has no server, and refusing would be worse than the disease. So it says
-  // so, once, where the one person debugging a dead deployment will look.
-  // `docs/deploy.md` §4 is the other half.
-  if (env?.PROD === true && base.length === 0) {
+  // who has no server, and refusing would be worse than the disease. The
+  // console line stays for the one person debugging a deployment from
+  // devtools. `docs/deploy.md` §4 is the other half.
+  if (!apiConfigured(env)) {
     console.warn(
-      'tangram: VITE_API_BASE is unset in a production build, so /api/** resolves to this ' +
-        'origin, which serves no API. Ask, example sentences and free recall will not work. ' +
-        'See docs/deploy.md §4.',
+      'tangram: VITE_API_BASE is unset in a production build, so this app has no API. ' +
+        'Ask, example sentences and free recall say so on screen. See docs/deploy.md §4.',
     );
   }
   return base;
@@ -130,9 +168,33 @@ function write(value: string | null): void {
   }
 }
 
-export type AccessExchange = 'granted' | 'denied' | 'unverified' | 'none';
+export type AccessExchange =
+  | 'granted'
+  | 'denied'
+  | 'unverified'
+  | 'unreachable'
+  | 'no-api'
+  | 'none';
 
-/** What the server can say about a key. `none` is "there was no key to trade". */
+/**
+ * What the exchange can say about a key. `none` is "there was no key to trade".
+ *
+ * Three of these are verdicts **about the key** and two are not, and keeping
+ * them apart is the point:
+ *
+ *  - `granted` / `denied` — the server checked it.
+ *  - `unverified` — a server answered and could not say (a 5xx, a 429).
+ *  - `unreachable` — nothing that answered was the API: the connection was
+ *    refused or dropped, or whatever is at the base 404s the probe. Transient
+ *    as far as the client can tell, so the key is kept.
+ *  - `no-api` — this build has no API configured (`API_CONFIGURED`). Nothing
+ *    was asked, because there is nobody to ask, and the key is kept for the
+ *    day a build that has one is deployed to the same origin.
+ *
+ * Before these two existed, both collapsed into `unverified`, so a phone with
+ * a perfectly good key on a deployment with no server was told its key could
+ * not be checked — forever, and with nothing it could do about it.
+ */
 export type AccessVerdict = Exclude<AccessExchange, 'none'>;
 
 /**
@@ -183,15 +245,29 @@ async function probe(key: string): Promise<AccessVerdict> {
     const response = await fetch(apiUrl(PROBE_PATH), {
       headers: { accept: 'application/json', [ACCESS_HEADER]: key },
     });
-    if (response.status === 401) return 'denied';
-    return response.ok ? 'granted' : 'unverified';
+    return verdictOf(response.status);
   } catch {
     // A transient network failure must NOT revoke a key. Reporting `denied`
     // here would throw away a correct credential because the phone happened to
     // be on a dead connection at the moment of setup — the one moment the owner
     // is most likely to be somewhere with bad signal.
-    return 'unverified';
+    return 'unreachable';
   }
+}
+
+/**
+ * The probe's status, read as a verdict. Pure, for the unit test.
+ *
+ * **404 is `unreachable`, not `unverified`.** The probe path is one the API
+ * always serves, so a 404 means whatever answered is not the API — a static
+ * host, a wrong base — and the key was never looked at. Calling that
+ * "unverified" is how a good key used to be reported as doubtful when the real
+ * news was that there is no server.
+ */
+export function verdictOf(status: number): AccessVerdict {
+  if (status === 401) return 'denied';
+  if (status === 404) return 'unreachable';
+  return status >= 200 && status < 300 ? 'granted' : 'unverified';
 }
 
 /**
@@ -207,6 +283,7 @@ async function probe(key: string): Promise<AccessVerdict> {
 export function initAccess(
   location: Location = globalThis.location,
   check: (key: string) => Promise<AccessVerdict> = probe,
+  configured: boolean = API_CONFIGURED,
 ): Promise<AccessExchange> {
   secret = read();
 
@@ -231,6 +308,14 @@ export function initAccess(
   secret = stripped.key;
   write(stripped.key);
   replaceUrl(stripped.url);
+
+  // No API in this build: there is nobody to present the key to, so nobody is
+  // asked, and the key is kept — it is not bad, it is unchecked for a reason
+  // that has nothing to do with it.
+  if (!configured) {
+    replaceUrl(withResult(stripped.url, origin, 'no-api'));
+    return Promise.resolve('no-api');
+  }
 
   return check(stripped.key).then((result) => {
     if (result === 'denied') {
@@ -307,6 +392,10 @@ export function apiUrl(path: string): string {
  * which needs an exact-origin `Access-Control-Allow-Origin` and cannot use `*`.
  */
 export function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  // The one chokepoint for "no API in this build". Every surface also checks
+  // `API_CONFIGURED` itself so it can say so before anything is tried; this is
+  // what makes it impossible for one that forgot to reach the network anyway.
+  if (!API_CONFIGURED) return Promise.reject(new ApiNotConfiguredError());
   return fetch(apiUrl(path), {
     ...init,
     headers: { ...accessHeaders(), ...(init.headers as Record<string, string> | undefined) },

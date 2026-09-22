@@ -89,7 +89,7 @@ import type { Repository } from '@/lib/db/repository';
 import { getLearnerProfile } from '@/lib/srs/profile';
 import type { CardContext, Entry, EntryId } from '@/lib/types';
 
-import { apiFetch } from '@/src/access/client';
+import { API_CONFIGURED, ApiNotConfiguredError, apiFetch } from '@/src/access/client';
 
 /** The seam a test replaces. Production is `apiFetch`, which applies the API
  *  base and attaches `X-Tangram-Access` (`web.md` W4). */
@@ -149,6 +149,7 @@ export function isTimeout(error: unknown): boolean {
  * say "rate-limited" without re-deriving it from a message string.
  */
 export function unavailableReason(error: unknown): AskUnavailableReason {
+  if (error instanceof ApiNotConfiguredError) return 'not-configured';
   if (isTimeout(error)) return 'timeout';
   // A fetch that never reached a server throws a TypeError, and the browser
   // already knows the likeliest reason.
@@ -193,6 +194,11 @@ export interface AskOptions {
    * an answer is worth keeping is how a cache starts lying.
    */
   cache?: boolean;
+  /**
+   * Whether this build has an API. Defaults to `API_CONFIGURED`; injected by
+   * tests, which run outside a production build and so always have one.
+   */
+  configured?: boolean;
 }
 
 export type AskOutcome =
@@ -245,6 +251,19 @@ export async function ask(input: AskInput, options: AskOptions = {}): Promise<As
 
   if (!query) {
     return { state: 'unavailable', reason: 'server', message: 'Nothing to ask about.' };
+  }
+
+  // **No API in this build: say so before touching anything.** Not the cache
+  // either — `lib/dev/seed.ts` pre-warms two rows under the offline handshake
+  // this function would otherwise guess, and an answer out of a cache on a
+  // build that can never ask is an answer the panel cannot stand behind the
+  // next time the same learner asks something else.
+  if (!(options.configured ?? API_CONFIGURED)) {
+    return {
+      state: 'unavailable',
+      reason: 'not-configured',
+      message: 'AI answers are not set up in this version of the app.',
+    };
   }
 
   try {

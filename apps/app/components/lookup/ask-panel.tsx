@@ -34,7 +34,11 @@ import { Button } from '@/components/ui/button';
 import { Chip } from '@/components/ui/chip';
 import { EmptyState } from '@/components/ui/empty-state';
 import {
+  ASK_NOT_CONFIGURED_BODY,
+  ASK_NOT_CONFIGURED_CHIP,
   ASK_OFFLINE_CHIP,
+  ASK_RETRY_LABEL,
+  ASK_UNREACHABLE_BODY,
   ASK_UNGROUNDED_BODY,
   ASK_UNGROUNDED_TITLE,
   type AskStateName,
@@ -55,7 +59,8 @@ import {
  * panel**: `core.md` C7 owns `thinking`, `unavailable` and `ungrounded`, and
  * every one of them is drawn exactly as it was before the flip.
  */
-import { ask, askInfo, isAbort } from '@/lib/ai/ask-client';
+import { FALLBACK_INFO, ask, askInfo, isAbort } from '@/lib/ai/ask-client';
+import { API_CONFIGURED } from '@/src/access/client';
 import { cn } from '@/lib/cn';
 import type { PhraseToken } from '@/lib/db/schema';
 import { getRepository } from '@/lib/db/get-db';
@@ -533,10 +538,27 @@ export interface AskPanelProps {
   /** Where the query came from: a reader tap's sentence, a lookup's query. */
   context?: CardContext;
   className?: string;
+  /**
+   * Whether this build has an API (`API_CONFIGURED`). A prop only so the
+   * gallery and the unit tests can draw the not-configured state without a
+   * second build; the app never passes it.
+   */
+  configured?: boolean;
 }
 
-export function AskPanel({ query, context, className }: AskPanelProps) {
+/**
+ * The two reasons that mean "a base is set and nothing answered" — the pair
+ * that gets a retry. Every other `unavailable` reason is a server that did
+ * answer, and keeps the quiet line it always had.
+ */
+export function isUnreachable(reason: AskUnavailableReason): boolean {
+  return reason === 'offline' || reason === 'timeout';
+}
+
+export function AskPanel({ query, context, className, configured = API_CONFIGURED }: AskPanelProps) {
   const [state, setState] = useState<AskState>({ status: 'idle' });
+  /** Bumped by the unreachable state's retry, which re-runs the ask effect. */
+  const [attempt, setAttempt] = useState(0);
   const [provider, setProvider] = useState<ProviderName>();
   // The learner's script, read once. Display only: ids, readings and everything
   // a card stores are the same row either way.
@@ -550,9 +572,17 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
 
   useEffect(() => {
     let cancelled = false;
-    askInfo().then((info) => {
-      if (!cancelled) setProvider(info.provider);
-    });
+    // No API, no handshake: the not-configured state needs no provider, and a
+    // build with no base must not send anything anywhere.
+    //
+    // A *failed* handshake sets nothing either. `askInfo` answers a failure
+    // with `FALLBACK_INFO` — provider `fake` — and painting that as the
+    // provider put "set ANTHROPIC_API_KEY" over a server that was simply down.
+    if (configured) {
+      askInfo().then((info) => {
+        if (!cancelled && info !== FALLBACK_INFO) setProvider(info.provider);
+      });
+    }
     getRepository()
       .getSettings()
       .then(
@@ -564,7 +594,7 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [configured]);
 
   useEffect(() => {
     let cancelled = false;
@@ -590,7 +620,7 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
         // being thought about rather than only once it arrives.
         const info = await askInfo();
         if (cancelled) return;
-        setProvider(info.provider);
+        if (info !== FALLBACK_INFO) setProvider(info.provider);
 
         const outcome = await ask(
           { query: trimmed, ...(askContext ? { context: askContext } : {}) },
@@ -632,6 +662,13 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
     // Everything, including the reset to idle, happens after the debounce: a
     // setState in the body of an effect is a cascading render (and a lint
     // error), and nothing here needs to be synchronous with the keystroke.
+    // Nothing to ask with. The not-configured state is drawn from the prop
+    // alone, so there is no status to set and no request to make.
+    if (!configured) {
+      clearTimeout(deadline);
+      return;
+    }
+
     const timer = setTimeout(() => {
       if (!trimmed) {
         setState({ status: 'idle' });
@@ -646,7 +683,7 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
       clearTimeout(timer);
       clearTimeout(deadline);
     };
-  }, [trimmed, contextJson]);
+  }, [trimmed, contextJson, configured, attempt]);
 
   // The answer on screen answers the *previous* question for as long as the
   // debounce runs. Deriving staleness in render (rather than resetting the
@@ -714,11 +751,19 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
    * `data-status`: the specs that assert `data-status` are asserting what the
    * fetch is doing, which is a different and still-useful fact.
    */
-  const uiState = askUiState({
-    status: state.status,
-    stale,
-    grounded: !empty,
-  });
+  const uiState: AskStateName = configured
+    ? askUiState({ status: state.status, stale, grounded: !empty })
+    : 'unavailable';
+
+  /**
+   * Which of the two "no API" situations this is, if either — the attribute the
+   * no-API specs read, and the switch for which of the two blocks below draws.
+   */
+  const apiProblem = !configured
+    ? 'not-configured'
+    : state.status === 'error' && isUnreachable(state.reason)
+      ? 'unreachable'
+      : undefined;
 
   const addMatch = async (
     entry: Entry,
@@ -821,6 +866,7 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
       data-ask-state={uiState}
       data-provider={provider ?? 'unknown'}
       data-cached={ready?.cached ? 'true' : 'false'}
+      data-api={apiProblem ?? 'ok'}
       className={cn('flex flex-col gap-3', className)}
     >
       <header className="flex flex-wrap items-baseline justify-between gap-2">
@@ -849,7 +895,24 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
         announced at all).
       */}
       <div role="status" aria-live="polite" className="contents">
-        {state.status === 'idle' ? (
+        {/*
+          **No API in this build.** Drawn from the first paint, whatever the
+          query, and instead of the idle invitation — "ask in your own words"
+          over a panel that can never answer is the dead control this state
+          exists to replace. No retry: nothing the learner does changes a
+          build-time fact.
+        */}
+        {apiProblem === 'not-configured' ? (
+          <div className="flex flex-col items-start gap-1">
+            <Chip tone="neutral" data-testid="ask-not-configured-chip">
+              {ASK_NOT_CONFIGURED_CHIP}
+            </Chip>
+            <p data-testid="ask-status" className="text-sm text-muted">
+              {ASK_NOT_CONFIGURED_BODY}
+            </p>
+          </div>
+        ) : null}
+        {configured && state.status === 'idle' ? (
           <p data-testid="ask-status" className="text-sm text-muted">
             Ask in your own words — “how do I say I’m just browsing” — or look a
             word up and this answers which sense the sentence wants.
@@ -865,7 +928,31 @@ export function AskPanel({ query, context, className }: AskPanelProps) {
             </p>
           </div>
         ) : null}
-        {uiState === 'unavailable' && state.status === 'error' ? (
+        {apiProblem === 'unreachable' ? (
+          <div className="flex flex-col items-start gap-2">
+            {/*
+              A base is set and nothing answered. The same chip as any other
+              `unavailable` — the dictionary really is all there is right now —
+              with the one thing the other reasons do not get: a retry, because
+              this is the one that can fix itself.
+            */}
+            <Chip tone="neutral" data-testid="ask-offline-chip">
+              {ASK_OFFLINE_CHIP}
+            </Chip>
+            <p data-testid="ask-status" className="text-sm text-muted">
+              {ASK_UNREACHABLE_BODY} The dictionary result above is unaffected.
+            </p>
+            <Button
+              data-testid="ask-retry"
+              variant="secondary"
+              size="sm"
+              onClick={() => setAttempt((count) => count + 1)}
+            >
+              {ASK_RETRY_LABEL}
+            </Button>
+          </div>
+        ) : null}
+        {configured && apiProblem === undefined && uiState === 'unavailable' && state.status === 'error' ? (
           <div className="flex flex-col items-start gap-1">
             {/*
             The whole visible face of "no AI is reachable" (product-decisions

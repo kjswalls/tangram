@@ -23,6 +23,13 @@
  *     suggestion.
  *  3. **A failure is quiet.** No error banner, no retry, one muted line saying
  *     there is no suggestion. The learner was going to grade this themselves.
+ *     That includes a server that is down or slow: a retry control mid-card
+ *     is an interruption, and an interruption in the middle of a review costs
+ *     more than a missing hint. **The one exception is a build with no API
+ *     at all** (`API_CONFIGURED`): that is not a failure of this card but a
+ *     fact about every card, so the same muted line says so instead of
+ *     "this time" — in the same slot, after the flip, interrupting nothing —
+ *     and no request is made.
  *
  * One piece of plumbing worth naming: the submit blurs whatever had focus. The
  * card wrapper stops key events from escaping the slot (so typing "3" into the
@@ -44,6 +51,7 @@ import {
 // relative path, which reaches the app's own origin rather than the API base
 // and carries no `X-Tangram-Access`. See `lib/api/recall-client.ts`.
 import { appRecallRequest } from '@/lib/api/recall-client';
+import { API_CONFIGURED } from '@/src/access/client';
 import type { CardRow } from '@/lib/db/schema';
 import { RATING_LABELS } from '@/lib/srs/card';
 // `backend.md` B2's contract flip: the server has no dictionary, so the entry's
@@ -53,6 +61,10 @@ import { RATING_LABELS } from '@/lib/srs/card';
 import { entryFromSnapshot, wordSnapshot } from '@/lib/srs/direction';
 
 const OFFLINE_NOTE = 'Offline grader — set ANTHROPIC_API_KEY for a real reading of your answer.';
+
+/** No API in this build, so the default grader can never answer. */
+export const RECALL_NOT_CONFIGURED =
+  'Grade suggestions are not set up in this version of the app — grade it yourself.';
 
 export interface RecallInputProps {
   card: CardRow;
@@ -79,6 +91,13 @@ export interface RecallInputProps {
    */
   label?: string;
   placeholder?: string;
+  /**
+   * Whether this build has an API (`API_CONFIGURED`). A prop only so the unit
+   * tests can draw the not-configured line without a second build. It matters
+   * only for the **default** grader: an injected `request` — the production
+   * direction's local one — needs no server and is used either way.
+   */
+  configured?: boolean;
 }
 
 export function RecallInput({
@@ -86,10 +105,15 @@ export function RecallInput({
   revealed,
   onReveal,
   onSuggestion,
-  request = appRecallRequest,
+  request,
   label = 'What does it mean?',
   placeholder = 'in your own words',
+  configured = API_CONFIGURED,
 }: RecallInputProps) {
+  // The default grader is the only one that needs the API. With none in this
+  // build it is not called at all, rather than called and left to fail.
+  const noGrader = request === undefined && !configured;
+  const grade = request ?? appRecallRequest;
   const [stored, dispatch] = useReducer(recallReducer, card.id, blankRecall);
   const requestIdRef = useRef(0);
   const controllerRef = useRef<AbortController | null>(null);
@@ -155,12 +179,12 @@ export function RecallInput({
     // sending a request nobody can answer — which is what the old `entryId ??
     // ''` amounted to, one layer further down.
     const snapshot = wordSnapshot(card.snapshot);
-    if (!snapshot || !card.entryId) {
+    if (!snapshot || !card.entryId || noGrader) {
       settle(null);
       return;
     }
 
-    void request(
+    void grade(
       {
         entry: entryFromSnapshot(card.entryId, snapshot),
         ...(card.senseIndex === undefined ? {} : { senseIndex: card.senseIndex }),
@@ -173,9 +197,10 @@ export function RecallInput({
     card.id,
     card.senseIndex,
     card.snapshot,
+    grade,
+    noGrader,
     onReveal,
     onSuggestion,
-    request,
     revealed,
     state.answer,
     state.phase,
@@ -282,8 +307,12 @@ export function RecallInput({
       ) : null}
 
       {state.failed ? (
-        <p data-testid="recall-no-suggestion" className="text-xs text-muted">
-          No suggestion this time — grade it yourself.
+        <p
+          data-testid="recall-no-suggestion"
+          data-api={noGrader ? 'not-configured' : 'ok'}
+          className="text-xs text-muted"
+        >
+          {noGrader ? RECALL_NOT_CONFIGURED : 'No suggestion this time — grade it yourself.'}
         </p>
       ) : null}
     </div>

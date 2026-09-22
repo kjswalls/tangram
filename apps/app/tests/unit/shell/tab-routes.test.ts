@@ -168,10 +168,16 @@ describe('the seven routes are gone', () => {
     // navigating: `p3/import-list.spec.ts`. It came from `main`'s `abe6793`,
     // where it lived at the same path against `/lists`; §8a's table says it
     // "ports; rehomed, and it joins the census here", which is this line.
+    //
+    // The no-API phase adds one, a spec and navigating: `d/no-api.spec.ts`. It
+    // builds the app with `VITE_API_BASE` empty and again against a port nothing
+    // listens on, and holds each AI surface to the state it now shows — and
+    // counts every request the no-API build makes, so "the rest of the app never
+    // touches the API" is asserted rather than inferred.
     expect({ files: files.length, specs: specs.length, navigating: navigating.length }).toEqual({
-      files: 56,
-      specs: 48,
-      navigating: 49,
+      files: 57,
+      specs: 49,
+      navigating: 50,
     });
   });
 

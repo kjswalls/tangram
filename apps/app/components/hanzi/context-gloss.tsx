@@ -33,6 +33,7 @@ import type { GroundedMatch } from '@tangram/ai/ground';
 // after the contract flip an ask is two round trips, a local retrieval and a
 // local `ground()`, and none of that may exist twice.
 import { ask } from '@/lib/ai/ask-client';
+import { API_CONFIGURED } from '@/src/access/client';
 import type { CardContext, Entry } from '@/lib/types';
 
 export interface ContextGlossProps {
@@ -93,6 +94,13 @@ export function ContextGloss({ entry, match }: ContextGlossProps) {
  *
  * Every failure renders nothing. The line is a bonus on top of a dictionary
  * entry that is already on screen, and the senses and the Add never wait on it.
+ *
+ * **With no API in this build it does not ask at all** — and still renders
+ * nothing, which is a decision rather than an omission. The line has no slot
+ * and no control (see "Absent, not empty" above), so there is nothing dead on
+ * screen to explain; and it lives inside the reader, which is not an AI surface
+ * and must not wait on, probe or mention the API. The Look up tab's ask panel is
+ * where the learner is told AI is not set up. Recorded in `HANDOFF.md`.
  */
 export function useContextGloss(
   query: string,
@@ -104,7 +112,7 @@ export function useContextGloss(
   const key = sentence ? [query, sentence].join('\u0000') : '';
 
   useEffect(() => {
-    if (!key || !query || !sentence) return;
+    if (!key || !query || !sentence || !API_CONFIGURED) return;
     let cancelled = false;
     const controller = new AbortController();
     setAnswer({ key });

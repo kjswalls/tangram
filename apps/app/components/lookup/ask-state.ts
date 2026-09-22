@@ -29,8 +29,20 @@
  *   real words inside the rejected phrases stay addable.
  */
 
-/** Why no model could be reached. The chip does not have to show it. */
-export type AskUnavailableReason = 'offline' | 'no-key' | 'server' | 'rate-limited' | 'timeout';
+/**
+ * Why no model could be reached. The chip does not have to show it.
+ *
+ * `not-configured` is the one reason that is not about this request: the build
+ * has no API at all (`API_CONFIGURED`, `lib/api/availability.ts`). `offline`
+ * and `timeout` are the panel's "unreachable" pair, the two that earn a retry.
+ */
+export type AskUnavailableReason =
+  | 'offline'
+  | 'no-key'
+  | 'server'
+  | 'rate-limited'
+  | 'timeout'
+  | 'not-configured';
 
 export type AskStateName = 'idle' | 'thinking' | 'answered' | 'unavailable' | 'ungrounded';
 
@@ -73,3 +85,16 @@ export const ASK_UNGROUNDED_TITLE = 'Nothing here could be checked';
 export const ASK_UNGROUNDED_BODY =
   'The answer did not cite a dictionary entry this app could verify, so none of it is shown. ' +
   'The dictionary result above is unaffected.';
+
+/**
+ * No API in this build (`web.md`, the no-API phase). A different chip from the
+ * offline one on purpose: "offline" promises that coming back online helps, and
+ * here nothing the learner does will.
+ */
+export const ASK_NOT_CONFIGURED_CHIP = 'Dictionary only';
+export const ASK_NOT_CONFIGURED_BODY =
+  'AI answers are not set up in this version of the app. The dictionary works as normal.';
+
+/** A base is set and nothing answered. Transient, so it comes with a retry. */
+export const ASK_UNREACHABLE_BODY = 'Could not reach the AI server.';
+export const ASK_RETRY_LABEL = 'Try again';

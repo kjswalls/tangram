@@ -83,7 +83,8 @@ can use satisfied both (`docs/deploy.md` §1). Vercel builds on Node 24. Playwri
 > IndexedDB); the **recorded-not-fixed polish**; a **raw `capi` cell extractor** under the wasm runner
 > (row-heavy lookups about halve their SQL time); the **first-run audit** (WCAG AA contrast, which moved
 > three token hexes; 44px touch targets; no developer text on screen); **reader punctuation** that
-> never starts a line; and the **default-reading fix** below.
+> never starts a line; and the **default-reading fix** below, with a hand-kept list of 43 preferred
+> readings (`lib/dict/preferred-readings.ts`) the owner is expected to read and edit.
 >
 > Not landed, and deliberately so: **W7** (the marketing site — the owner deferred it on 2026-09-17)
 > and **W8b** (the command palette — `wave-zero.md` §10c ships it with the desktop application, and

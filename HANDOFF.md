@@ -15288,3 +15288,72 @@ All run on the final tree:
     so does `reading-order.test.ts`'s "does not count the band of an entry whose every gloss is a
     cross-reference". Its 尽可能 pin reads the built artifact, so it catches a stale artifact, not
     this mutant.
+
+---
+
+## Orchestrator — the overnight build, waves 10–14 — 2026-09-22/23
+
+The owner asked for as much of the web app as could be built overnight. This section is what the
+orchestrator did with that, what landed, and what is waiting on him. Each session's own section
+above has the detail.
+
+### What landed, in order
+
+| Wave | Branch | What it did |
+|---|---|---|
+| 10 | `web-no-api` | No API is a visible state, not dead controls; "not configured" vs "unreachable" |
+| 10 | `web-wide-shell` | The wide header is pinned (`fixed`, not `sticky`, measured); each list is announced by its own name |
+| 10 | `test-isolation` | Every unit test starts from an empty IndexedDB; the data-safety flake was a test whose assertion checked nothing |
+| 11 | `web-polish` | Seven "recorded, not fixed" items, including no AI toggles on a no-API build and the header pinned only with height to spare |
+| 11 | `dict-perf` | The two-pass gloss projection **measured and closed**: it cannot pay. `wave-zero.md` §10e updated |
+| 11 | `dict-extract` | Raw `capi` cell reads under the wasm runner; row-heavy lookups about halve their SQL time; ~3.2M cells parity-checked |
+| 12 | `first-run-audit` | The app driven as a first-time learner at 390 / 844 / 1280; 11 defects fixed (WCAG AA, 44px targets, developer text), 159 screenshots in `docs/audit/2026-09-23/` |
+| 13 | `audit-small-fixes` | The search-pick scroll race, the "no words yet" flash, a plain-words reason on a failed download |
+| 13 | `reader-punctuation` | Closing punctuation never starts a line; drag-select specs unmodified |
+| 13 | `dict-reading-order` | **The default reading.** 说 was shuì, 要 yāo, 吗 má; the HSK band now breaks the tie. Stored artifacts keyed on sha256 so browsers re-fetch |
+| 14 | `dict-reading-overrides` | 43 hand-kept readings (么 me, 奇 qí, 壳 ké…) and a cross-reference rule (尽可能), in `lib/dict/preferred-readings.ts` |
+
+**Final gate on `integration` → `main`:** lint, typecheck, build, **2,488** app unit (3 of 3 runs) + **103** server, **389** e2e, smoke 41.
+
+Every merge was gated by the orchestrator, not taken on the session's word: lint, typecheck, build,
+the app unit suite **three times** (test teardown changed tonight, so one green run proved little),
+the server suite, e2e and smoke. `main` moved only on a green gate.
+
+### The most important finding
+
+**The app was teaching the wrong reading of some of the commonest words in Mandarin**, and every
+test was green. The first-run audit found it by looking at the reader. After both reading phases:
+**217 + 44 simplified defaults changed**; by the sessions' own teacher-style reviews the result is
+overwhelmingly better, with the remaining disagreements listed as the owner's call. The orchestrator
+checked the readings directly against the rebuilt SQLite rather than trusting the tests.
+
+### Two merge traps — for whoever orchestrates next
+
+1. **The e2e census auto-merges one short.** `tests/unit/shell/tab-routes.test.ts` counts spec
+   files. Two branches that each add one spec from the same base each write the same new number, git
+   sees identical changes and takes the line once, and **the merge reports no conflict on it.** It
+   happened three times tonight. Run the test after every merge and take the numbers from its
+   `Received`.
+2. **Keep-both-sides is only safe for `HANDOFF.md`.** The orchestrator's conflict script kept both
+   sides of every conflict. In the wave-13 merge that would have imported from `../artifact` twice in
+   `wasm-worker.ts` and left `tab-routes.test.ts` unparseable. It was caught before the merge was
+   pushed, reset, and redone by hand. Resolve code by hand, always.
+
+Also: **`pnpm build` only generates a *missing* dictionary.** After any change to `compareEntries`,
+run `pnpm data --force`, or the gate tests the old artifact and passes. `CLAUDE.md` now says so.
+
+### Waiting on the owner
+
+- **The copy pass.** New or changed strings are listed with file and line in: "The no-API state" →
+  *New strings, for the owner's copy pass*; "Polish" → *New and changed user-facing strings*; "Three
+  audit follow-ups" → *New and changed user-facing strings*. The Practice string from W6 is still
+  his too.
+- **The first-run audit's "For the owner: taste and copy"** — 18 items, each with a screenshot.
+- **The preferred-readings list** (`apps/app/lib/dict/preferred-readings.ts`) and the arguable cases
+  left out of it (得, 为, 倒, 干, 露, 钉, 勒, 蒙, 子).
+- **Three token hexes** moved for WCAG AA (`core.md` §C0 has the dated note). His to replace with
+  other values that also clear AA; `tests/unit/ui/contrast.test.ts` is what they must pass.
+- **The 320px @ 200% font tab bar** overflows; smaller type or icons is a design call.
+- **A real phone** for drag-select across glued punctuation, and everything in `ios.md`/`android.md`.
+- Unchanged from before: the app's name, the marketing site, accounts and sync (B3–B7), deploying
+  `apps/server`.

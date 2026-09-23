@@ -163,6 +163,11 @@ describe('compareEntries', () => {
       '(used in the names of grand buildings)',
       'abbr. for 體格檢查|体格检查[ti3 ge2 jian3 cha2]',
       'equivalent to',
+      // Begin like a pointer, but carry a meaning and point at no word.
+      'see you again later',
+      'See you!',
+      'used in place names',
+      'used in transliteration',
     ]) {
       expect(isCrossReferenceOnly({ glosses: [gloss] }), gloss).toBe(false);
     }

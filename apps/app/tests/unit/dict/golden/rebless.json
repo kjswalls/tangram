@@ -84,6 +84,55 @@
     },
     {
       "rule": "preferred-and-cross-reference",
+      "params": {
+        "preferredBefore": [],
+        "preferredAfter": [
+          "不了|不了[bu4 liao3]",
+          "予|予[yu3]",
+          "伯|伯[bo2]",
+          "似|似[si4]",
+          "倘|倘[tang3]",
+          "僕|仆[pu2]",
+          "咖|咖[ka1]",
+          "哇|哇[wa1]",
+          "唉|唉[ai1]",
+          "囊|囊[nang2]",
+          "奇|奇[qi2]",
+          "奔|奔[ben1]",
+          "姆|姆[mu3]",
+          "委|委[wei3]",
+          "小子|小子[xiao3 zi5]",
+          "居|居[ju1]",
+          "屏|屏[ping2]",
+          "嵌|嵌[qian4]",
+          "嶺|岭[ling3]",
+          "摩|摩[mo2]",
+          "校|校[xiao4]",
+          "殷|殷[yin1]",
+          "殼|壳[ke2]",
+          "渠|渠[qu2]",
+          "漸|渐[jian4]",
+          "濟|济[ji4]",
+          "石|石[shi2]",
+          "禁|禁[jin4]",
+          "秘|秘[mi4]",
+          "聖|圣[sheng4]",
+          "肚|肚[du4]",
+          "舌|舌[she2]",
+          "華|华[hua2]",
+          "葉|叶[ye4]",
+          "說道|说道[shuo1 dao4]",
+          "較差|较差[jiao4 cha4]",
+          "遂|遂[sui4]",
+          "陸|陆[lu4]",
+          "隆|隆[long2]",
+          "頸|颈[jing3]",
+          "骨|骨[gu3]",
+          "體|体[ti3]",
+          "麼|么[me5]"
+        ],
+        "crossReferenceBefore": false
+      },
       "reason": "compareEntries gained two tie-breaks (HANDOFF.md \"Preferred readings\"): a hand-kept list of preferred readings goes before the HSK band, and an entry whose every gloss is a cross-reference no longer has its band counted.",
       "files": {
         "apps/app/tests/unit/dict/golden/search.json": {
@@ -102,7 +151,7 @@
           ],
           "kind": "tokenDigest",
           "before": "4ea9289cf0ccd761e73aa57f236f20e4eca33201b3c54a2a9d8618a04d7be47e",
-          "after": "f7d2b8d40b7c048086e8c0a11e0a108e6870fff4bc5a5846877b9cc276c03629"
+          "after": "c90b40a2072b636d6f35a5bd821676e7932fc57fbec4232ad93b9d183d7fa0ea"
         }
       ]
     }

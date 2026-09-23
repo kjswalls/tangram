@@ -16,7 +16,7 @@
  * | everything else | carried forward: the deleted `search()` answered it, and group keys, routing and paging do not depend on the order of readings inside a group |
  *
  * Every field that comes out different is then checked by
- * `scripts/golden-rebless.ts` against **one rule, `CURRENT_RULE`** — the
+ * `scripts/golden-rebless.ts` against **one rule** — the
  * reading-order change being re-blessed and nothing broader: an id list may only
  * be reordered, and only as that rule allows; the passage digest must be
  * reproducible from today's tokens by re-sorting each token's readings the old
@@ -28,9 +28,10 @@
  * `golden/rebless.json`, the record of every re-bless so far, which
  * `tests/unit/dict/golden-rebless.test.ts` re-proves.
  *
- * **The next reading-order change** freezes a copy of today's `compareEntries`
- * in `golden-rebless.ts`, writes a new `OrderRule` whose `before` is that copy,
- * and points `CURRENT_RULE` and `REASON` at it.
+ * **An edit to `preferred-readings.ts`** needs nothing here: run `pnpm golden`
+ * and it records a step from the last blessed list to the new one, even when no
+ * fixture moved. **Any other reading-order change** needs its own `OrderRule` in
+ * `golden-rebless.ts`, and this script pointed at it.
  *
  * Run: `pnpm golden` (`--check` reports without writing). It needs `pnpm data`,
  * and it refuses a dictionary whose entries differ from the fixtures'
@@ -51,27 +52,42 @@ import {
   canonical,
   differingPaths,
   getPath,
-  PREFERRED_RULE,
+  PREFERRED_RULE_NAME,
+  preferredRule,
   sha256,
-  tokensInCurrentOrder,
+  tokensInOrder,
   unexplainedListChange,
   unexplainedTokenDigest,
+  type PreferredParams,
   type ReblessRecord,
   type ReblessStep,
 } from './golden-rebless';
+import { PREFERRED_READINGS } from '../apps/app/lib/dict/preferred-readings';
 
 const ROOT = workspaceRoot(dirOf(import.meta.url));
 export const SEARCH_FIXTURE = 'apps/app/tests/unit/dict/golden/search.json';
 export const RETRIEVE_FIXTURE = 'apps/app/tests/unit/ai/golden/retrieve.json';
 export const REBLESS_RECORD = 'apps/app/tests/unit/dict/golden/rebless.json';
 
-/** The one reading-order change this script will re-bless. */
-const CURRENT_RULE = PREFERRED_RULE;
-
-const REASON =
+const FIRST_PREFERRED_REASON =
   'compareEntries gained two tie-breaks (HANDOFF.md "Preferred readings"): a hand-kept list of ' +
   'preferred readings goes before the HSK band, and an entry whose every gloss is a cross-reference ' +
   'no longer has its band counted.';
+const EDITED_LIST_REASON = 'preferred-readings.ts was edited: the list of preferred first readings changed.';
+
+/**
+ * The one reading-order change this script will re-bless: from the list the
+ * record last blessed (none, before the first preferred step) to the list in
+ * `preferred-readings.ts` now.
+ */
+function currentParams(record: ReblessRecord): PreferredParams {
+  const last = [...record.steps].reverse().find((step) => step.rule === PREFERRED_RULE_NAME);
+  return {
+    preferredBefore: last?.params?.preferredAfter ?? [],
+    preferredAfter: PREFERRED_READINGS.map((reading) => reading.id).sort(),
+    crossReferenceBefore: last !== undefined,
+  };
+}
 
 type Json = Record<string, unknown>;
 
@@ -180,6 +196,10 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  const record = read(REBLESS_RECORD) as unknown as ReblessRecord;
+  const params = currentParams(record);
+  const currentRule = preferredRule(params);
+  const listChanged = params.preferredBefore.join('\n') !== params.preferredAfter.join('\n');
   const searchAfter = structuredClone(searchBefore);
   const retrieveAfter = structuredClone(retrieveBefore);
 
@@ -213,8 +233,10 @@ async function main(): Promise<void> {
   // Explain every difference, or write nothing.
   // -------------------------------------------------------------------------
   const complaints: string[] = [];
-  if (!tokensInCurrentOrder(tokens, getEntry)) {
-    complaints.push('the segmenter’s readings are not in compareEntries order');
+  if (!tokensInOrder(tokens, getEntry, currentRule.after)) {
+    complaints.push(
+      'the segmenter’s readings are not in the order this rule blesses: compareEntries has changed in some other way',
+    );
   }
   const changes: ReblessStep['changes'] = [];
   const pairs = [
@@ -231,7 +253,7 @@ async function main(): Promise<void> {
         (path[0] === 'candidateEntries' && path.length === 3 && path[2] === 'ids');
       if (file === RETRIEVE_FIXTURE && isIds) {
         complaints.push(
-          ...unexplainedListChange(was as string[], now as string[], getEntry, label, CURRENT_RULE),
+          ...unexplainedListChange(was as string[], now as string[], getEntry, label, currentRule),
         );
         changes.push({ file, path, kind: 'ids', before: was, after: now });
       } else if (
@@ -239,7 +261,7 @@ async function main(): Promise<void> {
         canonical(path) === canonical(['longPassage', 'tokensSha256'])
       ) {
         complaints.push(
-          ...unexplainedTokenDigest(tokens, getEntry, was as string, now as string, CURRENT_RULE).map(
+          ...unexplainedTokenDigest(tokens, getEntry, was as string, now as string, currentRule).map(
             (complaint) => `${label}: ${complaint}`,
           ),
         );
@@ -252,12 +274,12 @@ async function main(): Promise<void> {
 
   if (complaints.length > 0) {
     process.stderr.write(
-      `freeze-golden: ${complaints.length} change(s) the ${CURRENT_RULE.name} rule does not explain — nothing written.\n` +
+      `freeze-golden: ${complaints.length} change(s) the ${currentRule.name} rule does not explain — nothing written.\n` +
         `${complaints.map((line) => `  ${line}`).join('\n')}\n`,
     );
     process.exit(1);
   }
-  if (changes.length === 0) {
+  if (changes.length === 0 && !listChanged) {
     process.stdout.write('freeze-golden: the fixtures already match; nothing to re-bless\n');
     return;
   }
@@ -266,14 +288,16 @@ async function main(): Promise<void> {
     process.stdout.write(`  ${change.kind.padEnd(11)} ${change.file} ${JSON.stringify(change.path)}\n`);
   }
   if (check) {
-    process.stdout.write(`freeze-golden --check: ${changes.length} change(s), all explained; nothing written\n`);
+    process.stdout.write(
+      `freeze-golden --check: ${changes.length} change(s), all explained${listChanged ? ', and a list edit to record' : ''}; nothing written\n`,
+    );
     return;
   }
 
-  const record = read(REBLESS_RECORD) as unknown as ReblessRecord;
   record.steps.push({
-    rule: CURRENT_RULE.name,
-    reason: REASON,
+    rule: currentRule.name,
+    params,
+    reason: params.crossReferenceBefore ? EDITED_LIST_REASON : FIRST_PREFERRED_REASON,
     files: {
       [SEARCH_FIXTURE]: { beforeCanonicalSha256: sha256(canonical(searchBefore)) },
       [RETRIEVE_FIXTURE]: { beforeCanonicalSha256: sha256(canonical(retrieveBefore)) },
@@ -284,7 +308,7 @@ async function main(): Promise<void> {
   writeFileSync(resolve(ROOT, RETRIEVE_FIXTURE), renderRetrieve(retrieveAfter));
   writeFileSync(resolve(ROOT, REBLESS_RECORD), `${JSON.stringify(record, null, 2)}\n`);
   process.stdout.write(
-    `freeze-golden: ${changes.length} change(s), every one explained by the ${CURRENT_RULE.name} rule; wrote both fixtures and appended to ${REBLESS_RECORD}\n`,
+    `freeze-golden: ${changes.length} change(s), every one explained by the ${currentRule.name} rule; wrote both fixtures and appended to ${REBLESS_RECORD}\n`,
   );
 }
 

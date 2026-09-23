@@ -21,10 +21,12 @@
  *    lower HSK band first where the old one had put the lower id first.
  * 2. `preferred-and-cross-reference` (HANDOFF.md "Preferred readings"). Two
  *    entries may swap only if they tie on frequency, variant and proper noun,
- *    and either the one now first is on `preferred-readings.ts`'s list and the
- *    other is not, or the one that was first had a band only because the band
- *    counted for an entry whose every gloss is a cross-reference, and the order
- *    without that band puts the other first.
+ *    and either the one now first is on the preferred list and the other is
+ *    not, or the one that was first got there only through what the step
+ *    removed: a place on the previous list, or a band that no longer counts
+ *    because every gloss of its entry is a cross-reference. The step records
+ *    the lists it went between (`PreferredParams`), so the same rule re-blesses
+ *    every later edit to `preferred-readings.ts`.
  *
  * Under either rule a list may not gain, lose or duplicate an id, and a swap the
  * rule demands between two readings of one headword must actually have been
@@ -33,12 +35,7 @@
  */
 import { createHash } from 'node:crypto';
 
-import {
-  compareEntries,
-  isCrossReferenceOnly,
-  isPreferredReading,
-  orderingBand,
-} from '../apps/app/lib/dict/rank';
+import { isCrossReferenceOnly, orderingBand } from '../apps/app/lib/dict/rank';
 import type { DictEntry, EntryId } from '../apps/app/lib/dict/types';
 
 /** Beyond every real band, exactly as `rank.ts` folds a missing one. */
@@ -130,42 +127,83 @@ function lostItsBand(entry: DictEntry): boolean {
 }
 
 /**
- * The second re-bless: a preferred reading goes before the band, and a
- * cross-reference-only entry's band no longer counts. `after` is the live
- * `compareEntries`; a third re-bless freezes a copy of it first, as
- * `compareEntriesWithBand` froze the first.
+ * What a preferred-reading re-bless changed, as `rebless.json` records it: the
+ * list of preferred ids before and after, and whether the cross-reference
+ * exception was already in force before. The first such step goes from no list
+ * and no exception to both. A later edit to `preferred-readings.ts` goes from
+ * one list to the next, with the exception in force on both sides.
+ *
+ * The lists are recorded rather than read from `preferred-readings.ts`, so that
+ * a step stays provable after the list moves on. The live `compareEntries` is
+ * checked against the latest step instead (`tokensInOrder`), which is what makes
+ * an unrecorded list edit fail the suite rather than pass it.
  */
-export const PREFERRED_RULE: OrderRule = {
-  name: 'preferred-and-cross-reference',
-  before: compareEntriesWithBand,
-  after: compareEntries,
-  swapComplaint(a, b) {
-    const pair = `${describe(a)} ⇄ ${describe(b)}`;
-    const earlier = earlierKeyComplaint(a, b, pair);
-    if (earlier) return earlier;
-    const preferredA = isPreferredReading(a);
-    const preferredB = isPreferredReading(b);
-    if (preferredB && !preferredA) return undefined;
-    if (preferredA && !preferredB) return `${pair}: the preferred reading moved behind the other`;
-    if (!lostItsBand(a)) {
-      return lostItsBand(b)
-        ? `${pair}: only the entry now first lost its band, and losing a band cannot move it ahead`
-        : `${pair}: neither is a preferred reading and neither lost a band`;
-    }
-    const bandA = orderingBand(a);
-    const bandB = orderingBand(b);
-    if (!(bandB < bandA || (bandB === bandA && b.id < a.id))) {
-      return `${pair}: without its cross-reference band, the old first still sorts first`;
-    }
-    return undefined;
-  },
-};
+export interface PreferredParams {
+  preferredBefore: string[];
+  preferredAfter: string[];
+  crossReferenceBefore: boolean;
+}
+
+/** `compareEntries`, rebuilt from a recorded list: the order a step blessed. */
+export function preferredOrder(preferred: ReadonlySet<string>, crossReference: boolean): Order {
+  const band = (entry: DictEntry) =>
+    crossReference ? orderingBand(entry) : (entry.hskBand ?? NO_BAND);
+  return (a, b) =>
+    (b.freq ?? -1) - (a.freq ?? -1) ||
+    Number(a.isVariant) - Number(b.isVariant) ||
+    Number(a.properNoun) - Number(b.properNoun) ||
+    Number(preferred.has(b.id)) - Number(preferred.has(a.id)) ||
+    band(a) - band(b) ||
+    (a.id < b.id ? -1 : 1);
+}
+
+export const PREFERRED_RULE_NAME = 'preferred-and-cross-reference';
+
+/**
+ * The second kind of re-bless: a preferred reading goes before the band, and a
+ * cross-reference-only entry's band no longer counts.
+ *
+ * A swap is licensed only between entries that tie on frequency, variant and
+ * proper noun, where the entry now first is on the new list and the other is
+ * not, or where neither is and the one that was first got there only through
+ * something this step removed (its place on the old list, or a band the
+ * cross-reference exception no longer counts) and the band-then-id order now
+ * puts the other first.
+ */
+export function preferredRule(params: PreferredParams): OrderRule {
+  const before = new Set(params.preferredBefore);
+  const after = new Set(params.preferredAfter);
+  const beforeOrder = preferredOrder(before, params.crossReferenceBefore);
+  return {
+    name: PREFERRED_RULE_NAME,
+    before: beforeOrder,
+    after: preferredOrder(after, true),
+    swapComplaint(a, b) {
+      const pair = `${describe(a)} ⇄ ${describe(b)}`;
+      const earlier = earlierKeyComplaint(a, b, pair);
+      if (earlier) return earlier;
+      if (!(beforeOrder(a, b) < 0)) return `${pair}: the old order did not put the first of them first`;
+      if (after.has(b.id) !== after.has(a.id)) {
+        return after.has(b.id) ? undefined : `${pair}: the preferred reading moved behind the other`;
+      }
+      const bandA = orderingBand(a);
+      const bandB = orderingBand(b);
+      if (!(bandB < bandA || (bandB === bandA && b.id < a.id))) {
+        return `${pair}: nothing in this step puts the entry now first ahead`;
+      }
+      if (before.has(a.id) && !before.has(b.id)) return undefined;
+      if (!params.crossReferenceBefore && lostItsBand(a)) return undefined;
+      return `${pair}: neither the list nor the cross-reference exception explains it`;
+    },
+  };
+}
 
 /** Every rule a committed re-bless may name, by the name `rebless.json` records. */
-export const ORDER_RULES: Record<string, OrderRule> = {
-  [BAND_RULE.name]: BAND_RULE,
-  [PREFERRED_RULE.name]: PREFERRED_RULE,
-};
+export function ruleFor(step: Pick<ReblessStep, 'rule' | 'params'>): OrderRule {
+  if (step.rule === BAND_RULE.name) return BAND_RULE;
+  if (step.rule === PREFERRED_RULE_NAME && step.params) return preferredRule(step.params);
+  throw new Error(`rebless.json names a rule the checker does not know: ${step.rule}`);
+}
 
 /**
  * Every way `after` differs from `before` that `rule` does not explain. Empty
@@ -293,11 +331,13 @@ export function unexplainedTokenDigest(
   return complaints;
 }
 
-/** The segmenter's readings are already in `compareEntries` order. */
-export function tokensInCurrentOrder(tokens: readonly TokenLike[], lookup: Lookup): boolean {
-  return (
-    JSON.stringify(reorderReadings(tokens, lookup, compareEntries)) === JSON.stringify(tokens)
-  );
+/**
+ * The segmenter's readings are already in `order`. Passed the latest step's
+ * `after`, this is the check that the live `compareEntries` is the order the
+ * record last blessed.
+ */
+export function tokensInOrder(tokens: readonly TokenLike[], lookup: Lookup, order: Order): boolean {
+  return JSON.stringify(reorderReadings(tokens, lookup, order)) === JSON.stringify(tokens);
 }
 
 /**
@@ -307,8 +347,10 @@ export function tokensInCurrentOrder(tokens: readonly TokenLike[], lookup: Looku
  * ones it chose to list.
  */
 export interface ReblessStep {
-  /** A key of `ORDER_RULES`: the only reason this step may have moved anything. */
+  /** The rule's name (`ruleFor`): the only reason this step may have moved anything. */
   rule: string;
+  /** For a preferred-reading step, the lists it went between. */
+  params?: PreferredParams;
   reason: string;
   /** The files, relative to the workspace root, and their canonical digests before. */
   files: Record<string, { beforeCanonicalSha256: string }>;

@@ -29,6 +29,8 @@ import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { PREFERRED_READINGS } from '@/lib/dict/preferred-readings';
+import { compareEntries } from '@/lib/dict/rank';
 import type { DictEntry } from '@/lib/dict/types';
 import { workspaceRoot, dirOf } from '@/lib/server/roots';
 import {
@@ -36,12 +38,14 @@ import {
   canonical,
   compareEntriesWithBand,
   getPath,
-  ORDER_RULES,
-  PREFERRED_RULE,
+  PREFERRED_RULE_NAME,
+  preferredOrder,
+  preferredRule,
   reorderReadings,
+  ruleFor,
   setPath,
   sha256,
-  tokensInCurrentOrder,
+  tokensInOrder,
   unexplainedListChange,
   unexplainedTokenDigest,
   type OrderRule,
@@ -49,7 +53,7 @@ import {
 } from '../../../../../scripts/golden-rebless';
 import { passageTokens } from '../../../../../scripts/freeze-golden';
 import { goldenIsFresh, STALE_HINT } from './golden';
-import { getEntry } from './json-oracle';
+import { getEntry, orderedEntries } from './json-oracle';
 import { requireDictData } from './data-required';
 import record from './golden/rebless.json';
 
@@ -67,9 +71,31 @@ describe('the reading-order re-blesses of the golden fixtures', () => {
     expect(goldenIsFresh(), STALE_HINT).toBe(true);
   });
 
-  it('are the two rules, in order, each naming a rule the checker knows', () => {
-    expect(rebless.steps.map((step) => step.rule)).toEqual([BAND_RULE.name, PREFERRED_RULE.name]);
-    for (const step of rebless.steps) expect(ORDER_RULES[step.rule]).toBeDefined();
+  it('are the band rule and then preferred-list steps, each naming a rule the checker knows', () => {
+    const [first, ...rest] = rebless.steps;
+    expect(first.rule).toBe(BAND_RULE.name);
+    expect(rest.length).toBeGreaterThan(0);
+    for (const step of rest) expect(step.rule).toBe(PREFERRED_RULE_NAME);
+    for (const step of rebless.steps) expect(() => ruleFor(step)).not.toThrow();
+  });
+
+  it('chain their lists: each preferred step starts from the list the one before it blessed', () => {
+    let previous: string[] = [];
+    let crossReference = false;
+    for (const step of rebless.steps.filter((one) => one.rule === PREFERRED_RULE_NAME)) {
+      expect(step.params?.preferredBefore).toEqual(previous);
+      expect(step.params?.crossReferenceBefore).toBe(crossReference);
+      previous = step.params?.preferredAfter ?? [];
+      crossReference = true;
+    }
+  });
+
+  it('end on the list in preferred-readings.ts — an edit to it is recorded by pnpm golden', () => {
+    const last = rebless.steps[rebless.steps.length - 1];
+    expect(
+      last.params?.preferredAfter,
+      'preferred-readings.ts changed since the goldens were last re-blessed: run pnpm data --force, then pnpm golden',
+    ).toEqual(PREFERRED_READINGS.map((reading) => reading.id).sort());
   });
 
   it('record every change they made: undone newest first, each step lands on its own digest', () => {
@@ -78,7 +104,6 @@ describe('the reading-order re-blesses of the golden fixtures', () => {
     const state = new Map(files.map((file) => [file, fixture(file)]));
     for (const step of [...rebless.steps].reverse()) {
       expect(Object.keys(step.files).sort()).toEqual([...files].sort());
-      expect(step.changes.length).toBeGreaterThan(0);
       for (const file of files) {
         const now = state.get(file);
         for (const change of step.changes.filter((one) => one.file === file)) {
@@ -97,7 +122,7 @@ describe('the reading-order re-blesses of the golden fixtures', () => {
 
   it('changed id lists only where their rule says, and only by reordering', () => {
     for (const step of rebless.steps) {
-      const rule = ORDER_RULES[step.rule];
+      const rule = ruleFor(step);
       for (const change of step.changes.filter((one) => one.kind === 'ids')) {
         const label = `${step.rule} ${change.file} ${JSON.stringify(change.path)}`;
         expect(
@@ -116,28 +141,34 @@ describe('the reading-order re-blesses of the golden fixtures', () => {
 
   it('changed the passage digest only by the order of readings inside a token', () => {
     const tokens = passageTokens(20_000);
-    expect(tokensInCurrentOrder(tokens, getEntry)).toBe(true);
     for (const step of rebless.steps) {
       const digests = step.changes.filter((change) => change.kind === 'tokenDigest');
-      expect(digests.length, step.rule).toBe(1);
+      expect(digests.length, step.rule).toBeLessThanOrEqual(1);
+      if (digests.length === 0) continue;
       expect(
         unexplainedTokenDigest(
           tokens,
           getEntry,
           digests[0].before as string,
           digests[0].after as string,
-          ORDER_RULES[step.rule],
+          ruleFor(step),
         ),
       ).toEqual([]);
     }
   }, 120_000);
 
-  it('start each step where the one before it ended', () => {
-    const [band, preferred] = rebless.steps;
-    const bandDigest = band.changes.find((change) => change.kind === 'tokenDigest');
-    const preferredDigest = preferred.changes.find((change) => change.kind === 'tokenDigest');
-    expect(preferredDigest?.before).toBe(bandDigest?.after);
-  });
+  it('were blessed for the order the live compareEntries gives', () => {
+    // The check that the code still gives the order the last step recorded,
+    // rather than one it was changed to afterwards without a re-bless: on the
+    // passage the goldens hold, and on every headword in the dictionary, because
+    // the passage does not contain every word a change could move (尽可能).
+    const blessed = ruleFor(rebless.steps[rebless.steps.length - 1]).after;
+    const hint = 'compareEntries no longer gives the order the goldens were last blessed for';
+    expect(tokensInOrder(passageTokens(20_000), getEntry, blessed), hint).toBe(true);
+    expect(firstDisagreement(blessed, compareEntries), hint).toBeUndefined();
+  }, 120_000);
+
+
 });
 
 describe('the checker behind it: the band rule', () => {
@@ -185,6 +216,31 @@ describe('the checker behind it: the band rule', () => {
 });
 
 /**
+ * The first headword, simplified or traditional, whose readings two orders put
+ * differently — or undefined when they agree on every one.
+ */
+function firstDisagreement(
+  one: (a: DictEntry, b: DictEntry) => number,
+  other: (a: DictEntry, b: DictEntry) => number,
+): string | undefined {
+  const groups = new Map<string, DictEntry[]>();
+  for (const entry of orderedEntries()) {
+    for (const key of [`simp ${entry.simp}`, `trad ${entry.trad}`]) {
+      const group = groups.get(key);
+      if (group) group.push(entry);
+      else groups.set(key, [entry]);
+    }
+  }
+  for (const [key, entries] of groups) {
+    if (entries.length < 2) continue;
+    const a = [...entries].sort(one).map((entry) => entry.id).join(',');
+    const b = [...entries].sort(other).map((entry) => entry.id).join(',');
+    if (a !== b) return key;
+  }
+  return undefined;
+}
+
+/**
  * A mutant `compareEntries`: the band order, but with the id tie-break
  * reversed. It ignores the preferred list and would reproduce its own digest.
  */
@@ -211,8 +267,13 @@ describe('the checker behind it: the preferred-reading and cross-reference rule'
   // 个: the band rule's swap, which this rule does not license again.
   const GE3 = '個|个[ge3]';
   const GE4 = '個|个[ge4]';
+  const FIRST = preferredRule({
+    preferredBefore: [],
+    preferredAfter: [KE],
+    crossReferenceBefore: false,
+  });
   const check = (before: string[], after: string[]) =>
-    unexplainedListChange(before, after, getEntry, 't', PREFERRED_RULE);
+    unexplainedListChange(before, after, getEntry, 't', FIRST);
 
   it('accepts a preferred reading moving ahead of a banded one', () => {
     expect(check([QIAO, KE], [KE, QIAO])).toEqual([]);
@@ -249,7 +310,7 @@ describe('the checker behind it: the preferred-reading and cross-reference rule'
     // The digests are honest — each is what re-sorting gives — so only the
     // pairwise check can catch it.
     const tokens = passageTokens(2_000);
-    const wrong: OrderRule = { ...PREFERRED_RULE, after: lastTieBackwards };
+    const wrong: OrderRule = { ...FIRST, after: lastTieBackwards };
     const before = sha256(JSON.stringify(reorderReadings(tokens, getEntry, wrong.before)));
     const after = sha256(JSON.stringify(reorderReadings(tokens, getEntry, wrong.after)));
     expect(before, 'the passage has no tie for the mutant to break').not.toBe(after);
@@ -260,9 +321,37 @@ describe('the checker behind it: the preferred-reading and cross-reference rule'
         tokens,
         getEntry,
         before,
-        sha256(JSON.stringify(reorderReadings(tokens, getEntry, PREFERRED_RULE.after))),
-        PREFERRED_RULE,
+        sha256(JSON.stringify(reorderReadings(tokens, getEntry, FIRST.after))),
+        FIRST,
       ),
     ).toEqual([]);
   }, 60_000);
+
+  it('licenses an edit to the list: a reading dropped from it, or one added', () => {
+    const edit = (before: string[], after: string[]) =>
+      preferredRule({ preferredBefore: before, preferredAfter: after, crossReferenceBefore: true });
+    // Dropped: qiào (band 7–9) takes its place back from ké.
+    expect(unexplainedListChange([KE, QIAO], [QIAO, KE], getEntry, 't', edit([KE], []))).toEqual([]);
+    // Added, and the same swap with no list change is refused.
+    expect(unexplainedListChange([QIAO, KE], [KE, QIAO], getEntry, 't', edit([], [KE]))).toEqual([]);
+    expect(unexplainedListChange([QIAO, KE], [KE, QIAO], getEntry, 't', edit([KE], [KE]))).not.toEqual(
+      [],
+    );
+    // With the exception already in force, 尽可能 moving again is not this step's doing.
+    expect(unexplainedListChange([JIN4, JIN3], [JIN3, JIN4], getEntry, 't', edit([], []))).not.toEqual(
+      [],
+    );
+  });
+
+  it('catches a compareEntries that applies the rule only in part, or not at all', () => {
+    // What the review's mutants did: each reproduced its own digest, and a rule
+    // whose `after` was the live code accepted them. `after` is now built from the
+    // recorded list, and the live code is compared with it on every headword.
+    const last = rebless.steps[rebless.steps.length - 1];
+    const list = new Set(last.params?.preferredAfter);
+    expect(firstDisagreement(ruleFor(last).after, compareEntries)).toBeUndefined();
+    expect(firstDisagreement(ruleFor(last).after, preferredOrder(list, false))).toContain('尽可能');
+    expect(firstDisagreement(ruleFor(last).after, compareEntriesWithBand)).toBeDefined();
+    expect(firstDisagreement(ruleFor(last).after, preferredOrder(new Set(), true))).toBeDefined();
+  });
 });

@@ -30,14 +30,6 @@ import type { DictEntry, EntryId, HskBand } from './types';
 /** Sorts after every real band (1–7). Shared by the entry order and the group ranking. */
 const NO_BAND = 8;
 
-/**
- * A gloss that only points at another word: "see 儘可能…", "used in 似的…",
- * "variant of 家伙…", with any qualifier CC-CEDICT puts first ("old variant of",
- * "erhua variant of", "(Tw) see"). The leading parenthetical and the qualifier
- * words are `build-data.ts`'s `VARIANT_RE` shape.
- */
-const CROSS_REFERENCE_RE = /^(?:\([^)]*\)\s*)?(?:see(?: also)?\s|used in\s|(?:[A-Za-z]+\s+){0,2}variant of\s)/i;
-
 /** Every gloss is a pointer to another word, so the entry carries no meaning of its own. */
 export function isCrossReferenceOnly(entry: Pick<DictEntry, 'glosses'>): boolean {
   return entry.glosses.length > 0 && entry.glosses.every((gloss) => CROSS_REFERENCE_RE.test(gloss));
@@ -111,6 +103,20 @@ export function compareEntries(a: DictEntry, b: DictEntry): number {
  */
 export const CJK_PATTERN =
   /[㐀-䶿一-鿿豈-﫿\u{20000}-\u{2A6DF}\u{2A700}-\u{2EBEF}\u{2F800}-\u{2FA1F}]/u;
+
+/**
+ * A gloss that only points at another word: "see 儘可能…", "used in 似的…",
+ * "variant of 家伙…", with any qualifier CC-CEDICT puts first ("old variant of",
+ * "erhua variant of", "(Tw) see"). The leading parenthetical and the qualifier
+ * words are `build-data.ts`'s `VARIANT_RE` shape. The word pointed at must
+ * start with a hanzi, which is what keeps out glosses that carry a meaning and
+ * only begin like a pointer: "see you again later", "used in place names".
+ */
+const CROSS_REFERENCE_RE = new RegExp(
+  String.raw`^(?:\([^)]*\)\s*)?(?:see(?: also)?|used in|(?:[A-Za-z]+\s+){0,2}variant of)\s+` +
+    CJK_PATTERN.source,
+  'iu',
+);
 
 export function hasCjk(text: string): boolean {
   return CJK_PATTERN.test(text);

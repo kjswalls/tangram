@@ -10,8 +10,10 @@
  * app would teach the wrong reading. 奇 would be jī, 么 would be má.
  *
  * Every id here is put first among its headword's readings, before the HSK band
- * is consulted. That is all this list does. It changes no entry's content and
- * hides no reading. The other readings are still shown, just after this one.
+ * is consulted. It changes no entry's content and hides no reading. The other
+ * readings are still shown, just after this one. (It also moves the entry ahead
+ * of *other* headwords that happen to share its jieba frequency, as the band
+ * does, which only matters where a list is cut off at a fixed length.)
  *
  * **To change it**
  *
@@ -23,10 +25,12 @@
  * - Only add a reading every standard learner's dictionary gives first. If
  *   both readings are core (得 dé and de, 倒 dǎo and dào), leave the headword
  *   alone. HANDOFF.md lists the ones left out on purpose.
- * - Then run `pnpm data --force` (the order is baked into the dictionary file)
- *   and `pnpm test`. `tests/unit/dict/preferred-readings.test.ts` fails if an id
- *   does not exist, if two ids share a headword, or if an entry no longer changes
- *   anything.
+ * - Then run `pnpm data --force` (the order is baked into the dictionary file),
+ *   `pnpm golden` (it records the edit beside the frozen test fixtures, and
+ *   refuses if anything moved that the list does not explain) and `pnpm test`.
+ *   `tests/unit/dict/preferred-readings.test.ts` fails if an id does not exist,
+ *   if two ids share a headword, or if an entry no longer changes anything, and
+ *   `golden-rebless.test.ts` fails until `pnpm golden` has recorded the edit.
  *
  * `data/ATTRIBUTION.md` says that this editorial choice exists. The list only
  * reorders CC-CEDICT's readings; it never changes their text.

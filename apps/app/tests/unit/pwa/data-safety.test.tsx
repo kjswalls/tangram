@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DataSafetyCard } from '@/components/pwa/data-safety';
 import { closeDb, getRepository } from '@/lib/db/get-db';
 import { serializeSnapshot } from '@/lib/db/export';
-import { parseSnapshot } from '@/lib/db/import';
+import { MAX_SNAPSHOT_BYTES, parseSnapshot } from '@/lib/db/import';
 import { detectEngine, resetInstallCapture, startInstallCapture } from '@/src/pwa/install';
 import { requestPersistence, resetPersistence } from '@/src/pwa/persist';
 import { DASUAN } from '../db/fixtures';
@@ -191,6 +191,26 @@ describe('the backup controls', () => {
     // A button that silently does nothing reads as "saved", which is the worst
     // possible outcome for the one control that exists to be trusted.
     expect((await screen.findByTestId('backup-failed')).textContent).toMatch(/could not be made/i);
+  });
+
+  it('refuses a file too large to be read, before reading it, and says so in words', async () => {
+    const repo = getRepository();
+    await repo.addCardFromEntry(DASUAN, undefined, 0, 'test-dict');
+    asEngine(CHROME);
+    render(<DataSafetyCard />);
+
+    const file = new File(['{}'], 'holiday.mov', { type: 'video/quicktime' });
+    // A real file this size would be a real 256 MiB in the test's memory.
+    Object.defineProperty(file, 'size', { value: MAX_SNAPSHOT_BYTES + 1 });
+    const read = vi.spyOn(file, 'text');
+    const input = (await screen.findByTestId('backup-file')) as HTMLInputElement;
+    await choose(input, file);
+
+    expect((await screen.findByTestId('restore-failed')).textContent).toMatch(/too large to restore/i);
+    expect(read).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('restore-confirm')).toBeNull();
+    expect(await repo.allCards()).toHaveLength(1);
+    expect(reload).not.toHaveBeenCalled();
   });
 
   it('refuses a file that is not a backup, and does not touch the database', async () => {

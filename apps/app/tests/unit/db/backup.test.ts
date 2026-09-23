@@ -23,10 +23,19 @@
  *   and it would also prove the wrong thing, since the guarantee is a
  *   `Repository`-level one.
  */
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { serializeSnapshot, snapshotCounts, snapshotFilename, snapshotSummary } from '@/lib/db/export';
-import { parseSnapshot, SnapshotError, upgradeSnapshot, validateSnapshot } from '@/lib/db/import';
+import {
+  MAX_SNAPSHOT_BYTES,
+  MAX_SNAPSHOT_NESTING,
+  nestsDeeperThan,
+  parseSnapshot,
+  readSnapshotFile,
+  SnapshotError,
+  upgradeSnapshot,
+  validateSnapshot,
+} from '@/lib/db/import';
 import type { Repository, Snapshot } from '@/lib/db/repository';
 import { DB_VERSION, DEFAULT_CARD_DIRECTION, STORES } from '@/lib/db/schema';
 import { context, DASUAN, freshRepository, KANKAN } from './fixtures';
@@ -416,6 +425,77 @@ describe('reading a file that is not what it claims', () => {
     expect(() =>
       validateSnapshot(envelope({ rows: { ...rows, texts: [{ id: 't', body: deep }] } })),
     ).toThrow(SnapshotError);
+  });
+
+  /**
+   * The two guards that run **before** `JSON.parse`, because the parse is where
+   * the tab freezes. Everything else in this block runs after it.
+   */
+  it('refuses a file too large to read without reading a byte of it', async () => {
+    const text = vi.fn(async () => '{}');
+    const huge = { size: MAX_SNAPSHOT_BYTES + 1, text };
+    const refusal = await readSnapshotFile(huge).catch((error: unknown) => error);
+    expect(refusal).toBeInstanceOf(SnapshotError);
+    expect((refusal as SnapshotError).problem).toBe('too-large');
+    // In words, like every other refusal here: no byte count, no exception name.
+    expect((refusal as SnapshotError).message).toBe('That file is too large to restore.');
+    expect(text).not.toHaveBeenCalled();
+  });
+
+  it('reads a file at the limit, and the limit is what decides', async () => {
+    const body = serializeSnapshot(envelope() as unknown as Snapshot);
+    const file = new Blob([body]);
+    await expect(readSnapshotFile(file)).resolves.toMatchObject({ format: 1 });
+    // One byte under the file's own size refuses it, from the size alone.
+    await expect(readSnapshotFile(file, file.size - 1)).rejects.toMatchObject({ problem: 'too-large' });
+    await expect(readSnapshotFile(file, file.size)).resolves.toMatchObject({ format: 1 });
+  });
+
+  it('refuses text nested past any backup before parsing it', () => {
+    const parse = vi.spyOn(JSON, 'parse');
+    try {
+      const deep = `${'['.repeat(100_000)}${']'.repeat(100_000)}`;
+      const refusal = (() => {
+        try {
+          parseSnapshot(deep);
+        } catch (error) {
+          return error;
+        }
+      })();
+      expect((refusal as SnapshotError).problem).toBe('too-deep');
+      expect((refusal as SnapshotError).message).toBe('That file is not a Tangram backup.');
+      expect(parse).not.toHaveBeenCalled();
+    } finally {
+      parse.mockRestore();
+    }
+  });
+
+  it('never refuses by depth what the row check would accept', () => {
+    // The deepest row the validator lets through: containers down to the limit.
+    const rows = Object.fromEntries(Object.keys(STORES).map((store) => [store, []]));
+    let deep: unknown = {};
+    for (let i = 0; i < 15; i += 1) deep = { deep };
+    const deepest = envelope({ rows: { ...rows, texts: [{ id: 't', body: deep }] } });
+    expect(() => validateSnapshot(deepest)).not.toThrow();
+    expect(() => parseSnapshot(serializeSnapshot(deepest as unknown as Snapshot))).not.toThrow();
+    expect(nestsDeeperThan(JSON.stringify(deepest), MAX_SNAPSHOT_NESTING)).toBe(false);
+    // One more level is refused, by both checks.
+    const deeper = envelope({ rows: { ...rows, texts: [{ id: 't', body: { deep } }] } });
+    expect(() => validateSnapshot(deeper)).toThrow(SnapshotError);
+    expect(nestsDeeperThan(JSON.stringify(deeper), MAX_SNAPSHOT_NESTING)).toBe(true);
+  });
+
+  it('counts brackets inside strings as text, not as nesting', () => {
+    const body = '['.repeat(MAX_SNAPSHOT_NESTING * 2);
+    // An escaped quote does not end a string: the brackets after it are text too.
+    const texts = [{ id: 't', title: body, body: `a " quote then ${body}` }];
+    const rows = Object.fromEntries(Object.keys(STORES).map((store) => [store, []]));
+    const snapshot = parseSnapshot(JSON.stringify(envelope({ rows: { ...rows, texts } })));
+    expect(snapshot.rows.texts).toHaveLength(1);
+    expect(nestsDeeperThan('"[[[[" [[', 2)).toBe(false);
+    expect(nestsDeeperThan('"\\"[[[[" [[', 2)).toBe(false);
+    // An escaped backslash does not escape the quote after it: the string ends.
+    expect(nestsDeeperThan('"\\\\" [[[', 2)).toBe(true);
   });
 
   it('refuses a row with no id, and an unknown table', () => {

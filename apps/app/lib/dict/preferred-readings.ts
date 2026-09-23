@@ -45,13 +45,10 @@ export interface PreferredReading {
 export const PREFERRED_READINGS: readonly PreferredReading[] = [
   // HSK lists the rarer reading, so the band put it first.
   { id: '說道|说道[shuo1 dao4]', reason: 'shuōdào "said", as in 他说道 in any story; shuōdao "to discuss" is rarer' },
-  { id: '殼|壳[ke2]', reason: 'ké, as in 鸡蛋壳 and 贝壳; qiào is bookish (地壳)' },
-  { id: '勒|勒[le4]', reason: 'lè, as in 勒索, 勒令 and 希特勒; lēi is colloquial "to tie tight"' },
+  { id: '殼|壳[ke2]', reason: 'ké, as in 蛋壳 and 贝壳; qiào is bookish (地壳, 甲壳)' },
   { id: '唉|唉[ai1]', reason: 'āi, the ordinary sigh, as in 唉声叹气' },
   { id: '奔|奔[ben1]', reason: 'bēn, as in 奔跑 and 奔驰; bèn "to head for" is rarer' },
-  { id: '釘|钉[ding1]', reason: 'dīng, as in 钉子 "nail"; dìng is the verb "to nail"' },
-  { id: '哇|哇[wa1]', reason: 'wā, "wow!"; the particle wa only replaces 啊 after -u or -ao' },
-  { id: '露|露[lu4]', reason: 'lù, as in 露水, 暴露 and 露天; lòu is colloquial (露面)' },
+  { id: '哇|哇[wa1]', reason: 'wā, "wow!"; the particle wa only replaces 啊 after -u, -ao or -ou' },
 
   // Neither reading has an HSK band, so the id decided alphabetically.
   { id: '麼|么[me5]', reason: 'me, as in 什么, 怎么 and 这么' },
@@ -76,13 +73,20 @@ export const PREFERRED_READINGS: readonly PreferredReading[] = [
   { id: '濟|济[ji4]', reason: 'jì, as in 经济 and 救济' },
   { id: '頸|颈[jing3]', reason: 'jǐng, "neck", as in 颈部; gěng only in 脖颈' },
   { id: '摩|摩[mo2]', reason: 'mó, as in 摩擦 and 按摩; mā only in 摩挲' },
-  { id: '禁|禁[jin4]', reason: 'jìn, as in 禁止; jīn "to endure" (禁不住) is rarer' },
+  { id: '禁|禁[jin4]', reason: 'jìn, as in 禁止; jīn only in 不禁, 禁不住 and 禁得起' },
   { id: '隆|隆[long2]', reason: 'lóng, as in 隆重' },
   { id: '囊|囊[nang2]', reason: 'náng, as in 胶囊 and 行囊' },
   { id: '舌|舌[she2]', reason: 'shé, as in 舌头 "tongue"' },
   { id: '姆|姆[mu3]', reason: 'mǔ, as in 保姆' },
   { id: '秘|秘[mi4]', reason: 'mì, as in 秘密; bì only in 秘鲁 "Peru"' },
-  { id: '委|委[wei3]', reason: 'wěi, as in 委员 and 委托; wēi only in 委蛇' },
+  { id: '委|委[wei3]', reason: 'wěi, as in 委员 and 委托; wēi only in 委蛇 (= 逶迤)' },
+  { id: '嵌|嵌[qian4]', reason: 'qiàn, as in 镶嵌; kǎn only in the place name 赤嵌楼' },
+  { id: '倘|倘[tang3]', reason: 'tǎng, as in 倘若; cháng only in 倘佯' },
+  { id: '渠|渠[qu2]', reason: 'qú, as in 渠道' },
+  { id: '予|予[yu3]', reason: 'yǔ, as in 给予 and 予以; yú "I" is classical' },
+  { id: '僕|仆[pu2]', reason: 'pú, as in 仆人; pū only in 前仆后继' },
+  { id: '肚|肚[du4]', reason: 'dù, "belly", as in 肚子; dǔ is tripe on a menu (羊肚)' },
+  { id: '較差|较差[jiao4 cha4]', reason: 'jiàochà "rather poor"; jiàochā is a technical "range"' },
   { id: '不了|不了[bu4 liao3]', reason: 'bùliǎo, as in 受不了 and 少不了; bùle is "no thanks"' },
   { id: '小子|小子[xiao3 zi5]', reason: 'xiǎozi "boy; guy", as in 这小子; xiǎozǐ is literary' },
 ];

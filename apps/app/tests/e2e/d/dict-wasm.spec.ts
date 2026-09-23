@@ -29,7 +29,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { expect, test, type Page } from '@playwright/test';
 
 import { MANIFEST_FILE, type DictManifest } from '../../../lib/dict/artifact';
-import { RANK_COLUMNS } from '../../../lib/dict/query/entries';
+import { ENTRY_COLUMNS, RANK_COLUMNS } from '../../../lib/dict/query/entries';
 import { glossCandidates } from '../../../lib/dict/query/gloss';
 import { glossTier, lemmas } from '../../../lib/dict/rank';
 import type { DictEntry } from '../../../lib/dict/types';
@@ -222,6 +222,94 @@ test.describe('the OPFS dictionary', () => {
       record.parity = { calls: CALLS.length, chunkedEntryIds: many.length };
     } finally {
       await store.close();
+    }
+  });
+
+  /**
+   * The same comparison one layer down: the raw rows `SqlRunner.query` returns.
+   *
+   * `DictStore`'s answers are shaped — a BLOB is decoded into rowids, a `NULL`
+   * classifier becomes `[]` — so a runner that returned a subtly different
+   * *value* could still produce the same domain answer. The worker reads cells
+   * through raw `capi` calls rather than oo1's `Stmt.get()` (`wasm-extract.ts`),
+   * and this is where that is held to byte identity with `node:sqlite`: every
+   * value's type, every BLOB's bytes, every `NULL`, an astral headword's text,
+   * and the one integer in the file that is not small — `hsk_sort`'s sentinel,
+   * `Number.MAX_SAFE_INTEGER`, which a 32-bit read would silently truncate.
+   */
+  test('returns raw rows byte-identical to node:sqlite: BLOBs, NULLs, astral text, 2^53 − 1', async ({
+    page,
+  }) => {
+    await openHarness(page);
+    expect((await open(page)).ok).toBe(true);
+    const batch = [
+      // BLOBs: `char_words.rowids`, including an astral character's list.
+      { sql: "SELECT ch, script, n, rowids FROM char_words WHERE ch IN ('算', '的', '𩽾') ORDER BY ch, script" },
+      // An astral headword, in full.
+      { sql: `SELECT ${ENTRY_COLUMNS} FROM entries WHERE simp IN ('𩽾', '𧿹') ORDER BY rowid` },
+      // NULLs in every nullable column the store reads, and the xx5 rows whose
+      // pinyin keys are NULL.
+      {
+        sql:
+          `SELECT ${ENTRY_COLUMNS}, py_toneless, py_toned, hsk_sort FROM entries ` +
+          'WHERE py_toneless IS NULL OR (classifiers IS NULL AND hsk_band IS NULL) ' +
+          'ORDER BY rowid LIMIT 200',
+      },
+      // The sentinel, which is 2^53 − 1 exactly.
+      { sql: 'SELECT rowid, hsk_sort FROM entries WHERE hsk_sort = ? ORDER BY rowid', params: [Number.MAX_SAFE_INTEGER] },
+      // The statement the change is for, all 5,000 rows.
+      glossCandidates('"to"'),
+      // `open()`'s read, every row.
+      { sql: 'SELECT ch, simp_evidence, trad_evidence FROM chars' },
+      // FTS5's own BLOBs, a different shape of blob again.
+      { sql: 'SELECT id, block FROM gloss_fts_data ORDER BY id LIMIT 300' },
+    ];
+    /** Every value tagged with its type, and BLOBs as byte arrays, so nothing is lost crossing `evaluate`. */
+    type Tagged = [string, unknown];
+    const tag = (sets: Record<string, unknown>[][]): Tagged[][][] =>
+      sets.map((rows) =>
+        rows.map((row) =>
+          Object.entries(row).map(([key, value]): Tagged => [
+            key,
+            value instanceof Uint8Array
+              ? ['bytes', Object.getPrototypeOf(value) === Uint8Array.prototype, Array.from(value)]
+              : [value === null ? 'null' : typeof value, value],
+          ]),
+        ),
+      );
+    const runner = nodeRunner(ARTIFACT);
+    try {
+      const expected = tag(await runner.query(batch));
+      const actual = await page.evaluate(async (queries) => {
+        const sets = (await window.__dictWasm!.sql(queries as never)) as Record<string, unknown>[][];
+        return sets.map((rows) =>
+          rows.map((row) =>
+            Object.entries(row).map(([key, value]) => [
+              key,
+              value instanceof Uint8Array
+                ? ['bytes', Object.getPrototypeOf(value) === Uint8Array.prototype, Array.from(value)]
+                : [value === null ? 'null' : typeof value, value],
+            ]),
+          ),
+        );
+      }, batch);
+      expect(actual).toEqual(expected);
+      // The comparison had something to compare in each of the cases it names.
+      const [blobs, astral, nulls, sentinel, gloss, chars] = expected;
+      expect(blobs.length).toBeGreaterThanOrEqual(4);
+      expect(astral.length).toBeGreaterThan(0);
+      expect(nulls.length).toBe(200);
+      expect(sentinel.length).toBeGreaterThan(0);
+      expect(gloss.length).toBe(5_000);
+      expect(chars.length).toBeGreaterThan(14_000);
+      record.rawParity = {
+        blobRows: blobs.length,
+        astralRows: astral.length,
+        nullRows: nulls.length,
+        sentinelRows: sentinel.length,
+      };
+    } finally {
+      await runner.close();
     }
   });
 

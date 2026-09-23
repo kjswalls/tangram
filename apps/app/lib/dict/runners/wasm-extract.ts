@@ -9,7 +9,7 @@
  * (the gloss candidates are 5,000 rows of nine columns per keystroke; `open()`
  * reads all 14,625 `chars` rows), so that per-cell overhead is most of what the
  * worker spends on a query once SQLite has stepped. `HANDOFF.md` "The
- * dictionary's cell extractor" has the measurements.
+ * dictionary's cell extractor, measured and built" has the measurements.
  *
  * **What it must not change is the value.** Every branch below is written
  * against oo1 3.53.4's own `Stmt.get(ndx)` followed by `narrow()`, which is the
@@ -28,15 +28,21 @@
  *    `entries.hsk_sort` holds `HSK_SORT_SENTINEL`, 2^53 − 1.
  *  - **FLOAT** is `sqlite3_column_double`, as it is in oo1.
  *  - **TEXT** is `sqlite3_column_text` then `sqlite3_column_bytes`, in that
- *    order, decoded by a default `TextDecoder` over exactly that many bytes —
- *    which is what oo1's own `capi.sqlite3_column_text` does, down to the
- *    decoder's defaults (UTF-8, replacement rather than throwing, a leading BOM
+ *    order, decoded by `wasm.typedArrayToString` over exactly that many bytes —
+ *    which is what oo1's own `capi.sqlite3_column_text` does, with the same
+ *    decoder (UTF-8, replacement rather than throwing, a leading BOM
  *    stripped). It is length-delimited, not NUL-terminated, so an embedded
  *    U+0000 survives in both.
  *  - **BLOB** is `sqlite3_column_bytes` then `sqlite3_column_blob`, copied into
  *    a fresh `Uint8Array` that owns its own buffer — never a view on the wasm
  *    heap, which the next step overwrites and a heap growth detaches.
  *  - **NULL** is `null`.
+ *
+ * One ordering difference, and it cannot be reached: oo1 read a whole row
+ * before `narrow()` saw any of it, so a `get()` error on a later column would
+ * have beaten a range error on an earlier one. This throws at the first bad
+ * cell. `get()`'s only error of its own is an unknown type code, which
+ * `sqlite3_column_type` never returns.
  */
 import type { PreparedStatement, Sqlite3Static, SqlValue as WasmSqlValue } from '@sqlite.org/sqlite-wasm';
 
@@ -73,7 +79,10 @@ export type RowReader = (
   rows: Record<string, SqlValue>[],
 ) => void;
 
-/** The raw exports this file calls. Typed here because the library types `exports` as `any`. */
+/**
+ * The raw exports and helpers this file calls. Typed here because the library
+ * types `exports` as `any` and leaves `ptr` and `typedArrayToString` out.
+ */
 interface ColumnExports {
   sqlite3_column_type(stmt: number, index: number): number;
   sqlite3_column_double(stmt: number, index: number): number;
@@ -81,27 +90,31 @@ interface ColumnExports {
   sqlite3_column_bytes(stmt: number, index: number): number;
   sqlite3_column_blob(stmt: number, index: number): number;
 }
+interface WasmHelpers {
+  ptr?: { size?: number };
+  typedArrayToString(heap: Uint8Array, begin: number, end: number): string;
+}
 
 /**
  * Builds the reader for one initialised runtime.
  *
- * Throws if the build's pointers are not plain numbers. Every published
- * `@sqlite.org/sqlite-wasm` build so far is wasm32, where they are; a memory64
- * build would pass pointers as BigInt and every call below would be wrong, so it
- * is refused once, loudly, at the first query rather than per cell.
+ * Throws if the build is not wasm32. Every published `@sqlite.org/sqlite-wasm`
+ * build so far is; a memory64 build would pass pointers as BigInt and every raw
+ * call below would be wrong, so it is refused once, loudly, when the worker
+ * builds its reader, rather than per cell.
  */
 export function rowReader(runtime: Sqlite3Static): RowReader {
   const { capi, wasm } = runtime;
   const exports = wasm.exports as ColumnExports;
+  const helpers = wasm as unknown as WasmHelpers;
+  if (helpers.ptr?.size !== 4) {
+    throw new TypeError(`sqlite-wasm pointers are ${String(helpers.ptr?.size)} bytes, not 4`);
+  }
   const { SQLITE_INTEGER, SQLITE_FLOAT, SQLITE_TEXT, SQLITE_BLOB, SQLITE_NULL } = capi;
   const { MAX_SAFE_INTEGER, MIN_SAFE_INTEGER } = Number;
-  const decoder = new TextDecoder();
 
   return (statement, columns, rows) => {
-    const pointer = statement.pointer;
-    if (typeof pointer !== 'number') {
-      throw new TypeError(`sqlite-wasm statement pointers are ${typeof pointer}, not number`);
-    }
+    const pointer = statement.pointer as number;
     const width = columns.length;
     while (statement.step()) {
       const row: Record<string, SqlValue> = {};
@@ -127,9 +140,11 @@ export function rowReader(runtime: Sqlite3Static): RowReader {
               break;
             }
             const bytes = exports.sqlite3_column_bytes(pointer, index);
-            // The heap view is taken after both calls: either may allocate
-            // (a type conversion does), and a growth replaces the buffer.
-            value = decoder.decode(wasm.heap8u().subarray(text, text + bytes));
+            // oo1's own decode, called directly: the library's default
+            // `TextDecoder`, and a copy first if the heap is ever shared. The
+            // heap view is taken after both calls: either may allocate (a
+            // type conversion does), and a growth replaces the buffer.
+            value = helpers.typedArrayToString(wasm.heap8u(), text, text + bytes);
             break;
           }
           case SQLITE_BLOB: {

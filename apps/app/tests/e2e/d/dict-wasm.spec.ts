@@ -272,7 +272,14 @@ test.describe('the OPFS dictionary', () => {
           Object.entries(row).map(([key, value]): Tagged => [
             key,
             value instanceof Uint8Array
-              ? ['bytes', Object.getPrototypeOf(value) === Uint8Array.prototype, Array.from(value)]
+              ? [
+                  'bytes',
+                  Object.getPrototypeOf(value) === Uint8Array.prototype,
+                  // Owns its whole buffer. A view on the wasm heap would carry
+                  // the right bytes and clone the entire heap with them.
+                  value.byteOffset === 0 && value.buffer.byteLength === value.byteLength,
+                  Array.from(value),
+                ]
               : [value === null ? 'null' : typeof value, value],
           ]),
         ),
@@ -287,7 +294,14 @@ test.describe('the OPFS dictionary', () => {
             Object.entries(row).map(([key, value]) => [
               key,
               value instanceof Uint8Array
-                ? ['bytes', Object.getPrototypeOf(value) === Uint8Array.prototype, Array.from(value)]
+                ? [
+                  'bytes',
+                  Object.getPrototypeOf(value) === Uint8Array.prototype,
+                  // Owns its whole buffer. A view on the wasm heap would carry
+                  // the right bytes and clone the entire heap with them.
+                  value.byteOffset === 0 && value.buffer.byteLength === value.byteLength,
+                  Array.from(value),
+                ]
                 : [value === null ? 'null' : typeof value, value],
             ]),
           ),
@@ -340,11 +354,14 @@ test.describe('the OPFS dictionary', () => {
    * neither alone brings these two queries under 50 ms.
    */
   const KNOWN_BREACH: Record<string, number> = {
-    // Measured at 89–100 ms across runs when this phase closed, with the
+    // D4 measured 89–100 ms across runs when this phase closed, with the
     // redundant `ORDER BY e.rowid` removed — the statement behind it was
     // 1,117–1,137 ms with the clause in place. What is left is 5,000 nine-column
     // rows crossing the worker boundary plus `glossTier` over all of them.
-    // The ceiling is ~2× the measurement:
+    // Since the worker reads cells through raw `capi` calls (`wasm-extract.ts`,
+    // 2026-09-23) they measure 84–96 ms, down from ~130 on the same container;
+    // what remains is mostly `glossTier`, so the pins stay. The ceiling is ~2×
+    // D4's measurement:
     // enough headroom for a shared container's noise, tight enough that a real
     // regression fails rather than fitting underneath it.
     "search('to') — 31,561 postings, over the 5,000 cap": 200,

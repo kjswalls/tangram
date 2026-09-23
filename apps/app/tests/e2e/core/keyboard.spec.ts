@@ -218,7 +218,13 @@ test.describe('every tab and every primary action, with no pointer', () => {
     await page.keyboard.press('Enter');
     await expect(page.getByTestId('card-back')).toBeVisible();
     await page.keyboard.press('4');
-    await expect(page.getByTestId('review-session')).toBeVisible();
+    // `4` graded the last card, so the session ends. The assertion used to be
+    // that `review-session` was still visible, which exists only while a card
+    // is on screen — true only if it was read before the grade's write landed
+    // (it lost 1 run in 280 under `--repeat-each=8`). The finished state, with
+    // both grades counted, is what "4 grades" means.
+    await expect(page.getByTestId('review-empty')).toBeVisible();
+    await expect(page.getByText('2 done')).toBeVisible();
   });
 });
 

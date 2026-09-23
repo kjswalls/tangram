@@ -116,9 +116,15 @@ export function LookupView({ askSlot }: { askSlot?: ReactNode }) {
   // "Off-screen" starts below the wide shell's pinned header, which the root's
   // `scroll-padding-top` measures (globals.css) — zero on a phone — and which
   // `scrollIntoView` honours in turn.
+  //
+  // On a wide screen the panel is also its own scroller (capped to the room
+  // below the header — see the panel), and a new pick starts at its top:
+  // otherwise the scroll left over from reading the last answer hides the new
+  // entry's headword above the panel's visible area.
   useEffect(() => {
     const node = panelRef.current;
     if (!selectedKey || !node) return;
+    node.scrollTop = 0;
     const box = node.getBoundingClientRect();
     const clear = parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) || 0;
     if (box.top < clear || box.bottom > window.innerHeight) node.scrollIntoView({ block: 'nearest' });
@@ -193,11 +199,13 @@ export function LookupView({ askSlot }: { askSlot?: ReactNode }) {
             viewport less the header and the 1rem gap above and below, it
             scrolls inside itself instead. `--shell-header-height` is zero
             whenever the header is not pinned, so the same expression holds.
+            Print undoes the cap: a page is not a viewport, and a scroller
+            would print only its first screenful.
           */}
           <div
             ref={panelRef}
             data-testid="lookup-panel-column"
-            className="md:sticky md:top-[calc(var(--shell-header-height)+1rem)] md:max-h-[calc(100dvh-var(--shell-header-height)-2rem)] md:overflow-y-auto"
+            className="md:sticky md:top-[calc(var(--shell-header-height)+1rem)] md:max-h-[calc(100dvh-var(--shell-header-height)-2rem)] md:overflow-y-auto print:max-h-none print:overflow-visible"
           >
             <LookupPanel
               query={selected ? selected.simp : query}

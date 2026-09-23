@@ -509,29 +509,42 @@ test.describe('a wide viewport too short to pin the header: a phone on its side'
     await expectFocusClear(page, 'the Practice heading');
   });
 
-  test('Back restores a scrolled Library, and Tab from there lands on screen', async ({ page }) => {
+  /**
+   * A real click on a link that is on screen at depth — a list, far down
+   * Library — and Back. That is the path a learner can take here. What they
+   * cannot do at this height is press a tab from depth without scrolling to it
+   * first (the header scrolls away, by design), so Back after a *tab* returns
+   * to wherever they scrolled up to; HANDOFF.md records that trade.
+   */
+  test('Back from a list opened deep in Library restores the offset, and Tab lands on screen', async ({
+    page,
+  }) => {
     await page.goto('/library');
     await shortReady(page);
-    await expect(page.getByTestId('list-card').first()).toBeVisible({ timeout: 30_000 });
+    const card = page.getByTestId('list-card').last();
+    await expect(card).toBeVisible({ timeout: 30_000 });
     await scrollToBottom(page);
-    await page.evaluate(() => window.scrollTo(0, 1200));
-    await expect.poll(() => page.evaluate(() => Math.round(window.scrollY))).toBe(1200);
+    // The last list, at the top of the viewport: far down, and on screen.
+    const depth = await card.evaluate((node) => {
+      window.scrollTo(0, node.getBoundingClientRect().top + window.scrollY - 40);
+      return Math.round(window.scrollY);
+    });
+    expect(depth).toBeGreaterThan(300);
+    await expect.poll(() => page.evaluate(() => Math.round(window.scrollY))).toBe(depth);
 
-    // Followed without Playwright's scroll-before-click: the header is in flow
-    // and 1200px up, so a real click would scroll there first, and the offset
-    // saved for Library would be the top of the page rather than 1200.
-    await page.evaluate(() =>
-      document.querySelector<HTMLElement>('[data-testid="tab-link"][data-tab="practice"]')!.click(),
-    );
-    await expect(page.locator('[data-route="/practice"]')).toHaveCount(1);
+    await card.getByRole('link').first().click();
+    await expect(page).toHaveURL(/\/library\/lists\//);
+    // A real click, and it did not scroll first: the link was in view.
     await page.goBack();
     await expect(page.locator('[data-route="/library"]')).toHaveCount(1);
-    await expect.poll(() => page.evaluate(() => Math.round(window.scrollY))).toBeGreaterThan(1100);
+    await expect
+      .poll(() => page.evaluate(() => Math.round(window.scrollY)))
+      .toBeGreaterThan(depth - 5);
     await expect
       .poll(() => page.evaluate(() => document.activeElement?.hasAttribute('data-route-heading')))
       .toBe(true);
     // The heading was focused without moving the page.
-    expect(await page.evaluate(() => Math.round(window.scrollY))).toBeGreaterThan(1100);
+    expect(await page.evaluate(() => Math.round(window.scrollY))).toBeGreaterThan(depth - 5);
 
     await page.keyboard.press('Tab');
     const box = await focusedBox(page);
@@ -649,5 +662,20 @@ test.describe("Look up's answer panel is never cut off at the bottom", () => {
       return { bottom: rect.bottom, viewport: window.innerHeight };
     });
     expect(last.bottom).toBeLessThanOrEqual(last.viewport + 0.5);
+
+    // A new pick starts at the panel's top, not where the last answer was
+    // left scrolled — or the new headword is hidden above the visible area.
+    expect(await column.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
+    await page.getByTestId('search-result').nth(1).click();
+    await expect.poll(() => column.evaluate((node) => node.scrollTop)).toBe(0);
+
+    // And print undoes the cap: a page is not a viewport, and a scroller
+    // prints only its first screenful.
+    await page.emulateMedia({ media: 'print' });
+    const printed = await column.evaluate((node) => {
+      const style = getComputedStyle(node);
+      return { maxHeight: style.maxHeight, overflowY: style.overflowY };
+    });
+    expect(printed).toEqual({ maxHeight: 'none', overflowY: 'visible' });
   });
 });

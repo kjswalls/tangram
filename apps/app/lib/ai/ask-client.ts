@@ -401,10 +401,11 @@ export async function ask(input: AskInput, options: AskOptions = {}): Promise<As
      * `ground()` and `scrubProse` assume strings where the contract says
      * strings. A 200 whose `whyThisOne` is a number — a captive portal, a stale
      * proxy, a half-deployed server — throws a `TypeError` inside `scrubProse`,
-     * which the outer handler maps to `reason: 'offline'`, and `core.md` C7's
-     * "Dictionary only — offline" chip then covers a server that answered. It
-     * fails closed either way; it fails closed with the wrong words. An
-     * adversarial reviewer found it.
+     * which the outer handler used to map to `reason: 'offline'`, so `core.md`
+     * C7's "Dictionary only — offline" chip covered a server that answered. An
+     * adversarial reviewer found it. The outer handler no longer does that for
+     * any error off the wire (`caughtReason`), but this check still earns its
+     * place: it names the failure before grounding sees the body at all.
      *
      * `groundedAskResponseSchema` rather than a new one: `AskResponse` and
      * `GroundedAskResponse` are the same four fields — `ground()` is what turns

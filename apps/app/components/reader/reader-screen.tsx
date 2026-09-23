@@ -358,10 +358,7 @@ export function ReaderScreen() {
           </p>
         </div>
 
-        {/* The same cap as Look up's answer panel (`lookup-view.tsx`): a
-            sticky box no taller than the room below the header, so nothing it
-            holds is cut off at the bottom. */}
-        <div className="order-2 md:sticky md:top-[calc(var(--shell-header-height)+1rem)] md:max-h-[calc(100dvh-var(--shell-header-height)-2rem)] md:overflow-y-auto">
+        <div className="order-2 md:sticky md:top-[calc(var(--shell-header-height)+1rem)]">
           {open ? null : (
             <p className="hidden text-sm text-muted md:block" data-testid="reader-panel-empty">
               Tap a word to look it up, or drag across several. What you add keeps the sentence you

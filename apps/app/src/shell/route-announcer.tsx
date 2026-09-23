@@ -45,8 +45,8 @@
  *   under the wrong list's name) is a worse first word than none. The wait is
  *   one IndexedDB read. Two things keep it from becoming a trap of its own:
  *   past the ceiling focus goes to `<main>`, never to a heading with no name;
- *   and if the learner has already put focus somewhere in the new view by the
- *   time the name arrives, it is left there.
+ *   and if the learner has moved focus by the time the name arrives — into
+ *   the view, or out to the tabs — it is left where they put it.
  * - **A deliberate navigation can claim focus, and the claim is a deferral, not
  *   a cancellation.** `Mod+K` from another tab navigates to Look up *and*
  *   focuses the box; both this effect and `focusLookupInput`'s frame loop then
@@ -180,31 +180,52 @@ export function RouteAnnouncer() {
     /** Where focus was when the route changed — the control that changed it. */
     const before = document.activeElement;
 
-    const place = (target: HTMLElement | null) => {
+    const place = (target: HTMLElement | null, transient = false) => {
       if (!target) return;
       // A heading is not focusable by nature. `-1` makes it programmatically
       // focusable without putting it in the tab order, which is the whole of
       // what this needs and the standard spelling of it.
-      if (!target.hasAttribute('tabindex')) target.setAttribute('tabindex', '-1');
+      if (!target.hasAttribute('tabindex')) {
+        target.setAttribute('tabindex', '-1');
+        // `<main>` as the stand-in for a name that never arrived gives the
+        // mark back when focus leaves: left on, every click on the page's
+        // empty space would focus `<main>`, which the checks here then read
+        // as the learner having put focus in the view.
+        if (transient) {
+          target.addEventListener('blur', () => target.removeAttribute('tabindex'), {
+            once: true,
+          });
+        }
+      }
       target.focus({ preventScroll: true });
     };
 
     /** Whether focus has already landed somewhere inside the new view. */
-    const landedInView = (ignore: Element | null) => {
+    const landedInView = () => {
       const active = document.activeElement;
       return (
         active instanceof HTMLElement &&
         active !== document.body &&
-        active !== ignore &&
         document.querySelector('main')?.contains(active) === true
       );
     };
 
+    /**
+     * Whether the learner has moved focus since the route changed — anywhere:
+     * into the view, or out of it to the tabs in the header. `before` does
+     * not count, nor does `<body>`, which is where focus falls when the
+     * control that navigated unmounts.
+     */
+    const movedSince = () => {
+      const active = document.activeElement;
+      return active instanceof HTMLElement && active !== document.body && active !== before;
+    };
+
     // The heading once it has a name; `<main>` when there is no heading, or
     // when its name never arrived — never a heading with nothing to read. A
-    // wait that ends after the learner has moved focus into the view leaves it
-    // where they put it; with no wait, nobody has had the chance, and focus
-    // moves exactly as it always did.
+    // wait that ends after the learner has moved focus leaves it where they
+    // put it; with no wait, nobody has had the chance, and focus moves exactly
+    // as it always did.
     let cancelFocusWait: () => void = () => undefined;
     const moveFocus = () => {
       if (!isBusy(routeHeading())) {
@@ -213,12 +234,12 @@ export function RouteAnnouncer() {
       }
       cancelFocusWait = whenNamed(
         () => {
-          if (landedInView(before)) return;
+          if (movedSince()) return;
           place(routeHeading() ?? document.querySelector<HTMLElement>('main'));
         },
         () => {
-          if (landedInView(before)) return;
-          place(document.querySelector<HTMLElement>('main'));
+          if (movedSince()) return;
+          place(document.querySelector<HTMLElement>('main'), true);
         },
       );
     };
@@ -226,7 +247,7 @@ export function RouteAnnouncer() {
     let grace: ReturnType<typeof setTimeout> | undefined;
     if (claimed) {
       grace = setTimeout(() => {
-        if (!landedInView(null)) moveFocus();
+        if (!landedInView()) moveFocus();
       }, FOCUS_CLAIM_GRACE_MS);
     } else {
       moveFocus();

@@ -50,15 +50,19 @@
  *   permanently broken backup button with no way out through the UI.
  *
  * - **A file too large, or nested too deep, to hand to `JSON.parse` at all.**
- *   Both are checked *before* the parse, because the parse is the cost: a
- *   multi-hundred-megabyte file read into one string and parsed on the main
- *   thread freezes the tab, and the refusals above only run once it is done.
- *   The size is read off the `File` before a byte of it is read
- *   (`readSnapshotFile`); the depth is one linear scan of the text, bounded by
- *   the same `MAX_ROW_DEPTH` the row check below enforces after the parse, so
- *   the scan can never refuse a file the validator would have accepted.
- *   Neither ever reached the database — a refused file never does — so what
- *   these fix is a frozen tab, not data loss.
+ *   Both are checked *before* the parse, because the parse is the cost. The
+ *   size is read off the `File` before a byte of it is read
+ *   (`readSnapshotFile`), so a wrong pick — a video, a disk image — is refused
+ *   at once instead of being decoded into one string on the main thread. The
+ *   depth is one linear scan of the text, bounded by the same `MAX_ROW_DEPTH`
+ *   the row check enforces after the parse, so it never refuses a *row* the
+ *   validator would accept; it does count an unknown top-level key, which the
+ *   validator ignores, and nothing this app writes has one.
+ *   What neither does is make a legitimate large backup cheap: a file under
+ *   the cap is still read and parsed on the main thread, and the scan adds
+ *   about half again to that (measured in Node: 0.7 s to scan and 1.3 s to
+ *   parse 128M characters). A refused file never reached the database, so
+ *   what these fix is a tab frozen on the wrong file, not data loss.
  *
  * `backend.md` B5 is the reason several of these are not theoretical: its
  * `exportAccount()` pulls the same stores from PostgREST and feeds them through

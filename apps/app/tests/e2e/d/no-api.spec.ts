@@ -211,19 +211,21 @@ test.describe('built with VITE_API_BASE empty: not configured', () => {
     await expect(page.getByTestId('context-gloss')).toHaveCount(0);
     await expect(page.locator('body')).not.toContainText('not set up');
 
-    // --- Practice: free recall and the sentences on the back.
-    await dueCardWithRecall(page);
-    await page.getByTestId('recall-answer').fill('to plan');
-    await page.getByTestId('recall-answer').press('Enter');
+    // --- Practice. Both card features are on in the stored settings — the
+    // sentences by default, free recall as a backup from a build with an API
+    // would carry it — and neither is drawn: this build does not offer their
+    // toggles, so it does not honour them either, or they would be on every
+    // card with no way to turn them off.
+    await openReview(page);
+    await page.evaluate(() =>
+      window.__tangram.repo.setSettings({ freeRecall: true, examplesOnBack: true }),
+    );
+    await seed(page, [{ entry: DASUAN, context: readerContext(), gradedDaysAgo: 30 }]);
+    await expect(page.getByTestId('review-card')).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('recall-answer')).toHaveCount(0);
+    await page.getByTestId('reveal').click();
     await expect(page.getByTestId('card-back')).toBeVisible();
-    const recall = page.getByTestId('recall-no-suggestion');
-    await expect(recall).toHaveAttribute('data-api', 'not-configured');
-    await expect(recall).toContainText('not set up');
-    const examples = page.getByTestId('example-sentences');
-    await expect(examples).toHaveAttribute('data-api', 'not-configured');
-    await expect(examples.getByTestId('examples-status')).toContainText('not set up');
-    await expect(examples).not.toContainText('Building a sentence');
-    await expect(page.getByTestId('examples-retry')).toHaveCount(0);
+    await expect(page.getByTestId('example-sentences')).toHaveCount(0);
     // Grading is unaffected.
     await page.keyboard.press('3');
     await expect(page.getByTestId('review-empty')).toBeVisible();

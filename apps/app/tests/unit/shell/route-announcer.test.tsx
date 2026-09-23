@@ -406,6 +406,27 @@ describe('a heading whose name is still loading', () => {
     expect(document.activeElement).toBe(document.querySelector('main'));
   });
 
+  /** Tab during the wait reaches the header's tabs; the name arriving must not undo it. */
+  it('leaves focus in the header when the learner tabbed there during the wait', async () => {
+    render(<ListsFixture />);
+    fireEvent.click(screen.getByTestId('to-b'));
+    act(() => screen.getByTestId('to-a').focus());
+    await load();
+    expect(document.activeElement).toBe(screen.getByTestId('to-a'));
+  });
+
+  it('gives <main> back its tabindex when focus leaves it after the ceiling', () => {
+    render(<ListsFixture />);
+    fireEvent.click(screen.getByTestId('to-b'));
+    act(() => {
+      vi.advanceTimersByTime(HEADING_WAIT_MS + 10);
+    });
+    const main = document.querySelector('main')!;
+    expect(document.activeElement).toBe(main);
+    act(() => screen.getByTestId('in-view').focus());
+    expect(main.hasAttribute('tabindex')).toBe(false);
+  });
+
   it('leaves focus where the learner put it while the name loaded', async () => {
     render(<ListsFixture />);
     fireEvent.click(screen.getByTestId('to-b'));
@@ -507,18 +528,21 @@ describe('an abandoned focus wait', () => {
    * running, its ceiling fires two seconds later and moves focus to `<main>` —
    * out of wherever the learner has gone since, such as the tabs in the header.
    */
-  it('cannot pull focus out of the header two seconds later', () => {
+  it('cannot pull focus away two seconds later', () => {
     render(<ListsFixture />);
-    fireEvent.click(screen.getByTestId('to-b'));
+    const toB = screen.getByTestId('to-b');
+    act(() => toB.focus());
+    fireEvent.click(toB);
     fireEvent.click(screen.getByTestId('to-start'));
     // Not busy there: focus went straight to the heading.
     expect(document.activeElement).toBe(routeHeading());
-    // The learner tabs out of the view, to a control outside `<main>`.
-    act(() => screen.getByTestId('to-a').focus());
+    // The learner goes back to the control they pressed — which, to B's wait,
+    // looks like focus never moved, so a wait that survived would act.
+    act(() => toB.focus());
     act(() => {
       vi.advanceTimersByTime(HEADING_WAIT_MS + 10);
     });
-    expect(document.activeElement).toBe(screen.getByTestId('to-a'));
+    expect(document.activeElement).toBe(toB);
   });
 });
 

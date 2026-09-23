@@ -116,9 +116,8 @@
    * As an atomic inline the wrapper moves as a unit: its content is never
    * broken while it fits on a line, so the mark stays with its word. When a
    * word is wider than the whole column (a fifteen-character place name at
-   * 320px), the wrapper is as wide as the column and wraps inside itself. The
-   * word breaks as it always did, and the mark goes to the next line inside
-   * the wrapper. `nowrap` would be inherited into the button and stop the
+   * 320px), the wrapper would be as wide as the column, and the rule below
+   * switches it off. `nowrap` would be inherited into the button and stop the
    * word itself from wrapping, and even with that undone, the mark would stick
    * out of the column. That is the overflow `core/reader-punctuation.spec.ts`
    * checks at 320px. Inside the wrapper `white-space` is inherited unchanged,
@@ -130,5 +129,17 @@
    */
   .hanzi-glue {
     display: inline-block;
+  }
+
+  /*
+   * …unless the word and its marks cannot fit on one line at all. Then the
+   * wrapper would be as wide as the column, leave lone marks on lines of their
+   * own, and, with no break opportunity inside a button that has no `<rt>`,
+   * widen the column past the screen. `<HanziText>`'s `useGlueFit` measures
+   * that after layout and sets `data-glue="off"`, and the wrapper stops
+   * existing for layout. The word is set exactly as it was before the glue.
+   */
+  .hanzi-glue[data-glue='off'] {
+    display: contents;
   }
 }

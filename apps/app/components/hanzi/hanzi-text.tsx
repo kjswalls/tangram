@@ -60,6 +60,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useState,
   type MouseEvent,
@@ -586,6 +587,67 @@ const Runs = memo(function Runs({
   return <>{out}</>;
 });
 
+/**
+ * Switch a glue wrapper off when it cannot fit on one line (reviews A and B).
+ *
+ * `.hanzi-glue` is an inline-block, so while a word and its marks fit on a line
+ * they move as a unit. That is the whole fix. When they do not fit, because a
+ * fifteen-character place name meets a 320px column, or any four-character
+ * word meets a phone at a 200% font size, the wrapper becomes as wide as the
+ * column. Nothing else can share its lines, and the marks break away from the
+ * word inside it anyway. Measured: the spec's own long-word passage went from
+ * 6 lines to 9, three of them a lone "，", "「" or "」". At a 200% font size in
+ * `'tap'` mode, where a button with no `<rt>` has no break opportunity, the
+ * wrapper's word-plus-marks minimum widened the column past the screen by up
+ * to 20px more than before.
+ *
+ * CSS cannot ask "would this fit". So after layout, and again whenever the
+ * passage is resized, every wrapper is measured, and one as wide as the column
+ * gets `data-glue="off"`. `ruby.css` turns that into `display: contents`, and
+ * the word lays out exactly as it did before the glue existed, marks and all.
+ * That is the old behaviour, with its break before the "，", only for a word
+ * that cannot share a line with its punctuation at all.
+ *
+ * All the attributes are cleared first and all the widths read before any is
+ * set again, so the pass costs two layouts, however long the passage. It only
+ * writes an attribute, and never adds or removes a node, so the character map
+ * and every stamp are untouched. The resize that its own writes cause settles
+ * on the second pass, because the same widths give the same answer.
+ */
+function useGlueFit(
+  root: HTMLElement | null,
+  enabled: boolean,
+  // What changes a width: the runs and their readings, and what is revealed.
+  // Separate values, not one array, so an unrelated render (a span being
+  // dragged) does not re-measure.
+  views: unknown,
+  showAll: boolean,
+  revealed: unknown,
+): void {
+  useLayoutEffect(() => {
+    if (!root || !enabled) return;
+    const fit = () => {
+      const glues = [...root.querySelectorAll<HTMLElement>('.hanzi-glue')];
+      if (glues.length === 0) return;
+      const style = getComputedStyle(root);
+      const column =
+        root.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      // No layout (jsdom, a hidden tab): leave the glue as it is.
+      if (!(column > 0)) return;
+      for (const glue of glues) delete glue.dataset.glue;
+      const tooWide = glues.filter((glue) => glue.getBoundingClientRect().width >= column - 0.5);
+      for (const glue of tooWide) glue.dataset.glue = 'off';
+    };
+    fit();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(fit);
+    observer.observe(root);
+    // A web font swapping in changes every width without resizing anything.
+    void document.fonts?.ready.then(fit);
+    return () => observer.disconnect();
+  }, [root, enabled, views, showAll, revealed]);
+}
+
 export function HanziText({
   runs,
   states,
@@ -752,6 +814,18 @@ export function HanziText({
    */
   const Root = spanSelect ? 'div' : 'span';
 
+  const interactive = Boolean(onWord || onCharacter);
+  const [root, setRoot] = useState<HTMLElement | null>(null);
+  const spanRef = spanSelect?.ref;
+  const rootRef = useCallback(
+    (node: HTMLElement | null) => {
+      setRoot(node);
+      spanRef?.(node);
+    },
+    [spanRef],
+  );
+  useGlueFit(root, interactive, views, showAll, revealedRuns);
+
   return (
     <Root
       data-testid={testId}
@@ -766,7 +840,8 @@ export function HanziText({
       data-hanzi={runs.map((run) => run.text).join('')}
       data-band={bandReserved ? 'reserved' : 'none'}
       lang="zh-Hans"
-      {...(spanSelect ? { ref: spanSelect.ref, ...spanSelect.handlers } : {})}
+      ref={rootRef}
+      {...(spanSelect ? spanSelect.handlers : {})}
       /**
        * One delegated handler for the whole passage. See the header.
        *
@@ -800,7 +875,7 @@ export function HanziText({
         showAll={showAll}
         wordTestId={wordTestId}
         span={span}
-        interactive={Boolean(onWord || onCharacter)}
+        interactive={interactive}
         speakingOffset={speakingOffset}
         {...(rtClassName === undefined ? {} : { rtClassName })}
         {...(plainRunTestId === undefined ? {} : { plainRunTestId })}

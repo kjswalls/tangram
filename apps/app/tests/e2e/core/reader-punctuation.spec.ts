@@ -24,7 +24,7 @@
  */
 import { expect, installDictionary, test, type Page } from '../dict';
 
-import { readText, resetApp } from '../p5/helpers';
+import { readText, ready, resetApp } from '../p5/helpers';
 import { baseText } from '../hanzi';
 
 /**
@@ -145,6 +145,25 @@ async function openReader(page: Page, body: string): Promise<void> {
   await expect(page.locator('[data-span-index="0"]')).toBeAttached();
 }
 
+/** Paste `body` and scale the root font to 200%, the way a large-text setting does. */
+async function readTextAt200(page: Page, body: string, display: 'always' | 'tap'): Promise<void> {
+  await page.goto('/read');
+  await ready(page);
+  await page.getByTestId('reader-input').fill(body);
+  await page.getByTestId('read-text').click();
+  await expect(page.getByTestId('reader-token').first()).not.toHaveAttribute(
+    'data-state',
+    'unknown',
+  );
+  if (display === 'always') {
+    await expect(page.getByTestId('reader-text').locator('rt').first()).toBeAttached();
+  }
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = '200%';
+  });
+  await settled(page);
+}
+
 /**
  * The passage's geometry, read only once it has stopped moving: the readings
  * land and the web font swaps in a beat after the text, and each reflows every
@@ -168,6 +187,67 @@ async function settled(page: Page): Promise<void> {
       { intervals: [100] },
     )
     .toBeGreaterThanOrEqual(2);
+}
+
+/** How far anything sticks out: the page, the passage, and its furthest glyph. */
+async function overflowOf(page: Page) {
+  return page.evaluate(() => {
+    const root = document.querySelector<HTMLElement>('[data-testid="reader-text"]')!;
+    const box = root.getBoundingClientRect();
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let widest = box.left;
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      for (const rect of range.getClientRects()) widest = Math.max(widest, rect.right);
+    }
+    return {
+      page: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      passage: root.scrollWidth - root.clientWidth,
+      text: Math.max(0, Math.round(widest - box.right)),
+    };
+  });
+}
+
+/**
+ * The passage's lines, as base text, blank lines dropped. A line holding
+ * nothing but punctuation is the failure the glue produces when it does not
+ * know when to stop (reviews A and B): a word as wide as the column in a
+ * wrapper as wide as the column, and its marks on lines of their own.
+ */
+async function linesOf(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const root = document.querySelector('[data-testid="reader-text"]')!;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        for (let el = node.parentElement; el && el !== root; el = el.parentElement) {
+          if (el.tagName === 'RT' || el.tagName === 'RP') return NodeFilter.FILTER_REJECT;
+        }
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    });
+    const lines: { centre: number; text: string }[] = [];
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const value = node.nodeValue ?? '';
+      for (let i = 0; i < value.length; i += 1) {
+        if (/\s/.test(value[i]!)) continue;
+        const range = document.createRange();
+        range.setStart(node, i);
+        range.setEnd(node, i + 1);
+        const rect = range.getClientRects()[0];
+        if (!rect) continue;
+        const centre = rect.top + rect.height / 2;
+        const line = lines.at(-1);
+        if (line && Math.abs(line.centre - centre) < rect.height / 2) line.text += value[i];
+        else lines.push({ centre, text: value[i]! });
+      }
+    }
+    return lines.map((line) => line.text);
+  });
+}
+
+function punctuationOnly(lines: string[]): string[] {
+  return lines.filter((line) => /^[\p{P}\p{S}]+$/u.test(line));
 }
 
 test.use({ dictionary: 'installed' });
@@ -220,25 +300,59 @@ test.describe('punctuation keeps to its word across a line break', () => {
     // outside the word itself.
     await expect(page.locator(`[data-testid="reader-token"][data-token="${word}"]`)).toHaveCount(2);
 
-    const overflow = await page.evaluate(() => {
-      const root = document.querySelector<HTMLElement>('[data-testid="reader-text"]')!;
-      const box = root.getBoundingClientRect();
-      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-      let widest = box.left;
-      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-        const range = document.createRange();
-        range.selectNodeContents(node);
-        for (const rect of range.getClientRects()) widest = Math.max(widest, rect.right);
-      }
-      return {
-        page: document.documentElement.scrollWidth - document.documentElement.clientWidth,
-        passage: root.scrollWidth - root.clientWidth,
-        text: Math.round(widest - box.right),
-      };
-    });
-    expect(overflow).toEqual({ page: 0, passage: 0, text: expect.any(Number) });
-    expect(overflow.text).toBeLessThanOrEqual(0);
+    expect(await overflowOf(page)).toEqual({ page: 0, passage: 0, text: 0 });
+
+    // …and the glue knew to let go. A wrapper as wide as the column left "，",
+    // "「" and "」" each alone on a line (9 lines where there had been 6). The
+    // word that cannot share a line with its marks is set as it was before.
+    expect(punctuationOnly(await linesOf(page))).toEqual([]);
+    await expect(page.locator('.hanzi-glue[data-glue="off"]')).not.toHaveCount(0);
   });
+
+  /**
+   * A 200% font size (review B): at 390px a four-character word already fills
+   * much of a line, so this is where "wider than the column" stops being rare.
+   * In `'tap'` mode a button with no `<rt>` has no break opportunity inside it,
+   * and a wrapper as wide as word plus marks pushed the column past the screen.
+   */
+  for (const pinyinDisplay of ['always', 'tap'] as const) {
+    test(`at a 200% font size in '${pinyinDisplay}' mode, no lone marks and no overflow`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width: 390, height: 844 });
+      await resetApp(page, { knownBand: 2, newPerDay: 0, pinyinDisplay });
+      const body = '他说「很长的词」，我不信。「中华人民共和国」，「联合国教科文组织」。';
+      await readTextAt200(page, body, pinyinDisplay);
+      expect(await overflowOf(page)).toEqual({ page: 0, passage: 0, text: 0 });
+
+      // Every wrapper still on holds its word and marks on ONE line: that is
+      // the glue's whole promise. A wrapper that could not keep it has let go
+      // (`data-glue="off"`), and its word is set as it was before the glue,
+      // lone marks included. The base build prints the same lines for this
+      // passage in 'tap' mode, "「" alone and "」。" alone; they come from words
+      // that fill a line by themselves, and nothing short of breaking the word
+      // removes them.
+      await expect(page.locator('.hanzi-glue[data-glue="off"]')).not.toHaveCount(0);
+      const split = await page.evaluate(() =>
+        [...document.querySelectorAll<HTMLElement>('.hanzi-glue:not([data-glue="off"])')]
+          .filter((glue) => {
+            // Line membership per character, not the wrapper's own box: an
+            // inline-block reports one rect even when it wraps inside itself.
+            const centres: number[] = [];
+            const walker = document.createTreeWalker(glue, NodeFilter.SHOW_TEXT);
+            for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+              if (node.parentElement?.closest('rt, rp')) continue;
+              const range = document.createRange();
+              range.selectNodeContents(node);
+              for (const rect of range.getClientRects()) centres.push(rect.top + rect.height / 2);
+            }
+            return Math.max(...centres) - Math.min(...centres) > 8;
+          })
+          .map((glue) => glue.textContent),
+      );
+      expect(split).toEqual([]);
+    });
+  }
 });
 
 /**

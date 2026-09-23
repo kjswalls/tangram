@@ -15,6 +15,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   diagnose,
+  droppedMessage,
+  engineMessage,
   incompleteMessage,
   offlineMessage,
   refusedMessage,
@@ -39,6 +41,10 @@ describe('diagnose', () => {
     [offlineMessage('there is no dictionary in this browser yet'), 'unreachable'],
     [offlineMessage('this browser has no storage to read one from'), 'unreachable'],
     [incompleteMessage(6_100_000, 14_000_000), 'incomplete'],
+    // The connection dropping mid-body — `reader.read()` rejecting — used to
+    // reach the screen as `corrupt`, "damaged" (both reviews, HANDOFF.md).
+    [droppedMessage(6_100_000, new TypeError('network error')), 'incomplete'],
+    [engineMessage('CompileError: wasm validation error'), 'engine'],
     ['Connection reset after 6.1 MB', 'unknown'],
   ] as const)('a download failure "%s" is %s', (message, expected) => {
     expect(diagnose(failed('download', message))).toBe(expected satisfies DictDiagnosis);
@@ -49,6 +55,15 @@ describe('diagnose', () => {
     // SPA fallback answering a missing path with index.html is the usual cause.
     expect(diagnose(failed('corrupt', servedPageMessage('manifest')))).toBe('served-page');
     expect(diagnose(failed('corrupt', servedPageMessage('file')))).toBe('served-page');
+    // …and JSON of the wrong shape, an API fallback answering `{}`.
+    expect(diagnose(failed('corrupt', servedPageMessage('manifest-shape')))).toBe('served-page');
+  });
+
+  it('reads an engine that would not start as engine under any reason', () => {
+    // A worker that dies reaches the store as a plain Error, which it files as
+    // `corrupt`; a missing `sqlite3.wasm` is filed as `download`.
+    expect(diagnose(failed('corrupt', engineMessage('the worker failed: x')))).toBe('engine');
+    expect(diagnose(failed('download', engineMessage('x')))).toBe('engine');
   });
 
   it('passes the other three reasons through as themselves', () => {
@@ -74,7 +89,13 @@ describe('diagnose', () => {
       // (`onUnavailable`'s "could not be fetched; trying stored bytes" is a notice, not a failure.)
       expect(source).not.toMatch(/['`]the dictionary (?:manifest )?could not be fetched(?::| and)/);
       expect(source).not.toMatch(/['`]the dictionary download (?:was|is not)/);
-      expect(source).not.toMatch(/['`]the dictionary manifest is not JSON/);
+      expect(source).not.toMatch(/['`]the dictionary manifest (?:is not JSON|has no file)/);
+      expect(source).not.toMatch(/['`]the dictionary (?:worker failed|engine)/);
+      // Every body read goes through the one wrapper that says "dropped", not
+      // "damaged": the only `reader.read()` allowed is the one inside it.
+      const reads = source.match(/reader\.read\(\)/g) ?? [];
+      expect(reads.length).toBeLessThanOrEqual(1);
+      if (reads.length === 1) expect(source).toMatch(/function readChunk[\s\S]{0,200}reader\.read\(\)/);
     },
   );
 });

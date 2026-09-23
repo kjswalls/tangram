@@ -83,15 +83,15 @@ const FAILURE: Record<
     retry: 'Try again',
   },
   /**
-   * **Two producers land here, and the copy may assert nothing about either.**
-   * `data.md` D4's is a genuine import failure — the bytes arrived and OPFS
-   * refused them. `HttpDictStore`'s is a 503 `dict-data-missing`, which means
-   * the artifact was never built or served, so nothing downloaded and nothing
-   * arrived. The frozen `DictStatus` union has no reason for the second (see
-   * HANDOFF.md, "What `HttpDictStore` cannot do"), so this body says only what
-   * is true of both and leaves the diagnosis to the lines under it: the plain
-   * `dict-failure-diagnosis` in every build, and the raw `dict-failure-detail`
-   * (`run pnpm data`, the OPFS error) in development only.
+   * **The copy may assert nothing about a transfer.** When C4a wrote it, two
+   * producers landed here: `data.md` D4's genuine import failure (the bytes
+   * arrived and OPFS refused them) and `HttpDictStore`'s 503
+   * `dict-data-missing`, where nothing downloaded at all. `HttpDictStore` has
+   * since gone (D6), and the worker now falls an OPFS import failure through
+   * to the in-memory rung rather than reporting it, so `import` rarely reaches
+   * the screen — but a future runner (the native one) may report it for
+   * either reason, and the body stays true of both. The cause is the
+   * `dict-failure-diagnosis` line's to say.
    */
   import: {
     title: 'The dictionary could not be opened',
@@ -111,6 +111,30 @@ const FAILURE: Record<
 };
 
 /**
+ * A title and body for the causes where the reason's own copy is wrong.
+ *
+ * A web page served in place of the manifest arrives as `corrupt` ("damaged
+ * on this device… fetching it again is the fix") and a 404 as `download`
+ * ("trying again downloads the same file"). Both are false for a server that
+ * does not have the file: nothing on the device is wrong, and a retry cannot
+ * help until the deploy is fixed. The retry button stays — it is harmless,
+ * and it is what finds the fix once it lands.
+ */
+const SERVER_SIDE = {
+  title: 'The dictionary could not be downloaded',
+  body: 'Nothing on this device is wrong — the problem is on the server, so trying again may not help yet. Practice, your lists and your progress do not need it.',
+};
+const COPY_BY_DIAGNOSIS: Partial<Record<DictDiagnosis, { title: string; body: string }>> = {
+  'not-on-server': SERVER_SIDE,
+  'served-page': SERVER_SIDE,
+  'server-refused': SERVER_SIDE,
+  engine: {
+    title: 'The dictionary could not start',
+    body: 'Nothing on this device is wrong. Trying again is worth it; practice, your lists and your progress do not need it.',
+  },
+};
+
+/**
  * What happened, in one plain sentence per cause (`lib/dict/failure.ts`).
  *
  * This is the line C4a's second pass kept the raw message on screen for, and
@@ -125,6 +149,7 @@ const DIAGNOSIS: Record<DictDiagnosis, string> = {
   'server-refused': 'The server would not send the dictionary file.',
   unreachable: 'The server could not be reached. Check your connection.',
   incomplete: 'The connection dropped part way through.',
+  engine: 'The part of the app that reads the dictionary would not load.',
   storage: 'This device ran out of space or memory for it.',
   import: 'This browser would not store it.',
   corrupt: 'The file is not the dictionary this app expects.',
@@ -252,8 +277,8 @@ export function DictStatusView({
     );
   }
 
-  const copy = FAILURE[status.reason];
   const diagnosis = diagnose(status);
+  const copy = { ...FAILURE[status.reason], ...COPY_BY_DIAGNOSIS[diagnosis] };
   return (
     <Card
       data-testid="dict-status"

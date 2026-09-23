@@ -93,6 +93,36 @@ test.describe('picking a lower search result keeps its headword in view', () => 
   }
 });
 
+test.describe('once the learner scrolls into the results, the rows hold still', () => {
+  test.use({ dictionary: 'installed', viewport: PHONE });
+
+  // The other side of taking the results out of scroll anchoring (both
+  // reviews): it must end when the panel's head leaves the screen, or a panel
+  // growing above — the ask arriving — slides the rows the learner is reading.
+  test('a panel that grows above them does not move them', async ({ page }) => {
+    await page.goto('/?q=the');
+    const results = page.getByTestId('search-result');
+    await expect(results.nth(19)).toBeVisible();
+    await results.nth(2).click();
+    await expect(page.getByTestId('lookup-panel').locator('h2')).not.toHaveText('the');
+    const column = page.getByTestId('lookup-results-column');
+    await expect(column).toHaveAttribute('data-anchoring', 'panel');
+
+    await results.nth(12).scrollIntoViewIfNeeded();
+    await expect(column).toHaveAttribute('data-anchoring', 'results');
+    const before = await results.nth(12).evaluate((row) => row.getBoundingClientRect().top);
+    // Grow the panel by 400px, as an answer arriving would.
+    await page.evaluate(() => {
+      const grow = document.createElement('div');
+      grow.style.height = '400px';
+      document.querySelector('[data-testid="lookup-body"]')!.append(grow);
+    });
+    await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+    const after = await results.nth(12).evaluate((row) => row.getBoundingClientRect().top);
+    expect(Math.abs(after - before)).toBeLessThanOrEqual(1);
+  });
+});
+
 test.describe('Library never says "no words yet" for a band still being counted', () => {
   test.use({ dictionary: 'installed' });
 
@@ -128,6 +158,10 @@ test.describe('Library never says "no words yet" for a band still being counted'
     expect(wrong).toEqual([]);
     // …and the page really did pass through the state the defect lived in.
     expect(states).toContain('counting');
+    // With the dictionary installed the fill runs, so no HSK card may say its
+    // words are waiting on the dictionary either — not even for a frame
+    // between `load()` resolving and the fill starting.
+    expect(states).not.toContain('unfilled');
   });
 });
 
@@ -157,9 +191,49 @@ test.describe('the failed-download screen says what happened, in plain words', (
       route: (page: Page) => page.route('**/*.sqlite*', (route) => route.abort('failed')),
       diagnosis: 'unreachable',
     },
+    {
+      // The connection dropping mid-body: the stream's `read()` rejects after
+      // the first chunk. It read "damaged" before (both reviews). Playwright's
+      // `fulfill` can only end a body cleanly, so the break is made inside the
+      // dictionary's own worker — its `fetch` is replaced before the worker
+      // gets to it, which the delayed engine load below guarantees.
+      name: 'the connection drops part way through the file',
+      route: async (page: Page) => {
+        page.on('worker', (worker) => {
+          void worker
+            .evaluate(() => {
+              const real = self.fetch.bind(self);
+              self.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+                const url = input instanceof Request ? input.url : String(input);
+                if (!/\.sqlite(?:$|\?)/.test(url)) return real(input, init);
+                let sent = false;
+                const body = new ReadableStream<Uint8Array>({
+                  pull(controller) {
+                    if (sent) return controller.error(new TypeError('network error'));
+                    sent = true;
+                    const chunk = new Uint8Array(64 * 1024);
+                    chunk.set([...'SQLite format 3\u0000'].map((c) => c.charCodeAt(0)));
+                    controller.enqueue(chunk);
+                  },
+                });
+                return new Response(body, { status: 200 });
+              };
+            })
+            .catch(() => {});
+        });
+        await page.route('**/sqlite3*.wasm', async (route) => {
+          await new Promise((done) => setTimeout(done, 500));
+          await route.continue();
+        });
+      },
+      diagnosis: 'incomplete',
+      // The console line proves the break was a rejected read, not a short body.
+      detail: /stopped after 65536 bytes: TypeError/,
+    },
   ] as const;
 
-  for (const { name, route, diagnosis } of cases) {
+  for (const { name, route, diagnosis, ...rest } of cases) {
+    const detail = 'detail' in rest ? rest.detail : undefined;
     test(name, async ({ page }) => {
       const warnings: string[] = [];
       page.on('console', (message) => {
@@ -177,6 +251,7 @@ test.describe('the failed-download screen says what happened, in plain words', (
       await expect(status).not.toContainText(/TypeError|Failed to fetch|JSON|SQLite|\b40\d\b/);
       // The raw detail still reaches the console, where a desk can read it.
       expect(warnings.some((text) => text.startsWith('tangram: the dictionary failed — '))).toBe(true);
+      if (detail) expect(warnings.some((text) => detail.test(text))).toBe(true);
     });
   }
 });

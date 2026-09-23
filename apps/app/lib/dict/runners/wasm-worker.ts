@@ -49,6 +49,8 @@ import type {
 
 import { APPLICATION_ID, SCHEMA_VERSION, type DictManifest } from '../artifact';
 import {
+  droppedMessage,
+  engineMessage,
   incompleteMessage,
   offlineMessage,
   refusedMessage,
@@ -123,8 +125,31 @@ function post(message: WasmResponse): void {
 }
 
 async function boot(): Promise<Sqlite3Static> {
-  sqlite3 ??= await sqlite3InitModule();
+  try {
+    sqlite3 ??= await sqlite3InitModule();
+  } catch (error) {
+    // A missing or unloadable `sqlite3.wasm` is a deploy problem, not a bad
+    // file; unwrapped it reached the screen as `corrupt`.
+    throw new WorkerOpenError('download', engineMessage(String(error)), { cause: error });
+  }
   return sqlite3;
+}
+
+/**
+ * One chunk of the body. A read that **rejects** is the connection dropping
+ * part way through, and it is said as a download failure: unwrapped, the OPFS
+ * rung took it for an import failure (and fetched all 43 MB again in memory)
+ * and the memory rung let it reach the catch-all as `corrupt`.
+ */
+async function readChunk(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  received: number,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  try {
+    return await reader.read();
+  } catch (error) {
+    throw new WorkerOpenError('download', droppedMessage(received, error), { cause: error });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -242,7 +267,7 @@ async function importArtifact(
   post({ type: 'progress', received: 0, total: manifest.bytes });
   try {
     await target.importDb(name, async () => {
-      const { done, value } = await reader.read();
+      const { done, value } = await readChunk(reader, received);
       if (done || !value) return undefined;
       if (!checked && received === 0 && value.byteLength >= SQLITE_MAGIC.length) {
         checked = true;
@@ -519,7 +544,7 @@ async function openInMemory(
     const reader = response.body.getReader();
     post({ type: 'progress', received: 0, total: manifest.bytes });
     for (;;) {
-      const { done, value } = await reader.read();
+      const { done, value } = await readChunk(reader, received);
       if (done || !value) break;
       if (received === 0 && value.byteLength >= SQLITE_MAGIC.length) assertSqliteHeader(value);
       if (received + value.byteLength > manifest.bytes) {

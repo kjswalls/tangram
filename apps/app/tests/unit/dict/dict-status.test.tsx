@@ -129,6 +129,18 @@ describe('DictStatusView', () => {
     warn.mockRestore();
   });
 
+  it.each([
+    ['download', 'the dictionary manifest answered 404'],
+    ['corrupt', 'the dictionary manifest is not JSON'],
+    ['download', 'the dictionary fetch answered 500'],
+    ['corrupt', 'the dictionary engine could not start: the worker failed: x'],
+  ] as const)('a %s failure caused by the server ("%s") does not say the device or the file is at fault', (reason, message) => {
+    render(<DictStatusView status={{ state: 'failed', reason, message }} showDetail={false} />);
+    const text = screen.getByTestId('dict-status').textContent ?? '';
+    expect(text).not.toMatch(/damaged|discarded|Fetching it again is the fix|connection dropped/i);
+    expect(text).toMatch(/Nothing on this device is wrong/);
+  });
+
   it('the download body does not claim the connection dropped, since a 404 is also a download failure', () => {
     render(
       <DictStatusView

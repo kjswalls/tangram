@@ -21,7 +21,7 @@
  */
 import { MANIFEST_FILE, type DictManifest } from '../artifact';
 import { assetUrl } from '../asset-url';
-import { refusedMessage, servedPageMessage } from '../failure';
+import { engineMessage, refusedMessage, servedPageMessage } from '../failure';
 import { DictOpenError } from '../open-error';
 import type { SqlQuery, SqlRunner, SqlValue } from '../sql';
 import type {
@@ -119,10 +119,10 @@ class WorkerLink {
       this.#receive(event.data);
     });
     this.#worker.addEventListener('error', (event) => {
-      this.#die(new Error(`the dictionary worker failed: ${event.message || 'unknown error'}`));
+      this.#die(new Error(engineMessage(`the worker failed: ${event.message || 'unknown error'}`)));
     });
     this.#worker.addEventListener('messageerror', () => {
-      this.#die(new Error('the dictionary worker sent a message that could not be deserialised'));
+      this.#die(new Error(engineMessage('the worker sent a message that could not be deserialised')));
     });
   }
 
@@ -240,7 +240,7 @@ async function fetchManifest(url: string): Promise<DictManifest | null> {
     throw new DictOpenError('corrupt', servedPageMessage('manifest'), { cause: error });
   }
   if (typeof manifest?.file !== 'string' || typeof manifest?.bytes !== 'number') {
-    throw new DictOpenError('corrupt', 'the dictionary manifest has no file and bytes');
+    throw new DictOpenError('corrupt', servedPageMessage('manifest-shape'));
   }
   return manifest;
 }

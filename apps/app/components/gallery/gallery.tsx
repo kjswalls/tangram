@@ -26,6 +26,7 @@ import { useEffect, useState } from 'react';
 
 import { DictGate } from '@/components/dict/dict-gate';
 import { DictStatusView } from '@/components/dict/dict-status';
+import { droppedMessage } from '@/lib/dict/failure';
 import { Section, Row } from '@/components/gallery/section';
 import { FakeDictStore, TOTAL } from '@/components/gallery/fake-dict-store';
 import { GalleryTTSProvider } from '@/components/gallery/fake-tts';
@@ -133,7 +134,7 @@ const DICT_STATES: readonly { key: string; status: DictStatus }[] = [
   { key: 'ready', status: { state: 'ready', version: '1.3.20251213' } },
   {
     key: 'failed-download',
-    status: { state: 'failed', reason: 'download', message: 'Connection reset after 6.1 MB' },
+    status: { state: 'failed', reason: 'download', message: droppedMessage(6_100_000, 'TypeError: network error') },
   },
   {
     key: 'failed-import',

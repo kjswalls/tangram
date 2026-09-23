@@ -72,6 +72,8 @@ export function LookupView({ askSlot }: { askSlot?: ReactNode }) {
   const select = useLookupStore((state) => state.select);
 
   const [loadingMore, setLoadingMore] = useState(false);
+  /** The panel's head has been scrolled out of view since the pick (see the results column). */
+  const [headAway, setHeadAway] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -133,6 +135,7 @@ export function LookupView({ askSlot }: { askSlot?: ReactNode }) {
   // headword above the panel's visible area.
   useLayoutEffect(() => {
     const node = panelRef.current;
+    setHeadAway(false);
     if (!selectedKey || !node) return;
     node.scrollTop = 0;
     const head = node.querySelector('header') ?? node;
@@ -141,6 +144,17 @@ export function LookupView({ askSlot }: { askSlot?: ReactNode }) {
     const top = parseFloat(root.scrollPaddingTop) || 0;
     const bottom = window.innerHeight - (parseFloat(root.scrollPaddingBottom) || 0);
     if (box.top < top || box.bottom > bottom) node.scrollIntoView({ block: 'start' });
+  }, [selectedKey]);
+
+  // Whether the learner has scrolled the panel's head away since the pick —
+  // the moment the results column should take part in scroll anchoring again.
+  // Observed rather than timed: it is the learner's scroll that decides.
+  useEffect(() => {
+    const head = panelRef.current?.querySelector('header');
+    if (!selectedKey || !head || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(([entry]) => setHeadAway(!entry.isIntersecting));
+    observer.observe(head);
+    return () => observer.disconnect();
   }, [selectedKey]);
 
   return (
@@ -174,21 +188,25 @@ export function LookupView({ askSlot }: { askSlot?: ReactNode }) {
 
       <div className="grid gap-4 md:grid-cols-2">
         {/*
-          **Out of scroll anchoring while the panel leads** (below md, with a
-          pick). The results come first in the DOM and the panel is moved above
-          them by `order`, so the browser's anchor — the first visible node in
-          DOM order — was a result row drawn *under* the panel. Every pixel the
-          panel then grew by (the readings, the characters, the ask arriving)
-          was paid for by scrolling the page down to hold that row still, which
-          pushed the headword off the top: 30–73px on `?q=the`, and the whole
-          panel height at the moment it moved (first-run audit, HANDOFF.md).
-          With the column opted out the anchor is chosen from the panel, whose
-          head is what the learner is reading. Wide keeps anchoring: there the
-          DOM order is the visual order, and the panel is sticky.
+          **Out of scroll anchoring while the panel's head is on screen** (below
+          md, with a pick). The results come first in the DOM and the panel is
+          moved above them by `order`, so the browser's anchor — the first
+          visible node in DOM order — was a result row drawn *under* the panel.
+          Every pixel the panel then grew by (the readings, the characters, the
+          ask arriving) was paid for by scrolling the page down to hold that row
+          still, which pushed the headword off the top: 30–73px on `?q=the`
+          (first-run audit, HANDOFF.md). With the column opted out, the anchor
+          is chosen from the panel, whose head is what the learner is reading.
+
+          Only while that head is in view. Once the learner scrolls down into
+          the results, the rows are what they are reading, and a panel growing
+          above them must not slide them away — so anchoring comes back.
+          Wide keeps anchoring throughout: there DOM order is visual order.
         */}
         <div
           data-testid="lookup-results-column"
-          className={cn('order-2 md:order-1', selected && 'max-md:[overflow-anchor:none]')}
+          data-anchoring={selected && !headAway ? 'panel' : 'results'}
+          className={cn('order-2 md:order-1', selected && !headAway && 'max-md:[overflow-anchor:none]')}
         >
           <SearchResults
             sections={sections}

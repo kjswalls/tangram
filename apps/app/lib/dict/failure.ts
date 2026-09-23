@@ -40,7 +40,11 @@ export type DictRequestKind = 'manifest' | 'file';
  * - `server-refused` — any other HTTP refusal (403, 500…).
  * - `unreachable` — the request never completed: offline, DNS, a refused
  *   connection, a blocked cross-origin request.
- * - `incomplete` — the transfer ended short of the manifest's byte count.
+ * - `incomplete` — the transfer ended short of the manifest's byte count, or
+ *   the connection dropped part way through the body.
+ * - `engine` — the dictionary's worker or its SQLite engine would not start: a
+ *   worker chunk or `sqlite3.wasm` missing from the deploy, or a worker that
+ *   died. Nothing is wrong with the learner's file, and "damaged" would say so.
  * - `storage`, `import`, `corrupt` — the other three reasons, which need no
  *   refinement beyond their own.
  * - `unknown` — a `download` failure this module did not write. It still gets
@@ -52,6 +56,7 @@ export type DictDiagnosis =
   | 'server-refused'
   | 'unreachable'
   | 'incomplete'
+  | 'engine'
   | 'storage'
   | 'import'
   | 'corrupt'
@@ -59,8 +64,10 @@ export type DictDiagnosis =
 
 const HTTP = /^the dictionary (?:manifest|fetch) answered (\d{3})\b/;
 const UNREACHABLE = /^the dictionary (?:manifest )?could not be fetched\b/;
-const SERVED_PAGE = /^the dictionary (?:manifest is not JSON|download is not a SQLite database)\b/;
-const INCOMPLETE = /^the dictionary download was \d+ bytes\b/;
+const SERVED_PAGE =
+  /^the dictionary (?:manifest is not JSON|manifest has no file and bytes|download is not a SQLite database)\b/;
+const INCOMPLETE = /^the dictionary download (?:was|stopped after) \d+ bytes\b/;
+const ENGINE = /^the dictionary engine could not start\b/;
 
 /** The server answered, and said no. */
 export function refusedMessage(kind: DictRequestKind, status: number): string {
@@ -86,11 +93,30 @@ export function offlineMessage(detail: string): string {
   return `the dictionary manifest could not be fetched and ${detail}`;
 }
 
-/** The server answered 200 with something that is not what was asked for. */
-export function servedPageMessage(kind: DictRequestKind): string {
+/**
+ * The server answered 200 with something that is not what was asked for: a
+ * manifest that is not JSON, JSON without `file` and `bytes` (an API fallback
+ * answering `{}`), or a "database" that is not one.
+ */
+export function servedPageMessage(kind: DictRequestKind | 'manifest-shape'): string {
+  if (kind === 'manifest-shape') return 'the dictionary manifest has no file and bytes';
   return kind === 'manifest'
     ? 'the dictionary manifest is not JSON'
     : 'the dictionary download is not a SQLite database — the server answered with something else';
+}
+
+/**
+ * The connection dropped mid-body: `reader.read()` rejected. Not a bad file —
+ * it used to reach the screen as `corrupt`, "damaged", because nothing wrapped
+ * the rejection.
+ */
+export function droppedMessage(received: number, error: unknown): string {
+  return `the dictionary download stopped after ${received} bytes: ${String(error)}`;
+}
+
+/** The worker or the SQLite engine would not start, or the worker died. */
+export function engineMessage(detail: string): string {
+  return `the dictionary engine could not start: ${detail}`;
 }
 
 /** The body ended before the manifest's byte count. */
@@ -102,6 +128,7 @@ export function incompleteMessage(received: number, expected: number): string {
 export function diagnose(status: Failed): DictDiagnosis {
   const { reason, message } = status;
   if (SERVED_PAGE.test(message)) return 'served-page';
+  if (ENGINE.test(message)) return 'engine';
   if (reason !== 'download') return reason;
   const http = HTTP.exec(message);
   if (http) {

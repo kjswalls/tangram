@@ -534,7 +534,11 @@ test.describe('a wide viewport too short to pin the header: a phone on its side'
 
     await card.getByRole('link').first().click();
     await expect(page).toHaveURL(/\/library\/lists\//);
-    // A real click, and it did not scroll first: the link was in view.
+    // The list page, rendered — not only the URL. A navigation is a transition,
+    // and a Back pressed before it commits means the route never changed on
+    // screen, so nothing moves focus and the clicked link keeps it (1 run in
+    // 280 did exactly that before this wait).
+    await expect(page.getByTestId('list-breadcrumb')).toBeVisible();
     await page.goBack();
     await expect(page.locator('[data-route="/library"]')).toHaveCount(1);
     await expect

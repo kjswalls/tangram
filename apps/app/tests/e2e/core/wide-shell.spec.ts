@@ -392,8 +392,22 @@ test.describe('each list is announced by its own name', () => {
         const text = region.textContent?.trim() ?? '';
         if (text !== '') said.push(text);
       }).observe(region, { childList: true, subtree: true, characterData: true });
+      // And every focus that lands on a heading with no name yet — busy, or
+      // blank — which a screen reader would read as an empty level-1 heading.
+      const blank: string[] = [];
+      (window as unknown as { __blankFocus: string[] }).__blankFocus = blank;
+      document.addEventListener('focusin', (event) => {
+        const el = event.target as HTMLElement;
+        if (!el.hasAttribute('data-route-heading')) return;
+        const text = el.textContent?.replace(/\u00a0/g, ' ').trim() ?? '';
+        if (el.getAttribute('aria-busy') === 'true' || text === '') {
+          blank.push(`${location.pathname} busy=${el.getAttribute('aria-busy')} "${text}"`);
+        }
+      });
     });
     const said = () => page.evaluate(() => (window as unknown as { __said: string[] }).__said);
+    const blankFocus = () =>
+      page.evaluate(() => (window as unknown as { __blankFocus: string[] }).__blankFocus);
 
     // The Library screen reads its lists once, on mount; come back to it.
     await page.getByTestId('tab-link').filter({ hasText: 'Practice' }).click();
@@ -431,7 +445,11 @@ test.describe('each list is announced by its own name', () => {
     await expect(announcer(page)).toHaveText(a!.name);
 
     expect(await said()).toEqual(['Practice', 'Library', a!.name, 'Library', b!.name, a!.name]);
-
+    // Focus followed each route, and never onto a heading before its name.
+    await expect
+      .poll(() => page.evaluate(() => document.activeElement?.textContent?.trim()))
+      .toBe(a!.name);
+    expect(await blankFocus()).toEqual([]);
   });
 });
 

@@ -13353,3 +13353,261 @@ All run on this branch:
 
 The review fixes came after that run and changed only the new record test, comments and this file.
 So `tests/e2e/d/dict-wasm.spec.ts` was re-run in full against the same build: **15/15 passed**.
+---
+
+## Polish — seven "Recorded, not fixed" items — `claude/build-web-polish`, 2026-09-23
+
+Cut from `claude/integration` at `ddb17f3`. Six items changed code; item 3 was already closed. Some
+of these files are `core.md`'s (the shell, the announcer, the settings form, the review session);
+the orchestrator's brief authorised changing them. **No frozen surface was touched**: nothing under
+`packages/ai/**`, and no change to `lib/db/repository.ts`, `lib/db/schema.ts`, `lib/types.ts`,
+`lib/srs/params.ts`, `DictStore`/`SqlRunner`/`DictStatus` or the ask contract.
+
+### 1. Library offered AI toggles on a build with no API — fixed, and the settings behind them too
+
+`app/settings/settings-form.tsx` takes `apiConfigured` (default `API_CONFIGURED`) and drops the whole
+"On a card" section, heading included, when it is false. It reads the **build-time** flag only. It
+never reads a failed request, so a configured-but-unreachable build keeps both toggles; the brief
+calls that state transient.
+
+**Both reviews found the same consequence, and it is fixed here.** Hiding the toggles did not stop
+the settings behind them from applying. `examplesOnBack` defaults to `true`, so every card back on a
+no-API build would have carried "Example sentences are not set up…" for good, and the learner would
+have had no way to turn it off. A `freeRecall: true` restored from a backup made on a build with an
+API does the same thing to every card front. `components/review/review-session.tsx` now honours
+neither setting when `API_CONFIGURED` is false (an `apiConfigured` prop, for tests). Offering the
+toggle and drawing the feature are now one decision.
+
+**This reverses one choice the no-API phase made.** On a no-API build, its "not set up" lines for
+the card back and the recall box can now be reached only through the components' own `configured`
+prop, which is what their unit tests use. No production path shows them. `no-api.spec.ts` was
+changed to match: it now asserts that with both settings stored `true`, neither feature is drawn
+and nothing is requested. The production direction's typed-hanzi box is not governed by
+`freeRecall` and is unaffected.
+
+Tests: `tests/unit/settings/card-toggles.test.tsx` covers both builds, plus a `fetch` that refuses
+everything, which the form must never call. `tests/unit/ai/recall-session.test.tsx` covers the
+session in both builds; each of its two gates was mutation-tested. `tests/e2e/d/no-api.spec.ts`
+checks the real empty-base build (no toggles, no recall box, no sentences) and the real dead-port
+build (toggles present).
+
+### 2. A phone in landscape got the pinned header — fixed
+
+`components/shell/app-shell.tsx`: the header is pinned only when the viewport is wide **and** meets
+`PIN_QUERY = '(min-height: 32rem)'`. 512px is above every phone's landscape height (about 440px at
+most) and below the usable height of a laptop or a tablet on its side. Below that height, the wide
+arrangement keeps its tabs in the header and the header stays in flow and scrolls away.
+
+- **Nothing new reads the mode.** In flow, `--shell-header-height` is simply not published, so the
+  shell's padding, the side panels' offset and cap, and lookup-view's off-screen check all fall back
+  to zero. The root scroll padding is keyed on a new `data-header="pinned"|"in-flow"` attribute
+  (`globals.css`) instead of on the wide arrangement.
+- **What still holds, in both modes.** Pinned, everything the wide-shell section established is
+  unchanged: `fixed`, the scroll padding, focus clear of the header, restoration on Back. In flow,
+  there is no fixed header for anything to sit under. Focus after a route change is on screen, Tab
+  and Shift+Tab keep focus on screen, and Back from a list opened deep in Library restores the
+  offset and focuses the heading without moving the page.
+- **The trade, stated plainly (review 1).** In flow, the tabs are one scroll away. A learner deep in
+  a page who scrolls up to press a tab leaves that page at the top, so Back after a tab returns to
+  the top, not to where they were reading. This is what the brief asked for ("below it let the
+  header scroll with the page"), and it is how the wide header behaved before the wide-shell phase.
+  The alternative is a fixed bottom bar at this size, like the phone's, which is also
+  permanent chrome. That is the owner's call.
+
+Tests: `tests/unit/shell/pinned-header.test.tsx` (three new cases) and five new cases at 844×390 in
+`tests/e2e/core/wide-shell.spec.ts`, including a pin → unpin → pin resize. Against a runtime mutant
+(header `fixed` whenever wide, attribute left honest), four of the five fail. The two that pass
+check properties the pinned mode also has, as they should.
+
+### 3. Library and Practice with no dictionary — already closed by W6; no change
+
+`list-detail.tsx` mounts `<DictNotice>` unconditionally, and `lists-view.tsx` and
+`review-session.tsx` mount it on `isDictUnavailable`. It is the same card, with `dict-start`.
+`tests/e2e/d/dict-missing-surface.spec.ts` asserts that each tab reporting the missing dictionary
+offers the button, and so does a list page before and after a search. Review 1 checked this
+independently and agreed. The "not available on this device yet" sentence inside the Words card
+stays as it is, because the button sits directly above it.
+
+### 4. Restoring a backup parsed the whole file unguarded — fixed
+
+`lib/db/import.ts`:
+
+- `readSnapshotFile(file)` refuses a file over `MAX_SNAPSHOT_BYTES` (256 MiB) using `File.size`,
+  **before reading a byte**. `components/pwa/data-safety.tsx` calls it in place of
+  `parseSnapshot(await file.text())`. The cap is measured: a review row pretty-printed the way
+  `serializeSnapshot` writes it is about 900 bytes, so 256 MiB is roughly 300,000 reviews.
+- `parseSnapshot` runs `nestsDeeperThan(text, MAX_SNAPSHOT_NESTING)` before `JSON.parse`. This is one
+  linear pass that skips string contents and escapes. `MAX_SNAPSHOT_NESTING = 4 + MAX_ROW_DEPTH`,
+  so it never refuses a row the validator would accept. A unit test holds that boundary exactly.
+- Refusals are in words, like the existing ones: new problems `too-large` and `too-deep`, with the
+  messages listed below.
+
+What the guard does **not** do (review 2 measured it): make a legitimate large file cheap. A file
+under the cap is still read and parsed on the main thread, and the scan adds about half again to
+the parse (0.7 s to scan and 1.3 s to parse 128M characters in Node). The guard stops a tab from
+freezing on the *wrong* file. It also counts an unknown top-level envelope key, which the validator
+ignores and nothing this app writes has. The header comment says both.
+
+Tests: five cases in `tests/unit/db/backup.test.ts` and one in `tests/unit/pwa/data-safety.test.tsx`
+(a `File` whose `size` is past the cap: refused, `text()` never called, database untouched). The
+size check, the depth check, the escape handling and the depth arithmetic were each
+mutation-tested. The escape mutant survived the first version of the test, which was then made
+sharper.
+
+### 5. A busy list heading was focused while blank — fixed, and the claim still works
+
+`src/shell/route-announcer.tsx`. Focus now waits for an `aria-busy` heading to get its name, just
+as the announcement already did. The shared wait (`whenNamed`) is capped at `HEADING_WAIT_MS`.
+Past that cap, focus goes to `<main>`, never to a heading with no name. The header comment's
+fifth decision is rewritten to say this, and why the old "focus does not wait" argument lost:
+focusing an element is what makes a screen reader read it.
+
+- **A heading that is not busy is focused exactly as before**, synchronously, with no new guard.
+  That keeps `autoFocus` and every existing navigation unchanged.
+- **The claim is still a deferral.** `claimRouteFocus` still stands aside for
+  `FOCUS_CLAIM_GRACE_MS`. A claimant that never lands focus hands over to the same wait, and a
+  claimant that does land it keeps it.
+- **After a wait, focus the learner moved is left alone.** That covers focus moved into the view,
+  and also focus moved out to the header's tabs (review 2: Tab during the wait reaches them).
+  `<main>` gives back the `tabindex` it borrows as the fallback when focus leaves it (review 2: left
+  in place, every click on empty page space focused `<main>`).
+- **The cost (review 1): while the name loads, focus stays where it was, often on `<body>`** once
+  the clicked list link unmounts. That lasts one IndexedDB read, at most `HEADING_WAIT_MS`.
+
+Tests: seven new cases in `tests/unit/shell/route-announcer.test.tsx`. The old "moves focus at once,
+without waiting for the name" case is replaced by its opposite. Five mutants each fail at least one
+case: focusing immediately, no moved-focus guard, a blank heading at the ceiling, no cancel on
+cleanup (it survived until a case was written for it), and no `tabindex` return. The list A → B → A
+e2e now also records every `focusin` on a busy or blank heading. **Against the old behaviour it
+records four per run, 3/3 runs**, so it is a real guard and not one that happens to pass.
+
+### 6. The sticky side panels were cut off at the bottom — fixed on Look up; the reader had nothing to cut
+
+`components/lookup/lookup-view.tsx`: the answer panel is capped at
+`100dvh - var(--shell-header-height) - 2rem` and scrolls inside itself. Two things came with it,
+both found by review 2:
+
+- a new pick resets that scroll to the top, because the last answer's scroll position otherwise
+  hid the new headword;
+- `print:max-h-none print:overflow-visible`, because a scroller prints only its first screenful.
+
+**The reader's sticky column is unchanged.** It only ever holds a one-line hint; the reader's word
+sheet is a `fixed` layer outside the grid and was never clipped. A cap there was added and then
+reverted (both reviews).
+
+Tests: one e2e case at 1280×600 (pinned), with `?q=the` so the column is long enough to stick. It
+scrolls to where the panel is actually stuck, asserts the panel's top is just below the header and
+its bottom is on screen, asserts that its last element is reachable, that a new pick resets the
+inner scroll, and that print media removes the cap. The precondition that the panel overflows is
+asserted, not assumed. Mutants with the cap removed, the reset removed and the print rules removed
+each fail it.
+
+### 7. `ask()` read an app-code `TypeError` as `offline` — fixed
+
+`lib/ai/ask-client.ts`. Network steps run inside `onTheWire(...)`, which marks whatever they throw
+as a `WireFailure`: the proposal round trip, the answer request, and reading its body. Only those
+failures reach `unavailableReason`, whose `TypeError` → `offline` rule is right about `fetch`.
+Everything else maps to `server` (`caughtReason`), including when `navigator.onLine` is false, since
+that flag says nothing about an error the network did not raise. A `SyntaxError` from a body that
+arrived is `server`. The request body is serialised outside the wire step. Aborts are unwrapped and
+rethrown as before, and timeouts are still `timeout`. This draws the same line as `apiProblemOf`
+for the card back.
+
+Tests: four cases in `tests/unit/ai/ask-client.test.ts`. The app-code case makes a store method
+throw only *after* the answer has arrived, so it provably got past the network. The first version
+used `Object.create(store)`, which fails on the store's private fields with a `TypeError` of its
+own. Two of the four fail against the old catch; the other two pin behaviour that should not move.
+
+### New and changed user-facing strings
+
+| String | Where |
+|---|---|
+| `That file is too large to restore.` | `apps/app/lib/db/import.ts:252` (`TOO_LARGE`), shown in `restore-failed` |
+| `That file is not a Tangram backup.` — **existing** string, now also shown for a file nested too deep | `apps/app/lib/db/import.ts:297` |
+
+Removed from view on a no-API build: the "On a card" heading and both toggles' labels and hints in
+Library, and the card back's `EXAMPLES_NOT_CONFIGURED` and the recall box's
+`RECALL_NOT_CONFIGURED` lines (item 1). No other copy changed.
+
+### What the two adversarial reviews found
+
+Both ran cold and in parallel over `ddb17f3..07fb324`, read-only. Review 1 checked each item
+against the reason it was left; review 2 asked what breaks that no test covers.
+
+**Fixed:** the no-API settings trap (both, ranked first); the lookup panel keeping its inner scroll
+across picks (review 2); print clipping the capped panel (review 2); the reader cap that did
+nothing (both); the announcer pulling focus back from the header (both) and `<main>` keeping a
+`tabindex` it borrowed (review 2); the short-viewport Back e2e using a scripted click no learner
+can make (review 1), which now follows a real on-screen link; two comments that claimed more than
+the code does (import.ts on the scan and on the freeze; ask-client's malformed-200 comment).
+
+**Recorded, not fixed:**
+
+- **Back after pressing a tab on a short wide viewport returns to the top** (item 2's trade, above).
+- **`md:` (48rem) is not the wide breakpoint (45rem).** Between the two, the header is pinned but
+  the lookup panel is neither sticky nor capped. This predates this branch, and `tokens.css` warns
+  about it. Fixing it means changing the panel's breakpoint prefix, which is the layout's call.
+- **The capped panel is an `overflow` container.** Nothing inside it paints outside today (no
+  popovers, rings inset by the card's padding), but a later popover would be clipped. Safari does
+  not make a scroller keyboard-focusable when it has focusable children, so text after the last
+  control in a long answer may be unreachable by keyboard there. Both are unverified; the container
+  has no Safari.
+- **`100dvh` moves with a mobile browser's toolbar**, so on a tablet the panel's cap changes during
+  scroll. iOS applies it at the end of the toolbar animation, which may show as a jump. Unverified
+  on a device.
+- **256 MiB is likely more than an iOS WKWebView content process can hold** as a UTF-16 string plus
+  the parsed graph (review 2, a suspicion). A backup that large would probably kill the web process
+  rather than be refused. That needs roughly 300k reviews, and the database is untouched either way.
+  A lower cap would refuse real backups on every engine to protect one, so it is not lowered
+  without a measurement from a device.
+- **`onTheWire` also wraps `apiFetch`'s own configuration errors**: `apiUrl()` throwing on a
+  malformed `VITE_API_BASE`, or `fetch` refusing a non-Latin-1 access secret as a header value.
+  Both still read as `offline`. They are deployment faults, and `fetch` gives the invalid-header
+  case the same `TypeError` as a network failure, so it cannot be told apart by type.
+
+**Raised and wrong, checked:** none of substance. Both reviews confirmed the frozen surfaces are
+untouched, that item 3 is closed, that the scan's row arithmetic matches `tooDeep`, and that
+`Blob.text()` never yields more UTF-16 units than bytes.
+
+### Census and files
+
+**No new e2e spec file**, so `tests/unit/shell/tab-routes.test.ts` is unchanged. Files another
+session may collide with: `components/shell/app-shell.tsx`, `app/globals.css`, `app/tokens.css`
+(comment only), `components/lookup/lookup-view.tsx`, `components/review/review-session.tsx`,
+`app/settings/settings-form.tsx`, `src/shell/route-announcer.tsx`, `lib/ai/ask-client.ts`,
+`lib/db/import.ts`, `components/pwa/data-safety.tsx`; the specs `tests/e2e/core/wide-shell.spec.ts`
+and `tests/e2e/d/no-api.spec.ts`.
+
+### What this makes false elsewhere
+
+- **The wide-shell section's "Recorded, not fixed" items on landscape, the busy heading and the
+  panel height are done.**
+- **The no-API section's table** says free recall on a not-configured build shows "the after-flip
+  line says suggestions are not set up", and the card back shows "one line". On a real no-API
+  build, neither feature is now drawn at all (item 1).
+- **W5's "no depth or size guard"** is done.
+- **The no-API section's "`ask()`'s outer catch still reads an app-code `TypeError` as `offline`"**
+  is done.
+
+### Two spec races, found by `--repeat-each=8` and fixed in the specs
+
+- **`wide-shell.spec.ts`'s own short-viewport Back case** lost 1 run in 280. It waited only for the
+  list's URL before pressing Back. A navigation runs as a transition, so a Back that arrives before
+  the list route commits means the route never changed on screen, nothing moves focus, and the
+  clicked link keeps it. The product was right. The case now waits for the list page to render.
+- **`keyboard.spec.ts`'s "Space reveals, 1–4 grade"** (W8a's) lost 1 run in 280 on the next pass.
+  Its last line asserted `review-session` was still visible after `4` graded the *last* card, but
+  that element exists only while a card is on screen. It passed only when read before the grade's
+  write landed. It now asserts the finished state and "2 done". The configured build's session is
+  unchanged by this branch, so this race predates it.
+
+### Gates
+
+All on the final tree. `pnpm lint` and `pnpm typecheck` clean; `pnpm build` clean;
+`pnpm test` **2,203** app + **103** server; `pnpm e2e` **350 passed** (10.5 min; the two spec fixes
+above came after it and are covered by the repeat run); `pnpm smoke --no-api` **41 ok** (29 assets,
+6 paths, 6 API cases skipped and said so).
+
+`--repeat-each=8` over `core/wide-shell.spec.ts`, `core/routing.spec.ts` and `core/keyboard.spec.ts`
+together: **280/280** on the final build. Each earlier run lost one case to one of the two races
+above.

@@ -32,7 +32,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { serializeSnapshot, snapshotFilename, snapshotSummary } from '@/lib/db/export';
-import { parseSnapshot, SnapshotError } from '@/lib/db/import';
+import { readSnapshotFile, SnapshotError } from '@/lib/db/import';
 import type { Snapshot } from '@/lib/db/repository';
 import { getRepository } from '@/lib/db/get-db';
 import {
@@ -151,7 +151,7 @@ export function DataSafetyCard() {
   const onChoose = useCallback(async (file: File) => {
     setRestore({ step: 'reading', name: file.name });
     try {
-      setRestore({ step: 'confirm', snapshot: parseSnapshot(await file.text()), name: file.name });
+      setRestore({ step: 'confirm', snapshot: await readSnapshotFile(file), name: file.name });
     } catch (error) {
       setRestore({
         step: 'failed',

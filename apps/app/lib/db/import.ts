@@ -49,6 +49,21 @@
  *   a way to make every *later* export throw `RangeError`, which is a
  *   permanently broken backup button with no way out through the UI.
  *
+ * - **A file too large, or nested too deep, to hand to `JSON.parse` at all.**
+ *   Both are checked *before* the parse, because the parse is the cost. The
+ *   size is read off the `File` before a byte of it is read
+ *   (`readSnapshotFile`), so a wrong pick — a video, a disk image — is refused
+ *   at once instead of being decoded into one string on the main thread. The
+ *   depth is one linear scan of the text, bounded by the same `MAX_ROW_DEPTH`
+ *   the row check enforces after the parse, so it never refuses a *row* the
+ *   validator would accept; it does count an unknown top-level key, which the
+ *   validator ignores, and nothing this app writes has one.
+ *   What neither does is make a legitimate large backup cheap: a file under
+ *   the cap is still read and parsed on the main thread, and the scan adds
+ *   about half again to that (measured in Node: 0.7 s to scan and 1.3 s to
+ *   parse 128M characters). A refused file never reached the database, so
+ *   what these fix is a tab frozen on the wrong file, not data loss.
+ *
  * `backend.md` B5 is the reason several of these are not theoretical: its
  * `exportAccount()` pulls the same stores from PostgREST and feeds them through
  * this same door, and PostgREST hands back numerics as strings by default.
@@ -70,6 +85,8 @@ import {
 
 /** Why a file was refused. The UI maps these to copy; tests assert on them. */
 export type SnapshotProblem =
+  | 'too-large'
+  | 'too-deep'
   | 'not-json'
   | 'not-a-snapshot'
   | 'future-format'
@@ -213,8 +230,72 @@ export function validateSnapshot(value: unknown): Snapshot {
   return value as unknown as Snapshot;
 }
 
+/**
+ * The largest file `readSnapshotFile` will read, in bytes: 256 MiB.
+ *
+ * Measured, not guessed: a review row pretty-printed the way
+ * `serializeSnapshot` writes it is about 900 bytes, and reviews are nearly all
+ * of any real backup, so this holds roughly 300,000 reviews — a hundred a day
+ * for eight years. It also sits well under the longest string V8 can hold
+ * (about 2^29 UTF-16 units), past which `File.text()` fails outright anyway.
+ */
+export const MAX_SNAPSHOT_BYTES = 256 * 1024 * 1024;
+
+/**
+ * How deeply a backup's text may nest, counting every `{` and `[`: the
+ * envelope, `rows`, a store's array and the row itself are four, and a row may
+ * go `MAX_ROW_DEPTH` below that before the validator refuses it. Deriving it
+ * keeps the two checks agreeing.
+ */
+export const MAX_SNAPSHOT_NESTING = 4 + MAX_ROW_DEPTH;
+
+const TOO_LARGE = 'That file is too large to restore.';
+
+/**
+ * Whether `text`'s brackets nest deeper than `limit`, without parsing it. One
+ * pass over the characters; brackets inside strings do not count.
+ */
+export function nestsDeeperThan(text: string, limit: number): boolean {
+  let depth = 0;
+  let inString = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    if (inString) {
+      if (code === 0x5c) i += 1; // a backslash escapes whatever follows it
+      else if (code === 0x22) inString = false;
+      continue;
+    }
+    if (code === 0x22) inString = true;
+    else if (code === 0x7b || code === 0x5b) {
+      depth += 1;
+      if (depth > limit) return true;
+    } else if (code === 0x7d || code === 0x5d) depth -= 1;
+  }
+  return false;
+}
+
+/**
+ * Read a chosen file as a backup. The size is checked **before** the file is
+ * read, so a wrong choice — a video, a disk image — is refused at once rather
+ * than after the tab has spent itself decoding it.
+ */
+export async function readSnapshotFile(
+  file: Pick<Blob, 'size' | 'text'>,
+  maxBytes: number = MAX_SNAPSHOT_BYTES,
+): Promise<Snapshot> {
+  if (file.size > maxBytes) throw new SnapshotError('too-large', TOO_LARGE);
+  return parseSnapshot(await file.text(), maxBytes);
+}
+
 /** Read a downloaded backup. The one entry point for bytes off disk. */
-export function parseSnapshot(text: string): Snapshot {
+export function parseSnapshot(text: string, maxBytes: number = MAX_SNAPSHOT_BYTES): Snapshot {
+  // A UTF-16 length is never more than the UTF-8 byte count it came from, so
+  // this refuses nothing `readSnapshotFile` let through; it is here for a
+  // caller that already holds the text.
+  if (text.length > maxBytes) throw new SnapshotError('too-large', TOO_LARGE);
+  if (nestsDeeperThan(text, MAX_SNAPSHOT_NESTING)) {
+    throw new SnapshotError('too-deep', 'That file is not a Tangram backup.');
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);

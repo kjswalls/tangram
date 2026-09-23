@@ -61,16 +61,38 @@ export const WIDE_QUERY = '(min-width: 45rem)';
  * longer changes the component tree, that frame no longer costs a remount.
  */
 export function useIsWide(): boolean {
-  const [wide, setWide] = useState(false);
+  return useMediaQuery(WIDE_QUERY);
+}
+
+/**
+ * How tall the viewport must be before the wide header is pinned.
+ *
+ * **A phone in landscape is wide** — 45rem is narrower than any current phone
+ * on its side — so without this it gets the pinned header, and a header of
+ * 65–110px holds a fifth to a quarter of a ~390px viewport for good (WCAG
+ * 1.4.10). The same is true of a desktop browser zoomed on a short screen. So
+ * below this height the wide arrangement keeps its tabs in the header and lets
+ * the header scroll away with the page, as the phone header does.
+ *
+ * 32rem (512px) sits above every phone's landscape height, the largest of
+ * which is about 440px before the browser's own chrome, and below the usable
+ * height of a laptop screen or a tablet on its side. A viewport this short
+ * still has the tabs one scroll away — at the top of the page, where they
+ * always were before the header was pinned.
+ */
+export const PIN_QUERY = '(min-height: 32rem)';
+
+function useMediaQuery(media: string): boolean {
+  const [matches, setMatches] = useState(false);
   useEffect(() => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
-    const query = window.matchMedia(WIDE_QUERY);
-    const update = () => setWide(query.matches);
+    const query = window.matchMedia(media);
+    const update = () => setMatches(query.matches);
     update();
     query.addEventListener('change', update);
     return () => query.removeEventListener('change', update);
-  }, []);
-  return wide;
+  }, [media]);
+  return matches;
 }
 
 /**
@@ -107,18 +129,21 @@ export function useIsWide(): boolean {
  * own comment records the pixel that cost; this one is read off the element.
  *
  * Zero — absent — in the phone arrangement, whose header scrolls away with the
- * page exactly as it always did.
+ * page exactly as it always did, **and in a wide arrangement too short to pin
+ * it** (`PIN_QUERY`), whose header does the same. Everything that reads the
+ * variable — the shell's padding, the scroll padding, the side panels' offset
+ * and height — therefore falls back to zero in both, with no second rule.
  */
 export const HEADER_HEIGHT_VAR = '--shell-header-height';
 
-function usePinnedHeaderHeight(header: RefObject<HTMLElement | null>, wide: boolean): void {
+function usePinnedHeaderHeight(header: RefObject<HTMLElement | null>, pinned: boolean): void {
   // A layout effect: the header leaves the flow on the render that makes it
   // wide, and the shell's padding has to be the right height before that
   // render is painted or the page's first line flashes under the header.
   useLayoutEffect(() => {
     const root = document.documentElement;
     const node = header.current;
-    if (!wide || !node) {
+    if (!pinned || !node) {
       root.style.removeProperty(HEADER_HEIGHT_VAR);
       return;
     }
@@ -136,7 +161,7 @@ function usePinnedHeaderHeight(header: RefObject<HTMLElement | null>, wide: bool
       observer.disconnect();
       root.style.removeProperty(HEADER_HEIGHT_VAR);
     };
-  }, [header, wide]);
+  }, [header, pinned]);
 }
 
 /** Where a screen's destination actually is. The only place that knows. */
@@ -166,18 +191,24 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const active = tabForPath(pathname);
+  // Wide, and tall enough to spare the header (`PIN_QUERY`). `false` until the
+  // first effect, like `wide`: a header in flow for one frame is the safe side.
+  const tall = useMediaQuery(PIN_QUERY);
+  const pinned = wide && tall;
   const headerRef = useRef<HTMLElement>(null);
-  usePinnedHeaderHeight(headerRef, wide);
+  usePinnedHeaderHeight(headerRef, pinned);
 
   return (
     <ScreenNavigateProvider value={(to) => navigate(pathFor(to))}>
       <div
         data-testid={wide ? 'wide-shell' : 'phone-shell'}
         data-shell={wide ? 'wide' : 'phone'}
-        // The header is out of flow when wide; this is the room it took.
+        // `globals.css` keys the root's scroll padding on this.
+        data-header={pinned ? 'pinned' : 'in-flow'}
+        // The header is out of flow when pinned; this is the room it took.
         className={cn(
           'flex min-h-dvh flex-col',
-          wide ? 'pt-[var(--shell-header-height)] print:pt-0' : '',
+          pinned ? 'pt-[var(--shell-header-height)] print:pt-0' : '',
         )}
       >
         {/*
@@ -196,15 +227,20 @@ export function AppShell({ children }: { children: ReactNode }) {
           inset, so the padding and the scroll padding clear it too); and
           `print:static`, because a fixed element repeats on every printed page
           and the shell's padding clears only the first.
+
+          Pinned only when the viewport is tall enough to spare it
+          (`PIN_QUERY`): a wide viewport that is short — a phone on its side —
+          keeps the tabs in the header and the header in flow, so it scrolls
+          away like the phone's. The safe-area inset stays either way; in flow,
+          the header is still the first thing under the status bar.
         */}
         <header
           ref={headerRef}
           data-testid="shell-header"
           className={cn(
             'border-b border-border bg-surface/80 backdrop-blur',
-            wide
-              ? 'fixed inset-x-0 top-0 z-30 pt-[env(safe-area-inset-top,0px)] print:static'
-              : 'px-4 py-3',
+            wide ? 'pt-[env(safe-area-inset-top,0px)]' : 'px-4 py-3',
+            pinned && 'fixed inset-x-0 top-0 z-30 print:static',
           )}
         >
           {wide ? (

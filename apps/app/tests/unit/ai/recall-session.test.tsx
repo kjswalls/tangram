@@ -74,6 +74,42 @@ function type(answer: string) {
   fireEvent.keyDown(box, { key: 'Enter' });
 }
 
+/**
+ * On a build with no API, Library does not offer the two card toggles, so the
+ * session does not honour them either: a stored `true` (the sentences'
+ * default, or a `freeRecall` restored from a backup made where there was an
+ * API) would otherwise be on every card with no way to turn it off.
+ */
+describe('a review session on a build with no API', () => {
+  it('draws neither the recall box nor the sentences, whatever is stored, and asks nobody', async () => {
+    const fetcher = deferredFetch();
+    const repo = getRepository();
+    await repo.setSettings({ newPerDay: 0, freeRecall: true, examplesOnBack: true });
+    await repo.addCardFromEntry(DASUAN, context({ source: 'lookup' }));
+    render(<ReviewSession apiConfigured={false} />);
+    await screen.findByTestId('review-card');
+    expect(screen.queryByTestId('card-recall')).toBeNull();
+    expect(screen.queryByTestId('recall-answer')).toBeNull();
+
+    fireEvent.keyDown(window, { key: ' ' });
+    expect(await screen.findByTestId('card-back')).toBeVisible();
+    expect(screen.queryByTestId('example-sentences')).toBeNull();
+    expect(fetcher.impl).not.toHaveBeenCalled();
+    // Grading is untouched.
+    expect(screen.getByTestId('grade-bar')).toBeVisible();
+  });
+
+  it('still honours both when the build has an API', async () => {
+    deferredFetch();
+    const repo = getRepository();
+    await repo.setSettings({ newPerDay: 0, freeRecall: true, examplesOnBack: true });
+    await repo.addCardFromEntry(DASUAN, context({ source: 'lookup' }));
+    render(<ReviewSession apiConfigured />);
+    await screen.findByTestId('review-card');
+    expect(screen.getByTestId('card-recall')).toBeVisible();
+  });
+});
+
 describe('free recall in a review session', () => {
   it('is not offered unless the learner asked for it', async () => {
     await openSession({ freeRecall: false });

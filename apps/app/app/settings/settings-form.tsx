@@ -15,6 +15,7 @@ import {
 import { loadDemo, resetAll } from '@/lib/dev/seed';
 import { describeParameters, RETENTION_CHOICES } from '@/lib/srs/params';
 import { HSK_BANDS, hskBandLabel, type HskBand } from '@/lib/types';
+import { API_CONFIGURED } from '@/src/access/client';
 
 type Danger = 'demo' | 'reset';
 
@@ -39,9 +40,25 @@ export interface SettingsFormProps {
    * way.
    */
   onSettings?: (settings: SettingsRow) => void;
+  /**
+   * Whether this build has an API (`API_CONFIGURED`). A prop only so the unit
+   * tests can draw both builds without a second one.
+   *
+   * **The two card toggles are the only thing it hides.** Both switch on a
+   * model-backed feature, and on a build with no API neither can ever work,
+   * so offering them offers nothing. It is the build-time flag and never a
+   * failed request: a server that is down right now is transient, and a toggle
+   * that vanished whenever the network did would be a setting the learner
+   * could not find twice in a row. The card surfaces themselves are unchanged
+   * — they already say "not set up" when a stored setting reaches them.
+   */
+  apiConfigured?: boolean;
 }
 
-export function SettingsForm({ onSettings }: SettingsFormProps = {}) {
+export function SettingsForm({
+  onSettings,
+  apiConfigured = API_CONFIGURED,
+}: SettingsFormProps = {}) {
   const [settings, setSettings] = useState<SettingsRow>();
   const [status, setStatus] = useState<string>();
   const [confirming, setConfirming] = useState<Danger>();
@@ -312,44 +329,49 @@ export function SettingsForm({ onSettings }: SettingsFormProps = {}) {
         </label>
       </div>
 
-      <div className="flex flex-col gap-3 border-t border-border pt-4">
-        <p className="text-sm tracking-wide text-muted uppercase">On a card</p>
+      {apiConfigured ? (
+        <div
+          data-testid="settings-card-toggles"
+          className="flex flex-col gap-3 border-t border-border pt-4"
+        >
+          <p className="text-sm tracking-wide text-muted uppercase">On a card</p>
 
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              className="size-4 accent-accent"
-              data-testid="settings-examples-on-back"
-              // A row written before this field existed carries neither
-              // toggle, and `undefined` there means "not decided", not "off".
-              checked={settings.examplesOnBack ?? DEFAULT_SETTINGS.examplesOnBack ?? true}
-              onChange={(event) => void patch({ examplesOnBack: event.target.checked })}
-            />
-            Example sentences on the back
-          </span>
-          <span className="text-xs text-muted">
-            Sentences built from words you already know, with the card&rsquo;s word in them.
-          </span>
-        </label>
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                className="size-4 accent-accent"
+                data-testid="settings-examples-on-back"
+                // A row written before this field existed carries neither
+                // toggle, and `undefined` there means "not decided", not "off".
+                checked={settings.examplesOnBack ?? DEFAULT_SETTINGS.examplesOnBack ?? true}
+                onChange={(event) => void patch({ examplesOnBack: event.target.checked })}
+              />
+              Example sentences on the back
+            </span>
+            <span className="text-xs text-muted">
+              Sentences built from words you already know, with the card&rsquo;s word in them.
+            </span>
+          </label>
 
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              className="size-4 accent-accent"
-              data-testid="settings-free-recall"
-              checked={settings.freeRecall ?? DEFAULT_SETTINGS.freeRecall ?? false}
-              onChange={(event) => void patch({ freeRecall: event.target.checked })}
-            />
-            Type the meaning before flipping
-          </span>
-          <span className="text-xs text-muted">
-            Adds a box to the front of the card. Nothing is ever graded for you &mdash; the
-            suggestion is a highlighted button you can ignore.
-          </span>
-        </label>
-      </div>
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                className="size-4 accent-accent"
+                data-testid="settings-free-recall"
+                checked={settings.freeRecall ?? DEFAULT_SETTINGS.freeRecall ?? false}
+                onChange={(event) => void patch({ freeRecall: event.target.checked })}
+              />
+              Type the meaning before flipping
+            </span>
+            <span className="text-xs text-muted">
+              Adds a box to the front of the card. Nothing is ever graded for you &mdash; the
+              suggestion is a highlighted button you can ignore.
+            </span>
+          </label>
+        </div>
+      ) : null}
 
       <div className="flex flex-col gap-2 border-t border-border pt-4">
         <p className="text-sm text-muted">

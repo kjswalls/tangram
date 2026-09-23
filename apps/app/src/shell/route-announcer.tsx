@@ -34,14 +34,19 @@
  *   standard way to repeat an announcement. (Every list used to be headed
  *   "Library", which is how this was found; each list is headed with its own
  *   name now, but two routes can still share one — two lists called "Verbs".)
- * - **A heading whose name is still loading is waited for.** A list's name is
- *   in IndexedDB and arrives a read after the route renders, so at the commit
- *   the heading holds nothing — or, moving straight from one list to another,
- *   the *previous* list's name. `PageHeader` marks that heading `aria-busy`,
- *   and the announcement waits for the mark to clear, for at most
- *   `HEADING_WAIT_MS`. Focus does not wait: it moves to the heading at once,
- *   because the element is the same one either way and a screen reader left
- *   on the tab that was just pressed is the trap this file exists for.
+ * - **A heading whose name is still loading is waited for — by the
+ *   announcement and by focus.** A list's name is in IndexedDB and arrives a
+ *   read after the route renders, so at the commit the heading holds nothing —
+ *   or, moving straight from one list to another, the *previous* list's name.
+ *   `PageHeader` marks that heading `aria-busy`, and both wait for the mark to
+ *   clear, for at most `HEADING_WAIT_MS`. Focus used not to wait, on the
+ *   argument that the element is the same either way; but focusing it is what
+ *   makes a screen reader read it, and a level-1 heading read while blank (or
+ *   under the wrong list's name) is a worse first word than none. The wait is
+ *   one IndexedDB read. Two things keep it from becoming a trap of its own:
+ *   past the ceiling focus goes to `<main>`, never to a heading with no name;
+ *   and if the learner has moved focus by the time the name arrives — into
+ *   the view, or out to the tabs — it is left where they put it.
  * - **A deliberate navigation can claim focus, and the claim is a deferral, not
  *   a cancellation.** `Mod+K` from another tab navigates to Look up *and*
  *   focuses the box; both this effect and `focusLookupInput`'s frame loop then
@@ -108,6 +113,45 @@ export const HEADING_WAIT_MS = 2000;
 const isBusy = (heading: HTMLElement | null) => heading?.getAttribute('aria-busy') === 'true';
 
 /**
+ * Call `named` once the route heading is no longer busy, or `gaveUp` after
+ * `HEADING_WAIT_MS`, whichever is first — never both. Returns the cancel,
+ * which a newer route change calls so an abandoned wait cannot act late.
+ */
+function whenNamed(named: () => void, gaveUp: () => void): () => void {
+  const main = document.querySelector('main');
+  if (!isBusy(routeHeading())) {
+    named();
+    return () => undefined;
+  }
+  if (!main || typeof MutationObserver !== 'function') {
+    gaveUp();
+    return () => undefined;
+  }
+  let ceiling: ReturnType<typeof setTimeout> | undefined;
+  const observer = new MutationObserver(() => {
+    if (isBusy(routeHeading())) return;
+    stop();
+    named();
+  });
+  const stop = () => {
+    observer.disconnect();
+    if (ceiling !== undefined) clearTimeout(ceiling);
+    ceiling = undefined;
+  };
+  observer.observe(main, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: ['aria-busy'],
+  });
+  ceiling = setTimeout(() => {
+    stop();
+    gaveUp();
+  }, HEADING_WAIT_MS);
+  return stop;
+}
+
+/**
  * Set by whoever is about to navigate *and* move focus themselves. Read once,
  * by the next route change, and cleared there whether or not it matched — a
  * claim that outlived its navigation would silence the announcer's focus move
@@ -133,26 +177,77 @@ export function RouteAnnouncer() {
     const claimed = focusClaim === pathname;
     focusClaim = null;
 
-    const heading = routeHeading();
-    const moveFocus = () => {
-      const target = heading ?? document.querySelector<HTMLElement>('main');
+    /** Where focus was when the route changed — the control that changed it. */
+    const before = document.activeElement;
+
+    const place = (target: HTMLElement | null, transient = false) => {
       if (!target) return;
       // A heading is not focusable by nature. `-1` makes it programmatically
       // focusable without putting it in the tab order, which is the whole of
       // what this needs and the standard spelling of it.
-      if (!target.hasAttribute('tabindex')) target.setAttribute('tabindex', '-1');
+      if (!target.hasAttribute('tabindex')) {
+        target.setAttribute('tabindex', '-1');
+        // `<main>` as the stand-in for a name that never arrived gives the
+        // mark back when focus leaves: left on, every click on the page's
+        // empty space would focus `<main>`, which the checks here then read
+        // as the learner having put focus in the view.
+        if (transient) {
+          target.addEventListener('blur', () => target.removeAttribute('tabindex'), {
+            once: true,
+          });
+        }
+      }
       target.focus({ preventScroll: true });
+    };
+
+    /** Whether focus has already landed somewhere inside the new view. */
+    const landedInView = () => {
+      const active = document.activeElement;
+      return (
+        active instanceof HTMLElement &&
+        active !== document.body &&
+        document.querySelector('main')?.contains(active) === true
+      );
+    };
+
+    /**
+     * Whether the learner has moved focus since the route changed — anywhere:
+     * into the view, or out of it to the tabs in the header. `before` does
+     * not count, nor does `<body>`, which is where focus falls when the
+     * control that navigated unmounts.
+     */
+    const movedSince = () => {
+      const active = document.activeElement;
+      return active instanceof HTMLElement && active !== document.body && active !== before;
+    };
+
+    // The heading once it has a name; `<main>` when there is no heading, or
+    // when its name never arrived — never a heading with nothing to read. A
+    // wait that ends after the learner has moved focus leaves it where they
+    // put it; with no wait, nobody has had the chance, and focus moves exactly
+    // as it always did.
+    let cancelFocusWait: () => void = () => undefined;
+    const moveFocus = () => {
+      if (!isBusy(routeHeading())) {
+        place(routeHeading() ?? document.querySelector<HTMLElement>('main'));
+        return;
+      }
+      cancelFocusWait = whenNamed(
+        () => {
+          if (movedSince()) return;
+          place(routeHeading() ?? document.querySelector<HTMLElement>('main'));
+        },
+        () => {
+          if (movedSince()) return;
+          place(document.querySelector<HTMLElement>('main'), true);
+        },
+      );
     };
 
     let grace: ReturnType<typeof setTimeout> | undefined;
     if (claimed) {
       grace = setTimeout(() => {
-        const active = document.activeElement;
-        const landed =
-          active instanceof HTMLElement &&
-          active !== document.body &&
-          document.querySelector('main')?.contains(active) === true;
-        if (!landed) moveFocus();
+        if (!landedInView()) moveFocus();
       }, FOCUS_CLAIM_GRACE_MS);
     } else {
       moveFocus();
@@ -168,41 +263,15 @@ export function RouteAnnouncer() {
       setAnnounced(name && name !== '' ? name : fallbackRouteName(pathname));
     };
 
-    let observer: MutationObserver | undefined;
-    let ceiling: ReturnType<typeof setTimeout> | undefined;
-    const stopWaiting = () => {
-      observer?.disconnect();
-      observer = undefined;
-      if (ceiling !== undefined) clearTimeout(ceiling);
-      ceiling = undefined;
-    };
-
+    let cancelAnnounceWait: () => void = () => undefined;
     setAnnounced('');
     const timer = setTimeout(() => {
-      const main = document.querySelector('main');
-      if (!isBusy(routeHeading()) || !main || typeof MutationObserver !== 'function') {
-        announce();
-        return;
-      }
-      observer = new MutationObserver(() => {
-        if (isBusy(routeHeading())) return;
-        stopWaiting();
-        announce();
-      });
-      observer.observe(main, {
-        subtree: true,
-        childList: true,
-        attributes: true,
-        attributeFilter: ['aria-busy'],
-      });
-      ceiling = setTimeout(() => {
-        stopWaiting();
-        announce();
-      }, HEADING_WAIT_MS);
+      cancelAnnounceWait = whenNamed(announce, announce);
     }, ANNOUNCE_DELAY_MS);
     return () => {
       clearTimeout(timer);
-      stopWaiting();
+      cancelAnnounceWait();
+      cancelFocusWait();
       if (grace !== undefined) clearTimeout(grace);
     };
   }, [pathname]);

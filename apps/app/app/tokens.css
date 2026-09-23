@@ -225,7 +225,8 @@
   /*
    * The wide shell's pinned (`fixed`) header, **measured** — `components/shell/app-shell.tsx`
    * writes the real height onto `<html>` as an inline style, which beats this
-   * declaration, and removes it in the phone arrangement, which falls back to
+   * declaration, and removes it whenever the header is not pinned — the phone
+   * arrangement, and a wide one too short to spare it — which falls back to
    * this zero. Not hand-computed, for the reason the comment above gives: the
    * header wraps at the narrow end of the wide range and a copied height would
    * be silently wrong there. `globals.css` turns it into `scroll-padding-top`;

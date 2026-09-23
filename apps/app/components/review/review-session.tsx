@@ -25,6 +25,7 @@ import {
 } from '@/lib/srs/session';
 import { TangramProgress } from '@/components/practice/tangram-progress';
 import { useReviewStore } from '@/lib/stores/review';
+import { API_CONFIGURED } from '@/src/access/client';
 import { useShortcuts } from '@/src/keys/use-shortcuts';
 
 /**
@@ -43,7 +44,15 @@ import { useShortcuts } from '@/src/keys/use-shortcuts';
  * nothing here turns a suggestion into a grade. `grade()` is reached from a
  * key press and a button click, exactly as it was before the feature existed.
  */
-export function ReviewSession() {
+export interface ReviewSessionProps {
+  /**
+   * Whether this build has an API (`API_CONFIGURED`). A prop only so the unit
+   * tests can draw the no-API session without a second build.
+   */
+  apiConfigured?: boolean;
+}
+
+export function ReviewSession({ apiConfigured = API_CONFIGURED }: ReviewSessionProps = {}) {
   const go = useScreenNavigate();
   const queue = useReviewStore((state) => state.queue);
   const index = useReviewStore((state) => state.index);
@@ -107,13 +116,23 @@ export function ReviewSession() {
   const script = settings?.script ?? DEFAULT_SETTINGS.script;
   // `undefined` is "not decided" on a settings row written before the toggle
   // existed, never "off" (HANDOFF-prep, §6).
-  const examplesOnBack = settings?.examplesOnBack ?? DEFAULT_SETTINGS.examplesOnBack ?? true;
+  //
+  // **Neither card feature exists on a build with no API** (`API_CONFIGURED`).
+  // Library does not offer their toggles there, so a stored `true` — the
+  // default for sentences, or a `freeRecall` restored from a backup made on a
+  // build that had one — would otherwise be a setting the learner can see the
+  // effect of on every card and has no way to turn off.
+  const examplesOnBack =
+    apiConfigured && (settings?.examplesOnBack ?? DEFAULT_SETTINGS.examplesOnBack ?? true);
   // A phrase card has no dictionary entry to judge an answer against (its
   // meaning is the English on its back), so the box is offered on word cards.
   const judgeable = card !== undefined && card.kind === 'word' && card.entryId !== null;
   const production = card !== undefined && isProduction(card);
   const freeRecall =
-    (settings?.freeRecall ?? DEFAULT_SETTINGS.freeRecall ?? false) && judgeable && !production;
+    apiConfigured &&
+    (settings?.freeRecall ?? DEFAULT_SETTINGS.freeRecall ?? false) &&
+    judgeable &&
+    !production;
   /**
    * The production card's box is the card. Typing the hanzi is the exercise, so
    * it is not gated on `settings.freeRecall` — that toggle is about offering to

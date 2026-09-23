@@ -309,8 +309,22 @@ function ListsFixture() {
       <button data-testid="load" onClick={() => setLoadedFor(pathname)}>
         load
       </button>
+      {/* Where the fixture started, so its heading is not busy on the way back. */}
+      <button data-testid="to-start" onClick={() => navigate('/')}>
+        start
+      </button>
+      <button
+        data-testid="claim-to-b"
+        onClick={() => {
+          claimRouteFocus('/library/lists/b');
+          navigate('/library/lists/b');
+        }}
+      >
+        claim b
+      </button>
       <main>
         <PageHeader title={name(loadedFor)} busy={busy} />
+        <input data-testid="in-view" aria-label="something in the view" />
       </main>
       <RouteAnnouncer />
     </>
@@ -353,10 +367,119 @@ describe('a heading whose name is still loading', () => {
     expect(screen.getByTestId('route-announcer')).toHaveTextContent('Food');
   });
 
-  it('moves focus at once, without waiting for the name', () => {
+  /** The name arriving: the busy heading's `aria-busy` clearing, flushed. */
+  async function load() {
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('load'));
+      await Promise.resolve();
+    });
+  }
+
+  /**
+   * Focusing a heading is what makes a screen reader read it, and a busy one
+   * reads as a blank level-1 heading — or, between two lists, as the previous
+   * list's name. So focus waits for the name, as the announcement does.
+   */
+  it('does not focus the heading while it has no name, and does once it has one', async () => {
+    render(<ListsFixture />);
+    const trigger = screen.getByTestId('to-b');
+    act(() => trigger.focus());
+    fireEvent.click(trigger);
+    expect(routeHeading()).toHaveAttribute('aria-busy', 'true');
+    expect(document.activeElement).not.toBe(routeHeading());
+    settle();
+    expect(document.activeElement).not.toBe(routeHeading());
+
+    await load();
+    expect(routeHeading()).not.toHaveAttribute('aria-busy');
+    expect(document.activeElement).toBe(routeHeading());
+    expect(routeHeading()).toHaveTextContent('Food');
+  });
+
+  it('goes to <main> past the ceiling, never to the heading with no name', () => {
     render(<ListsFixture />);
     fireEvent.click(screen.getByTestId('to-b'));
-    // Before any timer: focus is not held back by the announcement.
+    act(() => {
+      vi.advanceTimersByTime(HEADING_WAIT_MS + 10);
+    });
+    expect(routeHeading()).toHaveAttribute('aria-busy', 'true');
+    expect(document.activeElement).toBe(document.querySelector('main'));
+  });
+
+  /** Tab during the wait reaches the header's tabs; the name arriving must not undo it. */
+  it('leaves focus in the header when the learner tabbed there during the wait', async () => {
+    render(<ListsFixture />);
+    fireEvent.click(screen.getByTestId('to-b'));
+    act(() => screen.getByTestId('to-a').focus());
+    await load();
+    expect(document.activeElement).toBe(screen.getByTestId('to-a'));
+  });
+
+  it('gives <main> back its tabindex when focus leaves it after the ceiling', () => {
+    render(<ListsFixture />);
+    fireEvent.click(screen.getByTestId('to-b'));
+    act(() => {
+      vi.advanceTimersByTime(HEADING_WAIT_MS + 10);
+    });
+    const main = document.querySelector('main')!;
+    expect(document.activeElement).toBe(main);
+    act(() => screen.getByTestId('in-view').focus());
+    expect(main.hasAttribute('tabindex')).toBe(false);
+  });
+
+  it('leaves focus where the learner put it while the name loaded', async () => {
+    render(<ListsFixture />);
+    fireEvent.click(screen.getByTestId('to-b'));
+    act(() => screen.getByTestId('in-view').focus());
+    await load();
+    expect(document.activeElement).toBe(screen.getByTestId('in-view'));
+    // …and past the ceiling too.
+    act(() => {
+      vi.advanceTimersByTime(HEADING_WAIT_MS + 10);
+    });
+    expect(document.activeElement).toBe(screen.getByTestId('in-view'));
+  });
+
+  /**
+   * The claim still defers first (`FOCUS_CLAIM_GRACE_MS`); a claimant that
+   * never lands focus hands over to the same wait, not to the blank heading.
+   */
+  it('keeps the claim working: after the grace, an unlanded claim waits for the name too', async () => {
+    render(<ListsFixture />);
+    fireEvent.click(screen.getByTestId('claim-to-b'));
+    act(() => {
+      (document.activeElement as HTMLElement | null)?.blur();
+    });
+    act(() => {
+      vi.advanceTimersByTime(FOCUS_CLAIM_GRACE_MS + 10);
+    });
+    expect(document.activeElement).not.toBe(routeHeading());
+    await load();
+    expect(document.activeElement).toBe(routeHeading());
+  });
+
+  it('keeps the claim working: a claimant that lands focus keeps it after the name arrives', async () => {
+    render(<ListsFixture />);
+    fireEvent.click(screen.getByTestId('claim-to-b'));
+    act(() => screen.getByTestId('in-view').focus());
+    act(() => {
+      vi.advanceTimersByTime(FOCUS_CLAIM_GRACE_MS + 10);
+    });
+    await load();
+    expect(document.activeElement).toBe(screen.getByTestId('in-view'));
+  });
+
+  it('an abandoned wait moves nothing: the next route decides focus alone', async () => {
+    render(<ListsFixture />);
+    fireEvent.click(screen.getByTestId('to-b'));
+    fireEvent.click(screen.getByTestId('to-a'));
+    await load();
+    expect(document.activeElement).toBe(routeHeading());
+    expect(routeHeading()).toHaveTextContent('Verbs');
+    // B's ceiling, had it survived, would now move focus to <main>.
+    act(() => {
+      vi.advanceTimersByTime(HEADING_WAIT_MS + 10);
+    });
     expect(document.activeElement).toBe(routeHeading());
   });
 
@@ -387,6 +510,39 @@ describe('a heading whose name is still loading', () => {
       vi.advanceTimersByTime(HEADING_WAIT_MS + 10);
     });
     expect(screen.getByTestId('route-announcer')).toHaveTextContent('Verbs');
+  });
+});
+
+describe('an abandoned focus wait', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.runOnlyPendingTimers();
+    vi.useRealTimers();
+  });
+
+  /**
+   * Leaving a busy route before its name arrives must cancel its wait. Left
+   * running, its ceiling fires two seconds later and moves focus to `<main>` —
+   * out of wherever the learner has gone since, such as the tabs in the header.
+   */
+  it('cannot pull focus away two seconds later', () => {
+    render(<ListsFixture />);
+    const toB = screen.getByTestId('to-b');
+    act(() => toB.focus());
+    fireEvent.click(toB);
+    fireEvent.click(screen.getByTestId('to-start'));
+    // Not busy there: focus went straight to the heading.
+    expect(document.activeElement).toBe(routeHeading());
+    // The learner goes back to the control they pressed — which, to B's wait,
+    // looks like focus never moved, so a wait that survived would act.
+    act(() => toB.focus());
+    act(() => {
+      vi.advanceTimersByTime(HEADING_WAIT_MS + 10);
+    });
+    expect(document.activeElement).toBe(toB);
   });
 });
 

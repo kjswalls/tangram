@@ -2,8 +2,8 @@
  * The wide shell keeps its tabs in reach, and keeps focus out from under them
  * (the wide-shell phase; `HANDOFF.md`, W8a's "Recorded, not fixed").
  *
- * At 1280px — Playwright's desktop default, and the width this whole file runs
- * at. The phone arrangement is not tested here because it did not change: its
+ * At 1280px — Playwright's desktop default, and the width this file runs at
+ * except where a block says otherwise (5 and 6 below). The phone arrangement is not tested here because it did not change: its
  * tabs are a `fixed` bar at the bottom, and every 390px spec is untouched.
  *
  * **Everything below is geometry, not screenshots.** A pinned header moves the
@@ -24,6 +24,16 @@
  *    Shift+Tab especially, because scrolling *up* to a control is what aims it
  *    at the viewport's top edge.
  * 4. Moving from one list to another announces each list's own name.
+ *
+ * And two that came after, from the polish phase:
+ *
+ * 5. **A wide viewport too short to spare the header does not pin it**
+ *    (`PIN_QUERY`) — a phone on its side, at 844×390. Its header is in flow and
+ *    scrolls away, and the same things must still hold: Back restores the
+ *    offset, and focus is never under the header.
+ * 6. **Look up's answer panel is never cut off at the bottom.** It sticks below
+ *    the header and is capped at the room it sticks in, so a long answer
+ *    scrolls inside the panel instead of running off the viewport.
  */
 import { expect, test, type Page } from '../dict';
 
@@ -382,8 +392,22 @@ test.describe('each list is announced by its own name', () => {
         const text = region.textContent?.trim() ?? '';
         if (text !== '') said.push(text);
       }).observe(region, { childList: true, subtree: true, characterData: true });
+      // And every focus that lands on a heading with no name yet — busy, or
+      // blank — which a screen reader would read as an empty level-1 heading.
+      const blank: string[] = [];
+      (window as unknown as { __blankFocus: string[] }).__blankFocus = blank;
+      document.addEventListener('focusin', (event) => {
+        const el = event.target as HTMLElement;
+        if (!el.hasAttribute('data-route-heading')) return;
+        const text = el.textContent?.replace(/\u00a0/g, ' ').trim() ?? '';
+        if (el.getAttribute('aria-busy') === 'true' || text === '') {
+          blank.push(`${location.pathname} busy=${el.getAttribute('aria-busy')} "${text}"`);
+        }
+      });
     });
     const said = () => page.evaluate(() => (window as unknown as { __said: string[] }).__said);
+    const blankFocus = () =>
+      page.evaluate(() => (window as unknown as { __blankFocus: string[] }).__blankFocus);
 
     // The Library screen reads its lists once, on mount; come back to it.
     await page.getByTestId('tab-link').filter({ hasText: 'Practice' }).click();
@@ -421,5 +445,241 @@ test.describe('each list is announced by its own name', () => {
     await expect(announcer(page)).toHaveText(a!.name);
 
     expect(await said()).toEqual(['Practice', 'Library', a!.name, 'Library', b!.name, a!.name]);
+    // Focus followed each route, and never onto a heading before its name.
+    await expect
+      .poll(() => page.evaluate(() => document.activeElement?.textContent?.trim()))
+      .toBe(a!.name);
+    expect(await blankFocus()).toEqual([]);
+  });
+});
+
+/** The header's pinning, as the page reports it. */
+const headerMode = (page: Page) =>
+  page.evaluate(() => ({
+    mode: document.querySelector('[data-shell]')?.getAttribute('data-header') ?? null,
+    position: getComputedStyle(document.querySelector('[data-testid="shell-header"]')!).position,
+    height: document.documentElement.style.getPropertyValue('--shell-header-height'),
+    padding: getComputedStyle(document.documentElement).scrollPaddingTop,
+  }));
+
+test.describe('a wide viewport too short to pin the header: a phone on its side', () => {
+  test.use({ viewport: { width: 844, height: 390 } });
+
+  /** The wide arrangement, settled, with the header in flow. */
+  async function shortReady(page: Page): Promise<void> {
+    await ready(page);
+    await expect(page.getByTestId('wide-shell')).toHaveCount(1);
+    await expect(page.getByTestId('wide-shell')).toHaveAttribute('data-header', 'in-flow');
+  }
+
+  test('the tabs are in the header, and the header scrolls away with the page', async ({ page }) => {
+    await page.goto('/library');
+    await shortReady(page);
+    expect(await headerMode(page)).toEqual({
+      mode: 'in-flow',
+      position: 'static',
+      height: '',
+      padding: 'auto',
+    });
+    // The wide arrangement's tabs: in the header, no bottom bar.
+    await expect(page.getByTestId('shell-header').getByTestId('tab-bar')).toHaveCount(1);
+    await expect(page.getByTestId('tab-bar')).toHaveCount(1);
+
+    await expect(page.getByTestId('list-card').first()).toBeVisible({ timeout: 30_000 });
+    await page.evaluate(() => window.scrollTo(0, 600));
+    await expect.poll(() => page.evaluate(() => Math.round(window.scrollY))).toBe(600);
+    // Gone: the whole viewport is the page's.
+    expect(await headerBottom(page)).toBeLessThanOrEqual(0);
+  });
+
+  test('a route change focuses the heading, on screen and clear of the header', async ({ page }) => {
+    await page.goto('/library');
+    await shortReady(page);
+    await expect(page.getByTestId('list-card').first()).toBeVisible({ timeout: 30_000 });
+    await page.evaluate(() => window.scrollTo(0, 800));
+
+    await page.getByTestId('tab-link').filter({ hasText: 'Practice' }).click();
+    await expect(page.locator('[data-route="/practice"]')).toHaveCount(1);
+    await expect
+      .poll(() => page.evaluate(() => document.activeElement?.hasAttribute('data-route-heading')))
+      .toBe(true);
+    const box = await focusedBox(page);
+    expect(box, 'the focused heading has no box').not.toBeNull();
+    expect(box!.top).toBeGreaterThanOrEqual(0);
+    await expectFocusClear(page, 'the Practice heading');
+  });
+
+  /**
+   * A real click on a link that is on screen at depth — a list, far down
+   * Library — and Back. That is the path a learner can take here. What they
+   * cannot do at this height is press a tab from depth without scrolling to it
+   * first (the header scrolls away, by design), so Back after a *tab* returns
+   * to wherever they scrolled up to; HANDOFF.md records that trade.
+   */
+  test('Back from a list opened deep in Library restores the offset, and Tab lands on screen', async ({
+    page,
+  }) => {
+    await page.goto('/library');
+    await shortReady(page);
+    const card = page.getByTestId('list-card').last();
+    await expect(card).toBeVisible({ timeout: 30_000 });
+    await scrollToBottom(page);
+    // The last list, at the top of the viewport: far down, and on screen.
+    const depth = await card.evaluate((node) => {
+      window.scrollTo(0, node.getBoundingClientRect().top + window.scrollY - 40);
+      return Math.round(window.scrollY);
+    });
+    expect(depth).toBeGreaterThan(300);
+    await expect.poll(() => page.evaluate(() => Math.round(window.scrollY))).toBe(depth);
+
+    await card.getByRole('link').first().click();
+    await expect(page).toHaveURL(/\/library\/lists\//);
+    // The list page, rendered — not only the URL. A navigation is a transition,
+    // and a Back pressed before it commits means the route never changed on
+    // screen, so nothing moves focus and the clicked link keeps it (1 run in
+    // 280 did exactly that before this wait).
+    await expect(page.getByTestId('list-breadcrumb')).toBeVisible();
+    await page.goBack();
+    await expect(page.locator('[data-route="/library"]')).toHaveCount(1);
+    await expect
+      .poll(() => page.evaluate(() => Math.round(window.scrollY)))
+      .toBeGreaterThan(depth - 5);
+    await expect
+      .poll(() => page.evaluate(() => document.activeElement?.hasAttribute('data-route-heading')))
+      .toBe(true);
+    // The heading was focused without moving the page.
+    expect(await page.evaluate(() => Math.round(window.scrollY))).toBeGreaterThan(depth - 5);
+
+    await page.keyboard.press('Tab');
+    const box = await focusedBox(page);
+    expect(box, 'Tab after Back focused nothing measurable').not.toBeNull();
+    expect(box!.top).toBeGreaterThanOrEqual(0);
+    await expectFocusClear(page, 'the first Tab after Back');
+  });
+
+  test('Tab and Shift+Tab through Library keep focus on screen', async ({ page }) => {
+    await page.goto('/library');
+    await shortReady(page);
+    await expect(page.getByTestId('list-card').first()).toBeVisible({ timeout: 30_000 });
+    await page.evaluate(() =>
+      document.querySelector<HTMLElement>('[data-route-heading]')?.focus(),
+    );
+    let deepest = 0;
+    for (let press = 0; press < 40; press += 1) {
+      await page.keyboard.press('Tab');
+      const box = await focusedBox(page);
+      if (box && !box.inHeader) {
+        expect(box.top, `Tab #${press + 1}: ${box.label} is above the viewport`).toBeGreaterThanOrEqual(-0.5);
+      }
+      await expectFocusClear(page, `Tab #${press + 1}`);
+      deepest = Math.max(deepest, await page.evaluate(() => window.scrollY));
+    }
+    expect(deepest).toBeGreaterThan(390);
+    for (let press = 0; press < 40; press += 1) {
+      await page.keyboard.press('Shift+Tab');
+      const box = await focusedBox(page);
+      if (box && !box.inHeader) {
+        expect(box.top, `Shift+Tab #${press + 1}: ${box.label} is above the viewport`).toBeGreaterThanOrEqual(-0.5);
+      }
+      await expectFocusClear(page, `Shift+Tab #${press + 1}`);
+    }
+  });
+
+  test('the header pins and unpins as the viewport crosses the height', async ({ page }) => {
+    await page.goto('/library');
+    await shortReady(page);
+    await page.setViewportSize({ width: 844, height: 720 });
+    await expect(page.getByTestId('wide-shell')).toHaveAttribute('data-header', 'pinned');
+    await expect.poll(async () => (await headerMode(page)).position).toBe('fixed');
+    await expect.poll(async () => (await headerMode(page)).height).not.toBe('');
+    await page.setViewportSize({ width: 844, height: 390 });
+    await expect(page.getByTestId('wide-shell')).toHaveAttribute('data-header', 'in-flow');
+    await expect.poll(async () => (await headerMode(page)).height).toBe('');
+    expect((await headerMode(page)).position).toBe('static');
+  });
+});
+
+test.describe("Look up's answer panel is never cut off at the bottom", () => {
+  /**
+   * A lookup for `the` is the tallest result list the app has, so the answer
+   * panel's column runs far below the viewport and the panel has room to
+   * stick; the entry and its answer beside it are taller than what is left of
+   * a 1280×600 viewport under the header. Pinned at that height (above
+   * `PIN_QUERY`).
+   */
+  test.use({ viewport: { width: 1280, height: 600 } });
+
+  test('stuck below the header, the panel ends inside the viewport and scrolls to its last line', async ({
+    page,
+  }) => {
+    await page.goto('/?q=the');
+    await wideReady(page);
+    await expect(page.getByTestId('wide-shell')).toHaveAttribute('data-header', 'pinned');
+    await expect(page.getByTestId('lookup-input')).toHaveValue('the');
+    await page.getByTestId('search-result').first().click();
+    await expect(page.getByTestId('entry-detail')).toBeVisible();
+    // Let the answer arrive, so the panel is at its tallest.
+    await expect(page.getByTestId('ask-panel')).not.toHaveAttribute('data-ask-state', 'thinking', {
+      timeout: 30_000,
+    });
+    const column = page.getByTestId('lookup-panel-column');
+
+    // Scroll to where the panel is stuck: its column's top above the sticking
+    // point, and its column's bottom still below the viewport. Past the end of
+    // the column a sticky box scrolls away with it, by design.
+    const at = await column.evaluate((node) => {
+      const cell = node.parentElement!.getBoundingClientRect();
+      const top = cell.top + window.scrollY;
+      const bottom = cell.bottom + window.scrollY;
+      const target = top + 200;
+      window.scrollTo(0, target);
+      return { target, stuckRoom: bottom - target - window.innerHeight };
+    });
+    expect(at.stuckRoom, 'the column ends inside the viewport; nothing is stuck').toBeGreaterThan(0);
+    await expect.poll(() => page.evaluate(() => Math.round(window.scrollY))).toBe(Math.round(at.target));
+
+    const geometry = await column.evaluate((node) => {
+      const rect = node.getBoundingClientRect();
+      const header = document.querySelector('[data-testid="shell-header"]')!.getBoundingClientRect();
+      return {
+        top: rect.top,
+        bottom: rect.bottom,
+        headerBottom: header.bottom,
+        viewport: window.innerHeight,
+        overflows: node.scrollHeight > node.clientHeight + 1,
+      };
+    });
+    // Stuck: just below the header, not under it…
+    expect(geometry.top).toBeGreaterThanOrEqual(geometry.headerBottom - 0.5);
+    expect(geometry.top).toBeLessThanOrEqual(geometry.headerBottom + 24);
+    // …and its bottom on screen, which is the whole of the fix.
+    expect(geometry.bottom).toBeLessThanOrEqual(geometry.viewport + 0.5);
+    // The case means something only if the panel is taller than its room.
+    expect(geometry.overflows, 'the panel fits without scrolling; pick a taller entry').toBe(true);
+
+    // Its last line is reachable: scrolled to its end, the panel's last
+    // element is inside the viewport.
+    const last = await column.evaluate((node) => {
+      node.scrollTop = node.scrollHeight;
+      const all = node.querySelectorAll<HTMLElement>('*');
+      const rect = all[all.length - 1]!.getBoundingClientRect();
+      return { bottom: rect.bottom, viewport: window.innerHeight };
+    });
+    expect(last.bottom).toBeLessThanOrEqual(last.viewport + 0.5);
+
+    // A new pick starts at the panel's top, not where the last answer was
+    // left scrolled — or the new headword is hidden above the visible area.
+    expect(await column.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
+    await page.getByTestId('search-result').nth(1).click();
+    await expect.poll(() => column.evaluate((node) => node.scrollTop)).toBe(0);
+
+    // And print undoes the cap: a page is not a viewport, and a scroller
+    // prints only its first screenful.
+    await page.emulateMedia({ media: 'print' });
+    const printed = await column.evaluate((node) => {
+      const style = getComputedStyle(node);
+      return { maxHeight: style.maxHeight, overflowY: style.overflowY };
+    });
+    expect(printed).toEqual({ maxHeight: 'none', overflowY: 'visible' });
   });
 });

@@ -159,6 +159,50 @@ export function unavailableReason(error: unknown): AskUnavailableReason {
   return 'server';
 }
 
+/**
+ * A failure that happened **on the wire**: the request itself, or reading the
+ * body of a response that did arrive. Only these are allowed to reach
+ * `unavailableReason`, whose `TypeError` → `offline` rule is right about what
+ * `fetch` rejects with and wrong about everything else — a `TypeError` thrown
+ * by this app's own code (a bad read of an entry, a grounding bug) is not the
+ * network, and calling it "offline" puts a retry beside a failure no retry can
+ * fix and tells the learner their connection is to blame for ours.
+ * `lib/api/availability.ts`'s `apiProblemOf` draws the same line for the card
+ * back.
+ */
+class WireFailure extends Error {
+  constructor(readonly original: unknown) {
+    super('the request did not complete', { cause: original });
+    this.name = 'WireFailure';
+  }
+}
+
+/**
+ * Run one network step and mark what it throws as the network's. A
+ * `SyntaxError` is the one exception: a body that arrived and is not JSON is a
+ * server that answered, badly, not a connection that failed.
+ */
+async function onTheWire<T>(step: () => Promise<T>): Promise<T> {
+  try {
+    return await step();
+  } catch (error) {
+    if (error instanceof SyntaxError) throw error;
+    throw new WireFailure(error);
+  }
+}
+
+/**
+ * The reason for a failure `ask()` caught: the network's own reading for a
+ * failure on the wire, and `server` for anything else — never a guess about the
+ * connection from an error the connection did not raise.
+ */
+export function caughtReason(error: unknown): AskUnavailableReason {
+  if (error instanceof WireFailure) return unavailableReason(error.original);
+  if (error instanceof ApiNotConfiguredError) return 'not-configured';
+  if (isTimeout(error)) return 'timeout';
+  return 'server';
+}
+
 /** The same, for a response that did arrive. */
 export function statusReason(status: number): AskUnavailableReason {
   if (status === 429) return 'rate-limited';
@@ -321,27 +365,34 @@ export async function ask(input: AskInput, options: AskOptions = {}): Promise<As
     const fromSearch = await mergedSearch(store, query);
     let candidates: string[] = [];
     if (await needsProposals(store, query)) {
-      candidates = await propose(fetchImpl, info, query, context, signal);
+      // `propose` swallows its own failures and rethrows only a caller's abort
+      // or deadline, both of which came off its fetch.
+      candidates = await onTheWire(() => propose(fetchImpl, info, query, context, signal));
     }
     const retrieved = mergeRetrieved(fromSearch, await candidateEntries(store, candidates));
 
     // 3 — the answer. `toRetrieved` is what makes the six-field projection true
     // at runtime: assignability is a compile-time fact and `JSON.stringify` is
     // not, so without it the whole `Entry` would go on the wire.
-    const res = await fetchImpl(ASK_ANSWER_PATH, {
-      method: 'POST',
-      ...(signal ? { signal } : {}),
-      headers: { 'content-type': 'application/json', accept: 'application/json' },
-      body: JSON.stringify({
-        query,
-        ...(context ? { context } : {}),
-        profile,
-        dictVersion: dictVersion(),
-        retrieved: retrieved.map(toRetrieved),
-      }),
+    // The body is built outside the wire step: a throw while building it is
+    // this app's, not the network's.
+    const request = JSON.stringify({
+      query,
+      ...(context ? { context } : {}),
+      profile,
+      dictVersion: dictVersion(),
+      retrieved: retrieved.map(toRetrieved),
     });
+    const res = await onTheWire(() =>
+      fetchImpl(ASK_ANSWER_PATH, {
+        method: 'POST',
+        ...(signal ? { signal } : {}),
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: request,
+      }),
+    );
     if (!res.ok) return await refusal(res);
-    const body = (await res.json()) as AskAnswerResponse;
+    const body = (await onTheWire(() => res.json())) as AskAnswerResponse;
 
     /**
      * The body is checked for *shape* before it is grounded, and the reason is
@@ -404,11 +455,12 @@ export async function ask(input: AskInput, options: AskOptions = {}): Promise<As
       cached: false,
       fallback,
     };
-  } catch (error) {
+  } catch (caught) {
+    const error = caught instanceof WireFailure ? caught.original : caught;
     if (isAbort(error)) throw error;
     return {
       state: 'unavailable',
-      reason: unavailableReason(error),
+      reason: caughtReason(caught),
       message: isTimeout(error)
         ? 'The ask took too long and was given up on.'
         : 'The ask panel could not answer that one.',

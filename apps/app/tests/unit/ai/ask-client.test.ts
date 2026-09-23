@@ -20,7 +20,7 @@
  * transport (so no model is called and every failure mode is reachable) and the
  * repository (so the cache is a `Map` and Dexie stays out of a node suite).
  */
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   ask,
@@ -115,7 +115,7 @@ interface TransportOptions {
   candidates?: string[];
   answer?: (retrieved: RetrievedEntry[]) => AskResponse;
   /** Override the whole reply for one path. */
-  reply?: (path: string) => Response | undefined;
+  reply?: (path: string) => Response | Promise<Response> | undefined;
   provider?: 'fake' | 'anthropic';
 }
 
@@ -307,6 +307,109 @@ describe('the two round trips', () => {
     expect(outcome.reason).toBe('server');
     expect(cache.size).toBe(0);
   });
+
+/**
+ * **`offline` is a claim about the network, so only the network may make it.**
+ * The catch in `ask()` used to hand every error to `unavailableReason`, whose
+ * `TypeError` → `offline` rule is right about what `fetch` rejects with and
+ * wrong about a `TypeError` from this app's own code — which then reached the
+ * learner as "Dictionary only — offline" with a retry that could never work.
+ */
+describe('what the caught failure is called', () => {
+  /**
+   * The same store, with one method throwing — from the moment `when()` says
+   * so, so a case can put the throw *after* a response has arrived.
+   */
+  function breaking(
+    method: 'entries' | 'search',
+    error: Error,
+    when: () => boolean = () => true,
+  ): DictStore {
+    // A proxy that binds every method to the real store, which keeps its
+    // private fields — `Object.create(store)` would not, and would fail on its
+    // own `TypeError` before the case under test was reached.
+    const real = store;
+    return new Proxy(real, {
+      get(target, key) {
+        const value = Reflect.get(target, key, target) as unknown;
+        if (typeof value !== 'function') return value;
+        const bound = (value as (...args: unknown[]) => unknown).bind(target);
+        if (key !== method) return bound;
+        return (...args: unknown[]) => (when() ? Promise.reject(error) : bound(...args));
+      },
+    });
+  }
+
+  it('calls a TypeError from our own code a server problem, not offline', async () => {
+    const net = transport();
+    const { repo } = fakeRepository();
+    const bug = new TypeError("Cannot read properties of undefined (reading 'map')");
+    const outcome = await ask(
+      { query: '打算' },
+      {
+        // Throws only once the answer is in: a response arrived, then our code failed.
+        store: breaking('entries', bug, () => net.calls.answer > 0),
+        repository: repo,
+        fetchImpl: net.fetchImpl,
+      },
+    );
+    if (outcome.state !== 'unavailable') throw new Error('expected unavailable');
+    expect(outcome.reason).toBe('server');
+    // It really got past the network: the answer was fetched, then our code threw.
+    expect(net.calls.answer).toBe(1);
+  });
+
+  it('does not borrow the browser\'s offline flag for an error the network did not raise', async () => {
+    // This file runs in Node, whose `navigator` has no `onLine` at all; a
+    // browser's reads `false` here while the device has no connection.
+    vi.stubGlobal('navigator', { onLine: false });
+    try {
+      const net = transport();
+      const { repo } = fakeRepository();
+      const outcome = await ask(
+        { query: '打算' },
+        { store: breaking('search', new TypeError('a bug')), repository: repo, fetchImpl: net.fetchImpl },
+      );
+      if (outcome.state !== 'unavailable') throw new Error('expected unavailable');
+      expect(outcome.reason).toBe('server');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('still calls a fetch that never reached a server offline', async () => {
+    const net = transport({
+      reply: (path) =>
+        path === ASK_ANSWER_PATH ? Promise.reject(new TypeError('Failed to fetch')) : undefined,
+    });
+    const { repo } = fakeRepository();
+    const outcome = await ask({ query: '打算' }, { store, repository: repo, fetchImpl: net.fetchImpl });
+    if (outcome.state !== 'unavailable') throw new Error('expected unavailable');
+    expect(outcome.reason).toBe('offline');
+  });
+
+  it('calls a body the connection dropped offline, and a body that is not JSON a server problem', async () => {
+    const dropped = {
+      ok: true,
+      status: 200,
+      json: () => Promise.reject(new TypeError('network error')),
+    } as unknown as Response;
+    const garbled = new Response('<html>captive portal</html>', {
+      status: 200,
+      headers: { 'content-type': 'text/html' },
+    });
+    for (const [reply, reason] of [
+      [dropped, 'offline'],
+      [garbled, 'server'],
+    ] as const) {
+      const net = transport({ reply: (path) => (path === ASK_ANSWER_PATH ? reply : undefined) });
+      const { repo } = fakeRepository();
+      const outcome = await ask({ query: '打算' }, { store, repository: repo, fetchImpl: net.fetchImpl });
+      if (outcome.state !== 'unavailable') throw new Error('expected unavailable');
+      expect(outcome.reason).toBe(reason);
+    }
+  });
+});
 
 // ---------------------------------------------------------------------------
 // What goes on the wire

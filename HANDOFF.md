@@ -13185,8 +13185,10 @@ reviewers. The tier counts are `0 / 2 / dropped`; no row lands in tier 1:
 
 - **Measured, it loses.** Pass 1 plus pass 2 is 31 + 79 ≈ **110 ms** for `to` and 33 + 81 ≈
   **114 ms** for `the`, against 92–95 ms today, before the second round trip.
-  - Pass 2 here fetched every candidate. Fetching only the survivors would save ~3 ms for `to` and
-    ~10 ms for `the`. Neither closes the gap: `the` would still be ≈104 ms against 93 ms today.
+  - Those runs fetched every candidate in pass 2. The committed test fetches **only the true
+    survivors**, which leans the probe toward the idea. The split still came out **+11.8 ms (`to`)
+    and +11.6 ms (`the`) slower than today**, before its extra round trip: medians of 9 runs, pass 2
+    at 80.3 and 71.4 ms.
 - **The ceiling is tight.** Any pass 2 that returns rank columns to TypeScript re-reads the
   survivors' share of the non-gloss cells. That caps the saving at (1 − survival) × ~61 ms: **≈2 ms
   for `to` and ≈7 ms for `the`**. That cap sits inside run-to-run noise, and pass 2's own costs have
@@ -13341,3 +13343,13 @@ It also ran `tests/unit/dict`: 441 tests, all passed. Fixed from it:
   runner trips the ceiling, lever 1 is the cheapest real fix.
 
 ### Gates
+
+All run on this branch:
+- `pnpm lint`, `pnpm typecheck` and `pnpm build`: clean.
+- `pnpm test`: **2,178** app tests and **103** server tests passed.
+- `pnpm e2e`: **344 passed** in 15.2 min, run on the first commit. In that run the pinned searches
+  averaged 162 ms (`to`) and 153 ms (`the`) against the 200 ms ceiling.
+- `pnpm smoke --no-api`: **41 ok**, with 6 API cases skipped and reported as skipped.
+
+The review fixes came after that run and changed only the new record test, comments and this file.
+So `tests/e2e/d/dict-wasm.spec.ts` was re-run in full against the same build: **15/15 passed**.

@@ -30,6 +30,9 @@ import { expect, test, type Page } from '@playwright/test';
 
 import { MANIFEST_FILE, type DictManifest } from '../../../lib/dict/artifact';
 import { RANK_COLUMNS } from '../../../lib/dict/query/entries';
+import { glossCandidates } from '../../../lib/dict/query/gloss';
+import { glossTier, lemmas } from '../../../lib/dict/rank';
+import type { DictEntry } from '../../../lib/dict/types';
 import { nodeRunner } from '../../../lib/dict/runners/node';
 import { SqliteDictStore } from '../../../lib/dict/sqlite-store';
 import { workspaceRoot } from '../../../lib/server/roots';
@@ -403,25 +406,31 @@ test.describe('the OPFS dictionary', () => {
    * The two-pass gloss projection, measured and closed (HANDOFF.md,
    * `claude/build-dict-perf`).
    *
-   * The idea was to read only what `glossTier` reads in pass 1 and fetch the
-   * rest for the survivors in pass 2. Two facts close it, and this records
-   * both so they can be re-checked rather than re-argued:
+   * The idea: pass 1 reads only what `glossTier` reads, and pass 2 fetches
+   * the survivors' rank columns. Two facts close that form of it, and this
+   * test records both, so they can be re-checked rather than re-argued.
    *
-   *  1. **The cost is per cell, not per byte.** `glosses` is about 60% of the
-   *     bytes and about 14 ms of the ~90 ms statement (container, 2026-09-23);
-   *     the four one-byte integer columns together cost twice that. So pass 1
+   *  1. **The cost is per cell, not per byte.** `glosses` carries most of the
+   *     text, yet costs about what the short `id` cell costs, and the four
+   *     integer columns together cost twice either. So pass 1
    *     (`rowid, glosses`) is cheap, but it saves only the cells pass 2 then
    *     has to read.
    *  2. **Almost every row survives.** `glossTier` keeps 97% of `to`'s 5,000
    *     candidates and 88% of `the`'s, and ranking needs every rank column of
-   *     every survivor — `total` counts their groups and the sort reads their
-   *     band and rank. Pass 2 is therefore nearly the whole projection again,
-   *     by random rowid lookup, and costs more than the columns it replaces.
+   *     every survivor: `total` counts their groups, and the sort reads their
+   *     band and rank. So pass 2 is nearly the whole projection again, and it
+   *     pays the per-row floor (stepping, rowid, a row object) a second time.
    *
-   * The `packed` probe is the lever the per-cell finding points at instead:
-   * the same nine values in one cell. Record only — nothing asserts on it.
-   * Medians rather than means, because one scheduler stall on a shared
-   * container moves a five-sample mean by several milliseconds.
+   * Pass 2 here fetches only the true survivors, computed below with the real
+   * `glossTier` on `node:sqlite`, so the probe errs toward the idea rather than
+   * against it. What it does *not* cover is a pass 2 that ranks in SQL and
+   * returns only the page; HANDOFF.md records that one as still open.
+   *
+   * The `packed` probe is a different lever the per-cell finding points at:
+   * the same nine values in one cell. Record only; nothing asserts on
+   * timings. Medians rather than means, and p90s beside them, because the
+   * spread on a shared container is skewed: the tail runs ~10 ms above the
+   * median.
    */
   test('records why a two-pass gloss projection cannot pay', async ({ page }) => {
     await openHarness(page);
@@ -447,21 +456,32 @@ test.describe('the OPFS dictionary', () => {
         'e.hsk_band, e.freq_rank, json(e.glosses)) AS r',
     };
     const result: Record<string, unknown> = {};
+    const oracle = new DatabaseSync(ARTIFACT, { readOnly: true });
     for (const term of ['to', 'the']) {
       const match = `"${term}"`;
-      const [candidateRows] = (await page.evaluate(
-        (batch) => window.__dictWasm!.sql(batch),
-        [{ sql: `SELECT e.rowid ${from} LIMIT 5000`, params: [match] }],
-      )) as { rowid: number }[][];
+      // The survivors, by the real ranking function over the real statement.
+      const candidates = glossCandidates(match);
+      const tiers: Record<string, number> = {};
+      const survivors: number[] = [];
+      const rows = oracle.prepare(candidates.sql).all(...(candidates.params ?? [])) as {
+        rowid: number;
+        glosses: string;
+      }[];
+      for (const row of rows) {
+        const tier = glossTier(
+          { glosses: JSON.parse(row.glosses) as string[] } as DictEntry,
+          lemmas(term),
+        );
+        tiers[String(tier)] = (tiers[String(tier)] ?? 0) + 1;
+        if (Number.isFinite(tier)) survivors.push(row.rowid);
+      }
       const probes: Record<string, { sql: string; params: (string | number)[] }> = {};
       for (const [name, columns] of Object.entries(shapes)) {
         probes[name] = { sql: `SELECT ${columns} ${from} LIMIT 5000`, params: [match] };
       }
-      // Every candidate rather than the true survivors: the survivors are
-      // 88–97% of them, and a smaller IN list would flatter pass 2.
-      probes['pass 2 — RANK_COLUMNS by rowid, every candidate'] = {
+      probes['pass 2 — RANK_COLUMNS by rowid, survivors only'] = {
         sql: `SELECT ${rank} FROM entries WHERE rowid IN (SELECT value FROM json_each(?))`,
-        params: [JSON.stringify(candidateRows.map((row) => row.rowid))],
+        params: [JSON.stringify(survivors)],
       };
       const samples = await page.evaluate(
         async ({ probes: batch, rounds }) => {
@@ -485,14 +505,29 @@ test.describe('the OPFS dictionary', () => {
         { probes, rounds: 9 },
       );
       const medians: Record<string, number> = {};
+      const p90s: Record<string, number> = {};
       for (const [name, times] of Object.entries(samples)) {
         const sorted = [...times].sort((a, b) => a - b);
         medians[name] = Number(sorted[sorted.length >> 1].toFixed(1));
+        p90s[name] = Number(sorted[Math.floor(sorted.length * 0.9)].toFixed(1));
       }
-      result[term] = medians;
+      const split =
+        medians['pass 1 — rowid, glosses'] + medians['pass 2 — RANK_COLUMNS by rowid, survivors only'];
+      result[term] = {
+        candidates: rows.length,
+        tiers,
+        survivors: survivors.length,
+        // Positive means the split is slower than today, before its extra round trip.
+        splitMinusToday: Number((split - medians['today — RANK_COLUMNS + glosses']).toFixed(1)),
+        medians,
+        p90s,
+      };
     }
+    oracle.close();
     record.twoPassProjection = {
-      note: 'median ms of 9 round-robin runs, one statement per probe, LIMIT 5000, container Chromium',
+      note:
+        'median and p90 ms of 9 round-robin runs, one statement per probe, LIMIT 5000, container ' +
+        'Chromium; tiers from glossTier on node:sqlite',
       probes: result,
     };
     write();

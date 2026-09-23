@@ -14167,3 +14167,14 @@ None of these is a defect, and nothing here was changed. Each has a screenshot u
 `components/stats/primitives.tsx`, `components/gallery/gallery.tsx`,
 `app/settings/attribution.tsx`, `lib/srs/session.ts`, `lib/stores/review.ts`, `lib/dev-hint.ts`
 (new).
+
+### Gates
+
+All run on the final tree:
+- `pnpm lint`, `pnpm typecheck` and `pnpm build`: clean.
+- `pnpm test`: **2,256** app tests and **103** server tests passed.
+- `pnpm e2e`: **360 passed** in 12.6 min.
+  - The run before the review fixes was 358 passed and 1 failed: `core/theme.spec.ts` still
+    pinned `--new` to `#8a6414`. It now asserts `#886211`.
+- `pnpm smoke --no-api`: **41 ok**, with 6 API cases skipped and reported as skipped.
+- `core/first-run-audit.spec.ts` with `--repeat-each=8`: **64/64**.

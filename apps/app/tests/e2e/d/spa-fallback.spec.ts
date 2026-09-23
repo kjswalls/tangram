@@ -23,7 +23,8 @@ test.describe('the SPA fallback', () => {
     expect(response?.status()).toBe(200);
     // The shell rendered, which means index.html was served AND its script ran.
     await expect(page.getByRole('navigation', { name: 'Main' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Library' })).toBeVisible();
+    // A list page, headed with the list's name — and there is no such list.
+    await expect(page.getByRole('heading', { level: 1, name: 'List not found' })).toBeVisible();
   });
 
   test("the deep route's asset URLs resolve from the root, not from its path", async ({ page }) => {

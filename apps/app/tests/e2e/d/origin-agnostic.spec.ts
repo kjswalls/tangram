@@ -315,7 +315,8 @@ test.describe('the default build, on an origin it was not built for', () => {
     // the half a single-origin run cannot see.
     await page.goto(`http://127.0.0.1:${SECOND_PORT}/library/lists/does-not-exist-yet`);
     await expect(page.getByRole('navigation', { name: 'Main' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Library' })).toBeVisible();
+    // A list page, headed with the list's name — and there is no such list.
+    await expect(page.getByRole('heading', { level: 1, name: 'List not found' })).toBeVisible();
 
     const strays = urls.filter((url) => new URL(url).origin === SUITE_ORIGIN);
     expect(strays, 'nothing may be fetched from the origin the build was made on').toEqual([]);
@@ -423,7 +424,8 @@ test.describe(`the ${PREFIX}/ build, behind its prefix`, () => {
     // instead and the fallback answers the script with HTML and nothing boots.
     await page.goto(`http://127.0.0.1:${SUBPATH_PORT}/sub/library/lists/does-not-exist-yet`);
     await expect(page.getByRole('navigation', { name: 'Main' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Library' })).toBeVisible();
+    // A list page, headed with the list's name — and there is no such list.
+    await expect(page.getByRole('heading', { level: 1, name: 'List not found' })).toBeVisible();
   });
 
   test('fetches its code, its fonts and its wasm from under the prefix', async ({ page }) => {

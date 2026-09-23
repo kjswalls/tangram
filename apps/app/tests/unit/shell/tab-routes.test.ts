@@ -174,10 +174,15 @@ describe('the seven routes are gone', () => {
     // listens on, and holds each AI surface to the state it now shows — and
     // counts every request the no-API build makes, so "the rest of the app never
     // touches the API" is asserted rather than inferred.
+    // The wide-shell phase adds one, a spec and navigating:
+    // `core/wide-shell.spec.ts` (the pinned header — the tab bar in reach at the
+    // bottom of the longest screens, focus never under the header after a route
+    // change or through Tab and Shift+Tab, and each list announced by its own
+    // name).
     expect({ files: files.length, specs: specs.length, navigating: navigating.length }).toEqual({
-      files: 57,
-      specs: 49,
-      navigating: 50,
+      files: 58,
+      specs: 50,
+      navigating: 51,
     });
   });
 

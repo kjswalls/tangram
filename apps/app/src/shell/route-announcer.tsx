@@ -9,7 +9,7 @@
  * changed. W8 calls it "not optional polish; it is the thing SPAs are notorious
  * for getting wrong".
  *
- * Five decisions in here that the plan does not make:
+ * Six decisions in here that the plan does not make:
  *
  * - **It keys on `pathname`, never on the whole location.** `?q=` changes the
  *   location on every settled keystroke (`src/url/lookup-query.ts`), and an
@@ -28,11 +28,20 @@
  *   opened with focus yanked to the heading. Found by W8a's adversarial review;
  *   production React made it invisible, and `tests/unit/render.tsx` has no
  *   StrictMode, so nothing else would have.
- * - **The same name twice still announces.** `/library` and one list inside it
- *   are both headed "Library", and a live region speaks on *mutation*: writing
- *   the same string is no mutation and says nothing at all. So the region is
- *   cleared first and filled a tick later, which is the standard way to repeat
- *   an announcement.
+ * - **The same name twice still announces.** A live region speaks on
+ *   *mutation*: writing the same string is no mutation and says nothing at all.
+ *   So the region is cleared first and filled a tick later, which is the
+ *   standard way to repeat an announcement. (Every list used to be headed
+ *   "Library", which is how this was found; each list is headed with its own
+ *   name now, but two routes can still share one — two lists called "Verbs".)
+ * - **A heading whose name is still loading is waited for.** A list's name is
+ *   in IndexedDB and arrives a read after the route renders, so at the commit
+ *   the heading holds nothing — or, moving straight from one list to another,
+ *   the *previous* list's name. `PageHeader` marks that heading `aria-busy`,
+ *   and the announcement waits for the mark to clear, for at most
+ *   `HEADING_WAIT_MS`. Focus does not wait: it moves to the heading at once,
+ *   because the element is the same one either way and a screen reader left
+ *   on the tab that was just pressed is the trap this file exists for.
  * - **A deliberate navigation can claim focus, and the claim is a deferral, not
  *   a cancellation.** `Mod+K` from another tab navigates to Look up *and*
  *   focuses the box; both this effect and `focusLookupInput`'s frame loop then
@@ -90,6 +99,15 @@ export const ANNOUNCE_DELAY_MS = 60;
 export const FOCUS_CLAIM_GRACE_MS = 200;
 
 /**
+ * How long the announcement waits for a busy heading's name. A list's name is
+ * one IndexedDB read; this is the ceiling for a slow device, after which the
+ * route's generic name is spoken rather than nothing.
+ */
+export const HEADING_WAIT_MS = 2000;
+
+const isBusy = (heading: HTMLElement | null) => heading?.getAttribute('aria-busy') === 'true';
+
+/**
  * Set by whoever is about to navigate *and* move focus themselves. Read once,
  * by the next route change, and cleared there whether or not it matched — a
  * claim that outlived its navigation would silence the announcer's focus move
@@ -141,13 +159,50 @@ export function RouteAnnouncer() {
     }
 
     // The announcement is not affected by the claim: whoever pressed the key
-    // still needs to hear which route they are on.
-    const name = heading?.textContent?.trim();
-    const next = name && name !== '' ? name : fallbackRouteName(pathname);
+    // still needs to hear which route they are on. The heading is read when it
+    // is spoken, not now — see `HEADING_WAIT_MS` — and re-found then, in case
+    // the view replaced the element while its name loaded.
+    const announce = () => {
+      const current = routeHeading();
+      const name = isBusy(current) ? undefined : current?.textContent?.trim();
+      setAnnounced(name && name !== '' ? name : fallbackRouteName(pathname));
+    };
+
+    let observer: MutationObserver | undefined;
+    let ceiling: ReturnType<typeof setTimeout> | undefined;
+    const stopWaiting = () => {
+      observer?.disconnect();
+      observer = undefined;
+      if (ceiling !== undefined) clearTimeout(ceiling);
+      ceiling = undefined;
+    };
+
     setAnnounced('');
-    const timer = setTimeout(() => setAnnounced(next), ANNOUNCE_DELAY_MS);
+    const timer = setTimeout(() => {
+      const main = document.querySelector('main');
+      if (!isBusy(routeHeading()) || !main || typeof MutationObserver !== 'function') {
+        announce();
+        return;
+      }
+      observer = new MutationObserver(() => {
+        if (isBusy(routeHeading())) return;
+        stopWaiting();
+        announce();
+      });
+      observer.observe(main, {
+        subtree: true,
+        childList: true,
+        attributes: true,
+        attributeFilter: ['aria-busy'],
+      });
+      ceiling = setTimeout(() => {
+        stopWaiting();
+        announce();
+      }, HEADING_WAIT_MS);
+    }, ANNOUNCE_DELAY_MS);
     return () => {
       clearTimeout(timer);
+      stopWaiting();
       if (grace !== undefined) clearTimeout(grace);
     };
   }, [pathname]);

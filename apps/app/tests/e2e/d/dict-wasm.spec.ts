@@ -29,6 +29,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { expect, test, type Page } from '@playwright/test';
 
 import { MANIFEST_FILE, type DictManifest } from '../../../lib/dict/artifact';
+import { RANK_COLUMNS } from '../../../lib/dict/query/entries';
 import { nodeRunner } from '../../../lib/dict/runners/node';
 import { SqliteDictStore } from '../../../lib/dict/sqlite-store';
 import { workspaceRoot } from '../../../lib/server/roots';
@@ -241,8 +242,11 @@ test.describe('the OPFS dictionary', () => {
    * content words a learner actually types. The distribution is in
    * `lib/dict/query/gloss.ts` and pinned by
    * `tests/unit/dict/gloss-order.test.ts`; `HANDOFF.md` carries the reasoning.
-   * **This pin is therefore permanent**, not provisional — it closes only if the
-   * two-pass projection follow-up in HANDOFF is built and turns out to pay.
+   * **This pin is therefore permanent**, not provisional. The two-pass
+   * projection that HANDOFF once named as the way to close it was measured on
+   * `claude/build-dict-perf` and cannot pay (the record test below says why);
+   * what is left is a one-cell projection plus `glossTier`'s own cost, and
+   * neither alone brings these two queries under 50 ms.
    */
   const KNOWN_BREACH: Record<string, number> = {
     // Measured at 89–100 ms across runs when this phase closed, with the
@@ -393,6 +397,105 @@ test.describe('the OPFS dictionary', () => {
     };
     write();
     expect(counts[0][0].n).toBeGreaterThan(5000);
+  });
+
+  /**
+   * The two-pass gloss projection, measured and closed (HANDOFF.md,
+   * `claude/build-dict-perf`).
+   *
+   * The idea was to read only what `glossTier` reads in pass 1 and fetch the
+   * rest for the survivors in pass 2. Two facts close it, and this records
+   * both so they can be re-checked rather than re-argued:
+   *
+   *  1. **The cost is per cell, not per byte.** `glosses` is about 60% of the
+   *     bytes and about 14 ms of the ~90 ms statement (container, 2026-09-23);
+   *     the four one-byte integer columns together cost twice that. So pass 1
+   *     (`rowid, glosses`) is cheap, but it saves only the cells pass 2 then
+   *     has to read.
+   *  2. **Almost every row survives.** `glossTier` keeps 97% of `to`'s 5,000
+   *     candidates and 88% of `the`'s, and ranking needs every rank column of
+   *     every survivor — `total` counts their groups and the sort reads their
+   *     band and rank. Pass 2 is therefore nearly the whole projection again,
+   *     by random rowid lookup, and costs more than the columns it replaces.
+   *
+   * The `packed` probe is the lever the per-cell finding points at instead:
+   * the same nine values in one cell. Record only — nothing asserts on it.
+   * Medians rather than means, because one scheduler stall on a shared
+   * container moves a five-sample mean by several milliseconds.
+   */
+  test('records why a two-pass gloss projection cannot pay', async ({ page }) => {
+    await openHarness(page);
+    expect((await open(page, { cacheSize: 0 })).ok).toBe(true);
+    const e = (columns: string) =>
+      columns
+        .split(', ')
+        .map((column) => `e.${column}`)
+        .join(', ');
+    // Imported, not re-typed: the probe must be the projection search sends.
+    const rank = RANK_COLUMNS;
+    const from = 'FROM gloss_fts f JOIN entries e ON e.rowid = f.rowid WHERE f.gloss_fts MATCH ?';
+    const shapes: Record<string, string> = {
+      'rowid only': e('rowid'),
+      'pass 1 — rowid, glosses': e('rowid, glosses'),
+      'rowid, id': e('rowid, id'),
+      'rowid, simp, trad': e('rowid, simp, trad'),
+      'rowid + the four integers': e('rowid, is_variant, proper_noun, hsk_band, freq_rank'),
+      'RANK_COLUMNS, no glosses': e(rank),
+      'today — RANK_COLUMNS + glosses': e(`${rank}, glosses`),
+      'packed — the same nine values as one json_array cell':
+        'json_array(e.rowid, e.id, e.simp, e.trad, e.is_variant, e.proper_noun, ' +
+        'e.hsk_band, e.freq_rank, json(e.glosses)) AS r',
+    };
+    const result: Record<string, unknown> = {};
+    for (const term of ['to', 'the']) {
+      const match = `"${term}"`;
+      const [candidateRows] = (await page.evaluate(
+        (batch) => window.__dictWasm!.sql(batch),
+        [{ sql: `SELECT e.rowid ${from} LIMIT 5000`, params: [match] }],
+      )) as { rowid: number }[][];
+      const probes: Record<string, { sql: string; params: (string | number)[] }> = {};
+      for (const [name, columns] of Object.entries(shapes)) {
+        probes[name] = { sql: `SELECT ${columns} ${from} LIMIT 5000`, params: [match] };
+      }
+      // Every candidate rather than the true survivors: the survivors are
+      // 88–97% of them, and a smaller IN list would flatter pass 2.
+      probes['pass 2 — RANK_COLUMNS by rowid, every candidate'] = {
+        sql: `SELECT ${rank} FROM entries WHERE rowid IN (SELECT value FROM json_each(?))`,
+        params: [JSON.stringify(candidateRows.map((row) => row.rowid))],
+      };
+      const samples = await page.evaluate(
+        async ({ probes: batch, rounds }) => {
+          const names = Object.keys(batch);
+          const times: Record<string, number[]> = {};
+          for (const name of names) {
+            times[name] = [];
+            await window.__dictWasm!.sql([batch[name] as never]);
+          }
+          // Round-robin, so a slow stretch of the container lands on every
+          // probe rather than on whichever one happened to be running.
+          for (let round = 0; round < rounds; round += 1) {
+            for (const name of names) {
+              const started = performance.now();
+              await window.__dictWasm!.sql([batch[name] as never]);
+              times[name].push(performance.now() - started);
+            }
+          }
+          return times;
+        },
+        { probes, rounds: 9 },
+      );
+      const medians: Record<string, number> = {};
+      for (const [name, times] of Object.entries(samples)) {
+        const sorted = [...times].sort((a, b) => a - b);
+        medians[name] = Number(sorted[sorted.length >> 1].toFixed(1));
+      }
+      result[term] = medians;
+    }
+    record.twoPassProjection = {
+      note: 'median ms of 9 round-robin runs, one statement per probe, LIMIT 5000, container Chromium',
+      probes: result,
+    };
+    write();
   });
 
   /**

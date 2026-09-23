@@ -8246,6 +8246,11 @@ change at all**, which is what makes it worth writing down. It is **not obviousl
 measured before anyone believes it**: `glosses` is plausibly most of the payload, and if it is, pass 1
 costs nearly what the single pass costs today and the second pass is pure addition. Nobody owns it.
 
+> **Measured and closed, 2026-09-23 (`claude/build-dict-perf`): it cannot pay, and not for the reason
+> above.** `glosses` is ~60% of the bytes but only ~14 ms of the statement — the cost is per *cell*,
+> and 88–97% of the candidates survive `glossTier`, so pass 2 re-reads nearly everything. See the
+> section of that name at the end of this file.
+
 ### The one change to a landed phase's code: `ORDER BY e.rowid` is gone from the gloss query
 
 `lib/dict/query/gloss.ts` no longer sorts. D3 put the clause there deliberately and wrote down why:
@@ -13068,3 +13073,169 @@ fail), header `sticky` (the real-click and tab-focus cases fail). Two cases were
 mutation-tested: the Back-then-Tab case, added after the reviews, and the list A→B case, whose limits
 are recorded above. The unit guards — announcer wait, per-id name, per-id error, name before
 members — were each mutation-tested the same way.
+
+## The two-pass gloss projection, measured and closed — `claude/build-dict-perf`, 2026-09-23
+
+**Result: it cannot win, so it was not built.** The only code change is comments; the rest is a
+new record-only e2e test and this section. `MAX_GLOSS_CANDIDATES` is untouched, `ORDER BY e.rowid`
+is still gone, no frozen surface was touched, and ranking cannot have moved because no query or
+ranking code changed. **The two `KNOWN_BREACH` pins for `to` and `the` stay**, at 200 ms, because
+neither query came in under 50 ms.
+
+D4 guessed the split might lose because `glosses` "is plausibly most of the payload". It is most of
+the *bytes*, but that is not why the split loses. It loses for two other reasons:
+
+1. **Marshalling cost is per cell, not per byte.** Four one-byte integer columns cost twice what
+   `glosses` does.
+2. **Nearly every candidate survives `glossTier`.** Ranking needs every rank column of every
+   survivor, so pass 2 is almost the whole projection again, fetched by the slower route.
+
+### How it was measured
+
+- **Setup:** the production `build:e2e` bundle served by `pnpm preview`, the container's Chromium,
+  the real 43.2 MB artifact in OPFS, the store opened with `cacheSize: 0`.
+- **What was timed:** each probe is one statement sent through `window.__dictWasm.sql()`. So each
+  number covers the worker, SQLite, per-cell `get()`, `narrow()` and the `postMessage` structured
+  clone. That is the path `search` actually pays.
+- **Sampling:** one warm-up per probe, then 25 rounds run round-robin across every probe, so a slow
+  stretch of the shared container lands on all of them. Four independent browser runs, plus a fifth
+  from the committed e2e test (9 rounds).
+- **How to read the tables:** each cell gives the range of the per-run **medians**. The p10–p90
+  spread within a run was typically ±3 ms around the median, with an occasional p90 tail of
+  +10–20 ms from scheduler stalls.
+
+**This container is slower than D4's**, by about 1.6–2× on every query, not just the gloss path.
+`search('打算')` is 4.7 ms here against D4's 2.9, `entries(50 ids)` 4.6 against 2.2, and
+`search('plan')` 9.6 against 7.1. So `search('to')` measures **155–171 ms** here against D4's
+89–100 ms. Compare proportions, not absolute numbers.
+
+All probes below are `FROM gloss_fts f JOIN entries e … MATCH ? LIMIT 5000`, except pass 2 and
+trip 2.
+
+| projection | `to` (ms) | `the` (ms) | Δ over rowid (`to`) |
+|---|---|---|---|
+| `rowid` only | 17.1–18.0 | 17.7–18.5 | — |
+| `rowid, id` | 29.1–30.3 | 30.3–31.7 | +12 (1 text cell) |
+| **`rowid, glosses` — pass 1** | **30.3–31.7** | **32.4–34.6** | **+13** (1 text cell, ~60% of the bytes) |
+| `rowid, simp, trad` | 36.6–39.8 | 38.0–39.9 | +20 (2 cells) |
+| `rowid` + the four integers | 45.1–46.3 | 44.0–46.5 | +28 (4 one-byte cells) |
+| `RANK_COLUMNS` (8, no glosses) | 77.0–79.4 | 77.6–81.0 | +60 |
+| **today — `RANK_COLUMNS` + `glosses`** | **89.4–94.8** | **92.8–95.9** | **+74** |
+| **pass 2 — `RANK_COLUMNS` `WHERE rowid IN (json_each(5,000))`** | **77.1–80.2** | **79.8–84.6** | — |
+| *packed — the same 9 values as one `json_array(…)` cell* | *35.6–37.5* | *39.0–40.6* | *+19* |
+| trip 2 — readings of the page's 50 headwords | 5.3 | 4.3 | — |
+
+The per-column increments add up: 13 + 12 + 20 + 28 = 73 ms, against 74 ms measured for today's
+projection minus rowid-only. So the model is roughly **7–10 ms per column per 5,000 rows**, with
+text a little dearer than integers and gloss length barely registering. For comparison, per row
+`glosses` averages 70–87 characters, `id` 14–19, `simp`/`trad` 2 each (measured in Node over the
+same rows).
+
+**Survivors**, from `glossTier` over the 5,000 candidates in Node. The tier counts are `0 / 2 /
+dropped` (no row landed in tier 1):
+
+| term | tier 0 | tier 2 | dropped | survive |
+|---|---|---|---|---|
+| `to` | 9 | 4,846 | 145 | **97%** |
+| `the` | 2 | 4,382 | 616 | **88%** |
+
+### Why the split cannot pay
+
+- **Measured, it loses.** Pass 1 plus pass 2 is 31 + 79 ≈ **110 ms** for `to` and 33 + 81 ≈
+  **114 ms** for `the`, against 92–95 ms today. That is before the second round trip's fixed cost.
+  Pass 2 here fetched every candidate rather than only the 88–97% that survive; at ~7–10 ms per
+  column per 5,000 rows, fetching only survivors would save a few milliseconds, nowhere near the
+  15–20 ms gap.
+- **Even an ideal pass 2 barely helps.** Suppose pass 2 cost only its share of the cells, riding the
+  FTS join as cheaply as today. The best case is then 31 + 0.97 × 61 ≈ 90 ms for `to`, saving ~2 ms,
+  and 33 + 0.88 × 62 ≈ 88 ms for `the`, saving ~6 ms. Both are inside run-to-run noise, and both
+  come before the extra statement and round trip.
+  - In practice pass 2 costs *more* than those cells (79 ms, not ~60). Random lookups by rowid
+    through an `IN` list are dearer than the join scan pass 1 already does.
+- **A tier-lazy pass 2 is also dead.** The idea: fetch rank columns only for the tiers the page
+  window reaches. But 4,846 of `to`'s rows are tier 2, so page 1 lands inside tier 2, and tier 2's
+  order depends on `quality`, `band` and `rank`, which are rank columns. `total` also needs the
+  group key (`simp`, `trad`) of every survivor.
+- **On the Capacitor bridge it is worse.** Pass 2 is a second bridge crossing in *both* directions:
+  about 30 kB of rowid list goes out as a JSON parameter, and ~4,400–4,850 rows of eight columns come
+  back. D2's round-trip budget at the top of `sqlite-store.ts` would have gone from two trips to
+  three for `search`. That budget table is unchanged because nothing was built.
+
+### Where `search('to')`'s time actually goes, and what is left to try
+
+This container, medians:
+
+- trip 1, the gloss statement: **~92 ms (~57%)**
+- trip 2: ~5 ms
+- JavaScript: ~60–70 ms, which is the 155–171 ms total minus the two trips
+
+The JavaScript does not show up in any SQL number. Split in Node (same V8, 30 runs, medians) over
+the same 5,000 rows:
+
+| step | `to` | `the` |
+|---|---|---|
+| `glossTier` | 49 ms | 52 ms |
+| `rowToRank` + `CandidateSet` + sort | 12 ms | 10 ms |
+| `JSON.parse` of `glosses` | 5 ms | 4 ms |
+
+So **the breach has two halves of similar size**, and no projection change closes it alone. Even if
+trip 1 cost only its rowid floor (17 ms), `search('to')` would be ~80 ms here. Two levers are left.
+Both are named, measured, and unowned:
+
+1. **Pack the projection into one cell.** Use
+   `json_array(e.rowid, e.id, …, json(e.glosses))`: the same nine values in one TEXT cell, parsed
+   once per row in TypeScript.
+   - Measured at 36–41 ms against 89–96 ms, with no ranking change and no extra round trip.
+   - The per-row `JSON.parse` already happens for `glosses`, so the JS side should not grow much.
+     That is not measured.
+   - It has to keep `narrow()`'s type guarantees; `json_array` emits integers as JSON numbers and
+     NULL as `null`.
+   - Unproven on the Capacitor bridge: a JSON string nested in the plugin's JSON reply is
+     double-escaped.
+   - On its own it would bring `search('to')` to roughly 100 ms here, or roughly 55–60 ms scaled to
+     D4's container. Still over the bar.
+2. **Make `glossTier` cheaper over 5,000 rows.** It re-tokenises and lemmatises every sense of every
+   candidate on every keystroke, and the result is a pure function of the gloss text and the query.
+   The obvious form is pre-lemmatised senses in the artifact. That changes the artifact and so is a
+   `data.md` D1 decision (the D1 schema is not frozen, per CLAUDE.md). Any form of it must leave
+   `rank.test.ts` and the D3 differential corpus byte-identical.
+
+Both would need the gloss oracle comparison run before and after, as this brief required for the
+two-pass split. Neither was built here, because this brief asked a narrower question and the
+answer to it was no.
+
+### Changes made
+
+- `tests/e2e/d/dict-wasm.spec.ts`:
+  - New test, **"records why a two-pass gloss projection cannot pay"**. It writes the per-column
+    probe table above into `test-results/d4-record.json` under `twoPassProjection` on every
+    `pnpm e2e`: medians of 9 round-robin runs, record-only, no assertions on timings, ~12 s. The
+    conclusion can therefore be re-checked on any machine instead of re-argued.
+  - The `KNOWN_BREACH` doc comment no longer says the pin closes "if the two-pass follow-up is
+    built and pays". The pin values are unchanged.
+- `lib/dict/query/gloss.ts`: the closing paragraph of `MAX_GLOSS_CANDIDATES`'s comment no longer
+  points at an "unowned follow-up".
+- D4's follow-up paragraph above has a short dated blockquote after it pointing here. Its own text
+  is untouched.
+
+### For the orchestrator
+
+- **`wave-zero.md` §10e's "The untried lever, named so it is not rediscovered" is now answered.**
+  That document is yours, so I left it alone. The answer is one sentence: measured, it cannot pay,
+  because the cost is per cell and 88–97% of candidates survive; see this section.
+- **The list importer's "untried lever"** (§8a's port, "a two-pass query, ranking on narrow columns
+  and fetching full rows for the survivors") is a different query and was **not** measured. The
+  per-cell finding bears on it: `resolve` hands every row it fetches back to its caller, so a split
+  there removes no cells either.
+- **The `to`/`the` pins have less headroom than they look.** On this container they measured
+  155–171 ms against the 200 ms ceiling, because the container is uniformly 1.6–2× slower than
+  D4's, not because of a gloss regression. Every other query is still under 50 ms here, and nothing
+  was loosened. If a slower runner ever trips the ceiling, check the other rows of the latency
+  table for the same multiplier before calling it a regression.
+
+### Gates
+
+Run on this branch: `pnpm lint`, `pnpm typecheck` and `pnpm build` clean. `pnpm test` passed
+**2,178** app tests and **103** server tests. `pnpm smoke --no-api` gave **41 ok**, with 6 API cases
+skipped and reported as skipped. The new record test and the latency test both passed alone against
+the built preview. The full `pnpm e2e` result follows in the next commit.

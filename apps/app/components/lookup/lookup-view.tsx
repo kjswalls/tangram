@@ -13,7 +13,7 @@
  * for a caller that wants something else there. Either way the dictionary body
  * renders and stays usable whatever the provider is doing (§3.4).
  */
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 
 import { EntryDetail } from '@/components/lookup/entry-detail';
 import { SearchResults } from '@/components/lookup/search-results';
@@ -72,6 +72,8 @@ export function LookupView({ askSlot }: { askSlot?: ReactNode }) {
   const select = useLookupStore((state) => state.select);
 
   const [loadingMore, setLoadingMore] = useState(false);
+  /** The panel's head has been scrolled out of view since the pick (see the results column). */
+  const [headAway, setHeadAway] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -113,21 +115,46 @@ export function LookupView({ askSlot }: { askSlot?: ReactNode }) {
 
   // On a phone the panel sits above the list, so picking the fortieth result would
   // otherwise answer somewhere off-screen. Only scrolls when it actually is.
-  // "Off-screen" starts below the wide shell's pinned header, which the root's
-  // `scroll-padding-top` measures (globals.css) — zero on a phone — and which
-  // `scrollIntoView` honours in turn.
+  // "Off-screen" means outside the band the root's scroll padding leaves clear
+  // (globals.css): below the wide shell's pinned header, above the phone's tab
+  // bar — the same band `scrollIntoView` honours in turn.
   //
-  // On a wide screen the panel is also its own scroller (capped to the room
-  // below the header — see the panel), and a new pick starts at its top:
-  // otherwise the scroll left over from reading the last answer hides the new
-  // entry's headword above the panel's visible area.
-  useEffect(() => {
+  // **What has to be on screen is the panel's head**, not the panel. The panel
+  // is routinely taller than a phone (readings, characters, the ask), and
+  // `block: 'nearest'` on a box taller than the viewport that sits above it
+  // aligns its *bottom* edge — the headword ended hundreds of pixels up. So the
+  // check is on the header and the alignment is `start`.
+  //
+  // A layout effect, so the measurement and the scroll land in the frame that
+  // moved the panel to the top rather than one painted frame later.
+  //
+  // The other half is the results column's `overflow-anchor` (below). On a
+  // wide screen the panel is also its own scroller (capped to the room below
+  // the header — see the panel), and a new pick starts at its top: otherwise
+  // the scroll left over from reading the last answer hides the new entry's
+  // headword above the panel's visible area.
+  useLayoutEffect(() => {
     const node = panelRef.current;
+    setHeadAway(false);
     if (!selectedKey || !node) return;
     node.scrollTop = 0;
-    const box = node.getBoundingClientRect();
-    const clear = parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) || 0;
-    if (box.top < clear || box.bottom > window.innerHeight) node.scrollIntoView({ block: 'nearest' });
+    const head = node.querySelector('header') ?? node;
+    const box = head.getBoundingClientRect();
+    const root = getComputedStyle(document.documentElement);
+    const top = parseFloat(root.scrollPaddingTop) || 0;
+    const bottom = window.innerHeight - (parseFloat(root.scrollPaddingBottom) || 0);
+    if (box.top < top || box.bottom > bottom) node.scrollIntoView({ block: 'start' });
+  }, [selectedKey]);
+
+  // Whether the learner has scrolled the panel's head away since the pick —
+  // the moment the results column should take part in scroll anchoring again.
+  // Observed rather than timed: it is the learner's scroll that decides.
+  useEffect(() => {
+    const head = panelRef.current?.querySelector('header');
+    if (!selectedKey || !head || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(([entry]) => setHeadAway(!entry.isIntersecting));
+    observer.observe(head);
+    return () => observer.disconnect();
   }, [selectedKey]);
 
   return (
@@ -160,7 +187,27 @@ export function LookupView({ askSlot }: { askSlot?: ReactNode }) {
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
-        <div className="order-2 md:order-1">
+        {/*
+          **Out of scroll anchoring while the panel's head is on screen** (below
+          md, with a pick). The results come first in the DOM and the panel is
+          moved above them by `order`, so the browser's anchor — the first
+          visible node in DOM order — was a result row drawn *under* the panel.
+          Every pixel the panel then grew by (the readings, the characters, the
+          ask arriving) was paid for by scrolling the page down to hold that row
+          still, which pushed the headword off the top: 30–73px on `?q=the`
+          (first-run audit, HANDOFF.md). With the column opted out, the anchor
+          is chosen from the panel, whose head is what the learner is reading.
+
+          Only while that head is in view. Once the learner scrolls down into
+          the results, the rows are what they are reading, and a panel growing
+          above them must not slide them away — so anchoring comes back.
+          Wide keeps anchoring throughout: there DOM order is visual order.
+        */}
+        <div
+          data-testid="lookup-results-column"
+          data-anchoring={selected && !headAway ? 'panel' : 'results'}
+          className={cn('order-2 md:order-1', selected && !headAway && 'max-md:[overflow-anchor:none]')}
+        >
           <SearchResults
             sections={sections}
             total={total}

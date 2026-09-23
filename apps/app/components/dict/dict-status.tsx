@@ -39,6 +39,7 @@
 import { cn } from '@/lib/cn';
 import { useEffect } from 'react';
 
+import { diagnose, type DictDiagnosis } from '@/lib/dict/failure';
 import type { DictStatus } from '@/lib/dict/store';
 
 import { Button } from '@/components/ui/button';
@@ -59,7 +60,9 @@ export interface DictStatusViewProps {
    * "the dictionary could not be fetched: TypeError: Failed to fetch", "run
    * pnpm data" — and in a production build it reached the learner verbatim, in
    * monospace (first-run audit, HANDOFF.md 2026-09-23). Production logs it to
-   * the console instead, where whoever runs the deployment looks.
+   * the console instead. What the line was *for* — telling a server without the
+   * file from a dropped network from a browser that refused storage — survives
+   * in every build as the plain-words `dict-failure-diagnosis` line below.
    */
   showDetail?: boolean;
 }
@@ -74,23 +77,21 @@ const FAILURE: Record<
 > = {
   download: {
     title: 'The dictionary did not finish downloading',
-    body: 'The connection dropped part way. Nothing is lost — it picks up from the start of the same file.',
+    // Says nothing about why: "the connection dropped" was false for a server
+    // that answered 404, and the diagnosis line below now says which it was.
+    body: 'Nothing is lost — trying again downloads the same file from the start.',
     retry: 'Try again',
   },
   /**
-   * **Two producers land here, and the copy may assert nothing about either.**
-   * `data.md` D4's is a genuine import failure — the bytes arrived and OPFS
-   * refused them. `HttpDictStore`'s is a 503 `dict-data-missing`, which means
-   * the artifact was never built or served, so nothing downloaded and nothing
-   * arrived. The frozen `DictStatus` union has no reason for the second (see
-   * HANDOFF.md, "What `HttpDictStore` cannot do"), so this body says only what
-   * is true of both and leaves the diagnosis to `dict-failure-detail`, which
-   * carries `run pnpm data` for one and the OPFS error for the other — **in a
-   * development build**. A production build logs that detail to the console
-   * instead of drawing it (`showDetail`, below), so on a deployed build the two
-   * producers look the same on screen. The first-run audit traded that away
-   * because the line put raw errors in front of the learner; HANDOFF.md
-   * records the trade for the owner.
+   * **The copy may assert nothing about a transfer.** When C4a wrote it, two
+   * producers landed here: `data.md` D4's genuine import failure (the bytes
+   * arrived and OPFS refused them) and `HttpDictStore`'s 503
+   * `dict-data-missing`, where nothing downloaded at all. `HttpDictStore` has
+   * since gone (D6), and the worker now falls an OPFS import failure through
+   * to the in-memory rung rather than reporting it, so `import` rarely reaches
+   * the screen — but a future runner (the native one) may report it for
+   * either reason, and the body stays true of both. The cause is the
+   * `dict-failure-diagnosis` line's to say.
    */
   import: {
     title: 'The dictionary could not be opened',
@@ -107,6 +108,52 @@ const FAILURE: Record<
     body: 'The file does not match what it should be, so it has been discarded rather than used. Fetching it again is the fix.',
     retry: 'Fetch it again',
   },
+};
+
+/**
+ * A title and body for the causes where the reason's own copy is wrong.
+ *
+ * A web page served in place of the manifest arrives as `corrupt` ("damaged
+ * on this device… fetching it again is the fix") and a 404 as `download`
+ * ("trying again downloads the same file"). Both are false for a server that
+ * does not have the file: nothing on the device is wrong, and a retry cannot
+ * help until the deploy is fixed. The retry button stays — it is harmless,
+ * and it is what finds the fix once it lands.
+ */
+const SERVER_SIDE = {
+  title: 'The dictionary could not be downloaded',
+  body: 'Nothing on this device is wrong — the problem is on the server, so trying again may not help yet. Practice, your lists and your progress do not need it.',
+};
+const COPY_BY_DIAGNOSIS: Partial<Record<DictDiagnosis, { title: string; body: string }>> = {
+  'not-on-server': SERVER_SIDE,
+  'served-page': SERVER_SIDE,
+  'server-refused': SERVER_SIDE,
+  engine: {
+    title: 'The dictionary could not start',
+    body: 'Nothing on this device is wrong. Trying again is worth it; practice, your lists and your progress do not need it.',
+  },
+};
+
+/**
+ * What happened, in one plain sentence per cause (`lib/dict/failure.ts`).
+ *
+ * This is the line C4a's second pass kept the raw message on screen for, and
+ * the first-run audit took away with it: whoever deployed the app needs to
+ * tell "the server does not have the file" from "the server could not be
+ * reached" from "this browser would not store it", and a phone has no
+ * console. None of these carries a raw error; the console still gets that.
+ */
+const DIAGNOSIS: Record<DictDiagnosis, string> = {
+  'not-on-server': 'The server does not have the dictionary file.',
+  'served-page': 'The server sent back a web page instead of the dictionary file.',
+  'server-refused': 'The server would not send the dictionary file.',
+  unreachable: 'The server could not be reached. Check your connection.',
+  incomplete: 'The connection dropped part way through.',
+  engine: 'The part of the app that reads the dictionary would not load.',
+  storage: 'This device ran out of space or memory for it.',
+  import: 'This browser would not store it.',
+  corrupt: 'The file is not the dictionary this app expects.',
+  unknown: 'The dictionary file did not come through.',
 };
 
 /**
@@ -230,17 +277,22 @@ export function DictStatusView({
     );
   }
 
-  const copy = FAILURE[status.reason];
+  const diagnosis = diagnose(status);
+  const copy = { ...FAILURE[status.reason], ...COPY_BY_DIAGNOSIS[diagnosis] };
   return (
     <Card
       data-testid="dict-status"
       data-state="failed"
       data-reason={status.reason}
+      data-diagnosis={diagnosis}
       data-source={source}
       className={cn('flex flex-col gap-3 border-warning', className)}
     >
       <div>
         <p className="font-medium text-ink">{copy.title}</p>
+        <p className="mt-1 text-sm text-ink" data-testid="dict-failure-diagnosis">
+          {DIAGNOSIS[diagnosis]}
+        </p>
         <p className="mt-1 text-sm text-muted">{copy.body}</p>
         {showDetail && status.message ? (
           <p className="mt-2 font-mono text-xs text-muted" data-testid="dict-failure-detail">

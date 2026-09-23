@@ -81,6 +81,7 @@ export function ListsView() {
             key={view.list.id}
             view={view}
             busy={busy[view.list.id]}
+            filling={filling}
             onToggleActive={(active) => void setActive(view.list.id, active)}
             onMarkAllKnown={() => void markAllKnown(view.list.id)}
           />

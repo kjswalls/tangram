@@ -14178,3 +14178,252 @@ All run on the final tree:
     pinned `--new` to `#8a6414`. It now asserts `#886211`.
 - `pnpm smoke --no-api`: **41 ok**, with 6 API cases skipped and reported as skipped.
 - `core/first-run-audit.spec.ts` with `--repeat-each=8`: **64/64**.
+
+
+---
+
+## Three audit follow-ups — `claude/build-audit-small-fixes`, 2026-09-23
+
+This fixes the first-run audit's "Defects found, not fixed" items **4** (a picked result's
+headword off the top of a phone) and **5** (Library's "HSK 7–9: no words yet"). It also gives
+back the diagnosis that "Defects fixed" item **7** traded away on the failed-download screen,
+without the raw error. **No frozen surface is touched.** That covers `DictStatus` (its type is
+unchanged), `DictStore`/`SqlRunner`, `packages/ai/**`, `repository.ts`, `schema.ts`, `types.ts`,
+`params.ts` and the ask contract. Review 1 checked.
+
+### 1. The picked headword above the viewport — two mechanisms, both fixed
+
+The audit put this down to `scrollIntoView` racing scroll anchoring. Measured frame by frame on
+the production build, **there were two causes**, and in this container the first was much the
+bigger:
+
+- **`block: 'nearest'` aligned the panel's *bottom*.** On a phone the panel is 1,450–2,200px
+  tall (readings, characters, the ask). For a box taller than the viewport that sits above it,
+  `nearest` brings the nearest edge into view, which is the bottom edge. Result 10 of `?q=the`
+  ended with its headword at **−769px**, result 18 at **−849px**. Neither moved after that.
+- **Scroll anchoring held a result row drawn under the panel.** The results come first in the
+  DOM, and CSS `order` moves the panel above them. Anchor selection walks DOM order, so the
+  anchor was a result row, and every pixel the panel grew was paid for by pushing the headword up.
+  This happens only when rows show under the panel, which means a panel shorter than the screen.
+  At **700×2200** (below `md`), with the first cause fixed and anchoring left alone, the headword
+  ended **66px** high, which is the audit's 30–73px.
+
+**The fix** (`components/lookup/lookup-view.tsx`):
+- The check is on the panel's `<header>`, not the whole panel. It uses the band the root's scroll
+  padding leaves clear, top **and** bottom, so the pinned wide header and the phone's tab bar are
+  both honoured.
+- The scroll is `block: 'start'`, in a **layout** effect, so it lands in the frame that moved the
+  panel.
+- While the header is on screen, the results column is `overflow-anchor: none` (below `md`,
+  with a pick). Both reviews found that this was on for the whole time a result was picked, so
+  once the learner scrolled down into the results, a panel growing above them (the ask arriving)
+  slid the rows away. An `IntersectionObserver` on the header now turns anchoring back on the
+  moment the header leaves the screen. It is observed, not timed.
+- Wide is unchanged: DOM order is the visual order there, the panel is sticky, and the geometry
+  measured the same before and after.
+
+No timeout, and `scroll-padding` is untouched (`pinned-header.test.tsx` still holds its rules).
+
+### 2. "No words yet" for a band still being counted
+
+Measured on a first visit, the "Filling in…" line and the last count land **in the same frame**.
+The gap the audit described did not reproduce. What did reproduce is worse and is the same
+defect: **every** unfilled band read "no words yet" for as long as the fill took. HSK 7–9 did so
+for 2.8s, while the "Filling in…" line sat below the last card, off screen on a phone.
+
+**The cause is the derivation.** `readViews` (`lib/stores/lists.ts`) reported `members.length`,
+so "not materialised yet" and "empty" were the same `0`. An HSK band is never empty. So
+`ListView.count` is now `number | null`, and it is **`null` for an HSK list with no members**. A
+custom or "Looked up" list keeps its real zero.
+
+`ListCard` draws three states and puts the state on `data-count-state`:
+- `counting`: null, with the fill running;
+- `unfilled`: null, with no fill running, which means the dictionary is unavailable;
+- `known`: the count, or "no words yet" for a list that really is empty.
+
+**One race found on the way, fixed:** views are read by `load()` (a toggle, an import, a mark) and
+by the fill. A `load()` that started before the last band filled could finish after the fill, and
+that band went back to unknown with nothing left to correct it. Reads are now ticketed
+(`readLatestViews`), and a read that finishes behind a later-started one is dropped.
+
+**Not changed, recorded:** a band that `ensureMembers` fills with zero rows (possible only with a
+fixture dictionary) stays `null` and is refilled on every visit (review 2, nit).
+
+### 3. The failed-download screen says what happened, in plain words
+
+`DictStatus` is frozen and `failed` carries only `reason` and `message`, so nothing was added to
+it. The opener already knows the HTTP status, so **it writes the cause into `message`**.
+- The new `lib/dict/failure.ts` holds the builders the runner and the worker now use for every
+  request failure, and `diagnose(status)`, which reads the message back into a cause.
+- The builders and the reader are in one file. `tests/unit/dict/failure.test.ts` round-trips each
+  builder, and it scans both runners' source for any failure literal they should have built. It
+  also checks that no `reader.read()` exists outside the one wrapper.
+- The module has type imports only, so the worker can import it.
+
+The causes are these:
+
+| cause | what the opener saw | reason it arrives under |
+|---|---|---|
+| `not-on-server` | a 404, 410 or 503 on the manifest or the file | `download` |
+| `served-page` | 200, but the manifest is not JSON, the JSON has no `file`/`bytes`, or the file is not SQLite (an SPA fallback) | `corrupt` |
+| `server-refused` | any other HTTP refusal | `download` |
+| `unreachable` | `fetch` rejected; also offline with nothing stored | `download` |
+| `incomplete` | the body ended short, **or a read rejected mid-body** | `download` |
+| `engine` | the worker or `sqlite3.wasm` would not start, or the worker died | `download` / `corrupt` |
+| `storage`, `import`, `corrupt` | as the reason says | themselves |
+| `unknown` | a `download` message this module did not write | `download` |
+
+`DictStatusView` draws one plain sentence per cause (`dict-failure-diagnosis`, with
+`data-diagnosis` on the card) **in every build**. The raw message stays development-only, and it
+is still logged to the console in production.
+
+**Both reviews found the commonest real failure mislabelled, and it is fixed.** A connection that
+drops part way makes `reader.read()` reject. Before this change:
+- the OPFS rung wrapped that as `import` and fell through to the memory rung, fetching 43 MB
+  again;
+- the memory rung let it reach the worker's catch-all as `corrupt`.
+
+The screen said "The dictionary on this device is damaged". That predates this branch, but this
+branch's new line would have added a second false cause. Every body read now goes through
+`readChunk`, which reports a `download` that "stopped after N bytes", so the cause is `incomplete`.
+It is terminal on the OPFS rung, as a short download already was.
+
+**Review 1 also found the reason's own title and body wrong for server-side causes.** A served
+page arrived as `corrupt`: "damaged on this device… Fetching it again is the fix". A 404 arrived
+as `download`: "trying again downloads the same file". So `not-on-server`, `served-page`,
+`server-refused` and `engine` take their own title and body. The `download` body no longer says
+"the connection dropped part way", which a 404 had made false.
+
+**What the owner can now tell apart on a deployed phone**, which was the point:
+- `pnpm data` never ran, or its output was not deployed: "The server does not have the dictionary
+  file", or "…sent back a web page…" when an SPA fallback hides the 404;
+- the network: "could not be reached" or "dropped part way";
+- the browser refusing storage: "ran out of space or memory", or "would not store it".
+
+A 503 is also what an overloaded server says, so "does not have the file" is stronger than a 503
+proves. The brief asked for 404/503 together, and review 1 flagged it as a nit.
+
+### New and changed user-facing strings — for the owner's copy pass
+
+All are in `apps/app/components/dict/dict-status.tsx` unless noted:
+
+- **:82** (changed; the `download` body): "Nothing is lost — trying again downloads the same file
+  from the start." It was "The connection dropped part way. Nothing is lost — it picks up from the
+  start of the same file."
+- **:124–125**: the server-side title and body, used for `not-on-server`, `served-page` and
+  `server-refused`.
+  - Title: "The dictionary could not be downloaded"
+  - Body: "Nothing on this device is wrong — the problem is on the server, so trying again may not
+    help yet. Practice, your lists and your progress do not need it."
+- **:132–133**: the `engine` title and body.
+  - Title: "The dictionary could not start"
+  - Body: "Nothing on this device is wrong. Trying again is worth it; practice, your lists and your
+    progress do not need it."
+- **:147–156**: the diagnosis lines, one per cause.
+  - `not-on-server`: "The server does not have the dictionary file."
+  - `served-page`: "The server sent back a web page instead of the dictionary file."
+  - `server-refused`: "The server would not send the dictionary file."
+  - `unreachable`: "The server could not be reached. Check your connection."
+  - `incomplete`: "The connection dropped part way through."
+  - `engine`: "The part of the app that reads the dictionary would not load."
+  - `storage`: "This device ran out of space or memory for it."
+  - `import`: "This browser would not store it."
+  - `corrupt`: "The file is not the dictionary this app expects."
+  - `unknown`: "The dictionary file did not come through."
+- **`apps/app/components/lists/list-card.tsx:68`**: "Counting words…" (while the fill runs), and
+  "Its words come from the dictionary" (an HSK card with no fill running, which means the
+  dictionary is unavailable).
+
+The comment at `dict-status.tsx:85` about `import`'s two producers was stale, because
+`HttpDictStore` is gone. It now says so. `import` rarely reaches the screen from the web runner
+now, because an OPFS import failure falls through to the memory rung. The string stays for a
+future native runner.
+
+The gallery's `failed-download` literal is now built with `droppedMessage`, so `/gallery` shows a
+real cause rather than `unknown`.
+
+### What the two adversarial reviews found
+
+Both read `ea37c1f..d01e886` cold and in parallel. **Review 1** checked each fix against its
+stated cause; **review 2** asked what breaks that no test covers. Both found nothing blocking,
+and both confirmed the scroll-anchoring mechanism, the `nearest` semantics and the null derivation.
+
+Fixed. Each fix is held by a test that failed on the unfixed code:
+- **(1 and 2, major)** A mid-stream drop was labelled `corrupt`. The new e2e case replaces the
+  dictionary worker's `fetch` with a body that errors after one chunk, because Playwright's
+  `fulfill` can only end a body cleanly: the first version of the case passed on the unfixed
+  worker for exactly that reason. Against the unwrapped worker it reads `data-reason="corrupt"`.
+- **(1 and 2, major)** Anchoring stayed off after the learner scrolled into the results. The e2e
+  grows the panel by 400px and a result row must not move; it moved 400px on the old rule.
+- **(1)** Worker or engine failures read as "damaged": the `engine` cause.
+- **(1)** A server-side cause kept the reason's device-side copy: the title and body chosen by
+  cause.
+- **(1)** The stale `HttpDictStore` comment.
+- **(2)** A manifest of the wrong shape (`{}`) read "not the dictionary this app expects": it is
+  now `served-page`.
+- **(2)** The gallery could show no diagnosis.
+- **(1, nit)** "Its words come from the dictionary" could in principle flash between `load()` and
+  the fill. It did not in any frame measured, and the e2e now asserts it never does with a
+  dictionary.
+
+Not fixed, recorded:
+- **(1)** Moving the panel before the results in the DOM would make anchoring and phone focus
+  order agree with no opt-out. Reasoned through, not measured: it moves the mismatch to wide and
+  to the no-pick phone layout, where the panel would lead in DOM order while drawn below the
+  rows, so "Show more" would shove them. The observer is narrower. The owner or orchestrator
+  may still prefer the reorder for focus order.
+- **(2)** Re-tapping the already-selected result does not re-scroll (the effect keys on
+  `selectedKey`). This predates the branch.
+- **(2)** "returned no body to stream" and "the in-memory rung needs a manifest" still read as
+  `unknown`. That is honest, and neither is a deploy mistake a learner would hit.
+- **(1, nit)** A 503 read as "not on the server", as above.
+
+### Census and files
+
+`tests/e2e/core/audit-small-fixes.spec.ts` is new and joins the census, now **60 / 52 / 53**. Its
+cases:
+- the headword in the clear band on **every animation frame** from the click, at 390×844,
+  1280×800 and 700×2200, results 10 and 18 of `?q=the`;
+- rows holding still under a growing panel once scrolled into;
+- no HSK card reading "no words yet" or `unfilled` in any frame of a first Library visit, and
+  passing through `counting`;
+- the failed-download cause for a manifest 404, a file 404, an SPA page as the manifest, a
+  refused connection and a mid-stream drop. Each case checks for no raw text on screen and the
+  detail in the console.
+
+New unit files: `dict/failure.test.ts` and `lists/list-counts.test.tsx`. New cases went into
+`dict/dict-status.test.tsx`.
+
+Files another session may collide with:
+- `components/lookup/lookup-view.tsx`
+- `components/lists/{list-card,lists-view}.tsx`
+- `lib/stores/lists.ts`
+- `components/dict/dict-status.tsx`
+- `components/gallery/gallery.tsx`
+- `lib/dict/runners/{wasm,wasm-worker}.ts`
+- `lib/dict/failure.ts` (new)
+
+**What this makes false elsewhere:**
+- the first-run audit's "Defects found, not fixed" 4 and 5, and its 7's "the two now look the
+  same on screen": all three are answered here;
+- C4a second pass §1's account of `import`'s two producers (`HttpDictStore` is gone).
+
+### Gates
+All run on the final tree (`3e19876`, the review-round commit):
+- `pnpm lint`, `pnpm typecheck` and `pnpm build`: clean.
+- `pnpm test`: **2,285** app tests and **103** server tests passed.
+- `pnpm e2e`: **373 passed** in 13.4 min. Before the review round it was 371 passed.
+- `pnpm smoke --no-api` against `pnpm preview`: **41 ok**, with 6 API cases skipped and reported as
+  skipped.
+- `core/audit-small-fixes.spec.ts` with `--repeat-each=8`: **104/104**. The item-1 cases alone,
+  before the review round, were 48/48.
+- Every new guard was mutation-checked against the code it guards, and each mutant failed:
+  - the original `lookup-view.tsx`;
+  - `nearest` restored;
+  - anchoring never opted out, which fails at 700×2200 by 66px;
+  - anchoring opted out for the whole pick, which fails by 400px;
+  - the `count: 0` derivation, in unit and e2e;
+  - the stale-read guard removed;
+  - `diagnose`'s HTTP rule disabled, which fails both 404 cases;
+  - `readChunk` unwrapped, which reads `corrupt`;
+  - the runners' old literals, which fail the source scan.

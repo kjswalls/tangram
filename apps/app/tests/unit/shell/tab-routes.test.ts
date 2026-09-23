@@ -184,10 +184,14 @@ describe('the seven routes are gone', () => {
     // a new learner at three viewports, held by geometry — tab labels on one
     // line, 44px touch targets, focus clear of the phone's tab bar, rows and a
     // heading that keep their text, no raw error on a failed download).
+    // The audit's small-fixes follow-up adds one, a spec and navigating:
+    // `core/audit-small-fixes.spec.ts` (a picked result's headword in view on
+    // every frame, no "no words yet" for a band still being counted, and a
+    // plain-words cause on the failed-download screen).
     expect({ files: files.length, specs: specs.length, navigating: navigating.length }).toEqual({
-      files: 59,
-      specs: 51,
-      navigating: 52,
+      files: 60,
+      specs: 52,
+      navigating: 53,
     });
   });
 

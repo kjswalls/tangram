@@ -12,6 +12,8 @@ import type { ListView } from '@/lib/stores/lists';
 export interface ListCardProps {
   view: ListView;
   busy?: boolean;
+  /** The HSK lists are being filled in from the dictionary right now. */
+  filling?: boolean;
   onToggleActive: (active: boolean) => void;
   onMarkAllKnown: () => void;
 }
@@ -21,9 +23,9 @@ export interface ListCardProps {
  * control and the counts are what tell you whether the list is worth drawing
  * from — how many words it holds, and how many of them you already know.
  */
-export function ListCard({ view, busy, onToggleActive, onMarkAllKnown }: ListCardProps) {
+export function ListCard({ view, busy, filling, onToggleActive, onMarkAllKnown }: ListCardProps) {
   const { list, count, knownCount } = view;
-  const allKnown = count > 0 && knownCount === count;
+  const allKnown = count !== null && count > 0 && knownCount === count;
   /**
    * Why the button is disabled, said out loud.
    *
@@ -51,8 +53,20 @@ export function ListCard({ view, busy, onToggleActive, onMarkAllKnown }: ListCar
       }
       aside={<Badge tone={list.kind === 'hsk' ? 'neutral' : 'accent'}>{list.kind}</Badge>}
     >
-      <p className="text-sm text-muted" data-testid="list-counts">
-        {count > 0 ? (
+      {/*
+        Three states, not two. A count that is not known yet (`null` — an HSK
+        band not filled in) is never drawn as zero: "no words yet" is a claim
+        about the list, and it sat beside "Filling in the HSK lists…" for the
+        seconds a band took to arrive.
+      */}
+      <p
+        className="text-sm text-muted"
+        data-testid="list-counts"
+        data-count-state={count === null ? (filling ? 'counting' : 'unfilled') : 'known'}
+      >
+        {count === null ? (
+          filling ? 'Counting words…' : 'Its words come from the dictionary'
+        ) : count > 0 ? (
           <>
             <span data-testid="list-count">{count}</span> words
             {knownCount > 0 ? <> · {knownCount} known</> : null}

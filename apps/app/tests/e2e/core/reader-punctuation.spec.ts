@@ -464,6 +464,124 @@ for (const { name, touch, drag } of DRAGGERS) {
   });
 }
 
+/**
+ * A drag that overshoots the end of a line (review A, finding 1).
+ *
+ * A line that ends a clause now ends in a `.hanzi-glue` inline-block, and a
+ * caret hit past it names the ELEMENT, with an offset that counts its
+ * children. `indexOfNode` used to drop that offset and answer the element's
+ * first character, so a thumb that ran off the end of "你周末一般做什么？"
+ * selected "你周末一般做什". Every line that ends in a closing mark is tried.
+ */
+test('a drag past the end of a line keeps the whole of its last word', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openReader(page, BODY);
+  await settled(page);
+  const text = await page
+    .getByTestId('reader-text')
+    .evaluate((el) => el.getAttribute('data-hanzi') ?? '');
+  const chars = [...text];
+
+  // Each line that ends in a closing mark after a Chinese character: the
+  // index of its first Chinese character and of its last one.
+  const lines = await page.evaluate(
+    ({ closing }) => {
+      const root = document.querySelector('[data-testid="reader-text"]')!;
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+        acceptNode(node) {
+          for (let el = node.parentElement; el && el !== root; el = el.parentElement) {
+            if (el.tagName === 'RT' || el.tagName === 'RP') return NodeFilter.FILTER_REJECT;
+          }
+          return NodeFilter.FILTER_ACCEPT;
+        },
+      });
+      const boxes: { char: string; line: number }[] = [];
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const value = node.nodeValue ?? '';
+        for (let i = 0; i < value.length; i += 1) {
+          const range = document.createRange();
+          range.setStart(node, i);
+          range.setEnd(node, i + 1);
+          const rect = range.getBoundingClientRect();
+          boxes.push({ char: value[i]!, line: Math.round(rect.top + rect.height / 2) });
+        }
+      }
+      const cjk = /[\u4e00-\u9fff]/;
+      const out: { first: number; last: number }[] = [];
+      for (let i = 1; i < boxes.length; i += 1) {
+        const next = boxes[i + 1];
+        const endsLine = !next || /\s/.test(next.char) || next.line !== boxes[i]!.line;
+        if (!closing.includes(boxes[i]!.char) || !endsLine) continue;
+        let last = i - 1;
+        while (last > 0 && !cjk.test(boxes[last]!.char)) last -= 1;
+        if (boxes[last]!.line !== boxes[i]!.line) continue;
+        let first = last;
+        while (first > 0 && boxes[first - 1]!.line === boxes[i]!.line) first -= 1;
+        while (!cjk.test(boxes[first]!.char)) first += 1;
+        if (last - first >= 3) out.push({ first, last });
+      }
+      return out;
+    },
+    { closing: CLOSING },
+  );
+  expect(lines.length).toBeGreaterThan(3);
+
+  const right = await page
+    .getByTestId('reader-text')
+    .evaluate((el) => el.getBoundingClientRect().right);
+  for (const { first, last } of lines.slice(0, 6)) {
+    await bringIntoView(page, first);
+    const a = await centreOf(page, first);
+    const end = await centreOf(page, last);
+    await page.mouse.move(a.x, a.y);
+    await page.mouse.down();
+    for (let step = 1; step <= 8; step += 1) {
+      await page.mouse.move(a.x + ((right - 2 - a.x) * step) / 8, end.y);
+    }
+    await page.mouse.up();
+    await sheetShows(page, chars.slice(first, last + 1).join(''));
+  }
+});
+
+/**
+ * Adjacent full-width marks are still compressed (review A, finding 2).
+ *
+ * Chromium trims the space in a pair like "：「" when the two marks share one
+ * inline formatting context. Splitting such a run between two wrappers printed
+ * both at full width, 17 pairs 10px wider each over this corpus at 1280px, and
+ * that added a line. A bridging run is now kept whole inside one wrapper.
+ */
+test('a pair like "：「" between two words is set as tightly as before', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await openReader(page, BODY);
+  await settled(page);
+  const widths = await page.evaluate(() => {
+    const root = document.querySelector('[data-testid="reader-text"]')!;
+    const size = parseFloat(getComputedStyle(root).fontSize);
+    const out: { pair: string; ratio: number }[] = [];
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const value = node.nodeValue ?? '';
+      for (let i = 0; i + 1 < value.length; i += 1) {
+        if (!'：」。'.includes(value[i]!) || !'「“'.includes(value[i + 1]!)) continue;
+        const range = document.createRange();
+        range.setStart(node, i);
+        range.setEnd(node, i + 2);
+        out.push({
+          pair: value.slice(i, i + 2),
+          ratio: range.getBoundingClientRect().width / size,
+        });
+      }
+    }
+    return out;
+  });
+  // Every such pair in the corpus is in ONE text node, which is what lets the
+  // engine trim it at all…
+  expect(widths.length).toBeGreaterThan(10);
+  // …and it does: two full-width marks set at full width are 2em.
+  for (const { pair, ratio } of widths) expect(ratio, pair).toBeLessThan(1.75);
+});
+
 test.describe('the wrapper is layout, and only layout', () => {
   test('focus order is the words in reading order, with no stop that is not a word', async ({
     page,

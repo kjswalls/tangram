@@ -10,13 +10,14 @@
  * a tap on the punctuation is still no tap at all, and the only focusable
  * things are still the words.
  */
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import userEvent from '@testing-library/user-event';
 
 import { HanziText, type HanziRun } from '@/components/hanzi/hanzi-text';
 import {
   buildCharMap,
+  indexFromPoint,
   spanIndexOfEvent,
   stampSpanIndexes,
 } from '@/components/hanzi/use-span-select';
@@ -99,7 +100,9 @@ describe('the wrapper is layout and nothing else', () => {
   it('wraps each word with exactly the marks that must stay with it', () => {
     const { root } = renderPassage(true);
     const groups = [...root.querySelectorAll('.hanzi-glue')].map(baseTextOf);
-    expect(groups).toEqual(['说：', '「你好，', '好吗？']);
+    // "：「" bridges 说 and 你好: one wrapper, the run kept whole so the two
+    // marks stay in one text node and the engine can compress them.
+    expect(groups).toEqual(['说：「你好，', '好吗？']);
   });
 
   it('keeps the words as the only groupings, and the text in order', () => {
@@ -110,8 +113,7 @@ describe('the wrapper is layout and nothing else', () => {
       screen.getAllByTestId('reader-token').map((node) => node.getAttribute('data-token')),
     ).toEqual(['他', '说', '你好', '我', '叫', '好吗']);
     expect(screen.getAllByTestId('reader-text-run').map((node) => node.textContent)).toEqual([
-      '：',
-      '「',
+      '：「',
       '，',
       'David。」',
       '？',
@@ -123,8 +125,9 @@ describe('the wrapper is layout and nothing else', () => {
     for (const glue of root.querySelectorAll('.hanzi-glue')) {
       expect(glue.tagName).toBe('SPAN');
       expect([...glue.attributes].map((attr) => attr.name)).toEqual(['class']);
-      // One word inside it, never two: a wrapper is a word plus its marks.
-      expect(glue.querySelectorAll('[data-token-index]')).toHaveLength(1);
+      // Words and punctuation only, and every run between two of its words is
+      // punctuation the line may not break inside.
+      expect(glue.querySelectorAll('[data-token-index]').length).toBeGreaterThan(0);
     }
   });
 
@@ -199,6 +202,60 @@ describe('the wrapper is layout and nothing else', () => {
       '叫',
       '好吗',
     ]);
+  });
+});
+
+/**
+ * A caret hit on an ELEMENT counts its children, and a drag past the end of a
+ * line produces one on the line's last atomic box (review A, finding 1).
+ *
+ * Every line that ends a clause now ends in a `.hanzi-glue` inline-block, so
+ * `caretPositionFromPoint` past the line end answers `{ glue, childNodes.length }`.
+ * `indexOfNode` used to drop the offset and answer the element's FIRST
+ * character, and the drag lost the rest of the last word: "…做什么？" came back
+ * as "…做什" in Chromium.
+ */
+describe('a caret hit on an element honours its offset', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    document.body.innerHTML = '';
+  });
+
+  function passage() {
+    const root = document.createElement('div');
+    root.innerHTML =
+      '<button data-token-index="0"><ruby data-char-index="0">做<rt>zuò</rt></ruby></button>' +
+      '<span class="hanzi-glue">' +
+      '<button data-token-index="1"><ruby data-char-index="0">什<rt>shén</rt></ruby>' +
+      '<ruby data-char-index="1">么<rt>me</rt></ruby></button><span>？</span></span>';
+    document.body.append(root);
+    // jsdom has no layout: every range is a zero box at the origin, so the point
+    // below is never inside the character before a boundary.
+    if (!Range.prototype.getBoundingClientRect) {
+      Range.prototype.getBoundingClientRect = () => new DOMRect(0, 0, 0, 0);
+    } else {
+      vi.spyOn(Range.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 0, 0));
+    }
+    const glue = root.querySelector('.hanzi-glue')!;
+    return { map: buildCharMap(root), glue };
+  }
+
+  function at(glue: Element, offset: number) {
+    return {
+      caretPositionFromPoint: () => ({ offsetNode: glue, offset }),
+    } as unknown as Document;
+  }
+
+  it('past the last child is the element’s last character, not its first', () => {
+    const { map, glue } = passage();
+    expect(map.text).toBe('做什么？');
+    expect(indexFromPoint(map, 500, 10, 'caretPositionFromPoint', at(glue, 2))).toBe(3);
+  });
+
+  it('before child k is the first character at or after it', () => {
+    const { map, glue } = passage();
+    expect(indexFromPoint(map, 500, 10, 'caretPositionFromPoint', at(glue, 0))).toBe(1);
+    expect(indexFromPoint(map, 500, 10, 'caretPositionFromPoint', at(glue, 1))).toBe(3);
   });
 });
 

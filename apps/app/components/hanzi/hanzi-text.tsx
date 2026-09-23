@@ -56,13 +56,21 @@
  * syllables are computed once, so revealing is a class toggle on an
  * already-rendered `<ruby>`, not a re-render.
  */
-import { memo, useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react';
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type MouseEvent,
+  type ReactNode,
+} from 'react';
 
 import { usePinyinDisplay } from '@/components/hanzi/pinyin-display';
 import { speakOneCharacter, useSpeakingOffset } from '@/components/hanzi/speak-control';
 import { spanIndexOfEvent, type SpanSelect } from '@/components/hanzi/use-span-select';
 import { alignReading, type Alignment } from '@/lib/hanzi/align';
-import { splitForGlue } from '@/lib/hanzi/glue';
+import { splitForGlue, type GlueSplit } from '@/lib/hanzi/glue';
 import { cn } from '@/lib/cn';
 import type { PinyinDisplay } from '@/lib/db/schema';
 import type { TTSProvider } from '@/lib/tts/provider';
@@ -490,17 +498,22 @@ const Runs = memo(function Runs({
    * straight through, and they keep exactly the DOM they had.
    *
    * So a word shares one `.hanzi-glue` wrapper with the closing marks after it
-   * and the opening marks before it. `ruby.css` says why the wrapper is an
-   * `inline-block` and not `white-space: nowrap`. The wrapper is layout and
-   * nothing else, which is what C3 and C5b depend on:
+   * and the opening marks before it, and two words joined only by such marks
+   * ("说：「你好") share one wrapper between them (see `bridges` below).
+   * `ruby.css` says why the wrapper is an `inline-block` and not
+   * `white-space: nowrap`. The wrapper is layout and nothing else, which is
+   * what C3 and C5b depend on:
    *
    *   - **It has no text of its own and no data attributes.** The character
    *     map (`buildCharMap` walks text nodes), the `data-span-index` stamp
    *     (`closest('[data-char-index]')`), the tap handler and the degrade's
    *     hit-test (`closest('[data-token-index]')`) all resolve exactly as they
    *     did. The characters are the same text, in the same order.
-   *   - **It has no role, no tab stop and no label.** Focus order, and what a
-   *     screen reader says, are the words' and the punctuation's, unchanged.
+   *   - **It has no role, no tab stop and no label.** Focus order, every
+   *     role and every accessible name are unchanged. Chromium does keep each
+   *     inline-block as a `generic` node in its accessibility tree (review A,
+   *     measured over CDP). A generic node is not announced, but the tree is
+   *     not byte-identical, and this comment used to claim it was.
    *   - **Segmentation does not change.** `splitForGlue` only divides a plain
    *     run's text between the wrappers either side of it, in order. A plain
    *     run can therefore render as up to three `reader-text-run` spans where
@@ -516,24 +529,61 @@ const Runs = memo(function Runs({
           views[index + 1]?.tappable ?? false,
         ),
   );
-  return (
-    <>
-      {views.map((view, index) => {
-        const split = splits[index];
-        if (split) return split.rest ? plain(split.rest, String(index)) : null;
-        const before = splits[index - 1]?.trail ?? '';
-        const after = splits[index + 1]?.lead ?? '';
-        if (!before && !after) return word(view, index);
-        return (
-          <span key={`glue-${index}`} className="hanzi-glue">
-            {before ? plain(before, `trail-${index - 1}`) : null}
-            {word(view, index)}
-            {after ? plain(after, `lead-${index + 1}`) : null}
-          </span>
-        );
-      })}
-    </>
-  );
+  /**
+   * A run that is nothing but a closing lead and an opening trail — "：「",
+   * "」「", "。“" — **bridges** its two words into one wrapper and stays one
+   * span.
+   *
+   * Splitting it between two wrappers kept each mark with its word, and it cost
+   * the typography (review A, finding 2). Chromium compresses adjacent
+   * full-width marks (`text-spacing-trim`'s default), but only inside one
+   * inline formatting context, and two inline-blocks are two. Every "说：「"
+   * printed its colon and bracket at full width, 17 of them 10px wider each over
+   * the spec's corpus at 1280px, which added a line. Kept whole and together,
+   * the pair is exactly the text node it was before the glue existed.
+   */
+  const bridges = (split: GlueSplit | null | undefined): boolean =>
+    Boolean(split && split.lead && split.trail && !split.rest);
+
+  const out: ReactNode[] = [];
+  let group: ReactNode[] = [];
+  let groupKey = '';
+  const flush = () => {
+    if (group.length === 1) out.push(group[0]);
+    else if (group.length > 1) {
+      out.push(
+        <span key={groupKey} className="hanzi-glue">
+          {group}
+        </span>,
+      );
+    }
+    group = [];
+  };
+  views.forEach((view, index) => {
+    const split = splits[index];
+    if (split) {
+      // A bridging run is already inside the wrapper, whole.
+      if (bridges(split)) return;
+      if (split.rest) out.push(plain(split.rest, String(index)));
+      return;
+    }
+    if (group.length === 0) {
+      groupKey = `glue-${index}`;
+      const before = splits[index - 1]?.trail;
+      if (before) group.push(plain(before, `trail-${index - 1}`));
+    }
+    group.push(word(view, index));
+    const next = splits[index + 1];
+    if (bridges(next)) {
+      // The word after joins this wrapper; the group stays open for it.
+      group.push(plain(next!.lead + next!.trail, String(index + 1)));
+      return;
+    }
+    if (next?.lead) group.push(plain(next.lead, `lead-${index + 1}`));
+    flush();
+  });
+  flush();
+  return <>{out}</>;
 });
 
 export function HanziText({

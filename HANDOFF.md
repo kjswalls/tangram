@@ -12652,3 +12652,128 @@ explains the intermittency and why adding a file perturbed it.
 
 **Do not read four green runs as a fix.** Whoever touches the db test harness next should make
 teardown delete rather than close, and then re-run the suite several times rather than once.
+
+## Test isolation — the `data-safety` flake, resolved — `claude/build-test-isolation`, 2026-09-23
+
+**Resolved.** `tests/unit/pwa/data-safety.test.tsx` → *"says nothing alarming to a learner with no
+cards yet"*, reported in W8a's section and in *"Why no Vercel build could ever have worked, and the
+flake it uncovered"*.
+
+### The hypothesis was wrong about where the leak was
+
+The Node 24 section's guess was a **cross-file** leak: fake-indexeddb on `globalThis`, surviving into
+a later file on a reused vitest worker. **That does not happen under this config.** Vitest 4.1.11's
+default is `pool: 'forks'`, `isolate: true`. With two probe files and `--maxWorkers=1`, each file ran
+in its own pid with a fresh `globalThis` (a marker set by one was `undefined` in the other). The
+review confirmed this across forks and threads. Cross-file leakage appears only with `isolate: false`,
+and the fix below covers that case too.
+
+The leak was **within the file**, and it happened on every run:
+
+1. *"warns a non-installed Safari tab holding cards"* writes a card through `getRepository()`. The
+   file's `afterEach` calls `closeDb()`, which drops the memo and keeps the rows, so the card is still
+   there when the next test starts. A probe logged `cards before render 1`.
+2. The "no cards yet" test mostly passed anyway, because its assertion checked nothing.
+   `DataSafetyCard` renders `risk = 'unknown'` while its `cards` state is still `null`, so
+   `waitFor(risk === 'unknown')` succeeded on the first synchronous check, before the count query
+   returned. Probe: `risk at first check unknown`, and `risk settled at-risk` 300 ms later.
+3. It failed when the count came back inside Testing Library's `asyncWrapper` drain: the
+   `await new Promise(r => setTimeout(r, 0))` after every `waitFor` (RTL 16.3.3, `pure.js`). The
+   warning then rendered before `queryByTestId('storage-warning')` ran. fake-indexeddb schedules on
+   `setImmediate`, so whether that chain beat a 1 ms timer depended on event-loop timing. That is why
+   adding an unrelated file, which changes scheduling and CPU load, perturbed it.
+
+### The deterministic reproduction
+
+A setup file that stretches zero-delay timers, so the count always lands inside the drain. It changes
+only timing, not IndexedDB, and in fake-indexeddb 6.2.5 `setImmediate` is not a timer:
+
+```ts
+// apps/app/tests/unit/zz-slow-drain.ts   (scratch — not committed)
+const real = globalThis.setTimeout;
+globalThis.setTimeout = ((fn: (...a: unknown[]) => void, ms?: number, ...rest: unknown[]) =>
+  real(fn, ms === 0 || ms === undefined ? 100 : ms, ...rest)) as typeof setTimeout;
+
+// apps/app/vitest.repro.config.ts   (scratch — not committed)
+import { mergeConfig } from 'vitest/config';
+import base from './vitest.config';
+export default mergeConfig(base, { test: { setupFiles: ['tests/unit/zz-slow-drain.ts'] } });
+```
+
+`cd apps/app && npx vitest run -c vitest.repro.config.ts tests/unit/pwa/data-safety.test.tsx`
+
+| Test file | `setup.ts` | Result |
+|---|---|---|
+| original | original | **fails 3/3**: `expected <p class="text-warning" …(1)></p> to be null`, and only that test |
+| original, `-t "says nothing alarming"` alone | original | passes, the control: no earlier test, no card |
+| original | fixed | 12/12 passes, 3/3 |
+
+Review 1 rebuilt this independently from `git show` copies and got the same table.
+
+### The fix
+
+- **`apps/app/tests/unit/setup.ts`: a global `beforeEach` deletes every IndexedDB database**
+  (`indexedDB.databases()` → `deleteDatabase`), after `closeDb()`. It runs before every test, so the
+  starting state is empty by construction and not a matter of each file's teardown. The hook first
+  restores real timers, because fake-indexeddb runs on `setImmediate` and leftover fake timers would
+  hang it. It rejects a blocked delete instead of hanging: a probe that left a raw `indexedDB.open`
+  connection now fails in 4 ms with `deleteDatabase('raw') was blocked by a connection left open`,
+  where it used to hit a 10 s hook timeout under the wrong test's name. **Consequence:** anything
+  seeded into IndexedDB in a `beforeAll` is gone before the first test. No file does this today;
+  seed in `beforeEach`.
+- **`closeDb()` and `getDb()` are unchanged.** Dropping the memo without deleting the data is correct
+  production behaviour: a closed connection must not erase a learner's cards. `repository.ts` and
+  `schema.ts` are untouched.
+- **The flaky test now checks something.** It spies on `cardCountsByState`, awaits the count inside
+  `act()`, asserts `total === 0`, and only then asserts `risk` and the absent warning. Under the old
+  setup it now fails **deterministically** (`expected 1 to be +0`, 3/3), with no timing harness. It is
+  a stricter version of the same test, not a looser one.
+- **The guard is `tests/unit/db/isolation.test.ts`.** Its first test writes through the memoised
+  repository *and* through a privately named `TangramDb`, and closes nothing. Its second test asserts
+  `indexedDB.databases()` is `[]` and both repositories are empty. The second test also asserts that
+  the first one ran, and the block is `{ shuffle: false }`. Mutations run against it:
+
+  | Mutation of `setup.ts` | Guard |
+  |---|---|
+  | no wipe (the original) | **red** |
+  | delete only the default `tangram` database | **red** |
+  | delete not awaited | **red** |
+  | wipe in `afterEach` instead | green, which is equivalent |
+  | wipe without `closeDb()` | green: Dexie closes on `versionchange` and reopens, so `closeDb()` is belt and braces, not what makes the wipe work |
+
+### Tests that were passing on leaked or ordered state
+
+With the wipe in place, the full suite was green on its first run: **no test depended on rows an
+earlier test left.** Review 2 shuffled 158 of the 166 files, `--sequence.shuffle` at 7 seeds for 114
+files and 3 seeds for 44. The static `build`, `fonts`, `deps`, `workspace` and `source-style` checks
+were left out. It found one order dependency, which had nothing to do with the database:
+
+- **`tests/unit/fsrs-optimize/previous.test.ts`** called `localStorage.clear()` *before*
+  `vi.unstubAllGlobals()` in its `beforeEach`. The *"survives a browser that refuses storage
+  entirely"* test stubs a `localStorage` with no `clear`, so every test that ran after it threw
+  `localStorage.clear is not a function`. That was hidden only because it is declared last.
+  `--sequence.shuffle --sequence.seed=1` gave 5 failures before the fix and 7/7 after. The fix swaps
+  the two lines.
+
+Candidates both reviews checked and cleared: the install and persist stores, which reset in
+`afterEach`; the keyboard registry; the review, lookup and reader zustand stores; the access
+credential; the `requested` and `direction-prefs` localStorage flags; the in-flight maps in
+`system-lists` and `members`; the memoised `infoRequest` handshakes; the `Capacitor`, `caches` and
+`serviceWorker` overrides; and every fake-timer file, all of which restore real timers. Latent, not
+fixed: `data-safety`'s `window.location` and `URL.createObjectURL` overrides are never restored, but
+they are reassigned in every `beforeEach` and no other test in that file reads them.
+`--sequence.concurrent` breaks `data-safety` with or without this fix, because its tests share one
+document. No test uses `.concurrent`.
+
+### Something the next person will trip on
+
+On a fresh clone, running vitest directly in `apps/app` gave **8 failures** before `pnpm build` had
+ever run. There were 5 in `tests/unit/fonts/**`, 2 in `dict/artifact-copy.test.ts` and 1 in
+`server/routes.test.ts`, all asserting against files the build or `font:ensure` produces. After one
+`pnpm build`, all passed. The root `pnpm test` runs `data:ensure` and `font:ensure` first. This is not
+a flake and is unrelated to this section.
+
+### Verification
+
+`pnpm lint` and `pnpm typecheck` are green on this branch. The ten-run and gate results follow below
+once they have been run.

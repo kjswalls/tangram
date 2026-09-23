@@ -69,7 +69,9 @@ import type { Entry } from '@/lib/types';
 // API base and attaches `X-Tangram-Access`; without it this call 401s on any
 // deployment with `TANGRAM_ACCESS_SECRET` set, and goes to the wrong origin
 // once `backend.md` moves the route off this one.
-import { apiFetch } from '@/src/access/client';
+import { API_CONFIGURED, apiFetch } from '@/src/access/client';
+import { apiProblemOf, responseProblem } from '@/lib/api/availability';
+import { Button } from '@/components/ui/button';
 
 /**
  * Longer than the route's own deadline (20 s), so a slow provider normally
@@ -79,6 +81,12 @@ import { apiFetch } from '@/src/access/client';
 const REQUEST_TIMEOUT_MS = 25_000;
 
 const OFFLINE_NOTE = 'Offline examples — set ANTHROPIC_API_KEY for real sentences.';
+
+/** No API in this build. Permanent, so there is no retry beside it. */
+export const EXAMPLES_NOT_CONFIGURED =
+  'Example sentences are not set up in this version of the app.';
+/** A base is set and nothing answered. Transient, so it comes with one. */
+export const EXAMPLES_UNREACHABLE = 'Could not reach the server for example sentences.';
 
 /**
  * Every settled state records **what it answers** (`answered`), and staleness is
@@ -97,7 +105,13 @@ type State =
       provider?: AskInfoResponse['provider'];
       cached: boolean;
     }
-  | { status: 'error'; answered: string; message: string };
+  | {
+      status: 'error';
+      answered: string;
+      message: string;
+      /** Nothing answered at all — the one failure a retry can fix. */
+      unreachable?: boolean;
+    };
 
 /** What a state answers: the entry, and the sense of it the card is about. */
 function requestKey(entryId: string | null, senseIndex?: number): string {
@@ -149,6 +163,11 @@ export interface ExampleSentencesProps {
    */
   script?: PhraseScript;
   className?: string;
+  /**
+   * Whether this build has an API (`API_CONFIGURED`). A prop only so the unit
+   * tests can draw the not-configured state without a second build.
+   */
+  configured?: boolean;
 }
 
 export function ExampleSentences({
@@ -156,13 +175,18 @@ export function ExampleSentences({
   senseIndex,
   script = 'simp',
   className,
+  configured = API_CONFIGURED,
 }: ExampleSentencesProps) {
   const [state, setState] = useState<State>({ status: 'loading' });
+  /** Bumped by the unreachable line's retry, which re-runs the request effect. */
+  const [attempt, setAttempt] = useState(0);
 
   const requested = requestKey(entryId, senseIndex);
 
   useEffect(() => {
-    if (!entryId) return;
+    // No API in this build: nothing to ask, so nothing is read, opened or sent.
+    // The line below is drawn from the prop alone.
+    if (!entryId || !configured) return;
     let cancelled = false;
     const controller = new AbortController();
     const deadline = setTimeout(
@@ -297,26 +321,51 @@ export function ExampleSentences({
         );
         if (cancelled) return;
 
-        const res = await apiFetch(EXAMPLES_PATH, {
-          method: 'POST',
-          signal: controller.signal,
-          headers: { 'content-type': 'application/json', accept: 'application/json' },
-          body: JSON.stringify({
-            // `toRetrieved`, not the rows themselves: assignability is a
-            // compile-time fact and `JSON.stringify` is not, so without it every
-            // one of the fourteen `Entry` fields would go on the wire.
-            entry: toRetrieved(target),
-            ...(senseIndex === undefined ? {} : { senseIndex }),
-            profile,
-            support: offered.map(toRetrieved),
-          }),
-        });
+        // The one call whose failure means "nothing answered", caught on its
+        // own: a `TypeError` from grounding a malformed body further down is
+        // a server that answered, and must not be read as unreachable.
+        let res: Response;
+        try {
+          res = await apiFetch(EXAMPLES_PATH, {
+            method: 'POST',
+            signal: controller.signal,
+            headers: { 'content-type': 'application/json', accept: 'application/json' },
+            body: JSON.stringify({
+              // `toRetrieved`, not the rows themselves: assignability is a
+              // compile-time fact and `JSON.stringify` is not, so without it every
+              // one of the fourteen `Entry` fields would go on the wire.
+              entry: toRetrieved(target),
+              ...(senseIndex === undefined ? {} : { senseIndex }),
+              profile,
+              support: offered.map(toRetrieved),
+            }),
+          });
+        } catch (error) {
+          if (cancelled || isAbort(error)) return;
+          const unreachable = apiProblemOf(error) === 'unreachable';
+          setState({
+            status: 'error',
+            answered: requested,
+            message: unreachable
+              ? EXAMPLES_UNREACHABLE
+              : 'No example sentences for this one right now.',
+            ...(unreachable ? { unreachable: true } : {}),
+          });
+          return;
+        }
         if (!res.ok) {
+          // A static host's 404 or a proxy's 5xx is "nothing answered" too;
+          // the API's own refusal carries its error shape and is not.
+          const refused = await res.json().catch(() => null);
+          const unreachable = responseProblem(res.status, refused) === 'unreachable';
           if (!cancelled) {
             setState({
               status: 'error',
               answered: requested,
-              message: 'No example sentences for this one right now.',
+              message: unreachable
+                ? EXAMPLES_UNREACHABLE
+                : 'No example sentences for this one right now.',
+              ...(unreachable ? { unreachable: true } : {}),
             });
           }
           return;
@@ -366,6 +415,9 @@ export function ExampleSentences({
         });
       } catch (error) {
         if (cancelled || isAbort(error)) return;
+        // Everything after the response arrived — a body that would not
+        // parse or ground, a dictionary read. The server answered, so this
+        // is the quiet line, never the unreachable one: see the fetch above.
         setState({
           status: 'error',
           answered: requested,
@@ -381,7 +433,7 @@ export function ExampleSentences({
       controller.abort();
       clearTimeout(deadline);
     };
-  }, [entryId, senseIndex, requested]);
+  }, [entryId, senseIndex, requested, configured, attempt]);
 
   // Anything answering a different entry is not an answer to this one yet.
   const settled = state.status !== 'loading' && state.answered === requested ? state : undefined;
@@ -408,10 +460,35 @@ export function ExampleSentences({
   // sentence *about*. Nothing is rendered at all — not an empty state.
   if (!entryId) return null;
 
+  /**
+   * **No API in this build.** One muted line where the sentences would be, from
+   * the first paint — no "Building a sentence…", because nothing is being
+   * built. It sits on the card back under the answer, so it never interrupts
+   * a review; the grade buttons were live the whole time either way.
+   */
+  if (!configured) {
+    return (
+      <section
+        data-testid="example-sentences"
+        data-status="error"
+        data-api="not-configured"
+        className={cn('flex flex-col gap-2', className)}
+      >
+        <h3 className="text-xs font-semibold tracking-wide text-muted uppercase">
+          Sentences from words you know
+        </h3>
+        <p data-testid="examples-status" className="text-sm text-muted">
+          {EXAMPLES_NOT_CONFIGURED}
+        </p>
+      </section>
+    );
+  }
+
   return (
     <section
       data-testid="example-sentences"
       data-status={settled?.status ?? 'loading'}
+      data-api={failed?.unreachable ? 'unreachable' : 'ok'}
       data-provider={ready?.provider ?? 'unknown'}
       data-cached={ready?.cached ? 'true' : 'false'}
       className={cn('flex flex-col gap-2', className)}
@@ -430,6 +507,24 @@ export function ExampleSentences({
         <p data-testid="examples-status" className="text-sm text-muted">
           {failed.message}
         </p>
+      ) : null}
+
+      {failed?.unreachable ? (
+        <Button
+          data-testid="examples-retry"
+          variant="secondary"
+          size="sm"
+          className="self-start"
+          // Keyboard grading reads 1–4 and Space off the window; a click here
+          // must not leave focus on a button that Space would press again.
+          onClick={(event) => {
+            event.currentTarget.blur();
+            setState({ status: 'loading' });
+            setAttempt((count) => count + 1);
+          }}
+        >
+          Try again
+        </Button>
       ) : null}
 
       {ready && rendered.length === 0 ? (

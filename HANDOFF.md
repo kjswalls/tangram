@@ -12788,3 +12788,111 @@ All on the final tree (`683ee98`, code; the docs commit touches no test input), 
 
 Not done here: `--sequence.concurrent` support, which no file uses, and restoring `data-safety`'s
 `window.location` override, which is latent. Both are described above.
+## The no-API state — `claude/build-web-no-api`, 2026-09-23
+
+**What was wrong.** The first deployed build has no server behind it, and an empty `VITE_API_BASE`
+got one `console.warn`. Ask fell through to a raw "The ask service answered HTTP 404." line, the card
+back to a generic one, free recall to silence, and the `?key=` probe read the 404 as `unverified`.
+Now "there is no API" is a visible state, split into the two situations behind it:
+
+| | Not configured | Unreachable |
+|---|---|---|
+| What | production build, `VITE_API_BASE` empty | base set; refused/dropped connection, our timeout, or a 404/502/503/504 **without** the API's own `{ error }` body |
+| Known | at build time — `API_CONFIGURED` (`src/access/client.ts`) | per request — `apiProblemOf` / `responseProblem` (`lib/api/availability.ts`) |
+| Requests | **none**: `apiFetch` rejects with `ApiNotConfiguredError` before `fetch`, and every surface checks first | as before |
+| Ask panel (Look up) | chip "Dictionary only" + one line, from first paint, whatever the query; no retry | chip "Dictionary only — offline" + one line + **Try again** |
+| Example sentences (card back) | one line, no "Building a sentence…", no retry | one line + **Try again** |
+| Free recall | the after-flip line says suggestions are not set up; no request | **unchanged: quiet** ("No suggestion this time") |
+| In-context gloss (reader) | not asked, not drawn | not drawn (unchanged) |
+| `?key=` exchange | `?access=no-api`, nothing asked, key **kept** | `?access=unreachable`, key **kept** |
+
+`unverified` now means only "the API answered and could not say" (5xx, 429). A 404 on the probe is
+`unreachable`: the API always serves `GET /api/ask`, so a 404 is something else answering.
+
+### Decisions this phase took that no plan settled
+
+- **Free recall keeps its silence for the transient case.** It was made silent on purpose
+  (`recall-input.tsx` rule 3, and B1's note above: "turns every failure into no suggestion and the
+  grade buttons stay live"). That is still right for a server that is down: a retry control in the
+  middle of a card interrupts a review, and the learner was grading it themselves anyway. The
+  permanent case is different — it holds for every card — so it gets named, in the **same** muted
+  line after the flip, which interrupts nothing. The production direction is unaffected: it grades
+  on the device (`PROVIDER_GRADES_PRODUCTION` is false) and needs no server.
+- **The in-context gloss says nothing either way.** It has no slot and no control ("absent, not
+  empty", `core.md` C4), and it lives in the reader, which the brief says must not mention the API.
+  So with no API it does not ask and draws nothing; the Look up tab's ask panel is where the learner
+  is told. If the owner wants a word-sheet hint, that is a reader change and should be his call.
+- **`not-configured` is PROD-only.** `apiConfigured()` treats an empty base outside a production
+  build as configured, because vitest stubs `fetch` against relative paths and `pnpm dev` always has
+  `.env.development`. A dev server started without that file would therefore still try same-origin.
+- **A timeout keeps its own wording** ("The ask took too long…") but gets the same retry — the
+  server was reached, so "could not reach" would be false; it was still slow, which the brief counts
+  as transient.
+
+### What the two adversarial reviews found
+
+Two reviews ran in parallel over `57bd910`, read cold: one against the six criteria, one asking
+"what breaks here that no test covers?". Fixed:
+
+1. **Unreachable covered only a refused port or a timeout.** A platform proxy's 503 or a static
+   host's 404 at a wrong base reached the old raw "HTTP 502" line with no retry. Now
+   `responseProblem` reads 404/502/503/504 without the API's own error body as unreachable, on the
+   ask panel and the card back, which also makes them agree with `verdictOf`.
+2. **The card back read *any* `TypeError` as unreachable.** A malformed 200 threw inside grounding
+   and got "Could not reach the server" plus a retry that could never work. The fetch call is now
+   caught on its own; everything after a response arrives is the old quiet line. Unit-tested both
+   ways.
+3. **Timeout wording** (above). 4. **The retry looked inert for the 500 ms debounce** — it now shows
+   "Thinking…" at once. 5. **Two e2e assertions could not fail** (a post-retry state that was never
+   left; a focus check where the button unmounts anyway) — rewritten to assert the panel really leaves
+   and re-enters the state. 6. **`docs/deploy.md` §4/§5 described the removed behaviour** and did not
+   list `no-api`/`unreachable`; corrected, with a pointer that a CORS refusal looks exactly like
+   "unreachable". 7. Two comments claimed things that were not there; fixed.
+
+Considered and **not** changed, with reasons:
+
+- *A cached answer can paint the fake-provider badge while the server is down* (rows keyed `fake`
+  from an earlier fake deployment). The badge describes that cached answer accurately, and skipping
+  the cache on a failed handshake would change a configured build's behaviour.
+- *`ask()`'s outer catch still reads an app-code `TypeError` as `offline`* — pre-existing, and the
+  shape check before grounding already closed the case that produced one. Worth the same treatment
+  as the card back if one shows up.
+- *The two chips read alike* ("Dictionary only" / "… — offline"). The line under each and the retry
+  tell them apart; the owner's copy pass is the place to sharpen it.
+- *Library still offers the free-recall and examples toggles on a build with no API.* Library is not
+  an AI surface and the brief says non-AI surfaces must not mention the API.
+
+### Evidence
+
+`tests/e2e/d/no-api.spec.ts` (new; joins the census in `tests/unit/shell/tab-routes.test.ts`, now
+57/49/50) builds the app twice more — base empty, and base on a port it checks is unbound — and
+serves each from the preview script. The empty build drives Look up, an add, the reader and a tap,
+Practice with free recall and the card back, the importer and a backup download, **recording every
+request**, and asserts none went to `/api/` or left the app's origin. Mutation-checked: removing the
+`apiFetch` guard and the card back's skip fails it with `…/api/examples` in the list. The dead-port
+build asserts both retries really re-request the dead origin. `--repeat-each 5`: 25/25.
+`tests/unit/api/no-api.test.tsx` covers the derivation (`apiConfigured`, `apiProblemOf`,
+`responseProblem`, `verdictOf`, `isUnreachable`, `apiFetch` under a stubbed production env) and each
+surface; two mutations (the `apiFetch` guard, the fallback-provider check) each fail it.
+
+### New strings, for the owner's copy pass
+
+| String | Where |
+|---|---|
+| `Dictionary only` | `apps/app/components/lookup/ask-state.ts:96` |
+| `AI answers are not set up in this version of the app. The dictionary works as normal.` | `apps/app/components/lookup/ask-state.ts:98` |
+| `Could not reach the AI server.` (the panel appends the existing "The dictionary result above is unaffected.") | `apps/app/components/lookup/ask-state.ts:101` |
+| `Try again` (ask panel) | `apps/app/components/lookup/ask-state.ts:102` |
+| `Example sentences are not set up in this version of the app.` | `apps/app/components/review/example-sentences.tsx:87` |
+| `Could not reach the server for example sentences.` | `apps/app/components/review/example-sentences.tsx:89` |
+| `Try again` (card back) | `apps/app/components/review/example-sentences.tsx:526` |
+| `Grade suggestions are not set up in this version of the app — grade it yourself.` | `apps/app/components/review/recall-input.tsx:67` |
+| `The AI server did not answer.` — `AskOutcome.message`, **not drawn** today (the panel draws its own line for this reason) | `apps/app/lib/ai/ask-client.ts:242` |
+| `AI answers are not set up in this version of the app.` — likewise not drawn | `apps/app/lib/ai/ask-client.ts:281` |
+| `?access=no-api`, `?access=unreachable` — URL feedback on a phone | `apps/app/src/access/client.ts` (`AccessExchange`) |
+| The console warning for an unset base (developer-facing) | `apps/app/src/access/client.ts:133` |
+
+Frozen surfaces untouched: nothing under `packages/ai/**`, no change to the ask request/response
+contract, and nothing near how a model answer is grounded or rendered. `AskUnavailableReason`
+(`components/lookup/ask-state.ts`, C7's, not on the settle-first list) gained `not-configured` and
+`unreachable`; nothing switches over it exhaustively.

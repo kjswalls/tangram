@@ -85,3 +85,9 @@ apps/app/dist-gated/
 # (docs/plans/web.md W9, docs/desktop.md). It carries a second copy of
 # `public/` — the 43 MB dictionary included — and the spec removes it again.
 apps/app/dist-sub/
+
+# The two builds `apps/app/tests/e2e/d/no-api.spec.ts` makes — one with
+# `VITE_API_BASE` empty, one pointing at a port nothing listens on — because the
+# base is substituted at build time. Throwaway; the spec removes both.
+apps/app/dist-no-api/
+apps/app/dist-dead-api/

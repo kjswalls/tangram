@@ -184,8 +184,9 @@ describe('the seven routes are gone', () => {
     // a new learner at three viewports, held by geometry — tab labels on one
     // line, 44px touch targets, focus clear of the phone's tab bar, rows and a
     // heading that keep their text, no raw error on a failed download).
-    // The reader-punctuation fix adds one, a spec that does NOT navigate itself
-    // (it enters `/read` through `p5/helpers.ts`'s `readText`):
+    // The reader-punctuation fix adds one, a spec and navigating (its 200%
+    // font-size cases enter `/read` themselves, since `readText` waits for
+    // readings that `'tap'` mode never draws):
     // `core/reader-punctuation.spec.ts` (no line starts with closing
     // punctuation or ends with opening, at three widths, held by geometry; a
     // long word and its comma inside the column at 320px; a drag across a
@@ -194,7 +195,7 @@ describe('the seven routes are gone', () => {
     expect({ files: files.length, specs: specs.length, navigating: navigating.length }).toEqual({
       files: 60,
       specs: 52,
-      navigating: 52,
+      navigating: 53,
     });
   });
 

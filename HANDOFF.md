@@ -15285,4 +15285,6 @@ All run on the final tree:
   - a `compareEntries` that breaks the last tie by id backwards: `pnpm golden --check` refuses it,
     and the test rejects it (it was accepted before the fix);
   - `compareEntries` without the cross-reference rule: two `golden-rebless.test.ts` tests fail, and
-    so does the 尽可能 pin in `reading-order.test.ts`.
+    so does `reading-order.test.ts`'s "does not count the band of an entry whose every gloss is a
+    cross-reference". Its 尽可能 pin reads the built artifact, so it catches a stale artifact, not
+    this mutant.

@@ -20,8 +20,11 @@ const inForce = (applied: FsrsWeights): FsrsWeights => applied;
 
 describe('the revert slot', () => {
   beforeEach(() => {
-    localStorage.clear();
+    // Unstub first: the storage-refusing test below stubs a `localStorage` with
+    // no `clear()`, and clearing before unstubbing threw in every test that ran
+    // after it — hidden only because that test is declared last.
     vi.unstubAllGlobals();
+    localStorage.clear();
   });
 
   it('is empty until something is parked in it', () => {

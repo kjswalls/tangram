@@ -4,8 +4,8 @@
  * The first test leaves as much behind as a careless test could: a card through
  * the memoised repository, a card in a privately named database, and both
  * connections still open. The second asserts none of it survived. Order is the
- * point, so the second also checks the first actually ran before it — a
- * shuffled run would otherwise pass this vacuously.
+ * point, so the block opts out of `--sequence.shuffle`, and the second test
+ * checks the first actually ran before it rather than passing vacuously.
  *
  * Without the setup file's delete, `closeDb()` in a file's `afterEach` only
  * drops the memo, fake-indexeddb keeps every row, and `data-safety.test.tsx`'s
@@ -20,7 +20,7 @@ import { DASUAN, KANKAN } from './fixtures';
 
 let leftBehind = false;
 
-describe('a test cannot see what the previous one wrote', () => {
+describe('a test cannot see what the previous one wrote', { shuffle: false }, () => {
   it('writes, and closes nothing', async () => {
     await getRepository().addCardFromEntry(DASUAN, undefined, 0, 'test-dict');
     const privateDb = new TangramDb('tangram-isolation-guard');

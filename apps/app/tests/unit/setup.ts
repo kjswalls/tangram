@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 import '@testing-library/jest-dom/vitest';
 
-import { beforeEach } from 'vitest';
+import { beforeEach, vi } from 'vitest';
 
 import { closeDb } from '@/lib/db/get-db';
 
@@ -10,18 +10,26 @@ import { closeDb } from '@/lib/db/get-db';
  *
  * `closeDb()` drops the memoised Dexie instance and nothing else, which is its
  * production meaning; fake-indexeddb's databases outlive it for the rest of the
- * worker. So a test that wrote a card through `getRepository()` left it there
+ * file. So a test that wrote a card through `getRepository()` left it there
  * for every later test in the same file, and a test asserting "no cards yet"
  * passed only while its assertion beat the count query back —
  * `tests/unit/pwa/data-safety.test.tsx` lost that race on some full runs
  * (HANDOFF.md, "Test isolation"). Deleting every database here, before each
  * test, makes an empty store the starting state rather than a timing accident.
+ * A consequence: nothing seeded into IndexedDB in a `beforeAll` survives to the
+ * tests — seed in `beforeEach`.
  *
- * `closeDb()` first, so the memoised connection is not the one that blocks the
- * delete. A connection a test opened itself and left open is closed by Dexie's
- * own `versionchange` handler, which is what lets the delete through.
+ * `closeDb()` is not what lets the delete through — Dexie closes any open
+ * connection on `versionchange` — it is here so the next `getDb()` builds a new
+ * instance rather than reopening one that watched its database disappear.
+ *
+ * Real timers first: fake-indexeddb schedules on `setImmediate`, so a previous
+ * test that left fake timers installed would hang this hook with a timeout that
+ * names the wrong test. And a delete that something blocks fails here, loudly,
+ * rather than hanging the same way.
  */
 beforeEach(async () => {
+  vi.useRealTimers();
   await closeDb();
   const databases = await indexedDB.databases();
   await Promise.all(
@@ -32,6 +40,8 @@ beforeEach(async () => {
           const request = indexedDB.deleteDatabase(name);
           request.onsuccess = () => resolve();
           request.onerror = () => reject(request.error);
+          request.onblocked = () =>
+            reject(new Error(`deleteDatabase('${name}') was blocked by a connection left open`));
         }),
     ),
   );

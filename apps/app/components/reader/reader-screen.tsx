@@ -288,8 +288,11 @@ export function ReaderScreen() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
+        {/* `basis-48`: with a basis of zero the heading shrank to one
+            character on a phone rather than letting the toolbar wrap below
+            it (first-run audit). Twelve rem is where the row breaks instead. */}
         <h2
-          className="hanzi min-w-0 flex-1 truncate text-lg font-medium"
+          className="hanzi min-w-0 flex-1 basis-48 truncate text-lg font-medium"
           data-testid="reader-heading"
           title={title}
         >

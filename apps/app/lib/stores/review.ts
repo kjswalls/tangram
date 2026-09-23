@@ -49,6 +49,7 @@ import {
   deferredCardIds,
   interleaveNew,
   nextDueAt,
+  returningByNext,
   returningWithin,
   sessionQueue,
   SESSION_RETURN_HORIZON_MS,
@@ -85,6 +86,8 @@ export interface ReviewState {
   nextDue: number | null;
   /** How many cards come back inside `SESSION_RETURN_HORIZON_MS`. */
   returning: number;
+  /** `returningByNext` — the count the empty state's "in N minutes" names. */
+  returningByNext: number;
   /**
    * Grades written this session, per card. Not persisted: leaving and coming
    * back is the learner deciding to try again.
@@ -126,6 +129,7 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
   now: 0,
   nextDue: null,
   returning: 0,
+  returningByNext: 0,
   repeats: {},
   deferred: [],
   attempts: 0,
@@ -173,6 +177,7 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
         settings: summary.settings,
         nextDue: nextDueAt(all, now, deferred),
         returning: returningWithin(all, now, SESSION_RETURN_HORIZON_MS, deferred),
+        returningByNext: returningByNext(all, now, nextDueAt(all, now, deferred), deferred),
         deferred: [...deferred],
         attempts: queue[0] ? (repeats[queue[0].id] ?? 0) : 0,
         /**
@@ -266,6 +271,7 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
       grading: false,
       nextDue: null,
       returning: 0,
+  returningByNext: 0,
       repeats: {},
       deferred: [],
       attempts: 0,

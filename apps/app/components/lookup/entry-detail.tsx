@@ -63,7 +63,7 @@ function Reading({
         selected ? 'border-accent bg-accent-soft' : 'border-border',
       )}
     >
-      <label className="flex cursor-pointer items-baseline gap-2">
+      <label className="touch-target flex cursor-pointer items-baseline gap-2">
         {choosable ? (
           <input
             type="radio"

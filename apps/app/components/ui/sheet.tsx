@@ -305,7 +305,7 @@ export function Sheet({
               data-testid={`${testId}-close`}
               onClick={onClose}
               aria-label="Close"
-              className="rounded-[var(--r-sm)] px-2 py-1 text-sm text-muted hover:bg-lookup-soft hover:text-ink"
+              className="touch-target rounded-[var(--r-sm)] px-2 py-1 text-sm text-muted hover:bg-lookup-soft hover:text-ink"
             >
               Close
             </button>

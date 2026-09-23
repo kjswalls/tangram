@@ -261,6 +261,25 @@ export function returningWithin(
 }
 
 /**
+ * How many come back by the minute the empty state names — the count behind
+ * "2 words come back in 1 minute". `returningWithin` over the whole horizon is
+ * the right total for the progress bar and the wrong count for that sentence:
+ * after two "Forgot it" (1 min) and eight "Got it" (10 min) it said "10 words
+ * come back in 1 minute" (first-run audit, HANDOFF.md 2026-09-23). The window
+ * is rounded exactly as `emptyStateMessage` rounds the minutes it prints.
+ */
+export function returningByNext(
+  cards: readonly CardRow[],
+  now: number,
+  next: number | null,
+  deferred: ReadonlySet<string> = EMPTY_SET,
+): number {
+  if (next === null) return 0;
+  const minutes = Math.max(1, Math.ceil(Math.max(0, next - now) / MINUTE_MS));
+  return returningWithin(cards, now, minutes * MINUTE_MS, deferred);
+}
+
+/**
  * A scheduling interval of a day or more, as a button label. Days are the
  * smallest unit it knows: anything under one rounds *up* to `1d`, which was
  * true of every schedule v1 could produce (`enable_short_term: false`) and is
@@ -358,6 +377,12 @@ export interface EmptyState {
   waiting?: number;
   /** `returningWithin` — how many come back inside the short-step horizon. */
   returning?: number;
+  /**
+   * `returningByNext` — how many come back by the minute the sentence names.
+   * When given, it is the count the minutes branch prints; `returning` stays
+   * the progress bar's total.
+   */
+  returningByNext?: number;
   /** Cards this session set aside after `MAX_SESSION_REPEATS` (see above). */
   deferred?: number;
 }
@@ -401,7 +426,7 @@ export function emptyStateMessage(state: EmptyState): string {
     const minutes = Math.max(1, Math.ceil(diff / MINUTE_MS));
     // `returning` is the count the caller measured over the same horizon; one
     // card is the floor because `next` being non-null means there is one.
-    const count = Math.max(1, returning);
+    const count = Math.max(1, state.returningByNext ?? returning);
     return `All done for now — ${count} ${count === 1 ? 'word comes' : 'words come'} back in ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}.${aside}`;
   }
   const hours = Math.ceil(diff / HOUR_MS);

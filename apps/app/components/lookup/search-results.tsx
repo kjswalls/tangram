@@ -129,9 +129,13 @@ export function SearchResults({
 }) {
   return (
     <div data-testid="search-results" data-query={resultQuery}>
-      <p className="mb-2 text-xs text-muted" data-testid="result-count">
-        {total === 0 ? 'No matches' : shown < total ? `${shown} of ${total} results` : `${total} result${total === 1 ? '' : 's'}`}
-      </p>
+      {/* No count before there is a query: an empty box said "No matches"
+          beside a panel saying "Nothing looked up yet" (first-run audit). */}
+      {resultQuery ? (
+        <p className="mb-2 text-xs text-muted" data-testid="result-count">
+          {total === 0 ? 'No matches' : shown < total ? `${shown} of ${total} results` : `${total} result${total === 1 ? '' : 's'}`}
+        </p>
+      ) : null}
       {sections.map((part) => (
         <section key={part.source} className="mb-4" data-testid={`section-${part.source}`}>
           {sections.length > 1 ? (

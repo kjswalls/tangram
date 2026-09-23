@@ -72,6 +72,7 @@ import type { Entry } from '@/lib/types';
 import { API_CONFIGURED, apiFetch } from '@/src/access/client';
 import { apiProblemOf, responseProblem } from '@/lib/api/availability';
 import { Button } from '@/components/ui/button';
+import { withDevHint } from '@/lib/dev-hint';
 
 /**
  * Longer than the route's own deadline (20 s), so a slow provider normally
@@ -80,7 +81,7 @@ import { Button } from '@/components/ui/button';
  */
 const REQUEST_TIMEOUT_MS = 25_000;
 
-const OFFLINE_NOTE = 'Offline examples — set ANTHROPIC_API_KEY for real sentences.';
+const OFFLINE_NOTE = withDevHint('Offline examples', ' — set ANTHROPIC_API_KEY for real sentences') + '.';
 
 /** No API in this build. Permanent, so there is no retry beside it. */
 export const EXAMPLES_NOT_CONFIGURED =

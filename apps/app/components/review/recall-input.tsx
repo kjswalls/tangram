@@ -59,8 +59,10 @@ import { RATING_LABELS } from '@/lib/srs/card';
 // snapshot, which is why free recall keeps working on a device that has never
 // downloaded the dictionary.
 import { entryFromSnapshot, wordSnapshot } from '@/lib/srs/direction';
+import { withDevHint } from '@/lib/dev-hint';
 
-const OFFLINE_NOTE = 'Offline grader — set ANTHROPIC_API_KEY for a real reading of your answer.';
+const OFFLINE_NOTE =
+  withDevHint('Offline grader', ' — set ANTHROPIC_API_KEY for a real reading of your answer') + '.';
 
 /** No API in this build, so the default grader can never answer. */
 export const RECALL_NOT_CONFIGURED =

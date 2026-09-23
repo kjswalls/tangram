@@ -216,7 +216,7 @@ export function ProductionCard({
 
           {back.glosses.others.length > 0 ? (
             <details data-testid="other-senses" className="text-sm text-muted">
-              <summary className="cursor-pointer">
+              <summary className="touch-target cursor-pointer">
                 Other senses ({back.glosses.others.length})
               </summary>
               <ul className="mt-2 list-inside list-disc space-y-1">

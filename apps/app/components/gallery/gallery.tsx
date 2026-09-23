@@ -114,6 +114,7 @@ export const SWATCHES: readonly { token: string; role: string }[] = [
   { token: '--new-soft', role: 'gold tint' },
   { token: '--warning', role: 'warnings (not in §11; see app/tokens.css)' },
   { token: '--warning-soft', role: 'warning tint' },
+  { token: '--muted-on-tint', role: 'secondary text on a soft tint' },
   { token: '--skeleton', role: 'a loading placeholder (not in §11; see app/tokens.css)' },
   { token: '--on-accent', role: 'text on a filled accent' },
 ];
@@ -224,9 +225,10 @@ function AskStateSpecimen({ state }: { state: AskState }) {
  * currently computes — so the numbers follow a token edit and follow the theme,
  * rather than being a comment that goes stale.
  *
- * Two of them fail AA today and both are product-decisions §11's own settled
- * hexes, so C0 recorded them as the owner's decision instead of changing them
- * (HANDOFF.md, C0). This table is where they are looked at.
+ * Three of them failed AA until the first-run audit moved three settled hexes
+ * one step each (the header of app/tokens.css). tests/unit/ui/contrast.test.ts
+ * holds every pair here at its threshold, in both palettes, so this table is
+ * no longer the only place a failure would show.
  */
 export const CONTRAST_PAIRS: readonly { fg: string; bg: string; use: string; large?: boolean }[] = [
   { fg: '--ink', bg: '--paper', use: 'body text on the page' },
@@ -238,6 +240,10 @@ export const CONTRAST_PAIRS: readonly { fg: string; bg: string; use: string; lar
   { fg: '--practice', bg: '--practice-soft', use: 'the practice chip, the Practice tab' },
   { fg: '--ink', bg: '--practice-soft', use: 'ink on the practice tint' },
   { fg: '--warning', bg: '--warning-soft', use: 'the warning badge' },
+  { fg: '--muted-on-tint', bg: '--lookup-soft', use: 'secondary text on the jade tint (a picked result)' },
+  { fg: '--muted-on-tint', bg: '--new-soft', use: 'secondary text on the gold tint' },
+  { fg: '--muted-on-tint', bg: '--practice-soft', use: 'secondary text on the vermillion tint' },
+  { fg: '--muted-on-tint', bg: '--warning-soft', use: 'secondary text on the warning tint' },
   { fg: '--on-accent', bg: '--practice', use: 'text on the one primary action' },
   { fg: '--on-accent', bg: '--lookup', use: 'text on a Look up action' },
   { fg: '--lookup', bg: '--paper', use: 'the focus ring', large: true },

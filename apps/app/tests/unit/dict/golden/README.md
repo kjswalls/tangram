@@ -89,6 +89,33 @@ rather than by judgement:**
 An upstream data move is still a human re-bless: `freeze-golden.ts` refuses a `dict.json` whose
 entries differ from the provenance.
 
+## Re-blessed a second time, for preferred readings — 2026-09-23
+
+`compareEntries` gained two more tie-breaks (HANDOFF.md "Preferred readings"): a hand-kept list of
+preferred first readings (`lib/dict/preferred-readings.ts`) goes before the HSK band, and the band of
+an entry whose every gloss is a cross-reference ("see …", "used in …", "variant of …") no longer
+counts. **One frozen expectation moved**, `search.json` `longPassage.tokensSha256`; neither retrieve
+list holds a headword either rule touches.
+
+The mechanism is the same, with one rule per re-bless. `scripts/golden-rebless.ts` names each as an
+`OrderRule`, and `golden/rebless.json` is now a chain of steps, oldest first; the first step is the
+band re-bless's record, unchanged apart from its `rule` field. The test undoes the steps newest first
+and checks that each lands on the digest its step recorded, and it re-proves every step under that
+step's own rule.
+
+**A preferred-reading step records the lists it went between** (`params`), and its rule builds both
+orders from them, not from the live code. So a step stays provable after `preferred-readings.ts`
+moves on. The live `compareEntries` is then checked against the latest step, on the passage and on
+every headword in the dictionary. **An edit to the list therefore fails `pnpm test` until it is
+recorded:** run `pnpm data --force`, then `pnpm golden`, which appends a step from the last blessed
+list to the new one (even if no fixture moved) and refuses anything the edit does not explain.
+
+The passage proof is also stricter than it was. Re-sorting today's tokens the old and new ways and
+comparing digests proves that only the order of readings moved, but not *why*: a `compareEntries`
+that sorted by id backwards would reproduce its own digest. Each token whose readings moved now also
+goes through the pairwise check that the id lists go through. The test runs that mutant, and the ones
+that apply the new rule in part or not at all, and requires each to be rejected.
+
 ## The generator, kept beside the fixtures and unrunnable
 
 It was `scripts/freeze-golden.ts`, run once as

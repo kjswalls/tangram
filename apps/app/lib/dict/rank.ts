@@ -20,6 +20,7 @@
  * runs in the build script, in Node, in a browser worker and behind the
  * Capacitor bridge.
  */
+import { PREFERRED_READINGS } from './preferred-readings';
 import type { DictEntry, EntryId, HskBand } from './types';
 
 // ---------------------------------------------------------------------------
@@ -29,20 +30,47 @@ import type { DictEntry, EntryId, HskBand } from './types';
 /** Sorts after every real band (1–7). Shared by the entry order and the group ranking. */
 const NO_BAND = 8;
 
+/** Every gloss is a pointer to another word, so the entry carries no meaning of its own. */
+export function isCrossReferenceOnly(entry: Pick<DictEntry, 'glosses'>): boolean {
+  return entry.glosses.length > 0 && entry.glosses.every((gloss) => CROSS_REFERENCE_RE.test(gloss));
+}
+
+/**
+ * The band that decides reading order: none, for an entry that only points
+ * elsewhere. HSK sometimes lists a reading whose CC-CEDICT entry is nothing but
+ * a pointer — 尽可能's band-5 `jin4` says only "see 儘可能…[jin3 ke3 neng2]",
+ * the reading it would have displaced — and a pointer is not a reading to teach
+ * first.
+ */
+export function orderingBand(entry: Pick<DictEntry, 'hskBand' | 'glosses'>): number {
+  if (entry.hskBand === undefined) return NO_BAND;
+  return isCrossReferenceOnly(entry) ? NO_BAND : entry.hskBand;
+}
+
+const PREFERRED_IDS: ReadonlySet<string> = new Set(PREFERRED_READINGS.map((reading) => reading.id));
+
+/** On the hand-kept list in `preferred-readings.ts`. */
+export function isPreferredReading(entry: Pick<DictEntry, 'id'>): boolean {
+  return PREFERRED_IDS.has(entry.id);
+}
+
 /**
  * Frequency first — that is the order every list in the UI wants. Entries of one
  * headword share a jieba frequency, so the tiebreaks decide between readings:
- * ordinary words before variants before proper nouns, then the HSK band, then
- * the id for determinism.
+ * ordinary words before variants before proper nouns, then the hand-kept list,
+ * then the HSK band, then the id for determinism.
  *
- * **The band is what picks a headword's default reading**, and the reader's
+ * **These tiebreaks pick a headword's default reading**, and the reader's
  * ruby, the character sheet, "Add" and every list of readings show the first
- * one. Without it the id decided, alphabetically, and `吗[ma2]` sorts before
+ * one. Without them the id decided, alphabetically, and `吗[ma2]` sorts before
  * `吗[ma5]`: the app taught 说 as shuì, 要 as yāo and 吗 as má. A banded reading
  * sorts before an unbanded one and a lower band before a higher, because the HSK
  * list is the only source in the artifact that says which reading a learner
- * meets. HANDOFF.md "The default reading" lists every headword this moved,
- * and the few it made worse (说道, 尽可能, 壳).
+ * meets — except that an entry whose every gloss is a cross-reference has no
+ * band here (`orderingBand`). Where the band still picks wrong, or neither
+ * reading has one (么, 奇, 壳), `preferred-readings.ts` names the reading to
+ * show first. HANDOFF.md "The default reading" and "Preferred readings" list
+ * every headword these moved.
  *
  * It also reorders *different* headwords that share a frequency (most of the
  * unranked tail), which only ever changes rowid order among exact ties.
@@ -52,7 +80,8 @@ export function compareEntries(a: DictEntry, b: DictEntry): number {
     (b.freq ?? -1) - (a.freq ?? -1) ||
     Number(a.isVariant) - Number(b.isVariant) ||
     Number(a.properNoun) - Number(b.properNoun) ||
-    (a.hskBand ?? NO_BAND) - (b.hskBand ?? NO_BAND) ||
+    Number(isPreferredReading(b)) - Number(isPreferredReading(a)) ||
+    orderingBand(a) - orderingBand(b) ||
     (a.id < b.id ? -1 : 1)
   );
 }
@@ -74,6 +103,20 @@ export function compareEntries(a: DictEntry, b: DictEntry): number {
  */
 export const CJK_PATTERN =
   /[㐀-䶿一-鿿豈-﫿\u{20000}-\u{2A6DF}\u{2A700}-\u{2EBEF}\u{2F800}-\u{2FA1F}]/u;
+
+/**
+ * A gloss that only points at another word: "see 儘可能…", "used in 似的…",
+ * "variant of 家伙…", with any qualifier CC-CEDICT puts first ("old variant of",
+ * "erhua variant of", "(Tw) see"). The leading parenthetical and the qualifier
+ * words are `build-data.ts`'s `VARIANT_RE` shape. The word pointed at must
+ * start with a hanzi, which is what keeps out glosses that carry a meaning and
+ * only begin like a pointer: "see you again later", "used in place names".
+ */
+const CROSS_REFERENCE_RE = new RegExp(
+  String.raw`^(?:\([^)]*\)\s*)?(?:see(?: also)?|used in|(?:[A-Za-z]+\s+){0,2}variant of)\s+` +
+    CJK_PATTERN.source,
+  'iu',
+);
 
 export function hasCjk(text: string): boolean {
   return CJK_PATTERN.test(text);

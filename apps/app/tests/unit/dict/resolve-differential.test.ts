@@ -26,7 +26,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { normalizePinyin } from '@/lib/dict/pinyin';
-import { hasCjk } from '@/lib/dict/rank';
+import { hasCjk, isPreferredReading, orderingBand } from '@/lib/dict/rank';
 import { nodeRunner } from '@/lib/dict/runners/node';
 import { SqliteDictStore } from '@/lib/dict/sqlite-store';
 import type { ResolveVia } from '@/lib/dict/store';
@@ -43,19 +43,22 @@ requireDictData();
 // ---------------------------------------------------------------------------
 
 /**
- * The one line that is not `abe6793`'s. Its `compareEntries` was a copy of the
+ * The two lines that are not `abe6793`'s. Its `compareEntries` was a copy of the
  * artifact's reading order, not a rule of its own, and that order gained an HSK
  * band tie-break before the id (`lib/dict/rank.ts`; HANDOFF.md "The default
- * reading"), so 吗 is ma before má. The band clause is carried here so the
- * oracle still describes the order the store is meant to reproduce; everything
- * else stays transcribed.
+ * reading"), so 吗 is ma before má, and then the hand-kept preferred readings
+ * and the band's exception for cross-reference-only entries (HANDOFF.md
+ * "Preferred readings"). Those clauses are carried here so the oracle still
+ * describes the order the store is meant to reproduce; everything else stays
+ * transcribed.
  */
 function compareEntries(a: DictEntry, b: DictEntry): number {
   return (
     (b.freq ?? -1) - (a.freq ?? -1) ||
     Number(a.isVariant) - Number(b.isVariant) ||
     Number(a.properNoun) - Number(b.properNoun) ||
-    (a.hskBand ?? 8) - (b.hskBand ?? 8) ||
+    Number(isPreferredReading(b)) - Number(isPreferredReading(a)) ||
+    orderingBand(a) - orderingBand(b) ||
     (a.id < b.id ? -1 : 1)
   );
 }

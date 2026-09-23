@@ -15068,3 +15068,223 @@ All run on the final tree, in this order:
   - `dict-wasm` upgrade case with the old keying: fails, "the stale file was trusted".
   - `dict-ask` upgrade case with the probe's check neutralised: fails, "the browser kept the older
     build".
+
+## Preferred readings — `claude/build-dict-reading-overrides`, 2026-09-23
+
+**This is what the app teaches, so the list comes first.** `compareEntries` now puts a hand-kept
+list of readings ahead of the HSK band, and it no longer counts the band of an entry whose every
+gloss is a cross-reference. The list is `apps/app/lib/dict/preferred-readings.ts`, which is one
+small file with a header that says how to change it. The owner is expected to read and edit it.
+
+### The list: 43 readings
+
+**The band put the rarer reading first.** HSK lists it, or the other reading has no band:
+
+| headword | first now | was | reason |
+|---|---|---|---|
+| 说道 | shuōdào | shuōdao (HSK 7–9) | "said", as in 他说道 in any story; shuōdao "to discuss" is rarer |
+| 壳 | ké | qiào (HSK 7–9) | as in 蛋壳 and 贝壳; qiào is bookish (地壳, 甲壳) |
+| 唉 | āi | ài (HSK 7–9) | the ordinary sigh, as in 唉声叹气 |
+| 奔 | bēn | bèn (HSK 7–9) | as in 奔跑 and 奔驰; bèn "to head for" is rarer |
+| 哇 | wā | wa (HSK 6) | "wow!"; the particle wa only replaces 啊 after -u, -ao or -ou |
+
+**Neither reading has a band, so the id decided alphabetically.** Most of these are an unbanded
+"used in …" or archaic reading that happens to sort first:
+
+| headword | first now | was | reason |
+|---|---|---|---|
+| 么 | me | má | as in 什么, 怎么 and 这么 |
+| 奇 | qí | jī | as in 奇怪; jī only means "odd number" (奇数) |
+| 似 | sì | shì | as in 似乎 and 相似; shì only in 似的 |
+| 伯 | bó | bǎi | as in 伯伯 and 伯父 |
+| 殷 | yīn | yān | as in 殷勤 |
+| 屏 | píng | bīng | as in 屏幕 "screen" |
+| 咖 | kā | gā | as in 咖啡; gā only in 咖喱 |
+| 石 | shí | dàn | as in 石头; dàn is an old measure of grain |
+| 体 | tǐ | tī | as in 身体; tī only in 体己 |
+| 居 | jū | jī | as in 居住 and 邻居 |
+| 叶 | yè | xié | as in 叶子 "leaf" |
+| 华 | huá | huā | as in 中华 and 华丽 |
+| 渐 | jiàn | jiān | as in 渐渐 "gradually" |
+| 遂 | suì | suí | as in 未遂 and 遂心; suí only in 半身不遂 |
+| 圣 | shèng | kū | as in 圣诞节 |
+| 骨 | gǔ | gū | as in 骨头; gū only in 骨碌 and 骨朵 |
+| 岭 | lǐng | líng | as in 山岭 "mountain ridge" |
+| 校 | xiào | jiào | as in 学校; jiào is "to proofread" (校对) |
+| 陆 | lù | liù | as in 大陆 and 陆地; liù is 六 written on cheques |
+| 济 | jì | jǐ | as in 经济 and 救济 |
+| 颈 | jǐng | gěng | "neck", as in 颈部; gěng only in 脖颈 |
+| 摩 | mó | mā | as in 摩擦 and 按摩; mā only in 摩挲 |
+| 禁 | jìn | jīn | as in 禁止; jīn only in 不禁, 禁不住 and 禁得起 |
+| 隆 | lóng | lōng | as in 隆重 |
+| 囊 | náng | nāng | as in 胶囊 and 行囊 |
+| 舌 | shé | jī | as in 舌头 "tongue" |
+| 姆 | mǔ | m | as in 保姆 |
+| 秘 | mì | bì | as in 秘密; bì only in 秘鲁 "Peru" |
+| 委 | wěi | wēi | as in 委员 and 委托; wēi only in 委蛇 (= 逶迤) |
+| 嵌 | qiàn | kǎn | as in 镶嵌; kǎn only in the place name 赤嵌楼 |
+| 倘 | tǎng | cháng | as in 倘若; cháng only in 倘佯 |
+| 渠 | qú | jù | as in 渠道 |
+| 予 | yǔ | yú | as in 给予 and 予以; yú "I" is classical |
+| 仆 | pú | pū | as in 仆人; pū only in 前仆后继 |
+| 肚 | dù | dǔ | "belly", as in 肚子; dǔ is tripe on a menu (羊肚) |
+| 较差 | jiàochà | jiàochā | "rather poor"; jiàochā is a technical "range" |
+| 不了 | bùliǎo | bùle | as in 受不了 and 少不了; bùle is "no thanks" |
+| 小子 | xiǎozi | xiǎozǐ | "boy; guy", as in 这小子; xiǎozǐ is literary |
+
+Twelve come from the brief's candidate set: 说道, 壳, 唉, 奔, 哇, 么, 奇, 似, 伯, 殷, 屏 and 咖.
+尽可能 is fixed by the cross-reference rule instead, and the other candidates (勒, 钉, 露, 蒙, 子, 得,
+倒, 干) are left out below. I found the rest the same way the brief's were found: by listing every
+headword whose first reading is still decided by the id alone, most frequent first (jieba ≥ ~1,000),
+and keeping only the ones where every learner's dictionary agrees. Review 1 added 嵌, 倘, 渠, 予, 仆,
+肚 and 较差 from just below that line.
+
+### Left out as arguable, on purpose
+
+Both readings are core, so the band (or the id) still decides. **These are the owner's call, not
+mine:**
+
+- **得** dé (band 2, first) vs de (band 2) vs děi — all three are core.
+- **为** wèi (now first) vs wéi — both core.
+- **倒** dǎo (first) vs dào — both core (倒下 / 倒水, 倒是). Both band 2.
+- **干** gān (first) vs gàn — 干净 / 干活; both band 1.
+- **露** lòu (first, band 6) vs lù (band 6). I had lù; review 1 argued that a standalone 露 in
+  running text is nearly always the verb (露出, 露了一手), which is colloquially lòu, and that lù
+  lives in compounds that are their own headwords. **Removed.**
+- **钉** dìng (first, band 7–9) vs dīng. The noun "nail" is usually 钉子; a standalone 钉 is mostly
+  the verb dìng. **Removed.** This is one of the previous phase's "mildly worse" cases, and it
+  stays as the band has it.
+- **勒** lēi (first, band 7–9) vs lè. lè is right in 勒索 and 希特勒, but those are their own
+  headwords; the standalone verb (勒紧, 勒死) is lēi. **Removed.** It was one of the previous
+  phase's "clearly worse" cases; on review, it is arguable.
+- **蒙** mēng (first) vs méng vs Měng (蒙古). **子** zi vs zǐ on a character sheet.
+- The rest of the survey's arguable rows: 载, 哩, 喇, 爪, 舍, 伽, 耶, 嗯, 辟, 帖, 阙, 分子, 粒子,
+  教会. Below the frequency I surveyed, **棱** léng and **尽数** jìnshù are clear-cut but were not
+  added.
+
+### The cross-reference rule
+
+`orderingBand(entry)` is the band, except that it is none when every gloss is a cross-reference:
+"see X", "see also X", "used in X", or "… variant of X", where X starts with a hanzi. **Re-measured:
+57 banded entries lose their band, and exactly one first reading changes, 尽可能 jìnkěnéng →
+jǐnkěnéng**, in simplified and in no traditional headword. The other 56 are erhua variants,
+"variant of" rows (already sorted after real words) and single-reading "see" rows. The previous
+phase's "173 of 174 kept" holds: nothing else it fixed moves back.
+
+Review 2 found that my first version of the regex also matched "see you again later", "See you!",
+"used in place names" and "used in transliteration". Nothing it got wrong changed a reading, but the
+target must now start with a hanzi, and those glosses are pinned as negatives in
+`reading-order.test.ts`.
+
+### Before → after
+
+**44 simplified headwords show a different first entry, all with a pinyin change**: the 43 in the
+list plus 尽可能. **39 traditional headwords do**: the same list less 叶, 圣, 岭 and 仆, whose
+traditional forms (葉, 聖, 嶺, 僕) have only the one reading. No other headword's first reading
+moves. The measurement sorts every simplified and traditional headword group with and without each
+rule, and compares that with `compareEntries`.
+
+- **Rowid order:** 2,025 of 124,188 rowids move. A preferred entry also moves ahead of other
+  headwords with the same jieba frequency (咖 passes 415 of them), as the band does. The file's
+  header says so.
+- **Capped queries, compared against the previous artifact:** `to`, `of`, `a`, `in`, `the`, `and`,
+  `idiom`, `or`, `for` and `see` return the same 5,000 (or fewer) candidates. Only the order inside
+  the cap moves, and the plan still equals `ORDER BY rowid`.
+- **`char_words`:** no posting set changed (review 2, on the 39-entry list, which differs only in
+  which headwords are preferred).
+
+### The goldens, and the hole the re-bless machinery had
+
+Only `search.json` `longPassage.tokensSha256` moved. `retrieve.json` holds no headword either rule
+touches. `pnpm golden` re-blessed it under a new `OrderRule`, and `rebless.json` is now a chain: the
+band step, byte-identical apart from a `rule` field, then this one.
+
+**I found one hole and review 2 found another; both are fixed and pinned:**
+
+1. **The passage proof accepted any reordering.** It re-sorted today's tokens by the old and new
+   comparators and compared the digests. But "new" was the live `compareEntries`, so a mutant that
+   broke ties by id backwards reproduced its own digest and was reported as "all explained". Each
+   token whose readings moved now also goes through the pairwise rule check. The test runs that
+   mutant and requires it to be rejected.
+2. **The step was proved against the live code, so editing the list broke it.** Review 2 showed that
+   after the list changed, neither `pnpm data` nor `pnpm golden` could get back to green. It also
+   showed the "missed swap" half compared the code with itself, so a `compareEntries` that applied
+   the new rule in part, or not at all, passed. Now:
+   - a preferred step records the lists it went between (`params`), and its rule builds both orders
+     from them;
+   - the test checks the live `compareEntries` against the latest step, on every headword in the
+     dictionary, not only the passage (which never contains 尽可能);
+   - **editing `preferred-readings.ts` fails `pnpm test` until `pnpm data --force` and
+     `pnpm golden` record the edit.** `pnpm golden` appends a list-to-list step and refuses anything
+     the edit does not explain.
+
+   Mutation check: `compareEntries` with the cross-reference rule removed fails two tests. The
+   partial mutants, and a rule that licensed a swap whose old order was already the new one, are
+   pinned in `golden-rebless.test.ts`.
+
+### Found, not fixed
+
+- **Search still leads 尽可能 with the pointer.** `search('尽可能')` groups by `trad|simp`. 盡可能
+  (band 5, "see 儘可能…") and 儘可能 (no band) are different groups, and group rank and the HSK badge
+  read the raw band (`CandidateSet`/`materialise`). The reader teaches jǐn; the search lists jìn's
+  pointer first, with the HSK 5 badge. Fixing it means the group ranking reads `orderingBand`, and
+  `RankFacts` carries no glosses (deliberately narrow). That is a search-ranking change with its own
+  goldens, not a reading-order one, so it is left for the orchestrator.
+- **A stronger rule, measured and not shipped: cross-reference-only readings sort after any
+  reading with its own meaning**, with or without a band. It changes **76** simplified headwords.
+  - 14 of them are already on the list (似, 骨, 岭, 济, 颈, 摩, 委, 囊, 舌, 姆, 秘, 嵌, 倘, 咖), so it
+    would shrink the list to 29 truly editorial entries. It would not reach 屏 (it gives bǐng, not
+    píng), 体 or 遂, whose pointer entries also carry a "Taiwan pr." gloss.
+  - Most of the other 62 are improvements too: 适 shì, 悄 qiǎo, 苔 tái, 芥 jiè, 伺 sì, 泌 mì, 胳
+    gē, 棱 léng, 苕 tiáo.
+  - A few get a worse display, because the entry that comes first is itself glossed "variant of …"
+    without being flagged `isVariant`: 苏, 蕃. 迫's first entry already has this display problem
+    (review 1).
+  
+  It goes beyond the ruling, so it is the orchestrator's decision.
+- **`CROSS_REFERENCE_RE` misses "erhua form of X"** (一下儿, 女孩儿) and 彷|仿[fang3]'s extra "(Note: …)"
+  gloss. Review 2 widened it for both and re-sorted every headword: **no first reading changed**, so
+  it is left narrow.
+
+### Frozen surfaces
+
+None touched. `DictStore`, `SqlRunner`, `DictStatus` and `lib/types.ts`'s `Entry` are unchanged.
+`MAX_GLOSS_CANDIDATES` is unchanged and no `ORDER BY e.rowid` was reintroduced.
+`resolve-differential.test.ts`'s transcribed comparator gained the two clauses, imported from
+`rank.ts` and commented as not `abe6793`'s. `data/ATTRIBUTION.md`'s ordering bullet now says one step
+of the order is editorial, not mechanical, and that it changes no entry's text.
+
+### Reviews
+
+- **Review 1 read the list as a Mandarin teacher.** 36 of 39 were right. It found three arguable
+  (露, 钉, 勒, now removed), four reasons with slips (壳's 鸡蛋壳 is not in the dictionary, 哇 also
+  follows -ou, 禁's jīn is common in 不禁, 委蛇 = 逶迤, all fixed), seven missed clear-cut cases
+  (added) and the stronger rule above. It confirmed the cross-reference rule makes no word worse.
+- **Review 2 hunted for unexplained golden changes.** It found both halves of hole 2, the regex's
+  false positives, the search disagreement and the missing handoff section; all are fixed or
+  recorded above. It confirmed that `PREFERRED_RULE`'s swap check is no broader than the two rules,
+  and that no capped query or posting set moved.
+
+### Gates
+
+All run on the final tree:
+
+- `pnpm lint`, `pnpm typecheck`, `pnpm build`: clean.
+- `pnpm data --force`, then `pnpm data:verify`: all checks pass, including "rowid order equals
+  compareEntries order". The artifact is `cbce9a0e…`.
+- `pnpm golden --check`: the fixtures already match.
+- `pnpm test`: **2,488** app tests and **103** server tests pass.
+  - An earlier run failed three tests that read the output of `pnpm build`, because this fresh
+    container had not built yet. They pass after a build.
+- `pnpm e2e`: **389 passed** in 18.0 min. The two upgrade cases pass, so a browser holding the
+  previous artifact picks up this one: `d/dict-ask.spec.ts` "whose stored copy is an older build…"
+  and `d/dict-wasm.spec.ts` "a browser holding an older artifact…".
+- `pnpm smoke --no-api` against `pnpm preview`: **41 ok**, with 6 API cases skipped and reported as
+  skipped.
+- Mutation checks:
+  - a `compareEntries` that breaks the last tie by id backwards: `pnpm golden --check` refuses it,
+    and the test rejects it (it was accepted before the fix);
+  - `compareEntries` without the cross-reference rule: two `golden-rebless.test.ts` tests fail, and
+    so does `reading-order.test.ts`'s "does not count the band of an entry whose every gloss is a
+    cross-reference". Its 尽可能 pin reads the built artifact, so it catches a stale artifact, not
+    this mutant.

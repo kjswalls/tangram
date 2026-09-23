@@ -64,6 +64,7 @@ export function ReviewSession({ apiConfigured = API_CONFIGURED }: ReviewSessionP
   const now = useReviewStore((state) => state.now);
   const nextDue = useReviewStore((state) => state.nextDue);
   const returning = useReviewStore((state) => state.returning);
+  const returningSoon = useReviewStore((state) => state.returningByNext);
   const deferred = useReviewStore((state) => state.deferred);
   const attempts = useReviewStore((state) => state.attempts);
   const waiting = useReviewStore((state) => state.waiting);
@@ -220,7 +221,7 @@ export function ReviewSession({ apiConfigured = API_CONFIGURED }: ReviewSessionP
           <DictNotice />
           <Card title="Session">
             <p data-testid="review-empty" className="text-base">
-              {emptyStateMessage({ next: nextDue, now, waiting, returning, deferred: deferred.length })}
+              {emptyStateMessage({ next: nextDue, now, waiting, returning, returningByNext: returningSoon, deferred: deferred.length })}
             </p>
           </Card>
         </div>
@@ -281,7 +282,7 @@ export function ReviewSession({ apiConfigured = API_CONFIGURED }: ReviewSessionP
           />
         ) : null}
         <p data-testid="review-empty" className="text-base">
-          {emptyStateMessage({ next: nextDue, now, waiting, returning, deferred: deferred.length })}
+          {emptyStateMessage({ next: nextDue, now, waiting, returning, returningByNext: returningSoon, deferred: deferred.length })}
         </p>
         {/* Same rule: the dictionary's absence is the card below, not a red
             line here. Everything else that can stop a draw still says so. */}

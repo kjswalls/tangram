@@ -110,7 +110,7 @@ export interface TableViewProps {
 export function TableView({ label, head, rows, testId }: TableViewProps) {
   return (
     <details className="mt-3">
-      <summary className="cursor-pointer text-sm text-muted">{label}</summary>
+      <summary className="touch-target cursor-pointer text-sm text-muted">{label}</summary>
       <div className="mt-2 max-h-64 overflow-y-auto">
         <table data-testid={testId} className="w-full text-sm tabular-nums">
           <thead>

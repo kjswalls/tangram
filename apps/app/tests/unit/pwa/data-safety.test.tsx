@@ -82,6 +82,15 @@ const CHROME =
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36';
 
 describe('what the learner is told', () => {
+  it('the hidden file input is not a Tab stop; the Restore button is the control', async () => {
+    // First-run audit: Tab went "Restore from a backup…" → an invisible
+    // sr-only input, which sat under the Download button on screen.
+    render(<DataSafetyCard />);
+    const input = (await screen.findByTestId('backup-file')) as HTMLInputElement;
+    expect(input.tabIndex).toBe(-1);
+    expect(screen.getByTestId('backup-restore').tabIndex).toBe(0);
+  });
+
   it('warns a non-installed Safari tab holding cards, in the pessimistic words', async () => {
     await getRepository().addCardFromEntry(DASUAN, undefined, 0, 'test-dict');
     asEngine(SAFARI);

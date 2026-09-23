@@ -117,6 +117,7 @@ const SEMANTIC_COLOURS = [
   'new-soft',
   'warning',
   'warning-soft',
+  'muted-on-tint',
   'skeleton',
   'on-accent',
 ] as const;
@@ -178,17 +179,22 @@ function stripComments(source: string): string {
 }
 
 describe('the values are the point, so assert the values', () => {
-  /** product-decisions §11's settled hexes, verbatim. */
+  /**
+   * product-decisions §11's settled hexes — verbatim, except the three the
+   * first-run audit moved one step each to clear WCAG AA (app/tokens.css's
+   * header; tests/unit/ui/contrast.test.ts holds the ratios). If the owner
+   * reverts them, contrast.test.ts is the test that must fail.
+   */
   it.each([
     ['--paper', '#f8f4ec'],
     ['--surface', '#fffdf9'],
     ['--ink', '#1c1a17'],
-    ['--muted', '#7a7469'],
+    ['--muted', '#756f64'],
     ['--border', '#e0d8ca'],
     ['--practice', '#b93a26'],
     ['--lookup', '#0f766e'],
-    ['--lookup-soft', '#d9ece6'],
-    ['--new', '#8a6414'],
+    ['--lookup-soft', '#dcefe9'],
+    ['--new', '#886211'],
     ['--new-soft', '#f3ead3'],
   ])('%s is %s in the light palette', (token, hex) => {
     expect(resolveValue(token)).toBe(hex);

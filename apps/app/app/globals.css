@@ -41,6 +41,49 @@ html {
   scroll-padding-top: calc(var(--shell-header-height) + 0.5rem);
 }
 
+/*
+ * **…and above the phone's tab bar**, which is `fixed` to the bottom edge the
+ * same way. Without this, Tab moved focus to a control just below the fold and
+ * the browser scrolled it to the viewport's bottom edge — behind the bar, where
+ * the learner could not see it (first-run audit, HANDOFF.md 2026-09-23; WCAG
+ * 2.4.11). `--tab-bar-height` already includes the home-indicator inset.
+ */
+:root:has([data-shell='phone']) {
+  scroll-padding-bottom: calc(var(--tab-bar-height) + 0.5rem);
+}
+
+/*
+ * **A 44×44 target on a touch screen, without moving anything** (first-run
+ * audit). The small primitives — a `sm` button is 32px tall, a text link or a
+ * `<summary>` about 20 — are sized for a pointer, and on a phone every one of
+ * them was under WCAG 2.5.5's 44px. Growing each box would have re-laid-out
+ * every card, so under a coarse pointer the element keeps its box and gains an
+ * invisible `::after` at least 44px each way, centred on it: a tap anywhere in
+ * that square is a tap on the element (a pseudo-element hit-tests as its
+ * owner). Only under `(pointer: coarse)`: a mouse keeps exact edges.
+ *
+ * In `@layer components` so a utility on the same element (`absolute`,
+ * `fixed`) still wins over the `relative` this needs. It cannot extend a
+ * replaced element — `<input>`, `<select>` — so a checkbox or radio takes it on
+ * its `<label>` and a `<select>` grows instead (`pointer-coarse:h-11`).
+ */
+@layer components {
+  @media (pointer: coarse) {
+    .touch-target {
+      position: relative;
+    }
+    .touch-target::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: max(100%, 44px);
+      height: max(100%, 44px);
+      transform: translate(-50%, -50%);
+    }
+  }
+}
+
 :root[data-theme='dark'] {
   color-scheme: dark;
 }

@@ -179,10 +179,15 @@ describe('the seven routes are gone', () => {
     // bottom of the longest screens, focus never under the header after a route
     // change or through Tab and Shift+Tab, and each list announced by its own
     // name).
+    // The first-run audit adds one, a spec and navigating:
+    // `core/first-run-audit.spec.ts` (the defects found by driving the build as
+    // a new learner at three viewports, held by geometry — tab labels on one
+    // line, 44px touch targets, focus clear of the phone's tab bar, rows and a
+    // heading that keep their text, no raw error on a failed download).
     expect({ files: files.length, specs: specs.length, navigating: navigating.length }).toEqual({
-      files: 58,
-      specs: 50,
-      navigating: 51,
+      files: 59,
+      specs: 51,
+      navigating: 52,
     });
   });
 

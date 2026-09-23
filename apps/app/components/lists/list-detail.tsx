@@ -223,7 +223,7 @@ export function ListDetail({ listId }: { listId: string }) {
           <Link
             to={TAB_PATHS.library}
             data-testid="list-breadcrumb"
-            className="text-accent underline underline-offset-2"
+            className="touch-target text-accent underline underline-offset-2"
           >
             Library
           </Link>
@@ -336,9 +336,12 @@ export function ListDetail({ listId }: { listId: string }) {
                   data-testid="list-member"
                   data-state={member.state}
                   data-entry-id={member.entryId}
-                  className="flex items-center justify-between gap-3 py-2"
+                  className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 py-2"
                 >
-                  <span className="min-w-0">
+                  {/* Wraps, with the word column at least twelve rem: without
+                      it a custom list's two buttons left the gloss "to run;
+                      t…" on a phone (first-run audit). */}
+                  <span className="min-w-0 flex-1 basis-48">
                     {member.entry ? (
                       <HanziWord
                         text={member.entry.simp}

@@ -72,12 +72,12 @@ import {
 import { orderGlosses } from '@/lib/srs/presentation';
 
 import { hskBandLabel, type CardContext, type Entry } from '@/lib/types';
+import { withDevHint } from '@/lib/dev-hint';
 
 /** Long enough that typing a sentence is one ask, short enough to feel answered. */
 const DEBOUNCE_MS = 500;
 
-const OFFLINE_BADGE =
-  'Offline dictionary mode — set ANTHROPIC_API_KEY for AI answers';
+const OFFLINE_BADGE = withDevHint('Offline dictionary mode', ' — set ANTHROPIC_API_KEY for AI answers');
 
 /**
  * Longer than the route's own answer deadline (30 s), so a slow provider
@@ -252,7 +252,7 @@ function MatchCard({
       </p>
       {glosses.others.length > 0 ? (
         <details className="mt-1">
-          <summary className="cursor-pointer text-xs text-muted">
+          <summary className="touch-target cursor-pointer text-xs text-muted">
             other senses ({glosses.others.length})
           </summary>
           <ol className="mt-1 list-inside list-decimal text-xs text-muted">

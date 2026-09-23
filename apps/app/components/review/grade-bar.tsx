@@ -79,7 +79,7 @@ export function GradeBar({
           onClick={() => onGrade(option.rating)}
         >
           <span className="flex min-w-0 items-center justify-center gap-1.5">
-            <span aria-hidden className="shrink-0 text-xs opacity-60">
+            <span aria-hidden className="shrink-0 text-xs opacity-90">
               {option.rating}
             </span>
             <span className="min-w-0">{option.label}</span>

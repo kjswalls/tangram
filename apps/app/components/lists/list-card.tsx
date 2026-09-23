@@ -45,7 +45,7 @@ export function ListCard({ view, busy, onToggleActive, onMarkAllKnown }: ListCar
       data-list-band={list.band ?? ''}
       data-active={list.active ? 'true' : 'false'}
       title={
-        <Link to={listPath(list.id)} className="normal-case hover:text-accent">
+        <Link to={listPath(list.id)} className="touch-target normal-case hover:text-accent">
           {list.name}
         </Link>
       }
@@ -63,7 +63,7 @@ export function ListCard({ view, busy, onToggleActive, onMarkAllKnown }: ListCar
       </p>
 
       <div className="mt-3 flex flex-wrap items-center gap-3">
-        <label className="flex items-center gap-2 text-sm">
+        <label className="touch-target flex items-center gap-2 text-sm">
           <input
             type="checkbox"
             checked={list.active}
@@ -85,7 +85,7 @@ export function ListCard({ view, busy, onToggleActive, onMarkAllKnown }: ListCar
           {allKnown ? 'All known' : busy ? 'Marking…' : 'Mark all known'}
         </Button>
 
-        <Link to={listPath(list.id)} className="text-sm text-accent underline underline-offset-2">
+        <Link to={listPath(list.id)} className="touch-target text-sm text-accent underline underline-offset-2">
           Open
         </Link>
       </div>

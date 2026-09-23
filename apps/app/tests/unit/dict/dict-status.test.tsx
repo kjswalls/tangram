@@ -81,6 +81,23 @@ describe('DictStatusView', () => {
     expect(screen.getByTestId('dict-failure-detail').textContent).toBe('detail');
   });
 
+  it.each(REASONS)('failure reason %s keeps its raw message off the screen in production', (reason) => {
+    // The first-run audit found "TypeError: Failed to fetch" on a production
+    // failure screen. The reason's own words and the retry are the screen.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const status: DictStatus = {
+      state: 'failed',
+      reason,
+      message: 'the dictionary could not be fetched: TypeError: Failed to fetch',
+    };
+    render(<DictStatusView status={status} onStart={() => {}} showDetail={false} />);
+    expect(screen.queryByTestId('dict-failure-detail')).toBeNull();
+    expect(screen.getByTestId('dict-status').textContent).not.toMatch(/TypeError|fetch/);
+    expect(screen.getByTestId('dict-retry')).toBeTruthy();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('TypeError: Failed to fetch'));
+    warn.mockRestore();
+  });
+
   it('the four failure reasons are four different screens, not one generic one', () => {
     const seen = new Set(
       REASONS.map((reason) => {

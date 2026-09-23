@@ -121,8 +121,13 @@ describe('the shell header', () => {
     const rule = /:root:has\(\[data-header='pinned'\]\)\s*\{([^}]*)\}/.exec(css);
     expect(rule, 'no pinned-only rule in globals.css').not.toBeNull();
     expect(rule?.[1]).toMatch(/scroll-padding-top:\s*calc\(var\(--shell-header-height\)/);
+    // The phone shell's bottom padding (the first-run audit's, for the fixed
+    // tab bar) is the one other rule, and it pads the bottom only.
+    const phone = /:root:has\(\[data-shell='phone'\]\)\s*\{([^}]*)\}/.exec(css);
+    expect(phone, 'no phone-only rule in globals.css').not.toBeNull();
+    expect(phone?.[1]).toMatch(/^\s*scroll-padding-bottom:\s*calc\(var\(--tab-bar-height\)[^;]*;\s*$/);
     // And nowhere unconditionally.
-    const elsewhere = css.replace(rule?.[0] ?? '', '');
+    const elsewhere = css.replace(rule?.[0] ?? '', '').replace(phone?.[0] ?? '', '');
     expect(elsewhere).not.toMatch(/scroll-padding/);
   });
 });

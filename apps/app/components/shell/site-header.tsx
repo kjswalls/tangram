@@ -1,4 +1,5 @@
 import { Link } from 'react-router';
+import { cn } from '@/lib/cn';
 
 /**
  * The wordmark row (docs/plans/core.md C7).
@@ -14,7 +15,7 @@ import { Link } from 'react-router';
  */
 export function SiteHeader({ className }: { className?: string }) {
   return (
-    <Link to="/" data-testid="wordmark" className={className ?? 'flex items-baseline gap-2'}>
+    <Link to="/" data-testid="wordmark" className={cn('touch-target', className ?? 'flex items-baseline gap-2')}>
       <span className="text-lg font-semibold tracking-tight">Tangram</span>
       <span className="hanzi text-sm text-muted">七巧板</span>
     </Link>

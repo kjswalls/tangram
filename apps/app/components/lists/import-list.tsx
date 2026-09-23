@@ -250,7 +250,7 @@ export function ImportList({ target, lists = [], onImported, resolver }: ImportL
 
       {target ? null : (
         <div className="flex flex-col gap-2 text-sm">
-          <label className="flex flex-wrap items-center gap-2">
+          <label className="flex flex-wrap items-center gap-2 pointer-coarse:min-h-11">
             <input
               type="radio"
               name="import-target"
@@ -267,11 +267,11 @@ export function ImportList({ target, lists = [], onImported, resolver }: ImportL
               value={name}
               disabled={mode !== 'new'}
               onChange={(event) => setName(event.target.value)}
-              className="h-9 max-w-xs"
+              className="h-9 max-w-xs pointer-coarse:h-11"
             />
           </label>
           {customLists.length > 0 ? (
-            <label className="flex flex-wrap items-center gap-2">
+            <label className="flex flex-wrap items-center gap-2 pointer-coarse:min-h-11">
               <input
                 type="radio"
                 name="import-target"
@@ -291,7 +291,7 @@ export function ImportList({ target, lists = [], onImported, resolver }: ImportL
                   setExistingId(event.target.value);
                   resetPreview();
                 }}
-                className="h-9 rounded-lg border border-border bg-surface px-2 text-sm"
+                className="h-9 rounded-lg border border-border bg-surface px-2 text-sm pointer-coarse:h-11"
               >
                 {customLists.map((list) => (
                   <option key={list.id} value={list.id}>
@@ -357,7 +357,11 @@ export function ImportList({ target, lists = [], onImported, resolver }: ImportL
                   data-word={row.row.word}
                   className="flex flex-wrap items-center justify-between gap-3 py-2"
                 >
-                  <span className="min-w-0 flex-1">
+                  {/* `basis-48`: at a basis of zero the word column shrank
+                      beside a reading picker until "line 2" wrapped and the
+                      gloss read "(c…" on a phone (first-run audit). With a
+                      basis the picker wraps below the word instead. */}
+                  <span className="min-w-0 flex-1 basis-48">
                     {/*
                       Plain type, no ruby. The preview's job is to show what the
                       dictionary made of each line so the learner can correct
@@ -390,7 +394,7 @@ export function ImportList({ target, lists = [], onImported, resolver }: ImportL
                             [row.index]: event.target.value,
                           }))
                         }
-                        className="h-8 max-w-56 rounded-lg border border-border bg-surface px-2 text-sm"
+                        className="h-8 max-w-56 rounded-lg border border-border bg-surface px-2 text-sm pointer-coarse:h-11"
                       >
                         {row.options.map((candidate) => (
                           <option key={candidate.key} value={candidate.key}>

@@ -13,6 +13,7 @@ import {
   gradeOptions,
   MAX_SESSION_REPEATS,
   nextDueAt,
+  returningByNext,
   returningWithin,
   sessionQueue,
   sessionRefreshDelay,
@@ -333,6 +334,38 @@ describe('returningWithin', () => {
     const fresh = card({ fsrs: { ...newCard(NOW), state: 0 }, due: NOW + 60_000 });
     const dead = card({ fsrs: { ...newCard(NOW), state: 2 }, due: NOW + 60_000, deletedAt: NOW });
     expect(returningWithin([soon, alsoSoon, beyond, past, fresh, dead], NOW)).toBe(2);
+  });
+});
+
+describe('returningByNext — the count the sentence names', () => {
+  // First-run audit: two "Forgot it" (1 min) and eight "Got it" (10 min) read
+  // "All done for now — 10 words come back in 1 minute".
+  const learning = (due: number) => card({ fsrs: { ...newCard(NOW), state: 1 }, due });
+  const cards = [
+    ...Array.from({ length: 2 }, () => learning(NOW + 60_000)),
+    ...Array.from({ length: 8 }, () => learning(NOW + 10 * 60_000)),
+  ];
+
+  it('counts only the cards due by the minute the message prints', () => {
+    const next = nextDueAt(cards, NOW);
+    expect(returningWithin(cards, NOW)).toBe(10);
+    expect(returningByNext(cards, NOW, next)).toBe(2);
+    expect(
+      emptyStateMessage({
+        next,
+        now: NOW,
+        returning: returningWithin(cards, NOW),
+        returningByNext: returningByNext(cards, NOW, next),
+      }),
+    ).toBe('All done for now — 2 words come back in 1 minute.');
+  });
+
+  it('rounds its window the way the message rounds its minutes', () => {
+    // Next at 90 s prints "2 minutes", so a card at 2 min is in the count and
+    // one at 2 min + 1 s is not.
+    const set = [learning(NOW + 90_000), learning(NOW + 120_000), learning(NOW + 121_000)];
+    expect(returningByNext(set, NOW, NOW + 90_000)).toBe(2);
+    expect(returningByNext([], NOW, null)).toBe(0);
   });
 });
 

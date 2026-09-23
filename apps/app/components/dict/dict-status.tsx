@@ -37,6 +37,8 @@
  * rather than a second pair being written.
  */
 import { cn } from '@/lib/cn';
+import { useEffect } from 'react';
+
 import type { DictStatus } from '@/lib/dict/store';
 
 import { Button } from '@/components/ui/button';
@@ -51,6 +53,15 @@ export interface DictStatusViewProps {
   /** `absent` → start; `failed` → try again. Absent means the affordance is too. */
   onStart?: () => void;
   className?: string;
+  /**
+   * Whether the failure's own message is drawn under the reason's words.
+   * Development only by default: the message is the store's diagnosis —
+   * "the dictionary could not be fetched: TypeError: Failed to fetch", "run
+   * pnpm data" — and in a production build it reached the learner verbatim, in
+   * monospace (first-run audit, HANDOFF.md 2026-09-23). Production logs it to
+   * the console instead, where whoever runs the deployment looks.
+   */
+  showDetail?: boolean;
 }
 
 /** The artifact's size, stated once. `data.md` D1 measured both figures. */
@@ -74,7 +85,12 @@ const FAILURE: Record<
    * arrived. The frozen `DictStatus` union has no reason for the second (see
    * HANDOFF.md, "What `HttpDictStore` cannot do"), so this body says only what
    * is true of both and leaves the diagnosis to `dict-failure-detail`, which
-   * carries `run pnpm data` for one and the OPFS error for the other.
+   * carries `run pnpm data` for one and the OPFS error for the other — **in a
+   * development build**. A production build logs that detail to the console
+   * instead of drawing it (`showDetail`, below), so on a deployed build the two
+   * producers look the same on screen. The first-run audit traded that away
+   * because the line put raw errors in front of the learner; HANDOFF.md
+   * records the trade for the owner.
    */
   import: {
     title: 'The dictionary could not be opened',
@@ -153,7 +169,13 @@ export function DictStatusView({
   source = 'download',
   onStart,
   className,
+  showDetail = import.meta.env.DEV,
 }: DictStatusViewProps) {
+  const detail = status.state === 'failed' ? status.message : '';
+  useEffect(() => {
+    if (detail && !showDetail) console.warn(`tangram: the dictionary failed — ${detail}`);
+  }, [detail, showDetail]);
+
   // `ready` is the state with no screen.
   if (status.state === 'ready') return null;
 
@@ -220,7 +242,7 @@ export function DictStatusView({
       <div>
         <p className="font-medium text-ink">{copy.title}</p>
         <p className="mt-1 text-sm text-muted">{copy.body}</p>
-        {status.message ? (
+        {showDetail && status.message ? (
           <p className="mt-2 font-mono text-xs text-muted" data-testid="dict-failure-detail">
             {status.message}
           </p>

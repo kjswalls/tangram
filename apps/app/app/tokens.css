@@ -41,16 +41,26 @@
  * name of that opt-in, `/gallery`'s theme control sets all four, and HANDOFF.md
  * records the conflict for the orchestrator to settle in wave-zero.md itself.
  *
- * --- One measured accessibility problem, recorded rather than fixed ---------
+ * --- Three settled hexes moved one step, for WCAG AA -----------------------
  *
- * `--muted` on `--paper` is **4.23:1**, under WCAG AA's 4.5:1 for normal-size
- * body text. (On `--surface` it is 4.56:1 and passes, so secondary text is
- * compliant inside a card and non-compliant on the page ground.) Both hexes are
- * product-decisions §11's settled values, so C0 does not change them on its own
- * — the same rule that makes `--practice-soft` the owner's call. `#756f64`, the
- * same hue and chroma one step darker, reaches 4.54:1 on paper. HANDOFF.md
- * carries the measurement and the proposal; `/gallery` renders the ratios so it
- * is looked at rather than read about.
+ * The first-run audit (HANDOFF.md, 2026-09-23) measured every text node on
+ * every screen and found three of product-decisions §11's pairs under AA's
+ * 4.5:1 wherever they were used: `--muted` on `--paper` (4.23, every screen's
+ * subtitle), `--lookup` on `--lookup-soft` (4.45, the active tab, every HSK
+ * badge) and `--new` on `--new-soft` (4.48, the "new" badge). Each was
+ * recorded as the owner's call by C0/C1 and never decided, and AA is a defect
+ * in the audit's brief, so each moved by the smallest step that clears it:
+ *
+ *   --t1-ink-500   #7a7469 → #756f64   4.54 on paper, 4.90 on surface
+ *   --t1-jade-050  #d9ece6 → #dcefe9   jade on it 4.58 (lighter, not darker:
+ *                                      C0's proposed #d2e8e1 measures 4.27)
+ *   --t1-gold-700  #8a6414 → #886211   4.61 on its tint, 5.03 on paper
+ *
+ * Plus one token that did not exist: `--muted-on-tint`. Muted text on ANY of
+ * the soft tints fails (3.8–4.3:1 — the selected search result, the word
+ * sheet's reading box), so inside a tinted element `--muted` is re-pointed at
+ * it (the rule after the dark blocks). The owner can revert the three hexes in
+ * one place; tests/unit/ui/contrast.test.ts is what will then fail, on purpose.
  */
 
 :root {
@@ -64,15 +74,16 @@
   --t1-paper: #f8f4ec;
   --t1-paper-raised: #fffdf9;
   --t1-ink-900: #1c1a17;
-  --t1-ink-500: #7a7469;
+  --t1-ink-500: #756f64;
+  --t1-ink-600: #6b655a;
   --t1-ink-150: #e0d8ca;
   --t1-ink-250: #c5bdaf;
 
   --t1-vermillion-600: #b93a26;
   --t1-vermillion-050: #ffe8e3;
   --t1-jade-700: #0f766e;
-  --t1-jade-050: #d9ece6;
-  --t1-gold-700: #8a6414;
+  --t1-jade-050: #dcefe9;
+  --t1-gold-700: #886211;
   --t1-gold-050: #f3ead3;
 
   /* Warning is not in §11's table and is not invented colour: it is the amber
@@ -128,6 +139,10 @@
 
   --warning: var(--t1-amber-800);
   --warning-soft: var(--t1-amber-050);
+
+  /* Secondary text on a soft tint. See the header and the rule below the dark
+   * blocks, which is the only reader of it. */
+  --muted-on-tint: var(--t1-ink-600);
 
   /*
    * The placeholder a `Skeleton` is painted in. Not `--border`, and not a wash
@@ -255,6 +270,7 @@
     --new-soft: var(--t1-gold-900);
     --warning: var(--t1-amber-400);
     --warning-soft: var(--t1-amber-900);
+    --muted-on-tint: var(--t1-night-muted);
     --skeleton: var(--t1-night-border);
     --on-accent: var(--t1-ink-900);
   }
@@ -274,8 +290,21 @@
   --new-soft: var(--t1-gold-900);
   --warning: var(--t1-amber-400);
   --warning-soft: var(--t1-amber-900);
+  --muted-on-tint: var(--t1-night-muted);
   --skeleton: var(--t1-night-border);
   --on-accent: var(--t1-ink-900);
+}
+
+/*
+ * Secondary text on a soft tint. `text-muted` is `color: var(--muted)` (the
+ * `@theme inline` mapping below inlines it), so re-pointing `--muted` on the
+ * tinted element darkens every muted descendant without any component knowing.
+ * `:where()` keeps the specificity at zero so nothing else has to outbid it.
+ * In the dark variant the two values are the same token: every dark tint
+ * already clears 4.8:1 against `--t1-night-muted`.
+ */
+:where(.bg-lookup-soft, .bg-accent-soft, .bg-new-soft, .bg-practice-soft, .bg-warning-soft) {
+  --muted: var(--muted-on-tint);
 }
 
 /*

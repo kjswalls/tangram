@@ -73,7 +73,9 @@ export function Button({
       data-variant={variant}
       data-shape={shape}
       className={cn(
-        'inline-flex items-center justify-center gap-2 rounded-[var(--r-sm)] font-medium transition',
+        // `touch-target`: 44×44 under a coarse pointer without changing the box
+        // (globals.css; the first-run audit found `sm` and `md` under it).
+        'touch-target inline-flex items-center justify-center gap-2 rounded-[var(--r-sm)] font-medium transition',
         'disabled:pointer-events-none disabled:opacity-50',
         grade && 'h-auto flex-col gap-0.5 text-center leading-tight',
         VARIANTS[variant],
@@ -84,7 +86,7 @@ export function Button({
     >
       {children}
       {grade && sub !== undefined && sub !== null ? (
-        <span className="text-xs font-normal opacity-80">{sub}</span>
+        <span className="text-xs font-normal opacity-90">{sub}</span>
       ) : null}
     </button>
   );

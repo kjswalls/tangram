@@ -252,6 +252,10 @@ export function DataSafetyCard() {
               type="file"
               accept="application/json,.json"
               className="sr-only"
+              // Not a Tab stop: "Restore from a backup…" is the control, and an
+              // sr-only input took focus invisibly right after it, under the
+              // button above (first-run audit).
+              tabIndex={-1}
               disabled={busy}
               data-testid="backup-file"
               onChange={(event) => {

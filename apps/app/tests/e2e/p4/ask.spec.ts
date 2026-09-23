@@ -87,7 +87,10 @@ test.describe('the ask panel', () => {
     const panel = page.getByTestId('ask-panel');
     await expect(panel).toHaveAttribute('data-provider', 'fake');
     await expect(page.getByTestId('ask-offline-badge')).toBeVisible();
-    await expect(page.getByTestId('ask-offline-badge')).toContainText('ANTHROPIC_API_KEY');
+    // The disclosure is in every build; the operator's half ("set
+    // ANTHROPIC_API_KEY …") is development-only, and this is a production
+    // build (first-run audit, HANDOFF.md 2026-09-23).
+    await expect(page.getByTestId('ask-offline-badge')).toHaveText('Offline dictionary mode');
 
     await expect(page.getByTestId('ask-interpretation')).not.toBeEmpty();
     expect(await page.getByTestId('ask-match').count()).toBeGreaterThanOrEqual(1);

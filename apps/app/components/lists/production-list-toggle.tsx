@@ -145,7 +145,7 @@ export function ProductionListToggle({
 
   return (
     <div data-testid="list-production" data-on={on ? 'true' : 'false'} className="text-sm">
-      <label className="flex items-center gap-2">
+      <label className="touch-target flex items-center gap-2">
         <input
           type="checkbox"
           data-testid="list-production-toggle"

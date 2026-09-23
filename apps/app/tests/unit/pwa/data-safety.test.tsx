@@ -17,7 +17,7 @@ import { parseSnapshot } from '@/lib/db/import';
 import { detectEngine, resetInstallCapture, startInstallCapture } from '@/src/pwa/install';
 import { requestPersistence, resetPersistence } from '@/src/pwa/persist';
 import { DASUAN } from '../db/fixtures';
-import { render, screen, waitFor } from '../render';
+import { act, render, screen, waitFor } from '../render';
 
 const reload = vi.fn();
 const objectUrls: Blob[] = [];
@@ -100,12 +100,21 @@ describe('what the learner is told', () => {
   });
 
   it('says nothing alarming to a learner with no cards yet', async () => {
+    const counted = vi.spyOn(getRepository(), 'cardCountsByState');
     asEngine(SAFARI);
     await requestPersistence({ storage: { persist: async () => false, persisted: async () => false } } as unknown as Navigator);
 
     render(<DataSafetyCard />);
 
-    await waitFor(() => expect(screen.getByTestId('data-safety').dataset.risk).toBe('unknown'));
+    // Wait for the count itself, not for `risk` to read 'unknown': the card
+    // renders 'unknown' before the count comes back, so a `waitFor` on it passed
+    // at first paint whatever the database held — and this test went green over
+    // a card an earlier test had left behind. See HANDOFF.md, "Test isolation".
+    await waitFor(() => expect(counted).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      expect((await counted.mock.results[0].value).total).toBe(0);
+    });
+    expect(screen.getByTestId('data-safety').dataset.risk).toBe('unknown');
     expect(screen.queryByTestId('storage-warning')).toBeNull();
   });
 

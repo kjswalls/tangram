@@ -14331,3 +14331,26 @@ Safari applies `text-spacing-trim`, are unmeasured too.
 `tests/unit/hanzi/glue.test.tsx` (new), `tests/e2e/core/reader-punctuation.spec.ts` (new), and the
 census in `tests/unit/shell/tab-routes.test.ts`, which is now 60 files, 52 specs, 53 navigating.
 Frozen surfaces: none touched.
+
+### Gates
+
+Run on the final tree, `efaf954` plus this section:
+- **`pnpm lint`, `pnpm typecheck`, `pnpm build`:** clean.
+- **`pnpm test`:** **2,270** app tests and **103** server tests passed.
+- **`pnpm e2e`:** **374 passed** in 12.4 min. The audit recorded 360; this branch adds 14 cases.
+- **`pnpm smoke --no-api`:** **41 ok**, with 6 API cases skipped and reported as skipped.
+- **`--repeat-each=8`:** **536/536**, run on the final build over five files, 67 cases:
+  `p5/reader`, `core/reader-span`, `core/ruby`, `core/span-select-harness` and
+  `core/reader-punctuation`.
+  - The existing specs are **unmodified**. The only test files this branch changes are the new
+    spec, the new unit file and the census.
+  - A first run on `4547531`, before the review fixes, was 488/488.
+- **The same five files under Chromium touch emulation:** **67/67**. That is a scratch config
+  with `hasTouch: true` on every context. It is emulation, not a device: see "Owed" above.
+- **Mutation checks.** Each guard added after the reviews failed when its defect was put back:
+  - the fit pass disabled;
+  - `indexOfNode` dropping the offset again;
+  - bridging disabled;
+  - a chain switched off rather than unbridged.
+- **Against the base build.** The geometry cases fail there at all three widths, which is what
+  makes them evidence. The drag cases pass there unchanged.

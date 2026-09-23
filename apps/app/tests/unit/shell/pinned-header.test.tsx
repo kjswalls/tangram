@@ -47,6 +47,9 @@ describe('the shell header', () => {
     expect(screen.getByTestId('shell-header').className).not.toMatch(/\bsticky\b/);
     expect(screen.getByTestId('shell-header').className).toMatch(/\btop-0\b/);
     expect(screen.getByTestId('wide-shell').className).toContain('pt-[var(--shell-header-height)]');
+    // A tablet's status bar, under `viewport-fit=cover`; and a printed page.
+    expect(screen.getByTestId('shell-header').className).toContain('pt-[env(safe-area-inset-top');
+    expect(screen.getByTestId('shell-header').className).toMatch(/\bprint:static\b/);
     // jsdom measures everything as 0px; what matters is that it is written.
     expect(document.documentElement.style.getPropertyValue(HEADER_HEIGHT_VAR)).toBe('0px');
   });

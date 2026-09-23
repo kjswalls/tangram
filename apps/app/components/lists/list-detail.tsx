@@ -143,7 +143,10 @@ export function ListDetail({ listId }: { listId: string }) {
   const [data, setData] = useState<DetailData>();
   const [shown, setShown] = useState(PAGE);
   const [reload, setReload] = useState(0);
-  const [error, setError] = useState<string>();
+  /** Keyed by the list it came from, so list A's failure is not list B's. */
+  const [failed, setFailed] = useState<{ listId: string; message: string }>();
+  /** The list row alone — its name — read ahead of everything else. See `busy`. */
+  const [named, setNamed] = useState<{ listId: string; row: ListRow | null }>();
   // Deleting a list is two clicks, not a `confirm()`: it is the one destructive
   // control on the page and there is no undo behind it.
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -156,10 +159,12 @@ export function ListDetail({ listId }: { listId: string }) {
         const next = await readDetail(listId, shown);
         if (!cancelled) {
           setData(next);
-          setError(undefined);
+          setFailed(undefined);
         }
       } catch (cause) {
-        if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
+        if (!cancelled) {
+          setFailed({ listId, message: cause instanceof Error ? cause.message : String(cause) });
+        }
       }
     })();
     return () => {
@@ -167,27 +172,50 @@ export function ListDetail({ listId }: { listId: string }) {
     };
   }, [listId, shown, reload]);
 
+  // The name, on its own read. `readDetail` goes on to fill an HSK band's
+  // membership, open the dictionary and read every card, and the first open
+  // of a band can take seconds — the heading must not wait for any of that.
+  useEffect(() => {
+    let cancelled = false;
+    getRepository()
+      .lists()
+      .then((lists) => {
+        if (!cancelled) setNamed({ listId, row: lists.find((list) => list.id === listId) ?? null });
+      })
+      .catch((cause: unknown) => {
+        if (!cancelled) {
+          setFailed({ listId, message: cause instanceof Error ? cause.message : String(cause) });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [listId, reload]);
 
   /**
    * **The heading is the list's name**, and the name is in IndexedDB.
    *
    * Every list used to be headed "Library", so moving from one list to another
-   * announced the same word twice and named neither. The name arrives a read
-   * after the route renders, and moving straight from list A to list B keeps
-   * this component mounted with A's data until B's read lands — so "is the name
-   * loaded?" is "was `data` read for *this* id?", not "is there any `data`".
-   * Until it is, the heading is busy and the announcer waits
-   * (`src/shell/route-announcer.tsx`). A failed read ends the wait too, on the
-   * old generic heading, rather than holding the announcement for ever.
+   * announced the same word twice and named neither. The name arrives one read
+   * after the route renders — its own read, not the whole page's — and moving
+   * straight from list A to list B keeps this component mounted with A's
+   * state until B's reads land, so "is the name loaded?" is "was it read for
+   * *this* id?", not "is there a name". Until it is, the heading is busy and
+   * the announcer waits (`src/shell/route-announcer.tsx`). A failed read for
+   * this id ends the wait too, on the old generic heading, rather than holding
+   * the announcement for ever.
    */
   const current = data?.listId === listId ? data : undefined;
-  const busy = current === undefined && error === undefined;
+  const nameRead = named?.listId === listId ? named : undefined;
+  const error = failed?.listId === listId ? failed.message : undefined;
+  const missing = current?.missing === true || nameRead?.row === null;
+  const busy = nameRead === undefined && error === undefined;
   const list = current?.list;
   const entryIds = current?.entryIds ?? [];
   const members = current?.members ?? [];
   const header = (
     <PageHeader
-      title={current?.missing ? 'List not found' : (current?.list?.name ?? 'Library')}
+      title={missing ? 'List not found' : (nameRead?.row?.name ?? 'Library')}
       busy={busy}
       trail={
         // The way back, and where the learner is: one list, inside Library.
@@ -202,22 +230,17 @@ export function ListDetail({ listId }: { listId: string }) {
         </nav>
       }
     >
-      {current?.missing ? null : 'Every word in this list, and what state it is in.'}
+      {missing ? null : 'Every word in this list, and what state it is in.'}
     </PageHeader>
   );
 
-  if (current?.missing) {
+  if (missing) {
+    // The breadcrumb above is the way back; a second link here said the same.
     return (
       <>
         {header}
         <Card>
-          <p className="text-sm text-muted">
-            That list does not exist.{' '}
-            <Link to={TAB_PATHS.library} className="text-accent underline underline-offset-2">
-              Back to lists
-            </Link>
-            .
-          </p>
+          <p className="text-sm text-muted">That list does not exist.</p>
         </Card>
       </>
     );

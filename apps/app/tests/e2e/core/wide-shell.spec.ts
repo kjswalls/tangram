@@ -280,8 +280,10 @@ test.describe('focus is never under the header', () => {
       await expectFocusClear(page, `Tab #${forward + 1}`);
       deepest = Math.max(deepest, await page.evaluate(() => window.scrollY));
     }
-    // It went somewhere worth testing: a page's worth of controls, far down.
+    // It went somewhere worth testing: a page's worth of controls, far down —
+    // and it finished, rather than running out of presses part-way.
     expect(forward).toBeGreaterThan(20);
+    expect(forward, 'Library has more than 250 controls; raise the cap').toBeLessThan(250);
     expect(deepest).toBeGreaterThan(1000);
 
     // Back up from the last control on the page.
@@ -298,6 +300,38 @@ test.describe('focus is never under the header', () => {
     expect(backward).toBeGreaterThan(20);
     // And it came all the way back up.
     expect(await page.evaluate(() => window.scrollY)).toBeLessThan(200);
+  });
+
+  /**
+   * Back restores the offset and the announcer focuses the heading without
+   * scrolling, on purpose — so the heading itself may be out of view, or
+   * partly under the header (HANDOFF.md records why that is left alone: it
+   * draws no focus ring, and scrolling it clear would undo the restore). What
+   * a keyboard user does next is Tab, and that must land clear.
+   */
+  test('after Back restores a scrolled Library, the next Tab lands clear of the header', async ({
+    page,
+  }) => {
+    await page.goto('/library');
+    await wideReady(page);
+    await expect(page.getByTestId('list-card').first()).toBeVisible({ timeout: 30_000 });
+    await scrollToBottom(page);
+    await page.evaluate(() => window.scrollTo(0, 1200));
+    await expect.poll(() => page.evaluate(() => Math.round(window.scrollY))).toBe(1200);
+
+    await page.getByTestId('tab-link').filter({ hasText: 'Practice' }).click();
+    await expect(page.locator('[data-route="/practice"]')).toHaveCount(1);
+    await page.goBack();
+    await expect(page.locator('[data-route="/library"]')).toHaveCount(1);
+    await expect.poll(() => page.evaluate(() => Math.round(window.scrollY))).toBeGreaterThan(1100);
+    await expect
+      .poll(() => page.evaluate(() => document.activeElement?.hasAttribute('data-route-heading')))
+      .toBe(true);
+
+    await page.keyboard.press('Tab');
+    const box = await focusedBox(page);
+    expect(box, 'Tab after Back focused nothing measurable').not.toBeNull();
+    await expectFocusClear(page, 'the first Tab after Back');
   });
 
   test('a scroll to a section inside the page lands below the header', async ({ page }) => {

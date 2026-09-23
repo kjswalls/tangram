@@ -175,7 +175,10 @@ export function AppShell({ children }: { children: ReactNode }) {
         data-testid={wide ? 'wide-shell' : 'phone-shell'}
         data-shell={wide ? 'wide' : 'phone'}
         // The header is out of flow when wide; this is the room it took.
-        className={cn('flex min-h-dvh flex-col', wide ? 'pt-[var(--shell-header-height)]' : '')}
+        className={cn(
+          'flex min-h-dvh flex-col',
+          wide ? 'pt-[var(--shell-header-height)] print:pt-0' : '',
+        )}
       >
         {/*
           Pinned on a wide screen, so the tabs stay where the pointer can reach
@@ -185,13 +188,23 @@ export function AppShell({ children }: { children: ReactNode }) {
           `Sheet`'s `z-40`, so an open sheet still covers it. The phone
           arrangement is unchanged: its tabs are a `fixed` bar at the bottom and
           its header scrolls away.
+
+          Two things a pinned header owes that an in-flow one did not: the top
+          safe-area inset, because `index.html` asks for `viewport-fit=cover`
+          and a tablet in the wide arrangement would otherwise keep the tabs
+          under its status bar at every depth (the measured height includes the
+          inset, so the padding and the scroll padding clear it too); and
+          `print:static`, because a fixed element repeats on every printed page
+          and the shell's padding clears only the first.
         */}
         <header
           ref={headerRef}
           data-testid="shell-header"
           className={cn(
             'border-b border-border bg-surface/80 backdrop-blur',
-            wide ? 'fixed inset-x-0 top-0 z-30' : 'px-4 py-3',
+            wide
+              ? 'fixed inset-x-0 top-0 z-30 pt-[env(safe-area-inset-top,0px)] print:static'
+              : 'px-4 py-3',
           )}
         >
           {wide ? (

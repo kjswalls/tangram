@@ -94,7 +94,7 @@ test.describe('scroll position survives a back-navigation', () => {
     // programmatic `.click()` (`followTab`), because the wide header was not
     // sticky: Playwright scrolled back to the top to reach the tab, the router
     // saved **0** for the page being left, and the case failed with nothing to
-    // restore. The header is sticky now, so the tab is on screen and the click
+    // restore. The header is pinned now, so the tab is on screen and the click
     // moves nothing — and if the header ever stops being sticky, this fails
     // again, which `tests/e2e/core/wide-shell.spec.ts` would say more plainly.
     await page.getByTestId('tab-link').filter({ hasText: 'Practice' }).click();

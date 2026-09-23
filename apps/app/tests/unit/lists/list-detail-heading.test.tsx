@@ -14,8 +14,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EntrySource } from '@/lib/lists/entry-source';
 
 // Custom lists need no dictionary; refusing keeps this file off the 43 MB one.
+// `band` is swappable so a case can hold an HSK band's first fill open.
+let band: EntrySource['band'] = () => Promise.reject(new Error('run pnpm data'));
 const down: EntrySource = {
-  band: () => Promise.reject(new Error('run pnpm data')),
+  band: (...args) => band(...args),
   entries: () => Promise.reject(new Error('run pnpm data')),
   search: () => Promise.reject(new Error('run pnpm data')),
 };
@@ -28,11 +30,14 @@ vi.mock('@/lib/lists/entry-source', async (importOriginal) => ({
 const { ListDetail } = await import('@/components/lists/list-detail');
 const { closeDb, getDb, getRepository } = await import('@/lib/db/get-db');
 const { routeHeading } = await import('@/src/shell/route-announcer');
+const { ensureSystemLists, findHskList } = await import('@/lib/lists/system-lists');
 const { render, screen, waitFor } = await import('../render');
 
 // `routeHeading()` looks inside `<main>`, as the announcer does; the shell
 // supplies one in the app.
 afterEach(async () => {
+  band = () => Promise.reject(new Error('run pnpm data'));
+  vi.restoreAllMocks();
   await getDb().delete();
   await closeDb();
 });
@@ -83,5 +88,54 @@ describe("a list's heading", () => {
     await waitFor(() => expect(routeHeading()?.textContent).toBe('List not found'));
     expect(routeHeading()).not.toHaveAttribute('aria-busy');
     expect(screen.getByTestId('list-breadcrumb')).toHaveAttribute('href', '/library');
+  });
+
+  /**
+   * The name is one read; the page is many. The first open of an HSK band
+   * fills its membership from the dictionary, which can take seconds on a
+   * cold device — or never finish where the store is unproven — and the
+   * heading must not sit blank (and the announcer fall back to "Library")
+   * for any of it. Found by the phase's second adversarial review.
+   */
+  it('arrives before the list’s words do', async () => {
+    band = () => new Promise(() => undefined);
+    const hsk1 = findHskList(await ensureSystemLists(getRepository()), 1)!;
+    render(
+      <main>
+        <ListDetail listId={hsk1.id} />
+      </main>,
+    );
+    await waitFor(() => expect(routeHeading()?.textContent).toBe(hsk1.name));
+    expect(routeHeading()).not.toHaveAttribute('aria-busy');
+    expect(screen.getByText('Loading words…')).toBeInTheDocument();
+  });
+
+  /**
+   * A failure belongs to the list it happened on. Kept as one unkeyed value,
+   * list A's failed read un-busied list B's heading at B's first commit, and
+   * the announcer spoke "Library" before B's name could arrive. Found by both
+   * adversarial reviews.
+   */
+  it('is still busy for list B after list A’s read failed', async () => {
+    const repo = getRepository();
+    const food = await repo.createList({ name: 'Food', kind: 'custom' });
+    const lists = vi.spyOn(repo, 'lists').mockRejectedValue(new Error('disk on fire'));
+    const { rerender } = render(
+      <main>
+        <ListDetail listId="list-a" />
+      </main>,
+    );
+    await waitFor(() => expect(screen.getByText('disk on fire')).toBeInTheDocument());
+    expect(routeHeading()).not.toHaveAttribute('aria-busy');
+
+    // B's reads are held open: this is the instant the announcer would read.
+    lists.mockReturnValue(new Promise(() => undefined));
+    rerender(
+      <main>
+        <ListDetail listId={food.id} />
+      </main>,
+    );
+    expect(routeHeading()).toHaveAttribute('aria-busy', 'true');
+    expect(screen.queryByText('disk on fire')).toBeNull();
   });
 });

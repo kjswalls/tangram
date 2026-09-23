@@ -56,7 +56,9 @@ describe('the gallery names only tokens that exist', () => {
      * it is a list rather than a prefix because each one has to be argued for:
      * a colour token that ends up here is a colour nobody reviews.
      */
-    const notColours = new Set(['--tab-bar-height']);
+    // `--shell-header-height` is a length: the wide header's measured height,
+    // written by `components/shell/app-shell.tsx`.
+    const notColours = new Set(['--tab-bar-height', '--shell-header-height']);
     const tier2 = [...declared].filter(
       (token) =>
         !token.startsWith(tier1) &&

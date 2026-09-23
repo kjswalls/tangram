@@ -221,6 +221,17 @@
       /* the `<ul>`'s `py-1`, top and bottom */ 0.5rem +
       /* the bar's own `border-t` */ 1px + env(safe-area-inset-bottom, 0px)
   );
+
+  /*
+   * The wide shell's pinned (`fixed`) header, **measured** — `components/shell/app-shell.tsx`
+   * writes the real height onto `<html>` as an inline style, which beats this
+   * declaration, and removes it in the phone arrangement, which falls back to
+   * this zero. Not hand-computed, for the reason the comment above gives: the
+   * header wraps at the narrow end of the wide range and a copied height would
+   * be silently wrong there. `globals.css` turns it into `scroll-padding-top`;
+   * the shell pads its top by it, because a fixed header is out of flow.
+   */
+  --shell-header-height: 0px;
 }
 
 /*

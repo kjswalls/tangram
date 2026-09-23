@@ -32,7 +32,7 @@
  * `wide-shell.tsx` and leaves the choosing unstated; those two files are gone.
  * Recorded in HANDOFF.md.
  */
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 
 import { useLocation, useNavigate } from 'react-router';
 
@@ -73,6 +73,72 @@ export function useIsWide(): boolean {
   return wide;
 }
 
+/**
+ * The CSS variable the wide header's measured height is written to, on `<html>`.
+ *
+ * **The wide header is pinned to the top of the viewport**, which it was not
+ * until the wide-shell phase: at any real scroll depth the tab bar used to be
+ * off screen, so a pointer user had to scroll back to the top to change tabs.
+ * Pinning it costs something everywhere else, because the browser now puts
+ * things *under* it: a focus move that scrolls, Tab through a page, an in-page
+ * anchor and `scrollIntoView()` all aim at the top edge of the viewport, and
+ * that edge is the header's now.
+ *
+ * `app/globals.css` turns this variable into `scroll-padding-top` on the root
+ * scroller, which is the one knob every one of those paths honours — so they
+ * land clear of the header without each caller knowing it exists. It is also
+ * the shell's top padding (the header is out of flow) and how the two
+ * `md:sticky` side panels (Look up's answer, the reader's) sit below the
+ * header rather than under it.
+ *
+ * **`fixed`, not `sticky`, and the difference is measured.** A sticky header
+ * is still *in* the root scroller, and with the scroll padding in place its
+ * own tab links sit inside the padded band — so the browser judges a stuck
+ * tab link out of view and "scrolls it into view" by moving the page, which
+ * leaves the header where it was and the learner 364px from where they were.
+ * `focus()` on a tab did it, and so did Playwright's scroll-before-click, which
+ * is how it was found: the scroll-restoration spec saved the wrong offset. A
+ * fixed element is not scrolled by the root scroller, so neither path moves
+ * the page. `tests/e2e/core/wide-shell.spec.ts` holds it.
+ *
+ * **Measured, not computed.** The header wraps below ~800px when the wordmark
+ * and the tabs stop fitting on one row, and a font swap or a zoom changes its
+ * height too. `--tab-bar-height` is a hand-computed copy of a height and its
+ * own comment records the pixel that cost; this one is read off the element.
+ *
+ * Zero — absent — in the phone arrangement, whose header scrolls away with the
+ * page exactly as it always did.
+ */
+export const HEADER_HEIGHT_VAR = '--shell-header-height';
+
+function usePinnedHeaderHeight(header: RefObject<HTMLElement | null>, wide: boolean): void {
+  // A layout effect: the header leaves the flow on the render that makes it
+  // wide, and the shell's padding has to be the right height before that
+  // render is painted or the page's first line flashes under the header.
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+    const node = header.current;
+    if (!wide || !node) {
+      root.style.removeProperty(HEADER_HEIGHT_VAR);
+      return;
+    }
+    const write = () => {
+      root.style.setProperty(HEADER_HEIGHT_VAR, `${node.getBoundingClientRect().height}px`);
+    };
+    write();
+    // jsdom has no ResizeObserver; the one write above is all a unit test sees.
+    if (typeof ResizeObserver !== 'function') {
+      return () => root.style.removeProperty(HEADER_HEIGHT_VAR);
+    }
+    const observer = new ResizeObserver(write);
+    observer.observe(node);
+    return () => {
+      observer.disconnect();
+      root.style.removeProperty(HEADER_HEIGHT_VAR);
+    };
+  }, [header, wide]);
+}
+
 /** Where a screen's destination actually is. The only place that knows. */
 export function pathFor(to: ScreenDestination): string {
   if (to.tab === 'lookup') {
@@ -100,18 +166,32 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const active = tabForPath(pathname);
+  const headerRef = useRef<HTMLElement>(null);
+  usePinnedHeaderHeight(headerRef, wide);
 
   return (
     <ScreenNavigateProvider value={(to) => navigate(pathFor(to))}>
       <div
         data-testid={wide ? 'wide-shell' : 'phone-shell'}
         data-shell={wide ? 'wide' : 'phone'}
-        className="flex min-h-dvh flex-col"
+        // The header is out of flow when wide; this is the room it took.
+        className={cn('flex min-h-dvh flex-col', wide ? 'pt-[var(--shell-header-height)]' : '')}
       >
+        {/*
+          Pinned on a wide screen, so the tabs stay where the pointer can reach
+          them at any scroll depth — see `HEADER_HEIGHT_VAR` for what that costs,
+          where it is paid, and why `fixed` rather than `sticky`. `z-30` is above
+          the page's own stacking (the stats tooltip, the practice bar) and below
+          `Sheet`'s `z-40`, so an open sheet still covers it. The phone
+          arrangement is unchanged: its tabs are a `fixed` bar at the bottom and
+          its header scrolls away.
+        */}
         <header
+          ref={headerRef}
+          data-testid="shell-header"
           className={cn(
             'border-b border-border bg-surface/80 backdrop-blur',
-            wide ? '' : 'px-4 py-3',
+            wide ? 'fixed inset-x-0 top-0 z-30' : 'px-4 py-3',
           )}
         >
           {wide ? (

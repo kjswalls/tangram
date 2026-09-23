@@ -358,7 +358,7 @@ export function ReaderScreen() {
           </p>
         </div>
 
-        <div className="order-2 md:sticky md:top-4">
+        <div className="order-2 md:sticky md:top-[calc(var(--shell-header-height)+1rem)]">
           {open ? null : (
             <p className="hidden text-sm text-muted md:block" data-testid="reader-panel-empty">
               Tap a word to look it up, or drag across several. What you add keeps the sentence you

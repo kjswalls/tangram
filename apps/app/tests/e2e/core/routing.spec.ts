@@ -22,26 +22,19 @@ test.use({ dictionary: 'installed' });
 const announcer = (page: Page) => page.getByTestId('route-announcer');
 const scrollY = (page: Page) => page.evaluate(() => Math.round(window.scrollY));
 
-/**
- * Follow a tab link **without letting Playwright scroll to it first**.
- *
- * `locator.click()` scrolls its target into view before pressing it, and the
- * wide shell's header is not sticky — so at 600px down the page the tab bar is
- * off screen, Playwright scrolls back to the top to reach it, and the router
- * then saves a scroll position of **0** for the page being left. The scroll
- * restoration case then fails for a reason that has nothing to do with scroll
- * restoration: it was never given anything to restore. Diagnosed by patching
- * `window.scrollTo` and reading the saved map, not by guessing.
- *
- * A programmatic `.click()` on the anchor is still a real click as far as React
- * Router's `<Link>` is concerned, and it moves nothing.
- */
-async function followTab(page: Page, tab: string): Promise<void> {
-  await page.evaluate((key) => {
-    const link = document.querySelector<HTMLAnchorElement>(`[data-tab="${key}"]`);
-    if (!link) throw new Error(`no tab link for ${key}`);
-    link.click();
-  }, tab);
+/** Wait until the page has been the same height for three reads in a row. */
+async function settledHeight(page: Page): Promise<void> {
+  const heights: number[] = [];
+  await expect
+    .poll(
+      async () => {
+        heights.push(await page.evaluate(() => document.documentElement.scrollHeight));
+        const last = heights.slice(-3);
+        return last.length === 3 && last.every((height) => height === last[0]);
+      },
+      { intervals: [150] },
+    )
+    .toBe(true);
 }
 
 test.describe('a route change moves focus and says where you are', () => {
@@ -86,11 +79,25 @@ test.describe('scroll position survives a back-navigation', () => {
     await expect
       .poll(() => page.evaluate(() => document.documentElement.scrollHeight - window.innerHeight))
       .toBeGreaterThan(600);
+    // …but it is not finished: the lists arrive after the first paint and grow
+    // the page *above* 600px, and Chromium's scroll anchoring then moves a
+    // reader parked at 600 down with the content they were looking at —
+    // measured at 1768, five runs in thirty, on this spec as W8a wrote it. So
+    // wait for the lists and for the height to stop moving before scrolling.
+    await expect(page.getByTestId('list-card').first()).toBeVisible({ timeout: 30_000 });
+    await settledHeight(page);
 
     await page.evaluate(() => window.scrollTo(0, 600));
     await expect.poll(() => scrollY(page)).toBe(600);
 
-    await followTab(page, 'practice');
+    // A real pointer click on the tab, 600px down the page. This used to be a
+    // programmatic `.click()` (`followTab`), because the wide header was not
+    // sticky: Playwright scrolled back to the top to reach the tab, the router
+    // saved **0** for the page being left, and the case failed with nothing to
+    // restore. The header is sticky now, so the tab is on screen and the click
+    // moves nothing — and if the header ever stops being sticky, this fails
+    // again, which `tests/e2e/core/wide-shell.spec.ts` would say more plainly.
+    await page.getByTestId('tab-link').filter({ hasText: 'Practice' }).click();
     await expect(page.locator('[data-route="/practice"]')).toHaveCount(1);
     await expect.poll(() => scrollY(page)).toBe(0);
 
@@ -162,9 +169,9 @@ test.describe('?q= is the lookup', () => {
     await page.evaluate(() => window.scrollTo(0, 300));
     await expect.poll(() => scrollY(page)).toBe(300);
 
-    // Focused without scrolling, for the same reason `followTab` exists: the box
-    // is at the top of the page and `fill()` would scroll to it, which is the
-    // jump this test is trying to prove does not happen.
+    // Focused without scrolling: the box is at the top of the page and `fill()`
+    // would scroll to it, which is the jump this test is trying to prove does
+    // not happen.
     await page.evaluate(() => {
       document.getElementById('lookup-query')?.focus({ preventScroll: true });
     });

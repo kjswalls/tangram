@@ -113,11 +113,15 @@ export function LookupView({ askSlot }: { askSlot?: ReactNode }) {
 
   // On a phone the panel sits above the list, so picking the fortieth result would
   // otherwise answer somewhere off-screen. Only scrolls when it actually is.
+  // "Off-screen" starts below the wide shell's pinned header, which the root's
+  // `scroll-padding-top` measures (globals.css) — zero on a phone — and which
+  // `scrollIntoView` honours in turn.
   useEffect(() => {
     const node = panelRef.current;
     if (!selectedKey || !node) return;
     const box = node.getBoundingClientRect();
-    if (box.top < 0 || box.bottom > window.innerHeight) node.scrollIntoView({ block: 'nearest' });
+    const clear = parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) || 0;
+    if (box.top < clear || box.bottom > window.innerHeight) node.scrollIntoView({ block: 'nearest' });
   }, [selectedKey]);
 
   return (
@@ -181,7 +185,7 @@ export function LookupView({ askSlot }: { askSlot?: ReactNode }) {
             selected || query.trim() ? '' : 'hidden md:block',
           )}
         >
-          <div ref={panelRef} className="md:sticky md:top-4">
+          <div ref={panelRef} className="md:sticky md:top-[calc(var(--shell-header-height)+1rem)]">
             <LookupPanel
               query={selected ? selected.simp : query}
               // The ask stays keyed to what the learner typed. Picking 打算 out

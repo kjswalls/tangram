@@ -20,6 +20,7 @@
     "data": "TANGRAM_DATA_DIR=\"$PWD/data\" tsx scripts/build-data.ts",
     "data:ensure": "TANGRAM_DATA_DIR=\"$PWD/data\" tsx scripts/build-data.ts --ensure",
     "data:verify": "TANGRAM_DATA_DIR=\"$PWD/data\" tsx scripts/verify-data.ts",
+    "golden": "TANGRAM_DATA_DIR=\"$PWD/data\" tsx scripts/freeze-golden.ts",
     "dict:copy": "TANGRAM_DATA_DIR=\"$PWD/data\" tsx scripts/copy-dict.ts",
     "dict:copy:optional": "TANGRAM_DATA_DIR=\"$PWD/data\" tsx scripts/copy-dict.ts --optional",
     "sw": "tsx scripts/build-sw.ts",

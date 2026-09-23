@@ -42,11 +42,20 @@ requireDictData();
 // is entirely in being the other implementation.
 // ---------------------------------------------------------------------------
 
+/**
+ * The one line that is not `abe6793`'s. Its `compareEntries` was a copy of the
+ * artifact's reading order, not a rule of its own, and that order gained an HSK
+ * band tie-break before the id (`lib/dict/rank.ts`; HANDOFF.md "The default
+ * reading"), so 吗 is ma before má. The band clause is carried here so the
+ * oracle still describes the order the store is meant to reproduce; everything
+ * else stays transcribed.
+ */
 function compareEntries(a: DictEntry, b: DictEntry): number {
   return (
     (b.freq ?? -1) - (a.freq ?? -1) ||
     Number(a.isVariant) - Number(b.isVariant) ||
     Number(a.properNoun) - Number(b.properNoun) ||
+    (a.hskBand ?? 8) - (b.hskBand ?? 8) ||
     (a.id < b.id ? -1 : 1)
   );
 }

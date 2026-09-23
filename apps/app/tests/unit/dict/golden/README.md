@@ -57,6 +57,38 @@ the suites say so by name and stop — they do not skip. Re-blessing is a human 
 JSON implementation is gone: read the diff, decide whether the new answers are right, and record the
 decision. That is the normal golden-file contract, and it is the cost of D6.
 
+## Re-blessed once, for the reading order — 2026-09-23
+
+`compareEntries` gained an HSK-band tie-break before the id (`lib/dict/rank.ts`; HANDOFF.md "The
+default reading"). That reorders the readings of a headword wherever they tie on frequency, variant
+and proper noun, and three frozen expectations held a reading order:
+
+| Fixture | Field | What moved |
+|---|---|---|
+| `search.json` | `longPassage.tokensSha256` | the order of readings inside some of the 8,047 tokens |
+| `retrieve.json` | `candidateEntries[1].ids` | 多少 duōshao (HSK 1) now before duōshǎo |
+| `retrieve.json` | `candidateEntries[4].ids` | 个 gè (HSK 1) now before gě |
+
+Nothing else moved: group keys, routing, paging and `mergedSearch` do not depend on the order of
+readings inside a group, and the provenance digest is over `dict.json`'s entries, which did not
+change. **The deleted implementation could not re-answer, so the re-bless was done under a rule
+rather than by judgement:**
+
+- `scripts/freeze-golden.ts` (`pnpm golden`, `--check` for a dry run) regenerates only the fields
+  that depend on reading order — the passage from `scripts/dict-json.ts`'s JSON segmenter, the two
+  retrieve lists from `packages/ai/retrieve.ts` over the store — and carries every other field
+  forward byte for byte. It **writes nothing** if any field differs in a way
+  `scripts/golden-rebless.ts` cannot explain: an id list may only be reordered, and only between
+  entries tied on frequency, variant and proper noun with the lower band now first; the passage
+  digest must be reproduced exactly by re-sorting today's readings the old way.
+- `golden/rebless.json` records each change, before and after, and a canonical digest of each
+  fixture as it was. `tests/unit/dict/golden-rebless.test.ts` re-proves the whole thing on every
+  run, including that putting the `before` values back reproduces the old fixtures — so the record
+  cannot have left a change out — and that the checker rejects a swap it should.
+
+An upstream data move is still a human re-bless: `freeze-golden.ts` refuses a `dict.json` whose
+entries differ from the provenance.
+
 ## The generator, kept beside the fixtures and unrunnable
 
 It was `scripts/freeze-golden.ts`, run once as

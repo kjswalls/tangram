@@ -137,7 +137,11 @@ describe('the frozen schema', () => {
       sha256: createHash('sha256').update(schema).digest('hex'),
     }).toEqual({
       schemaVersion: 1,
-      sha256: '461972e05ab170ec54930cbfa1de96c73d96bf9a767adb4ecd346ca21bb4b6d1',
+      // Last moved by a comment only — the `entries` header now names the HSK
+      // band tie-break in the rowid order. No DDL changed and SQLite does not
+      // store a comment that precedes a CREATE, so no bump (HANDOFF.md "The
+      // default reading").
+      sha256: '5ed6e457112522867eee435b8b00217b1811684a1ecb1b87ba4c23b3dac20c45',
     });
   });
 

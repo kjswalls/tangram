@@ -12818,8 +12818,10 @@ missing-list heading assertions both reviews predicted. `tests/unit/pwa/data-saf
 intermittent did not show in any run here.
 
 **`--repeat-each=8`**, as the brief asks: `core/wide-shell.spec.ts`, `core/routing.spec.ts` and
-`d/spa-fallback.spec.ts` together, **152/152** on the final build. Every new e2e case was also run
-against runtime mutants and fails each one it exists for: no scroll padding (Tab/Shift+Tab and the
-section jump fail), header in flow (all tab-reach cases fail), header `sticky` (the real-click and
-tab-focus cases fail). The unit guards — announcer wait, per-id name, per-id error, name before
+`d/spa-fallback.spec.ts` together, **152/152** on the final build.
+The tab-reach, focus and scroll cases were run against runtime mutants and fail each one they exist
+for: no scroll padding (Tab/Shift+Tab and the section jump fail), header in flow (all tab-reach cases
+fail), header `sticky` (the real-click and tab-focus cases fail). Two cases were **not**
+mutation-tested: the Back-then-Tab case, added after the reviews, and the list A→B case, whose limits
+are recorded above. The unit guards — announcer wait, per-id name, per-id error, name before
 members — were each mutation-tested the same way.

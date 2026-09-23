@@ -19,15 +19,40 @@ import type { ReactNode } from 'react';
  * announcer reads the route's name off it too, which is why the `<p>` below is
  * a sibling rather than a child.
  */
-export function PageHeader({ title, children }: { title: string; children?: ReactNode }) {
+export function PageHeader({
+  title,
+  children,
+  trail,
+  busy = false,
+}: {
+  title: string;
+  children?: ReactNode;
+  /**
+   * Where this page sits, above the heading — one list's way back to Library.
+   * Outside the `<h1>`, so the route's name the announcer reads is the page's
+   * own and not "Library HSK 1".
+   */
+  trail?: ReactNode;
+  /**
+   * The name is still loading. A list's name lives in IndexedDB and arrives a
+   * read after the route renders; `aria-busy` tells the announcer to wait for
+   * it rather than speak whatever the heading holds at the commit — which,
+   * moving from one list to the next, is the *previous* list's name.
+   */
+  busy?: boolean;
+}) {
   return (
     <div className="mb-6">
+      {trail}
       <h1
         data-route-heading
         tabIndex={-1}
+        aria-busy={busy ? 'true' : undefined}
         className="text-2xl font-semibold tracking-tight outline-none"
       >
-        {title}
+        {/* A non-breaking space while busy keeps the line's height, so the page
+            does not jump when the name arrives. */}
+        {busy ? '\u00a0' : title}
       </h1>
       {children ? <p className="mt-1 text-sm text-muted">{children}</p> : null}
     </div>

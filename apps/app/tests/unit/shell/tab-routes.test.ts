@@ -168,10 +168,16 @@ describe('the seven routes are gone', () => {
     // navigating: `p3/import-list.spec.ts`. It came from `main`'s `abe6793`,
     // where it lived at the same path against `/lists`; §8a's table says it
     // "ports; rehomed, and it joins the census here", which is this line.
+    //
+    // The wide-shell phase adds one, a spec and navigating:
+    // `core/wide-shell.spec.ts` (the pinned header — the tab bar in reach at the
+    // bottom of the longest screens, focus never under the header after a route
+    // change or through Tab and Shift+Tab, and each list announced by its own
+    // name).
     expect({ files: files.length, specs: specs.length, navigating: navigating.length }).toEqual({
-      files: 56,
-      specs: 48,
-      navigating: 49,
+      files: 57,
+      specs: 49,
+      navigating: 50,
     });
   });
 

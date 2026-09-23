@@ -14602,3 +14602,469 @@ Run on the final tree, `efaf954` plus this section:
   - a chain switched off rather than unbridged.
 - **Against the base build.** The geometry cases fail there at all three widths, which is what
   makes them evidence. The drag cases pass there unchanged.
+## The default reading — `claude/build-dict-reading-order`, 2026-09-23
+
+**This is what the app teaches, so it comes first.** Every place that shows a headword's reading
+shows its *first* entry: the reader's ruby, the character sheet's default, the "Add …" button and
+the order of readings in every sheet and result. The first entry was decided by the id,
+alphabetically, because every reading of a headword shares one jieba frequency. `吗[ma2]` sorts
+before `吗[ma5]`, so the app taught 你想跟我一起去吗 ending in **má**.
+
+`compareEntries` now breaks that tie by HSK band before the id. A banded reading comes first, and a
+lower band before a higher. That is the orchestrator's ruling, verified against every headword
+rather than a dozen.
+
+### What changed
+
+**217 simplified headwords show a different first entry.** For 174 of them the pinyin changes. The
+other 43 keep the same pinyin and change which traditional form and sense is shown: 后 is now
+"back, behind" rather than "empress", 钟 is "bell, clock" rather than "cup", 丑 is "ugly" rather than
+the earthly branch. **159 traditional headwords change**, all with a pinyin change; all but one (紮
+zā → zhā) are the same words as the simplified list.
+
+The ones a beginner meets in week one:
+
+| | before | after |
+|---|---|---|
+| 说 | shuì "to persuade" | **shuō** (HSK 1) |
+| 要 | yāo "to demand" | **yào** (HSK 1) |
+| 看 | kān "to look after" | **kàn** (HSK 1) |
+| 吗 | má "what?" | **ma** (HSK 1) |
+| 打 | dá "dozen" | **dǎ** (HSK 1) |
+| 着 | zhāo "a move in chess" | **zhe** (HSK 1) |
+| 行 | háng "row; line of business" | **xíng** (HSK 1) |
+| 重 | chóng "to repeat" | **zhòng** (HSK 1) |
+| 几 | jī "small table" | **jǐ** (HSK 1) |
+| 差 | chā "difference" | **chà** (HSK 1) |
+| 听 | yǐn "smile (archaic)" | **tīng** (HSK 1) |
+| 个 | gě (used in 自个儿) | **gè** (HSK 1) |
+| 上 | shǎng (the tone name) | **shàng** (HSK 1) |
+| 吧 | bā "bar" | **ba** (HSK 1) |
+| 多少 | duōshǎo "amount" | **duōshao** "how many?" (HSK 1) |
+| 东西 | dōngxī "east and west" | **dōngxi** "thing" (HSK 1) |
+| 告诉 | gàosù "to press charges" | **gàosu** "to tell" (HSK 1) |
+| 地方 | dìfāng "regional" | **dìfang** "place" (HSK 1) |
+| 子 | zǐ "son" | **zi** (suffix, HSK 1) |
+
+Also fixed: 更 gèng, 号 hào, 正 zhèng, 万 wàn, 南 nán, 红 hóng, 跑 pǎo, 读 dú, 页 yè, 累 lèi, 胖
+pàng, 药/岁/考/球 (their real sense), 便宜 piányi, 生意 shēngyi, 故事 gùshi, 大夫 dàifu, 结果
+jiéguǒ, 血 xuè, 厂 chǎng, 广 guǎng, 离 lí, 价 jià, 场 chǎng, 转 zhuǎn, 结 jié, 落 luò, 格 gé.
+
+**Unchanged, and still right:** 了 le, 还 hái, 都 dōu, 长 cháng, 没 méi, 只 zhǐ, 会 huì, 好 hǎo,
+的 de, 中 zhōng, 和 hé, 发 fā, 分 fēn, 难 nán, 教 jiāo. **Unchanged and defensible:** 得 dé, 觉 jiào.
+
+### What it made worse
+
+Review 1 read the whole list as a teacher would: about 138 better, about 26 neutral, **5 clearly
+worse and 5 mildly worse.** I had found three of the clear ones and the first mild one; the review
+found 勒, 唉 and the remaining mild four.
+
+- **Clearly worse:**
+  - **说道** shuōdào → shuōdao. "He said", in every novel; the HSK 7–9 entry means "to discuss".
+  - **尽可能** jǐnkěnéng → jìnkěnéng. The banded entry's only gloss is "see 儘可能…[jin3 ke3 neng2]",
+    a pointer back at the reading it displaced.
+  - **壳** ké → qiào. ké is the everyday reading (鸡蛋壳).
+  - **勒** lè → lēi. lè is in 勒索, 勒令 and 希特勒.
+  - **唉** āi → ài. āi is the ordinary sigh.
+- **Mildly worse:** 奔 bēn → bèn, 钉 dīng → dìng, 哇 wā → wa, 蒙 méng → mēng (both band 6, so the
+  id decides), 子 zǐ → zi (defensible for a suffix, odd on a character sheet).
+- **Neutral, either reading defensible:** 为 wéi → wèi, 背, 处, 曲, 弹, 喂, 挨, 杆, 铺, 当天, 正当,
+  所长, 大都 (dàdū is the standard dictionary's).
+
+Every one of them is HSK listing the rarer reading, and 6 of the 10 are decided by band 7–9. Treating
+band 7 as unbanded would undo about 32 real fixes (格, 虾, 熬, 谜, 分量, 空地, 下调, 糊, 抹, 创, 恶…) to
+remove those 6. **The rule is right in general, and I shipped it as ruled.**
+
+**Two refinements, measured by review 1 and not shipped** because they go beyond the ruling. The
+owner or the orchestrator should decide:
+
+1. **Ignore the band when every gloss of the banded entry is a cross-reference** ("see …", "variant
+   of …", "used in …"). It fixes 尽可能 and changes nothing else (173 of 174 fixes kept, 0 new
+   changes). Principled and cheap, but it is a ranking change and so another rebuild and re-bless.
+2. **A small committed override list of preferred first ids**, applied in `compareEntries` before the
+   band and pinned by a unit test. Nothing in the artifact can tell 壳, 勒, 唉, 说道, 奔 or 钉 apart,
+   because their glosses carry no "(literary)" marker. The same list would be the natural home for
+   the worst survivors below.
+
+**Still wrong, and not touched by this change**, because neither reading has a band (or both share
+one) so the id still decides: **么 má before me**, **奇 jī before qí**, 似 shì before sì, 伯 bǎi
+before bó, 殷 yān before yīn, 屏 bīng before píng, 咖 gā before kā; with a shared band, 得 dé before
+de, 露 lòu before lù, 倒 dǎo before dào, 干 gān (乾) before gàn. 么 and 奇 are the most visible. Each
+is an override-list candidate.
+
+**Putting the band before the variant and proper-noun keys** was also measured and rejected. It
+causes 3 changes: 佛 → Fó (better), 标致 → Biāozhì "Peugeot" (worse), 茅台 (neutral).
+
+### Different headwords that share a frequency
+
+The tie-break reorders more than readings. **86,021 of the 124,188 rowids move**, across 1,814 tie
+classes. Most of them are in the unranked tail (`freq` absent, 26,716 entries) and among very low
+jieba counts. Within a tie, a banded word now precedes an unbanded one. Only two things read rowid
+order across headwords:
+
+- **The candidate caps.** I compared every query in the golden corpus plus the capped function words,
+  257 in all, between the old and new artifacts. **Two changed, each by one group at the 5,000-row
+  cap:** `to` now includes 打印 (HSK 2) and `a` swaps 乳名 (unbanded) for 小卒 (band 7). No other
+  total, group or group order moved; 41 queries show a different order of readings inside a group,
+  which is the point.
+- **`char_words` postings** ("words containing 算") are rowid-ascending, so their order moves the same
+  way.
+
+A headword-scoped tie-break (keyed on `trad|simp`) would have left cross-headword order byte-identical.
+**It is wrong**: it misses the 60 simplified headwords whose readings have different traditional forms,
+including 几 jī → jǐ, 听 yǐn → tīng, 万 mò → wàn, 离, 厂, 广 and 价. So the band goes in
+`compareEntries` itself, as ruled.
+
+<details>
+<summary>All 217 simplified headwords, before → after, commonest first (band in brackets)</summary>
+
+| headword | before | after | |
+|---|---|---|---|
+| 为 | wéi (HSK 3) — as (in the capacity of) | wèi (HSK 2) — because of | |
+| 上 | shǎng (no band) — used in 上聲/上声[shang3 sheng1] | shàng (HSK 1) — (bound form) up; upper; above; previous | |
+| 说 | shuì (no band) — to persuade | shuō (HSK 1) — to speak; to talk; to say | |
+| 着 | zhāo (no band) — a move in chess (Taiwan pr. [zhuo2]) | zhe (HSK 1) — aspect particle indicating action in progress or | |
+| 要 | yāo (no band) — (bound form) to demand; to coerce | yào (HSK 1) — to want; to need; to ask for | |
+| 个 | gě (no band) — used in 自個兒/自个儿[zi4 ge3 r5] | gè (HSK 1) — (classifier used before a noun that has no speci | |
+| 后 | hòu (no band) — empress | hòu (HSK 1) — back | |
+| 看 | kān (HSK 6) — to look after | kàn (HSK 1) — to see; to look at | |
+| 更 | gēng (no band) — to change or replace | gèng (HSK 2) — more | |
+| 地方 | dìfāng (HSK 4) — region | dìfang (HSK 1) — area | |
+| 听 | yǐn (no band) — smile (archaic) | tīng (HSK 1) — to listen to; to hear | |
+| 号 | háo (no band) — roar | hào (HSK 1) — ordinal number | |
+| 当 | dāng (no band) — (onom.) dong | dāng (HSK 2) — to be | |
+| 无 | mó (no band) — used in 南無/南无[na1 mo2] | wú (HSK 4) — not to have | |
+| 家 | jiā (no band) — used in 傢伙/家伙[jia1 huo5] and 傢俱/家俱[jia1 ju4] | jiā (HSK 1) — home | |
+| 正 | zhēng (no band) — first month of the lunar year | zhèng (HSK 1) — straight | |
+| 打 | dá (HSK 4) — (loanword) dozen | dǎ (HSK 1) — a semantically light, transitive verb that is co | |
+| 万 | mò (no band) — used in 万俟[Mo4 qi2] | wàn (HSK 2) — ten thousand | |
+| 作 | zuō (no band) — (bound form) worker | zuò (HSK 6) — to do; to engage in | |
+| 约 | yāo (no band) — to weigh in a balance or on a scale | yuē (HSK 3) — to make an appointment | |
+| 称 | chèn (no band) — to fit; to match; to suit | chēng (HSK 2) — to weigh | |
+| 吧 | bā (no band) — bar (loanword) (serving drinks, or providing Int | ba (HSK 1) — (modal particle indicating suggestion or surmise | |
+| 占 | zhān (no band) — to observe | zhàn (HSK 2) — to take possession of | |
+| 处 | chǔ (no band) — to reside | chù (HSK 4) — (bound form) place; locality | |
+| 南 | nā (no band) — used in 南無/南无[na1 mo2] | nán (HSK 1) — south | |
+| 行 | háng (HSK 3) — (bound form) row; line | xíng (HSK 1) — (bound form) to walk; to go; to travel | |
+| 派 | pā (no band) — used in 派司[pa1 si5] | pài (HSK 3) — (literary) tributary; branch of a river | |
+| 啊 | ā (HSK 4) — interjection of surprise | a (HSK 2) — modal particle ending sentence, showing affirmat | |
+| 吗 | má (no band) — (coll.) what? | ma (HSK 1) — (question particle for "yes-no" questions) | |
+| 说道 | shuōdào (no band) — to state | shuōdao (HSK 7–9) — to discuss | **worse** |
+| 据 | jū (no band) — used in 拮据[jie2 ju1] | jù (HSK 6) — according to | |
+| 子 | zǐ (no band) — son | zi (HSK 1) — noun suffix, as in 椅子[yi3 zi5] "chair" | arguably worse |
+| 东西 | dōngxī (no band) — east and west | dōngxi (HSK 1) — thing | |
+| 强 | jiàng (no band) — stubborn | qiáng (HSK 3) — strong | |
+| 若 | rě (no band) — used in 般若[bo1 re3] | ruò (HSK 6) — to seem | |
+| 台 | tāi (no band) — used in place names | tái (HSK 3) — (classical) you (in letters) | |
+| 重 | chóng (HSK 3) — to repeat | zhòng (HSK 1) — heavy | |
+| 红 | gōng (no band) — used in 女紅/女红[nu : 3 gong1] | hóng (HSK 2) — red | |
+| 结果 | jiēguǒ (HSK 7–9) — to bear fruit | jiéguǒ (HSK 2) — outcome; result; consequence | |
+| 重点 | chóngdiǎn (no band) — to recount (e.g. results of election) | zhòngdiǎn (HSK 2) — important point; main point; focus | |
+| 制 | zhì (no band) — system | zhì (HSK 7–9) — to manufacture | |
+| 岁 | suì (no band) — variant of 歲/岁[sui4], year | suì (HSK 1) — classifier for years (of age) | |
+| 转 | zhuǎi (no band) — see 轉文/转文[zhuai3 wen2] | zhuǎn (HSK 3) — to turn | |
+| 场 | cháng (no band) — threshing floor | chǎng (HSK 2) — large place used for a specific purpose | |
+| 跑 | páo (no band) — (of an animal) to paw (the ground) | pǎo (HSK 1) — to run | |
+| 告诉 | gàosù (no band) — to press charges; to file a complaint | gàosu (HSK 1) — to tell; to inform; to let know | |
+| 多少 | duōshǎo (no band) — number; amount | duōshao (HSK 1) — how much?; how many? | |
+| 提 | dī (no band) — used in 提防[di1 fang5] and 提溜[di1 liu5] | tí (HSK 2) — to carry (hanging down from the hand) | |
+| 系 | xì (no band) — to connect | xì (HSK 3) — system | |
+| 尽 | jǐn (HSK 7–9) — to the greatest extent | jìn (HSK 6) — to use up | |
+| 啦 | lā (no band) — (onom.) sound of singing, cheering etc | la (HSK 6) — sentence-final particle, contraction of 了啊, indi | |
+| 背 | bēi (HSK 3) — to be burdened | bèi (HSK 2) — the back of a body or object | |
+| 离 | chī (no band) — mythical beast (archaic) | lí (HSK 2) — to leave | |
+| 呀 | yā (no band) — ah (used to express surprise) | ya (HSK 4) — (particle equivalent to 啊 after a vowel, express | |
+| 令 | líng (no band) — used in 脊令[ji2 ling2] | lìng (HSK 5) — to order | |
+| 足 | jù (no band) — excessive | zú (HSK 6) — (bound form) foot; leg | |
+| 合 | gě (no band) — 100 ml | hé (HSK 3) — to close | |
+| 落 | là (HSK 5) — to leave out | luò (HSK 4) — to fall or drop | |
+| 药 | yào (no band) — leaf of the iris | yào (HSK 2) — medicine | |
+| 周 | zhōu (no band) — to make a circuit | zhōu (HSK 2) — week | |
+| 几 | jī (no band) — small table | jǐ (HSK 1) — how much | |
+| 人家 | rénjiā (no band) — household | rénjia (HSK 4) — other people | |
+| 血 | xiě (no band) — see 血[xue4] | xuè (HSK 3) — blood | |
+| 差 | chā (no band) — difference; discrepancy | chà (HSK 1) — different | |
+| 刺 | cī (no band) — (onom.) whoosh | cì (HSK 4) — thorn | |
+| 底 | de (no band) — (equivalent to 的 as possessive particle) | dǐ (HSK 4) — bottom; base | |
+| 铺 | pù (no band) — variant of 鋪/铺[pu4] | pū (HSK 6) — to spread | |
+| 期 | qī (no band) — variant of 期[qi1] | qī (HSK 3) — a period of time | |
+| 愿 | yuàn (no band) — honest and prudent | yuàn (HSK 5) — (bound form) wish; hope; desire | |
+| 云 | yún (no band) — (classical) to say | yún (HSK 2) — cloud | |
+| 斗 | dǒu (no band) — dry measure for grain equal to ten 升[sheng1] or  | dòu (HSK 7–9) — to fight | |
+| 片 | piān (no band) — disk | piàn (HSK 2) — thin piece | |
+| 奔 | bēn (no band) — to hurry | bèn (HSK 7–9) — to go to | arguably worse |
+| 考 | kǎo (no band) — to beat | kǎo (HSK 1) — to check | |
+| 故事 | gùshì (no band) — old practice | gùshi (HSK 2) — narrative; story; tale | |
+| 单 | chán (no band) — used in 單于/单于[chan2 yu2] | dān (HSK 4) — bill | |
+| 抢 | qiāng (no band) — (literary) to knock against (esp. to knock one's | qiǎng (HSK 5) — to fight over | |
+| 弄 | lòng (no band) — lane | nòng (HSK 2) — to do | |
+| 厂 | hǎn (no band) — "cliff" radical in Chinese characters (Kangxi ra | chǎng (HSK 3) — factory | |
+| 追 | duī (no band) — to sculpt | zhuī (HSK 3) — to chase | |
+| 读 | dòu (no band) — comma | dú (HSK 1) — to read out; to read aloud | |
+| 球 | qiú (no band) — ball used for playing games (variant of 球[qiu2]) | qiú (HSK 1) — ball | |
+| 散 | sǎn (HSK 5) — scattered | sàn (HSK 4) — to scatter | |
+| 答 | dā (no band) — bound form having the same meaning as the free w | dá (HSK 5) — to answer | |
+| 照 | zhào (no band) — variant of 照[zhao4] | zhào (HSK 3) — according to | |
+| 假 | gēi (no band) — used in 假掰[gei1 bai1] | jiǎ (HSK 2) — fake | |
+| 页 | xié (no band) — head | yè (HSK 1) — page | |
+| 咱 | zá (no band) — see 咱[zan2] | zán (HSK 2) — I or me | |
+| 布 | bù (no band) — variant of 布[bu4] | bù (HSK 3) — cloth | |
+| 节 | jiē (no band) — see 節骨眼/节骨眼[jie1 gu5 yan3] | jié (HSK 2) — joint; node | |
+| 广 | yǎn (no band) — "house on a cliff" radical in Chinese characters | guǎng (HSK 5) — wide | |
+| 弹 | dàn (no band) — crossball | tán (HSK 5) — to pluck (a string) | |
+| 妻子 | qīzǐ (no band) — wife and children | qīzi (HSK 4) — wife | |
+| 骑 | jì (no band) — (Tw) saddle horse | qí (HSK 2) — to sit astride | |
+| 折 | shé (no band) — to snap | zhé (HSK 4) — to break | |
+| 汗 | hán (no band) — see 可汗[ke4 han2], 汗國/汗国[han2 guo2] | hàn (HSK 5) — perspiration | |
+| 格 | gē (no band) — used in 格登[ge1 deng1] | gé (HSK 7–9) — square | |
+| 吓 | hè (no band) — to scare | xià (HSK 5) — to frighten | |
+| 汤 | shāng (no band) — rushing current | tāng (HSK 3) — soup | |
+| 教学 | jiāoxué (no band) — to teach (as a professor) | jiàoxué (HSK 2) — teaching; instruction | |
+| 局 | jú (no band) — narrow | jú (HSK 4) — office | |
+| 结 | jiē (HSK 7–9) — (of a plant) to produce (fruit or seeds) | jié (HSK 4) — knot | |
+| 松 | sōng (no band) — pine | sōng (HSK 4) — loose | |
+| 绿 | lù (no band) — used in names | lǜ (HSK 2) — green | |
+| 准 | zhǔn (no band) — to allow | zhǔn (HSK 3) — accurate | |
+| 乐 | lào (no band) — used in place names | lè (HSK 3) — happy | |
+| 致 | zhì (no band) — (bound form) fine; delicate; exquisite | zhì (HSK 7–9) — (literary) to send; to transmit; to convey | |
+| 证 | zhèng (no band) — to admonish | zhèng (HSK 3) — certificate | |
+| 逼 | bī (no band) — variant of 逼[bi1] | bī (HSK 6) — to force (sb to do sth) | |
+| 炮 | bāo (no band) — to sauté | pào (HSK 6) — cannon | |
+| 钟 | zhōng (no band) — handleless cup; goblet | zhōng (HSK 3) — a (large) bell | |
+| 哦 | é (no band) — to chant | ò (HSK 7–9) — oh (interjection indicating that one has just le | |
+| 嘛 | má (no band) — used in 唵嘛呢叭咪吽[an3 ma2 ni2 ba1 mi1 hong1] | ma (HSK 6) — modal particle indicating that sth is obvious | |
+| 恶 | ě (no band) — used in 惡心/恶心[e3 xin1] | è (HSK 7–9) — evil | |
+| 仿佛 | fǎngfú (no band) — to seem; as if; seemingly | fǎngfú (HSK 6) — to seem; as if; seemingly | |
+| 价 | jiè (no band) — (literary) messenger; servant | jià (HSK 5) — price | |
+| 鸟 | diǎo (no band) — variant of 屌[diao3] | niǎo (HSK 2) — bird | |
+| 蒙 | méng (no band) — (literary) sincere; honest; genuine | mēng (HSK 6) — (knocked) unconscious | arguably worse |
+| 混 | hún (no band) — muddy; turbid (variant of 渾/浑[hun2]) | hùn (HSK 6) — to mix | |
+| 累 | lěi (no band) — to accumulate | lèi (HSK 1) — tired | |
+| 曲 | qū (no band) — bent | qǔ (HSK 7–9) — tune | |
+| 浅 | jiān (no band) — sound of moving water | qiǎn (HSK 4) — shallow | |
+| 创 | chuāng (no band) — (bound form) a wound; to wound | chuàng (HSK 7–9) — to initiate; to create; to achieve (sth for the  | |
+| 圈 | juān (no band) — to confine | quān (HSK 4) — circle; ring; loop | |
+| 唉 | āi (no band) — interjection or grunt of agreement or recognitio | ài (HSK 7–9) — alas | **worse** |
+| 泡 | pāo (no band) — puffed; swollen; spongy | pào (HSK 6) — bubble; foam | |
+| 好处 | hǎochǔ (no band) — easy to get along with | hǎochu (HSK 2) — benefit; advantage; merit | |
+| 涌 | chōng (no band) — (used in place names) | yǒng (HSK 7–9) — to bubble up | |
+| 抹 | mā (no band) — to wipe | mǒ (HSK 7–9) — to smear | |
+| 喂 | wéi (no band) — hello (when answering the phone) | wèi (HSK 2) — hey | |
+| 大夫 | dàfū (no band) — senior official (in imperial China) | dàifu (HSK 3) — doctor; physician | |
+| 筑 | zhù (no band) — five-string lute | zhù (HSK 7–9) — to build | |
+| 正当 | zhèngdāng (no band) — timely | zhèngdàng (HSK 6) — honest | |
+| 大都 | dàdōu (no band) — for the most part | dàdū (HSK 5) — for the most part | |
+| 炸 | zhá (HSK 7–9) — to deep fry | zhà (HSK 6) — to burst; to explode | |
+| 壳 | ké (no band) — (coll.) shell (of an egg, nut, crab etc) | qiào (HSK 7–9) — (bound form) shell | **worse** |
+| 档 | dǎng (no band) — (Tw) gear (variant of 擋/挡[dang3]) | dàng (HSK 6) — (bound form) shelves (for files); pigeonholes | |
+| 所长 | suǒcháng (no band) — what one is good at | suǒzhǎng (HSK 3) — head of an institute etc | |
+| 便宜 | biànyí (no band) — convenient | piányi (HSK 2) — cheap; inexpensive | |
+| 拟 | nǐ (no band) — doubtful | nǐ (HSK 7–9) — to plan to | |
+| 录 | lù (no band) — to carve wood | lù (HSK 3) — diary | |
+| 勒 | lè (no band) — (literary) bridle; halter; headstall | lēi (HSK 7–9) — to strap tightly | **worse** |
+| 踏 | tā (no band) — see 踏實/踏实[ta1 shi5] | tà (HSK 6) — to tread | |
+| 麻 | má (no band) — hemp (variant of 麻[ma2]) | má (HSK 7–9) — generic name for hemp, flax etc | |
+| 生意 | shēngyì (no band) — life force | shēngyi (HSK 3) — business | |
+| 挨 | āi (no band) — in order; in sequence | ái (HSK 6) — to suffer; to endure | |
+| 钉 | dīng (no band) — nail | dìng (HSK 7–9) — to join things together by fixing them in place  | arguably worse |
+| 当天 | dāngtiān (no band) — on that day | dàngtiān (HSK 6) — the same day | |
+| 闲 | xián (no band) — enclosure | xián (HSK 5) — idle | |
+| 本事 | běnshì (no band) — source material | běnshi (HSK 3) — ability | |
+| 胖 | pán (no band) — healthy | pàng (HSK 3) — fat | |
+| 丑 | chǒu (no band) — clown | chǒu (HSK 5) — shameful | |
+| 杆 | gān (no band) — pole | gǎn (HSK 6) — stick | |
+| 拾 | shè (no band) — to ascend in light steps | shí (HSK 5) — to pick up | |
+| 虾 | há (no band) — used in 蝦蟆/虾蟆[ha2 ma5] | xiā (HSK 7–9) — shrimp | |
+| 搂 | lōu (no band) — to draw towards oneself | lǒu (HSK 7–9) — to hug | |
+| 伙 | huǒ (no band) — meals (abbr. for 伙食[huo3 shi2]) | huǒ (HSK 4) — companion | |
+| 蹲 | cún (no band) — (dialect) to sprain one's foot or leg due to a s | dūn (HSK 6) — to crouch | |
+| 熬 | āo (no band) — to boil; to simmer | áo (HSK 7–9) — to cook on a slow fire; to extract by heating; t | |
+| 谜 | mèi (no band) — see 謎兒/谜儿[mei4 r5], riddle | mí (HSK 7–9) — riddle | |
+| 闸 | zhá (no band) — old variant of 閘/闸[zha2] | zhá (HSK 7–9) — sluice; sluice gate | |
+| 拽 | zhuāi (no band) — to throw | zhuài (HSK 7–9) — to pull | |
+| 粥 | yù (no band) — used in 葷粥/荤粥[Xun1 yu4] | zhōu (HSK 6) — congee | |
+| 尽可能 | jǐnkěnéng (no band) — as far as possible; to the best of one's ability | jìnkěnéng (HSK 5) — see 儘可能/尽可能[jin3 ke3 neng2] | **worse** |
+| 咽 | yān (no band) — throat; pharynx | yàn (HSK 7–9) — to swallow | |
+| 挣 | zhēng (no band) — used in 掙扎/挣扎[zheng1 zha2] | zhèng (HSK 5) — to struggle to get free | |
+| 大爷 | dàyé (no band) — arrogant idler | dàye (HSK 4) — (coll.) father's older brother | |
+| 哇 | wā (no band) — Wow! | wa (HSK 6) — replaces 啊[a5] when following the vowel "u" or " | arguably worse |
+| 脏 | zàng (no band) — viscera | zāng (HSK 2) — dirty | |
+| 工夫 | gōngfū (no band) — (old) laborer | gōngfu (HSK 3) — period of time (may be months, or mere seconds) | |
+| 坝 | bà (no band) — (used in place names) plain; flatland | bà (HSK 7–9) — dam | |
+| 琢磨 | zhuómó (no band) — to carve and polish (jade) | zuómo (HSK 7–9) — to ponder | |
+| 夸 | kuā (no band) — used in transliteration | kuā (HSK 7–9) — to boast; to exaggerate | |
+| 尺 | chě (no band) — one of the characters used to represent a musica | chǐ (HSK 4) — a Chinese foot | |
+| 扛 | gāng (no band) — to raise aloft with both hands | káng (HSK 7–9) — to carry on one's shoulder | |
+| 咳 | hāi (no band) — sound of sighing | ké (HSK 5) — cough | |
+| 当晚 | dāngwǎn (no band) — on that evening | dàngwǎn (HSK 7–9) — the same evening | |
+| 裤子 | kùzi (no band) — variant of 褲子/裤子, trousers | kùzi (HSK 3) — trousers | |
+| 趟 | tāng (no band) — to wade | tàng (HSK 6) — classifier for times, round trips or rows | |
+| 哑 | yā (no band) — (onom.) sound of cawing | yǎ (HSK 7–9) — mute; dumb; incapable of speech | |
+| 痒 | yǎng (no band) — variant of 癢/痒[yang3] | yǎng (HSK 7–9) — to itch | |
+| 分量 | fēnliàng (no band) — (vector) component | fènliang (HSK 7–9) — quantity; weight; measure | |
+| 刨 | bào (no band) — carpenter's plane | páo (HSK 7–9) — to dig | |
+| 看好 | kānhǎo (no band) — to keep an eye on | kànhǎo (HSK 6) — to regard as having good prospects | |
+| 雇佣 | gùyōng (no band) — to employ; to hire | gùyōng (HSK 7–9) — to employ; to hire | |
+| 公道 | gōngdào (no band) — justice | gōngdao (HSK 7–9) — fair | |
+| 糊 | hū (no band) — to smear; to daub; to cover (a surface with sth  | hú (HSK 7–9) — to paste; to glue | |
+| 大方 | dàfāng (no band) — expert | dàfang (HSK 4) — generous | |
+| 翘 | qiáo (no band) — outstanding | qiào (HSK 7–9) — to stick up | |
+| 结实 | jiēshí (no band) — to bear fruit | jiēshi (HSK 3) — rugged | |
+| 驮 | duò (no band) — load carried by a pack animal | tuó (HSK 7–9) — to carry on one's back | |
+| 兹 | cí (no band) — used in 龜茲/龟兹[Qiu1 ci2] | zī (HSK 7–9) — (literary) this | |
+| 攒 | cuán (no band) — to bring together | zǎn (HSK 7–9) — to collect | |
+| 下调 | xiàdiào (no band) — to demote | xiàtiáo (HSK 7–9) — to adjust downwards | |
+| 幢 | chuáng (no band) — banner; pennant (in ancient China) | zhuàng (HSK 7–9) — classifier for buildings (Taiwan pr. [chuang2]) | |
+| 撇 | piē (no band) — to cast away | piě (HSK 7–9) — to throw | |
+| 咸 | xián (no band) — all | xián (HSK 4) — salted | |
+| 凄凉 | qīliáng (no band) — mournful; miserable | qīliáng (HSK 7–9) — desolate (place) | |
+| 把手 | bǎshǒu (no band) — to shake hands | bǎshou (HSK 7–9) — handle | |
+| 榨 | zhà (no band) — variant of 榨[zha4] | zhà (HSK 7–9) — to press | |
+| 空地 | kōngdì (no band) — air-to-surface (missile) | kòngdì (HSK 7–9) — vacant land | |
+| 启蒙 | qǐméng (no band) — variant of 啟蒙/启蒙[qi3 meng2] | qǐméng (HSK 7–9) — to instruct the young | |
+| 台风 | táifēng (no band) — stage presence, poise | táifēng (HSK 5) — typhoon | |
+| 秤 | chēng (no band) — to weigh (variant of 稱/称[cheng1]) | chèng (HSK 7–9) — steelyard balance; Roman balance | |
+| 蠢 | chǔn (no band) — variant of 蠢[chun3] | chǔn (HSK 7–9) — stupid | |
+| 出息 | chūxī (no band) — to yield interest, profit etc | chūxi (HSK 7–9) — future prospects | |
+| 悠闲 | yōuxián (no band) — variant of 悠閒/悠闲 | yōuxián (HSK 7–9) — leisurely | |
+| 疏散 | shūsǎn (no band) — idle; leisurely; laid-back | shūsàn (HSK 7–9) — to scatter; to disperse; to evacuate | |
+| 摆设 | bǎishè (no band) — to set out | bǎishe (HSK 7–9) — ornament | |
+| 豁 | huá (no band) — to play Chinese finger-guessing game | huō (HSK 7–9) — opening | |
+| 上头 | shàngtóu (no band) — (of alcohol, love etc) to go to one's head; (of  | shàngtou (HSK 7–9) — the top; the upper part; (its) surface | |
+| 卷子 | juǎnzi (no band) — steamed roll | juànzi (HSK 7–9) — test paper; examination paper | |
+| 倔 | jué (no band) — used in 倔強/倔强[jue2 jiang4] | juè (HSK 7–9) — gruff; surly | |
+| 遛 | liú (no band) — used in 逗遛[dou4 liu2] | liù (HSK 7–9) — to stroll | |
+| 世故 | shìgù (no band) — the ways of the world | shìgu (HSK 7–9) — sophisticated | |
+| 背着 | bēizhe (no band) — carrying on one's back | bèizhe (HSK 6) — turning one's back to (sth or sb) | |
+| 好学 | hǎoxué (no band) — easy to learn | hàoxué (HSK 6) — eager to study | |
+
+</details>
+
+### A browser that already had the dictionary
+
+**The owner's browser would have kept teaching má, and the first fix did not reach it.**
+
+The artifact's filename is `dict-<schema>-<cedict>.sqlite`. This rebuild changed its bytes and
+sha256 and kept its name, and three layers keyed on the name:
+
+1. **The OPFS pool.** The worker imported under `/${manifest.file}` and on every later load found
+   that name `present` and opened it (`wasm-worker.ts`). It now stores under `artifactPoolName`:
+   `/dict-1-1.3.20251213-cb893d8856faa18d.sqlite`. A changed artifact is a new name, so the worker
+   sweeps the old one (`ARTIFACT_PATTERN` still matches the bare name) and imports.
+2. **The HTTP cache.** The host serves `dict-*.sqlite` `immutable` for a year (`vercel.json`), so
+   re-keying OPFS alone would have re-imported the old bytes out of the browser's cache. The worker
+   now fetches `artifactFetchPath`: `dict-….sqlite?sha256=<digest>`. The path is unchanged, so every
+   host rule, the dev/preview middleware and the service worker's deny rule still match on it.
+3. **The mount probe.** Review 2 found this one, after (1) and (2) were committed and green.
+   `<DictGate>` mounts with `openStored()`, which skipped the manifest and opened whatever the pool
+   held. A returning learner therefore never reached (1). Now, once the pool has answered, the probe
+   reads the 200-byte manifest and rejects a file whose pool name is not the manifest's. The gate's
+   existing escalation then does the full open that sweeps and re-imports, because the origin has
+   already consented. A fresh origin still fetches nothing, not even the manifest, as
+   `dict-ask.spec.ts` asserts. If the manifest cannot be fetched, the stored copy is kept.
+
+**This was a latent defect before this branch.** A new CC-CEDICT snapshot is a new filename and would
+have hit (3) the same way, and so would any upstream HSK or jieba move under an unchanged name.
+
+Proof:
+- `d/dict-ask.spec.ts` "whose stored copy is an older build…" drives the real app. It seeds the
+  pre-fix state through the product's own ask: a digest-less manifest, so the file lands under the
+  bare name, and the artifact with 吗's readings put back in the old order
+  (`d/stale-artifact.ts`). It asserts the seed took (má). It then reloads and asserts no ask, one
+  artifact fetch with `?sha256=`, ma, and nothing fetched on the next reload. **With the probe's
+  check disabled it fails with "the browser kept the older build".**
+- `d/dict-wasm.spec.ts` "a browser holding an older artifact…" does the same through the harness's
+  full open. **With the old keying it fails with "the stale file was trusted".**
+- `unit/dict/artifact-key.test.ts` pins both names.
+
+**Left open, found by review 2:**
+- **The sha256 is a key and never a check.** The import still verifies only length,
+  `application_id`, `user_version` and `dict_version`, and the old and new artifacts agree on all
+  four. An intermediary that ignores query strings (a CDN set to "ignore query string") could serve
+  the old immutable bytes for the new URL, and they would be stored under the new name. Vercel, the
+  preview middleware and the service worker all handle the query. The fix is a content digest in
+  `meta`, carried in the manifest and compared in `validate`. It is an additive build and verify
+  change, not done here.
+- **The sweep runs before the download.** An upgrade whose download then fails leaves no dictionary
+  until the network returns. That was already true of a version bump; it now also applies to every
+  byte change.
+- **A tab still running the old bundle** looks for the bare name. If it reopens (recovery after an
+  eviction), it can sweep the new file and re-import the old bytes from its HTTP cache. The next
+  load on the new bundle corrects it.
+- **Native (`D5a`/`D5b`) will need the same keying.** Nothing there is built yet.
+  `lib/dict/artifact.ts`'s `artifactFile` doc says so.
+- **`data.md` D1 says "every cache key on every platform is the whole filename".** That is now false
+  on purpose, and D1 is the orchestrator's document, so it is left alone. Read it as superseded.
+  The same goes for the schema comment quoted in D1: `schema.sql`'s own comment now names the band.
+  The change is comment-only, SQLite does not store it, the artifact bytes are identical, and it
+  needs no `SCHEMA_VERSION` bump. The pinned digest in `store-contract.test.ts` moved with it.
+
+### The goldens, re-blessed under a rule
+
+Exactly three frozen expectations held a reading order:
+- `search.json` `longPassage.tokensSha256`;
+- `retrieve.json` `candidateEntries[1]` (多少 duōshao before duōshǎo);
+- `retrieve.json` `candidateEntries[4]` (个 gè before gě).
+
+The implementation that froze them is gone, so they were re-blessed mechanically rather than by eye:
+
+- **`scripts/freeze-golden.ts` (`pnpm golden`, `--check`)** is runnable again. It regenerates only
+  the fields that depend on reading order and carries every other field forward byte for byte. It
+  **refuses to write** if any difference is not explained by `scripts/golden-rebless.ts`. An id list
+  may only be reordered. Every inverted pair must tie on frequency, variant and proper noun, with the
+  lower band now first. Every tie the rule demands within one headword must actually be flipped. The
+  passage digest must be reproduced byte for byte by re-sorting today's readings the old way. It also
+  refuses a `dict.json` that is not the provenance's, because a data move is still a human re-bless.
+- **`golden/rebless.json`** records each change, and **`golden-rebless.test.ts`** re-proves it on
+  every run. Putting the recorded `before` values back reproduces a canonical digest of the old
+  fixtures, so the record cannot have omitted a change; review 2 recomputed that digest from
+  `ea37c1f` independently and it matches. The test also mutation-checks the checker: a swap across
+  frequencies, a swap the wrong way, a missed swap, a lost id and a moved token are all rejected.
+- **The limit**, from review 2: `mergedSearch`, `candidateEntries` and the passage are regenerated
+  from code that shares `compareEntries`, so the diff rule is the only guard on order. It is adequate
+  here, but it is not an independent oracle.
+
+### Other guards, and assertions that pinned the wrong reading
+
+- **`core/sheets.spec.ts`** asserted the word sheet lists 看 as `['kān', 'kàn']`, which is the wrong
+  order. It now asserts `['kàn', 'kān']`, with a comment saying why.
+- **`unit/dict/resolve-differential.test.ts`**'s transcription of `abe6793` carried its own copy of
+  the old comparator. It gained the band clause, commented as the one line that is not `abe6793`'s.
+  Review 2 is right that the oracle therefore no longer checks reading order independently.
+  `reading-order.test.ts` does, by value.
+- **`unit/dict/reading-order.test.ts`** is new. It pins the first reading of the audit's examples
+  and six more by value against the artifact, plus the whole sentence. It fails 16 of 21 against the
+  old artifact.
+- **The 200-query gloss oracle (`gloss.test.ts`) is unchanged and passes.** The only golden-backed
+  assertion in it that moved is the passage digest above.
+- **Node-versus-wasm parity (`d/dict-wasm.spec.ts`) is unchanged in substance.** Its artifact routes
+  now match on the path, because the fetch URL carries a query: a glob over the whole URL would never
+  fire, and in the truncation cases that reads as a pass. Review 2 checked every route and unroute.
+- `data/ATTRIBUTION.md`'s modification notice was still true. It gained one bullet saying the rows are
+  stored in a derived order (frequency, then variant and proper noun, then HSK band, then id), which
+  decides the reading shown first.
+
+### Frozen surfaces
+
+None touched. `DictStore`, `SqlRunner` and `DictStatus` are unchanged, as is `lib/types.ts`'s
+`Entry`. `OpenReport` gained an optional `stored` field; it is the worker protocol, not a frozen
+surface. `MAX_GLOSS_CANDIDATES` is unchanged and no `ORDER BY e.rowid` was reintroduced.
+
+### Gates
+
+All run on the final tree, in this order:
+- `pnpm lint`, `pnpm typecheck`, `pnpm build`: clean.
+- `pnpm data --force` then `pnpm data:verify`: all checks pass, including "rowid order equals
+  compareEntries order". The artifact is `cb893d88…`; two consecutive builds are byte-identical.
+- `pnpm test`: **2,292** app tests and **103** server tests pass.
+  - The first run failed one test: `shell/tab-routes.test.ts`'s e2e census counts files, and
+    `d/stale-artifact.ts` is a new helper file (no spec, no navigation). The count went from 59 to 60
+    files, with a note. The rerun is green.
+- `pnpm e2e`: **362 passed** in 16.1 min.
+- `pnpm smoke --no-api` against `pnpm preview`: **41 ok**, with 6 API cases skipped and reported as
+  skipped.
+- Mutation checks:
+  - `reading-order.test.ts` against the old artifact: 16 of 21 fail.
+  - `dict-wasm` upgrade case with the old keying: fails, "the stale file was trusted".
+  - `dict-ask` upgrade case with the probe's check neutralised: fails, "the browser kept the older
+    build".

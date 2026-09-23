@@ -36,6 +36,7 @@ import type { DictEntry } from '../../../lib/dict/types';
 import { nodeRunner } from '../../../lib/dict/runners/node';
 import { SqliteDictStore } from '../../../lib/dict/sqlite-store';
 import { workspaceRoot } from '../../../lib/server/roots';
+import { MA2, MA5, MA_SENTENCE, makeStaleArtifact } from './stale-artifact';
 
 const RECORD = 'test-results/d4-record.json';
 const record: Record<string, unknown> = {};
@@ -71,6 +72,15 @@ const DATA_DIR = process.env.TANGRAM_DATA_DIR
 const manifest = JSON.parse(readFileSync(join(DATA_DIR, MANIFEST_FILE), 'utf8')) as DictManifest;
 const ARTIFACT = join(DATA_DIR, manifest.file);
 const ARTIFACT_URL = `/${manifest.file}`;
+
+/**
+ * The artifact's request, by **path**. The worker fetches
+ * `dict-….sqlite?sha256=<digest>` (`artifactFetchPath`), so a glob or an
+ * `endsWith` over the whole URL would match nothing and the route would never
+ * fire — which in the truncation cases reads as a pass.
+ */
+const isArtifact = (url: URL | string): boolean =>
+  new URL(url).pathname.endsWith(ARTIFACT_URL);
 
 /**
  * The fixed query list criterion 1 compares runner for runner.
@@ -658,8 +668,9 @@ test.describe('the OPFS dictionary', () => {
   /**
    * Criterion 3 — a reload fetches nothing.
    *
-   * The import is idempotent and keyed by the **whole artifact filename**, so a
-   * second load finds the file already in the pool and opens it.
+   * The import is idempotent and keyed by the artifact's filename **and its
+   * sha256** (`artifactPoolName`), so a second load of the same build finds the
+   * file already in the pool and opens it.
    *
    * **The reload is a real one: nothing closes the store first.** An earlier
    * version called `window.__dictWasm.close()` before reloading, which removed
@@ -679,7 +690,7 @@ test.describe('the OPFS dictionary', () => {
     const fetches: { url: string; after: 'first' | 'reload' }[] = [];
     let phase: 'first' | 'reload' = 'first';
     page.on('request', (request) => {
-      if (request.url().endsWith(manifest.file)) fetches.push({ url: request.url(), after: phase });
+      if (isArtifact(request.url())) fetches.push({ url: request.url(), after: phase });
     });
 
     await openHarness(page);
@@ -736,6 +747,89 @@ test.describe('the OPFS dictionary', () => {
 
     const status = await page.evaluate(() => window.__dictWasm!.status());
     expect(status).toEqual({ state: 'ready', version: manifest.dictVersion });
+  });
+
+  /**
+   * **A browser that already holds an older artifact under the same filename
+   * ends up with the new one.**
+   *
+   * The filename carries the schema and the CC-CEDICT snapshot and nothing
+   * else, so a rebuild that changes the bytes keeps it — the HSK-band reading
+   * order did exactly that (HANDOFF.md "The default reading"). Until the pool
+   * was keyed on the manifest's sha256 the worker found `/${manifest.file}`
+   * already in the pool and opened it, for ever: a learner who had visited once
+   * would have gone on seeing 吗 as má however many deploys followed.
+   *
+   * The seed is that learner's browser, reproduced exactly. The old client
+   * stored the artifact under the bare filename, which is what
+   * `artifactPoolName` still writes for a manifest with no digest; and the
+   * bytes are this artifact with 吗's two readings put back in the old order,
+   * so the one thing the test reads — the first reading of 吗 — tells the two
+   * files apart. The seed is asserted too, so a seed that silently failed to
+   * take cannot make the upgrade look like it worked.
+   */
+  test('a browser holding an older artifact under the same filename imports the new one', async ({
+    page,
+  }) => {
+    const { path: stale, bytes: staleBytes } = makeStaleArtifact(ARTIFACT, 'wasm');
+
+    const firstOf吗 = () =>
+      page.evaluate(async (sentence) => {
+        const result = (await window.__dictWasm!.segment(sentence)) as {
+          tokens: { text: string; entryIds?: string[] }[];
+        };
+        return result.tokens.at(-1)?.entryIds?.[0];
+      }, MA_SENTENCE);
+
+    // The old client's state: its manifest had no reason to key on a digest.
+    await page.route(`**/${MANIFEST_FILE}`, (route) =>
+      route.fulfill({
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ...manifest, bytes: staleBytes, sha256: '' }),
+      }),
+    );
+    await page.route(isArtifact, (route) =>
+      route.fulfill({
+        status: 200,
+        headers: { 'content-type': 'application/vnd.sqlite3' },
+        path: stale,
+      }),
+    );
+    await openHarness(page);
+    const seeded = await open(page);
+    expect(seeded.ok, JSON.stringify(seeded)).toBe(true);
+    expect(seeded.ok && seeded.report.mode).toBe('opfs');
+    expect(await firstOf吗(), 'the seed did not take: the stale file is not what opened').toBe(MA2);
+    await page.evaluate(() => window.__dictWasm!.close());
+    await page.unroute(`**/${MANIFEST_FILE}`);
+    await page.unroute(isArtifact);
+
+    // The deploy: the real manifest, the same filename, different bytes.
+    const fetched: string[] = [];
+    page.on('request', (request) => {
+      if (isArtifact(request.url())) fetched.push(request.url());
+    });
+    await openHarness(page);
+    const upgraded = await open(page);
+    expect(upgraded.ok, JSON.stringify(upgraded)).toBe(true);
+    expect(upgraded.ok && upgraded.report.mode).toBe('opfs');
+    expect(upgraded.ok && upgraded.report.imported, 'the stale file was trusted').toBe(true);
+    expect(upgraded.ok && upgraded.report.downloaded).toBe(manifest.bytes);
+    expect(await firstOf吗(), 'the browser kept the old artifact').toBe(MA5);
+    // The fetch is content-addressed too, so an HTTP cache holding the old bytes
+    // under the same path — the host sends them `immutable` for a year — is not
+    // what the import reads.
+    expect(fetched).toHaveLength(1);
+    expect(new URL(fetched[0]).searchParams.get('sha256')).toBe(manifest.sha256);
+
+    // …and the new one is what stays: the next load opens it without a fetch.
+    await page.evaluate(() => window.__dictWasm!.close());
+    await openHarness(page);
+    const kept = await open(page);
+    expect(kept.ok && kept.report.imported, 'the upgraded file was imported again').toBe(false);
+    expect(await firstOf吗()).toBe(MA5);
+    expect(fetched).toHaveLength(1);
   });
 
   /**
@@ -853,7 +947,7 @@ test.describe('the OPFS dictionary', () => {
    */
   test('a truncated download fails with reason "download"', async ({ page }) => {
     const bytes = readFileSync(ARTIFACT);
-    await page.route(`**${ARTIFACT_URL}`, (route) =>
+    await page.route(isArtifact, (route) =>
       route.fulfill({
         status: 200,
         headers: { 'content-type': 'application/vnd.sqlite3' },
@@ -875,7 +969,7 @@ test.describe('the OPFS dictionary', () => {
     bytes.writeUInt32BE(0, 68);
     const corrupt = join(tmpdir(), `tangram-d4-corrupt-${process.pid}.sqlite`);
     writeFileSync(corrupt, bytes);
-    await page.route(`**${ARTIFACT_URL}`, (route) =>
+    await page.route(isArtifact, (route) =>
       route.fulfill({
         status: 200,
         headers: { 'content-type': 'application/vnd.sqlite3' },
@@ -908,7 +1002,7 @@ test.describe('the OPFS dictionary', () => {
         body: JSON.stringify({ ...manifest, bytes: otherBytes.byteLength, sha256: '' }),
       }),
     );
-    await page.route(`**${ARTIFACT_URL}`, (route) =>
+    await page.route(isArtifact, (route) =>
       route.fulfill({
         status: 200,
         headers: { 'content-type': 'application/vnd.sqlite3' },
@@ -944,9 +1038,9 @@ test.describe('the OPFS dictionary', () => {
   }) => {
     const fetches: string[] = [];
     page.on('request', (request) => {
-      if (request.url().endsWith(manifest.file)) fetches.push(request.url());
+      if (isArtifact(request.url())) fetches.push(request.url());
     });
-    await page.route(`**${ARTIFACT_URL}`, (route) =>
+    await page.route(isArtifact, (route) =>
       route.fulfill({
         status: 200,
         headers: { 'content-type': 'text/html' },
@@ -980,7 +1074,7 @@ test.describe('the OPFS dictionary', () => {
    * here is the thing a learner would notice either way.
    */
   test('a retry after a failed open still gets OPFS, not the memory rung', async ({ page }) => {
-    await page.route(`**${ARTIFACT_URL}`, (route) =>
+    await page.route(isArtifact, (route) =>
       route.fulfill({
         status: 200,
         headers: { 'content-type': 'application/vnd.sqlite3' },
@@ -991,7 +1085,7 @@ test.describe('the OPFS dictionary', () => {
     const failed = await open(page);
     expect(failed.ok).toBe(false);
 
-    await page.unroute(`**${ARTIFACT_URL}`);
+    await page.unroute(isArtifact);
     const retried = await open(page);
     expect(retried.ok, JSON.stringify(retried)).toBe(true);
     expect(retried.ok && retried.report.mode, 'the retry was pushed onto the memory rung').toBe(

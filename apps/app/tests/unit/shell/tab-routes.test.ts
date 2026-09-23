@@ -196,8 +196,11 @@ describe('the seven routes are gone', () => {
     // long word and its comma inside the column at 320px; a drag across a
     // glued boundary selecting what it did before; focus and the
     // accessibility tree unchanged by the wrapper).
+    // The reading-order fix adds one file and no spec: `d/stale-artifact.ts`,
+    // the older-build stand-in that `d/dict-ask.spec.ts` and
+    // `d/dict-wasm.spec.ts` both seed a browser with. It does not navigate.
     expect({ files: files.length, specs: specs.length, navigating: navigating.length }).toEqual({
-      files: 61,
+      files: 62,
       specs: 53,
       navigating: 54,
     });

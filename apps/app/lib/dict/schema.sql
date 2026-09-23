@@ -25,9 +25,10 @@ PRAGMA encoding  = 'UTF-8';
 -- One row per CC-CEDICT headword-reading pair.
 --
 -- `rowid` is assigned in `compareEntries` order (freq DESC, isVariant ASC,
--- properNoun ASC, id ASC), which is the order every existing index already
--- uses. So `ORDER BY rowid` *is* "frequency first, real words before variants
--- before proper nouns, then id", and no query needs the four-clause sort.
+-- properNoun ASC, hskBand ASC with no band last, id ASC), which is the order
+-- every existing index already uses. So `ORDER BY rowid` *is* "frequency first,
+-- real words before variants before proper nouns, then the easier reading, then
+-- id", and no query needs the five-clause sort.
 CREATE TABLE entries (
   rowid          INTEGER PRIMARY KEY,
   id             TEXT    NOT NULL,   -- 'trad|simp[pinyinNum]'

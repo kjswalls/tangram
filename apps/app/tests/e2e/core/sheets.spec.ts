@@ -17,7 +17,7 @@ const PHONE = { width: 390, height: 844 };
 const WORD = '继续';
 /** 打扫 — two characters, TWO senses. CC-CEDICT gives 继续 only one. */
 const TWO_SENSES = '打扫';
-/** 看 — the polyphone in the paragraph: kān and kàn. */
+/** 看 — the polyphone in the paragraph: kàn and kān. */
 const POLYPHONE = '看';
 /** …and 打扫's entry id, which the "Mark known" case asserts by hand. */
 const TWO_SENSES_ID = '打掃|打扫[da3 sao3]';
@@ -60,7 +60,11 @@ test.describe('the word sheet', () => {
     // sheet is `EntryDetail` re-homed rather than a new panel.
     await openWord(page, POLYPHONE);
     const sheet = page.getByTestId('word-sheet');
-    await expect(sheet.getByTestId('reading-pinyin')).toHaveText(['kān', 'kàn']);
+    // kàn (HSK 1, "to see") first, kān (HSK 6, "to look after") second. This
+    // asserted ['kān', 'kàn'] until the reading order gained its band tie-break
+    // (HANDOFF.md "The default reading"): the two readings tie on frequency, and
+    // the id alone put the rarer one first.
+    await expect(sheet.getByTestId('reading-pinyin')).toHaveText(['kàn', 'kān']);
     await expect(sheet.getByTestId('reading-option')).toHaveCount(2);
   });
 

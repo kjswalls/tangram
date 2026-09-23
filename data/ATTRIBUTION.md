@@ -47,6 +47,10 @@ than leaving it to convention.
   lookup keys derived mechanically from the numbered pinyin, an English gloss index over
   stemmed gloss tokens, a headword-frequency table for word segmentation, and a
   character-to-headword index. Every gloss is stored exactly as `dict.json` has it.
+- The rows are stored in a derived order, not CC-CEDICT's: by `freq`, then real words
+  before variants before proper nouns, then `hskBand`, then entry id. That order decides
+  which reading of a headword the app shows first (看 as kàn before kān); no reading is
+  removed by it.
 
 Definitions are otherwise reproduced verbatim, and the derived file is offered under the
 same CC BY-SA 4.0 licence. AI-written prose in the app is the model's own expression about

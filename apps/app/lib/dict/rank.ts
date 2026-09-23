@@ -13,7 +13,7 @@
  * `compareEntries` lives here for a related reason: it is now a property of the
  * *artifact*. `scripts/build-data.ts` assigns `entries.rowid` in exactly this
  * order and `scripts/verify-data.ts` re-checks it, so `ORDER BY rowid`
- * reproduces every frequency-ordered list the app has without a four-clause
+ * reproduces every frequency-ordered list the app has without a five-clause
  * sort.
  *
  * Everything in this module is dependency-free, like `lib/dict/pinyin.ts`: it
@@ -26,16 +26,33 @@ import type { DictEntry, EntryId, HskBand } from './types';
 // Ordering
 // ---------------------------------------------------------------------------
 
+/** Sorts after every real band (1–7). Shared by the entry order and the group ranking. */
+const NO_BAND = 8;
+
 /**
  * Frequency first — that is the order every list in the UI wants. Entries of one
  * headword share a jieba frequency, so the tiebreaks decide between readings:
- * ordinary words before proper nouns before variants, then the id for determinism.
+ * ordinary words before variants before proper nouns, then the HSK band, then
+ * the id for determinism.
+ *
+ * **The band is what picks a headword's default reading**, and the reader's
+ * ruby, the character sheet, "Add" and every list of readings show the first
+ * one. Without it the id decided, alphabetically, and `吗[ma2]` sorts before
+ * `吗[ma5]`: the app taught 说 as shuì, 要 as yāo and 吗 as má. A banded reading
+ * sorts before an unbanded one and a lower band before a higher, because the HSK
+ * list is the only source in the artifact that says which reading a learner
+ * meets. HANDOFF.md "The default reading" lists every headword this moved,
+ * and the few it made worse (说道, 尽可能, 壳).
+ *
+ * It also reorders *different* headwords that share a frequency (most of the
+ * unranked tail), which only ever changes rowid order among exact ties.
  */
 export function compareEntries(a: DictEntry, b: DictEntry): number {
   return (
     (b.freq ?? -1) - (a.freq ?? -1) ||
     Number(a.isVariant) - Number(b.isVariant) ||
     Number(a.properNoun) - Number(b.properNoun) ||
+    (a.hskBand ?? NO_BAND) - (b.hskBand ?? NO_BAND) ||
     (a.id < b.id ? -1 : 1)
   );
 }
@@ -151,7 +168,6 @@ export const SECTION_LABELS: Record<MatchSource, string> = {
 /** PLAN.md §3.2 caps a page at 50 groups. */
 export const SEARCH_PAGE_SIZE = 50;
 
-const NO_BAND = 8;
 const NO_RANK = Number.MAX_SAFE_INTEGER;
 
 /**

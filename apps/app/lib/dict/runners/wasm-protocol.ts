@@ -87,6 +87,13 @@ export interface OpenReport {
   /** Null when nothing was fetched, or when the entry could not be found. */
   transfer: TransferTiming | null;
   sqliteVersion: string;
+  /**
+   * The pool file the connection reads, e.g.
+   * `/dict-1-1.3.20251213-cb893d8856faa18d.sqlite`; absent on the in-memory
+   * rung. A stored-only open compares it with the name the current manifest
+   * implies, which is how a stale stored artifact is noticed at all.
+   */
+  stored?: string;
 }
 
 export interface IntegrityReport {

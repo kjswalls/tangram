@@ -21,6 +21,7 @@
  */
 import { MANIFEST_FILE, type DictManifest } from '../artifact';
 import { assetUrl } from '../asset-url';
+import { refusedMessage, servedPageMessage } from '../failure';
 import { DictOpenError } from '../open-error';
 import type { SqlQuery, SqlRunner, SqlValue } from '../sql';
 import type {
@@ -230,13 +231,13 @@ async function fetchManifest(url: string): Promise<DictManifest | null> {
     return null;
   }
   if (!response.ok) {
-    throw new DictOpenError('download', `the dictionary manifest answered ${response.status}`);
+    throw new DictOpenError('download', refusedMessage('manifest', response.status));
   }
   let manifest: DictManifest;
   try {
     manifest = (await response.json()) as DictManifest;
   } catch (error) {
-    throw new DictOpenError('corrupt', 'the dictionary manifest is not JSON', { cause: error });
+    throw new DictOpenError('corrupt', servedPageMessage('manifest'), { cause: error });
   }
   if (typeof manifest?.file !== 'string' || typeof manifest?.bytes !== 'number') {
     throw new DictOpenError('corrupt', 'the dictionary manifest has no file and bytes');

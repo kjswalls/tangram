@@ -48,6 +48,13 @@ import type {
 } from '@sqlite.org/sqlite-wasm';
 
 import { APPLICATION_ID, SCHEMA_VERSION, type DictManifest } from '../artifact';
+import {
+  incompleteMessage,
+  offlineMessage,
+  refusedMessage,
+  servedPageMessage,
+  unreachableMessage,
+} from '../failure';
 import type { DictFailureReason } from '../open-error';
 import type { SqlValue } from '../sql';
 import { rowReader, type RowReader } from './wasm-extract';
@@ -195,7 +202,7 @@ function assertSqliteHeader(chunk: Uint8Array): void {
     if (chunk[index] !== SQLITE_MAGIC.charCodeAt(index)) {
       throw new WorkerOpenError(
         'corrupt',
-        'the dictionary download is not a SQLite database — the server answered with something else',
+        servedPageMessage('file'),
       );
     }
   }
@@ -219,12 +226,12 @@ async function importArtifact(
   try {
     response = await fetch(url, { credentials: 'same-origin' });
   } catch (error) {
-    throw new WorkerOpenError('download', `the dictionary could not be fetched: ${String(error)}`, {
+    throw new WorkerOpenError('download', unreachableMessage(error), {
       cause: error,
     });
   }
   if (!response.ok) {
-    throw new WorkerOpenError('download', `the dictionary fetch answered ${response.status}`);
+    throw new WorkerOpenError('download', refusedMessage('file', response.status));
   }
   if (!response.body) {
     throw new WorkerOpenError('download', 'the dictionary fetch returned no body to stream');
@@ -267,7 +274,7 @@ async function importArtifact(
     target.unlink(name);
     throw new WorkerOpenError(
       'download',
-      `the dictionary download was ${received} bytes, the manifest says ${manifest.bytes}`,
+      incompleteMessage(received, manifest.bytes),
     );
   }
   return { downloaded: received, transfer: transferTiming(url) };
@@ -366,8 +373,8 @@ async function openOnOpfs(
       throw new WorkerOpenError(
         'download',
         pooled.length === 0
-          ? 'the dictionary manifest could not be fetched and there is no dictionary in this browser yet'
-          : `the dictionary manifest could not be fetched and this browser holds ${pooled.length} dictionaries`,
+          ? offlineMessage('there is no dictionary in this browser yet')
+          : offlineMessage(`this browser holds ${pooled.length} dictionaries`),
       );
     }
     return openPooled(pooled[0]);
@@ -499,12 +506,12 @@ async function openInMemory(
     try {
       response = await fetch(url, { credentials: 'same-origin' });
     } catch (error) {
-      throw new WorkerOpenError('download', `the dictionary could not be fetched: ${String(error)}`, {
+      throw new WorkerOpenError('download', unreachableMessage(error), {
         cause: error,
       });
     }
     if (!response.ok) {
-      throw new WorkerOpenError('download', `the dictionary fetch answered ${response.status}`);
+      throw new WorkerOpenError('download', refusedMessage('file', response.status));
     }
     if (!response.body) {
       throw new WorkerOpenError('download', 'the dictionary fetch returned no body to stream');
@@ -533,7 +540,7 @@ async function openInMemory(
     if (received !== manifest.bytes) {
       throw new WorkerOpenError(
         'download',
-        `the dictionary download was ${received} bytes, the manifest says ${manifest.bytes}`,
+        incompleteMessage(received, manifest.bytes),
       );
     }
   } catch (error) {
@@ -615,7 +622,7 @@ async function open(
         // dictionary — said plainly rather than after a failed download.
         throw new WorkerOpenError(
           'download',
-          'the dictionary manifest could not be fetched and this browser has no storage to read one from',
+          offlineMessage('this browser has no storage to read one from'),
         );
       }
       mode = 'memory';

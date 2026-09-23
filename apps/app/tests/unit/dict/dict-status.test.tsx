@@ -98,6 +98,49 @@ describe('DictStatusView', () => {
     warn.mockRestore();
   });
 
+  /**
+   * **The diagnosis C4a's second pass kept the raw line for.** A deployer on a
+   * phone must be able to tell a server without the file from an unreachable
+   * one from a browser that refused storage, in a production build, without
+   * the raw text the first-run audit took off the screen.
+   */
+  it('names the cause in plain words in production, and no two causes read alike', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const cases: [DictStatus & { state: 'failed' }, string][] = [
+      [{ state: 'failed', reason: 'download', message: 'the dictionary manifest answered 404' }, 'not-on-server'],
+      [{ state: 'failed', reason: 'download', message: 'the dictionary fetch answered 500' }, 'server-refused'],
+      [{ state: 'failed', reason: 'download', message: 'the dictionary could not be fetched: TypeError: Failed to fetch' }, 'unreachable'],
+      [{ state: 'failed', reason: 'download', message: 'the dictionary download was 10 bytes, the manifest says 20' }, 'incomplete'],
+      [{ state: 'failed', reason: 'corrupt', message: 'the dictionary manifest is not JSON' }, 'served-page'],
+      [{ state: 'failed', reason: 'storage', message: 'QuotaExceededError' }, 'storage'],
+      [{ state: 'failed', reason: 'import', message: 'NotAllowedError' }, 'import'],
+      [{ state: 'failed', reason: 'corrupt', message: 'sha256 mismatch' }, 'corrupt'],
+    ];
+    const lines = cases.map(([status, expected]) => {
+      const { unmount } = render(<DictStatusView status={status} onStart={() => {}} showDetail={false} />);
+      expect(screen.getByTestId('dict-status').getAttribute('data-diagnosis')).toBe(expected);
+      const line = screen.getByTestId('dict-failure-diagnosis').textContent ?? '';
+      expect(line).not.toMatch(/TypeError|Quota|NotAllowed|sha256|JSON|\b\d{3}\b/);
+      expect(screen.getByTestId('dict-status').textContent).not.toContain(status.message);
+      unmount();
+      return line;
+    });
+    expect(new Set(lines).size).toBe(cases.length);
+    warn.mockRestore();
+  });
+
+  it('the download body does not claim the connection dropped, since a 404 is also a download failure', () => {
+    render(
+      <DictStatusView
+        status={{ state: 'failed', reason: 'download', message: 'the dictionary manifest answered 404' }}
+        showDetail={false}
+      />,
+    );
+    const text = screen.getByTestId('dict-status').textContent ?? '';
+    expect(text).not.toMatch(/dropped|connection/i);
+    expect(text).toMatch(/does not have/);
+  });
+
   it('the four failure reasons are four different screens, not one generic one', () => {
     const seen = new Set(
       REASONS.map((reason) => {

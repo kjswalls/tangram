@@ -1,80 +1,109 @@
 {
-  "reason": "compareEntries gained an HSK-band tie-break before the id (HANDOFF.md \"The default reading\"): readings of one headword that tie on frequency, variant and proper noun now put the lower band first.",
-  "files": {
-    "apps/app/tests/unit/dict/golden/search.json": {
-      "beforeCanonicalSha256": "7dc514b6bafa9656d3ce07e7ea1d4e4b23d8954f26b2bdabc25c972397c54762"
-    },
-    "apps/app/tests/unit/ai/golden/retrieve.json": {
-      "beforeCanonicalSha256": "11e1f8f5294e9a7fb9b80599c61db89f2586820412922222503500a27c7a6755"
-    }
-  },
-  "changes": [
+  "steps": [
     {
-      "file": "apps/app/tests/unit/dict/golden/search.json",
-      "path": [
-        "longPassage",
-        "tokensSha256"
-      ],
-      "kind": "tokenDigest",
-      "before": "18fa634cc426efe8212a5f9ce9e92320df8f0a6f71a0a0a861f92c316ab2e043",
-      "after": "4ea9289cf0ccd761e73aa57f236f20e4eca33201b3c54a2a9d8618a04d7be47e"
-    },
-    {
-      "file": "apps/app/tests/unit/ai/golden/retrieve.json",
-      "path": [
-        "candidateEntries",
-        1,
-        "ids"
-      ],
-      "kind": "ids",
-      "before": [
-        "我|我[wo3]",
-        "打算|打算[da3 suan4]",
-        "明天|明天[ming2 tian1]",
-        "去|去[qu4]",
-        "北京|北京[Bei3 jing1]",
-        "這個|这个[zhe4 ge5]",
-        "多少|多少[duo1 shao3]",
-        "多少|多少[duo1 shao5]",
-        "錢|钱[qian2]",
-        "錢|钱[Qian2]"
-      ],
-      "after": [
-        "我|我[wo3]",
-        "打算|打算[da3 suan4]",
-        "明天|明天[ming2 tian1]",
-        "去|去[qu4]",
-        "北京|北京[Bei3 jing1]",
-        "這個|这个[zhe4 ge5]",
-        "多少|多少[duo1 shao5]",
-        "多少|多少[duo1 shao3]",
-        "錢|钱[qian2]",
-        "錢|钱[Qian2]"
+      "rule": "band",
+      "reason": "compareEntries gained an HSK-band tie-break before the id (HANDOFF.md \"The default reading\"): readings of one headword that tie on frequency, variant and proper noun now put the lower band first.",
+      "files": {
+        "apps/app/tests/unit/dict/golden/search.json": {
+          "beforeCanonicalSha256": "7dc514b6bafa9656d3ce07e7ea1d4e4b23d8954f26b2bdabc25c972397c54762"
+        },
+        "apps/app/tests/unit/ai/golden/retrieve.json": {
+          "beforeCanonicalSha256": "11e1f8f5294e9a7fb9b80599c61db89f2586820412922222503500a27c7a6755"
+        }
+      },
+      "changes": [
+        {
+          "file": "apps/app/tests/unit/dict/golden/search.json",
+          "path": [
+            "longPassage",
+            "tokensSha256"
+          ],
+          "kind": "tokenDigest",
+          "before": "18fa634cc426efe8212a5f9ce9e92320df8f0a6f71a0a0a861f92c316ab2e043",
+          "after": "4ea9289cf0ccd761e73aa57f236f20e4eca33201b3c54a2a9d8618a04d7be47e"
+        },
+        {
+          "file": "apps/app/tests/unit/ai/golden/retrieve.json",
+          "path": [
+            "candidateEntries",
+            1,
+            "ids"
+          ],
+          "kind": "ids",
+          "before": [
+            "我|我[wo3]",
+            "打算|打算[da3 suan4]",
+            "明天|明天[ming2 tian1]",
+            "去|去[qu4]",
+            "北京|北京[Bei3 jing1]",
+            "這個|这个[zhe4 ge5]",
+            "多少|多少[duo1 shao3]",
+            "多少|多少[duo1 shao5]",
+            "錢|钱[qian2]",
+            "錢|钱[Qian2]"
+          ],
+          "after": [
+            "我|我[wo3]",
+            "打算|打算[da3 suan4]",
+            "明天|明天[ming2 tian1]",
+            "去|去[qu4]",
+            "北京|北京[Bei3 jing1]",
+            "這個|这个[zhe4 ge5]",
+            "多少|多少[duo1 shao5]",
+            "多少|多少[duo1 shao3]",
+            "錢|钱[qian2]",
+            "錢|钱[Qian2]"
+          ]
+        },
+        {
+          "file": "apps/app/tests/unit/ai/golden/retrieve.json",
+          "path": [
+            "candidateEntries",
+            4,
+            "ids"
+          ],
+          "kind": "ids",
+          "before": [
+            "第|第[di4]",
+            "個|个[ge3]",
+            "個|个[ge4]",
+            "箇|个[ge4]",
+            "句子|句子[ju4 zi5]",
+            "測試|测试[ce4 shi4]"
+          ],
+          "after": [
+            "第|第[di4]",
+            "個|个[ge4]",
+            "個|个[ge3]",
+            "箇|个[ge4]",
+            "句子|句子[ju4 zi5]",
+            "測試|测试[ce4 shi4]"
+          ]
+        }
       ]
     },
     {
-      "file": "apps/app/tests/unit/ai/golden/retrieve.json",
-      "path": [
-        "candidateEntries",
-        4,
-        "ids"
-      ],
-      "kind": "ids",
-      "before": [
-        "第|第[di4]",
-        "個|个[ge3]",
-        "個|个[ge4]",
-        "箇|个[ge4]",
-        "句子|句子[ju4 zi5]",
-        "測試|测试[ce4 shi4]"
-      ],
-      "after": [
-        "第|第[di4]",
-        "個|个[ge4]",
-        "個|个[ge3]",
-        "箇|个[ge4]",
-        "句子|句子[ju4 zi5]",
-        "測試|测试[ce4 shi4]"
+      "rule": "preferred-and-cross-reference",
+      "reason": "compareEntries gained two tie-breaks (HANDOFF.md \"Preferred readings\"): a hand-kept list of preferred readings goes before the HSK band, and an entry whose every gloss is a cross-reference no longer has its band counted.",
+      "files": {
+        "apps/app/tests/unit/dict/golden/search.json": {
+          "beforeCanonicalSha256": "dcfc484a536ac403357d40dfcf7bc4c4a5595b408aad126cc272b9d5e8a04a60"
+        },
+        "apps/app/tests/unit/ai/golden/retrieve.json": {
+          "beforeCanonicalSha256": "869310f0b67df4a55b2b185064f76d0565fe8d2d1345fefa78e601b3d13bee41"
+        }
+      },
+      "changes": [
+        {
+          "file": "apps/app/tests/unit/dict/golden/search.json",
+          "path": [
+            "longPassage",
+            "tokensSha256"
+          ],
+          "kind": "tokenDigest",
+          "before": "4ea9289cf0ccd761e73aa57f236f20e4eca33201b3c54a2a9d8618a04d7be47e",
+          "after": "f7d2b8d40b7c048086e8c0a11e0a108e6870fff4bc5a5846877b9cc276c03629"
+        }
       ]
     }
   ]

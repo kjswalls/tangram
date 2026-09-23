@@ -16,16 +16,21 @@
  * | everything else | carried forward: the deleted `search()` answered it, and group keys, routing and paging do not depend on the order of readings inside a group |
  *
  * Every field that comes out different is then checked by
- * `scripts/golden-rebless.ts`: an id list may only be reordered, and only where
- * two entries tie on frequency, variant and proper noun and the lower HSK band
- * now comes first; the passage digest must be reproducible from today's tokens
- * by re-sorting each token's readings the old way. **Any other difference means
- * nothing is written** and the script exits 1 with the list. That is the point
- * of it: a bug introduced alongside a ranking change would otherwise be blessed
- * with it.
+ * `scripts/golden-rebless.ts` against **one rule, `CURRENT_RULE`** — the
+ * reading-order change being re-blessed and nothing broader: an id list may only
+ * be reordered, and only as that rule allows; the passage digest must be
+ * reproducible from today's tokens by re-sorting each token's readings the old
+ * way. **Any other difference means nothing is written** and the script exits 1
+ * with the list. That is the point of it: a bug introduced alongside a ranking
+ * change would otherwise be blessed with it.
  *
- * On success it writes the two fixtures and `golden/rebless.json`, the record of
- * what moved, which `tests/unit/dict/golden-rebless.test.ts` re-proves.
+ * On success it writes the two fixtures and appends a step to
+ * `golden/rebless.json`, the record of every re-bless so far, which
+ * `tests/unit/dict/golden-rebless.test.ts` re-proves.
+ *
+ * **The next reading-order change** freezes a copy of today's `compareEntries`
+ * in `golden-rebless.ts`, writes a new `OrderRule` whose `before` is that copy,
+ * and points `CURRENT_RULE` and `REASON` at it.
  *
  * Run: `pnpm golden` (`--check` reports without writing). It needs `pnpm data`,
  * and it refuses a dictionary whose entries differ from the fixtures'
@@ -46,10 +51,13 @@ import {
   canonical,
   differingPaths,
   getPath,
+  PREFERRED_RULE,
   sha256,
+  tokensInCurrentOrder,
   unexplainedListChange,
   unexplainedTokenDigest,
   type ReblessRecord,
+  type ReblessStep,
 } from './golden-rebless';
 
 const ROOT = workspaceRoot(dirOf(import.meta.url));
@@ -57,9 +65,13 @@ export const SEARCH_FIXTURE = 'apps/app/tests/unit/dict/golden/search.json';
 export const RETRIEVE_FIXTURE = 'apps/app/tests/unit/ai/golden/retrieve.json';
 export const REBLESS_RECORD = 'apps/app/tests/unit/dict/golden/rebless.json';
 
+/** The one reading-order change this script will re-bless. */
+const CURRENT_RULE = PREFERRED_RULE;
+
 const REASON =
-  'compareEntries gained an HSK-band tie-break before the id (HANDOFF.md "The default reading"): ' +
-  'readings of one headword that tie on frequency, variant and proper noun now put the lower band first.';
+  'compareEntries gained two tie-breaks (HANDOFF.md "Preferred readings"): a hand-kept list of ' +
+  'preferred readings goes before the HSK band, and an entry whose every gloss is a cross-reference ' +
+  'no longer has its band counted.';
 
 type Json = Record<string, unknown>;
 
@@ -201,7 +213,10 @@ async function main(): Promise<void> {
   // Explain every difference, or write nothing.
   // -------------------------------------------------------------------------
   const complaints: string[] = [];
-  const changes: ReblessRecord['changes'] = [];
+  if (!tokensInCurrentOrder(tokens, getEntry)) {
+    complaints.push('the segmenter’s readings are not in compareEntries order');
+  }
+  const changes: ReblessStep['changes'] = [];
   const pairs = [
     [SEARCH_FIXTURE, searchBefore, searchAfter],
     [RETRIEVE_FIXTURE, retrieveBefore, retrieveAfter],
@@ -216,7 +231,7 @@ async function main(): Promise<void> {
         (path[0] === 'candidateEntries' && path.length === 3 && path[2] === 'ids');
       if (file === RETRIEVE_FIXTURE && isIds) {
         complaints.push(
-          ...unexplainedListChange(was as string[], now as string[], getEntry, label),
+          ...unexplainedListChange(was as string[], now as string[], getEntry, label, CURRENT_RULE),
         );
         changes.push({ file, path, kind: 'ids', before: was, after: now });
       } else if (
@@ -224,7 +239,7 @@ async function main(): Promise<void> {
         canonical(path) === canonical(['longPassage', 'tokensSha256'])
       ) {
         complaints.push(
-          ...unexplainedTokenDigest(tokens, getEntry, was as string, now as string).map(
+          ...unexplainedTokenDigest(tokens, getEntry, was as string, now as string, CURRENT_RULE).map(
             (complaint) => `${label}: ${complaint}`,
           ),
         );
@@ -237,7 +252,7 @@ async function main(): Promise<void> {
 
   if (complaints.length > 0) {
     process.stderr.write(
-      `freeze-golden: ${complaints.length} change(s) the band tie-break does not explain — nothing written.\n` +
+      `freeze-golden: ${complaints.length} change(s) the ${CURRENT_RULE.name} rule does not explain — nothing written.\n` +
         `${complaints.map((line) => `  ${line}`).join('\n')}\n`,
     );
     process.exit(1);
@@ -255,19 +270,21 @@ async function main(): Promise<void> {
     return;
   }
 
-  const record: ReblessRecord = {
+  const record = read(REBLESS_RECORD) as unknown as ReblessRecord;
+  record.steps.push({
+    rule: CURRENT_RULE.name,
     reason: REASON,
     files: {
       [SEARCH_FIXTURE]: { beforeCanonicalSha256: sha256(canonical(searchBefore)) },
       [RETRIEVE_FIXTURE]: { beforeCanonicalSha256: sha256(canonical(retrieveBefore)) },
     },
     changes,
-  };
+  });
   writeFileSync(resolve(ROOT, SEARCH_FIXTURE), renderSearch(searchAfter));
   writeFileSync(resolve(ROOT, RETRIEVE_FIXTURE), renderRetrieve(retrieveAfter));
   writeFileSync(resolve(ROOT, REBLESS_RECORD), `${JSON.stringify(record, null, 2)}\n`);
   process.stdout.write(
-    `freeze-golden: ${changes.length} change(s), every one explained by the band tie-break; wrote both fixtures and ${REBLESS_RECORD}\n`,
+    `freeze-golden: ${changes.length} change(s), every one explained by the ${CURRENT_RULE.name} rule; wrote both fixtures and appended to ${REBLESS_RECORD}\n`,
   );
 }
 

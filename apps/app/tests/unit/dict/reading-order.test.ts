@@ -5,7 +5,8 @@
  * The reader's ruby, the character sheet's default, the "Add" button and the
  * order of readings in every sheet all take a headword's **first** entry, and
  * the first entry is whatever `compareEntries` put first when the artifact was
- * built. Before the band tie-break the id decided among readings that share a
+ * built. The hand-kept preferred readings have their own test,
+ * `preferred-readings.test.ts`. Before the band tie-break the id decided among readings that share a
  * jieba frequency — every reading of a headword does — so `吗[ma2]` beat
  * `吗[ma5]` alphabetically and the first-run audit found 说 as shuì, 要 as yāo
  * and 你想跟我一起去吗 ending in "má" (HANDOFF.md "First-run audit", defect 1).
@@ -16,7 +17,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { compareEntries } from '@/lib/dict/rank';
+import { compareEntries, isCrossReferenceOnly } from '@/lib/dict/rank';
 import { nodeRunner } from '@/lib/dict/runners/node';
 import { SqliteDictStore } from '@/lib/dict/sqlite-store';
 import type { DictEntry } from '@/lib/dict/types';
@@ -60,6 +61,8 @@ describe('the first reading of a common polyphone', () => {
     ['个', '個|个[ge4]'],
     ['吧', '吧|吧[ba5]'],
     ['多少', '多少|多少[duo1 shao5]'],
+    // The band-5 jìn says only "see 儘可能…"; its band no longer counts.
+    ['尽可能', '儘可能|尽可能[jin3 ke3 neng2]'],
     // Unchanged by the tie-break and recorded as defensible by the audit.
     ['得', '得|得[de2]'],
     ['觉', '覺|觉[jiao4]'],
@@ -127,6 +130,52 @@ describe('compareEntries', () => {
     expect(
       [entry('a', { hskBand: 1, properNoun: true }), entry('b')].sort(compareEntries)[0].id,
     ).toBe('b');
+  });
+
+  it('does not count the band of an entry whose every gloss is a cross-reference', () => {
+    const pointer = entry('盡可能|尽可能[jin4 ke3 neng2]', {
+      hskBand: 5,
+      glosses: ['see 儘可能|尽可能[jin3 ke3 neng2]'],
+    });
+    const meaning = entry('儘可能|尽可能[jin3 ke3 neng2]', { glosses: ['as far as possible'] });
+    expect([pointer, meaning].sort(compareEntries)[0].id).toBe(meaning.id);
+    // One real gloss is enough to keep the band.
+    const mixed = { ...pointer, glosses: [...pointer.glosses, 'to do one\'s utmost'] };
+    expect([mixed, meaning].sort(compareEntries)[0].id).toBe(mixed.id);
+  });
+
+  it('recognises the cross-reference forms CC-CEDICT writes, and nothing that merely starts like one', () => {
+    for (const gloss of [
+      'see 儘可能|尽可能[jin3 ke3 neng2]',
+      'see also 仿傚|仿效[fang3 xiao4]',
+      'used in 似的[shi4 de5]',
+      'variant of 家伙[jia1 huo5]',
+      'old variant of 乾|干[gan1]',
+      'erhua variant of 一點|一点[yi1 dian3]',
+      '(Tw) see 秘魯|秘鲁[Bi4 lu3]',
+    ]) {
+      expect(isCrossReferenceOnly({ glosses: [gloss] }), gloss).toBe(true);
+    }
+    for (const gloss of [
+      'seed',
+      'seemingly; apparently',
+      '(used after a verb) endlessly',
+      '(used in the names of grand buildings)',
+      'abbr. for 體格檢查|体格检查[ti3 ge2 jian3 cha2]',
+      'equivalent to',
+    ]) {
+      expect(isCrossReferenceOnly({ glosses: [gloss] }), gloss).toBe(false);
+    }
+    expect(isCrossReferenceOnly({ glosses: [] })).toBe(false);
+  });
+
+  it('puts a preferred reading first, ahead of the band but not of frequency, variant or proper noun', () => {
+    const preferred = entry('殼|壳[ke2]', { simp: '壳', trad: '殼' });
+    const banded = entry('殼|壳[qiao4]', { simp: '壳', trad: '殼', hskBand: 7 });
+    expect([banded, preferred].sort(compareEntries)[0].id).toBe(preferred.id);
+    expect([{ ...preferred, freq: 99 }, banded].sort(compareEntries)[0].id).toBe(banded.id);
+    expect([{ ...preferred, isVariant: true }, banded].sort(compareEntries)[0].id).toBe(banded.id);
+    expect([{ ...preferred, properNoun: true }, banded].sort(compareEntries)[0].id).toBe(banded.id);
   });
 
   it('falls back to the id when the band ties too', () => {

@@ -52,9 +52,14 @@ import type { SqlQuery } from '../sql';
  * `tests/unit/dict/gloss-order.test.ts` pins that distribution against the
  * artifact, so the premise cannot rot as CC-CEDICT moves.
  *
- * The lever that *would* close the breach without touching ranking is a
- * two-pass projection; see HANDOFF.md under D4, where it is recorded as an
- * unowned follow-up with the reason it might not pay.
+ * D4 named a two-pass projection as the lever that would close the breach
+ * without touching ranking. It was measured, and **as described it cannot
+ * pay**. Marshalling is paid per cell rather than per byte, and 88–97% of
+ * these queries' candidates survive `glossTier`, so a pass 2 that returns
+ * their rank columns re-reads nearly every cell pass 1 skipped. Separately,
+ * `glossTier` itself costs about 50 ms over 5,000 rows, so no change to the
+ * SQL alone brings `to` under the bar. HANDOFF.md (`claude/build-dict-perf`)
+ * has the numbers and the levers that are still open.
  */
 export const MAX_GLOSS_CANDIDATES = 5000;
 

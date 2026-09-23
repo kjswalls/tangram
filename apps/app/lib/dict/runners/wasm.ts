@@ -19,7 +19,7 @@
  *     everything outstanding; without that the page waits forever on a promise
  *     nobody will settle.
  */
-import { MANIFEST_FILE, type DictManifest } from '../artifact';
+import { MANIFEST_FILE, artifactFetchPath, type DictManifest } from '../artifact';
 import { assetUrl } from '../asset-url';
 import { DictOpenError } from '../open-error';
 import type { SqlQuery, SqlRunner, SqlValue } from '../sql';
@@ -277,7 +277,10 @@ export async function wasmRunner(options: WasmRunnerOptions = {}): Promise<WasmS
   if (manifest === null && !options.storedOnly) {
     options.onUnavailable?.('the dictionary manifest could not be fetched; trying stored bytes');
   }
-  const url = manifest === null ? null : options.artifactUrl?.(manifest) ?? assetUrl(manifest.file);
+  const url =
+    manifest === null
+      ? null
+      : (options.artifactUrl?.(manifest) ?? assetUrl(artifactFetchPath(manifest)));
   const link = new WorkerLink(options);
   let report: OpenReport;
   try {

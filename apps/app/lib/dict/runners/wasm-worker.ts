@@ -35,8 +35,10 @@
  * A full `PRAGMA integrity_check` reads the entire file and is not run on open;
  * D4 measures how long it takes here so that choice is informed rather than
  * assumed, and it stays available for the day a query raises `SQLITE_CORRUPT`.
- * The manifest's `sha256` remains a build-side fact that `pnpm data:verify`
- * checks.
+ * The manifest's `sha256` is not re-computed here, but it is what the stored
+ * copy is keyed on: the pool name and the fetch URL both carry it
+ * (`artifactPoolName`, `artifactFetchPath`), so a rebuilt artifact under an
+ * unchanged filename is downloaded again instead of trusted.
  */
 import sqlite3InitModule from '@sqlite.org/sqlite-wasm';
 import type {
@@ -47,7 +49,7 @@ import type {
   Sqlite3Static,
 } from '@sqlite.org/sqlite-wasm';
 
-import { APPLICATION_ID, SCHEMA_VERSION, type DictManifest } from '../artifact';
+import { APPLICATION_ID, SCHEMA_VERSION, artifactPoolName, type DictManifest } from '../artifact';
 import type { DictFailureReason } from '../open-error';
 import type { SqlValue } from '../sql';
 import { rowReader, type RowReader } from './wasm-extract';
@@ -69,7 +71,11 @@ import type {
  */
 const VFS_NAME = 'tangram-dict';
 
-/** Everything in the pool this app put there. Used to sweep an old version out. */
+/**
+ * Everything in the pool this app put there. Used to sweep an old version out,
+ * and it matches both the content-keyed names `artifactPoolName` writes and the
+ * bare `dict-<schema>-<cedict>.sqlite` every browser stored before them.
+ */
 const ARTIFACT_PATTERN = /^\/dict-\d+-.*\.sqlite$/;
 
 /**
@@ -104,7 +110,8 @@ class WorkerOpenError extends Error {
 let sqlite3: Sqlite3Static | undefined;
 let pool: SAHPoolUtil | undefined;
 let db: Database | undefined;
-let opened: { manifest: DictManifest; name: string } | undefined;
+/** The pool file the open connection reads; undefined on the in-memory rung. */
+let opened: { name: string | undefined } | undefined;
 /** Set by the test-only `evict` command; the next query reports it as a loss. */
 let evicted = false;
 const statements = new Map<string, Cached>();
@@ -174,11 +181,6 @@ function validate(connection: Database, manifest: DictManifest | null): void {
   if (manifest && dictVersion !== manifest.dictVersion) {
     fail(`meta.dict_version is ${String(dictVersion)}, the manifest says ${manifest.dictVersion}`);
   }
-}
-
-/** The `dict_version` this connection reports, for a synthesised manifest. */
-function readDictVersion(connection: Database): string {
-  return String(connection.selectValue("SELECT value FROM meta WHERE key = 'dict_version'") ?? '');
 }
 
 /** `SQLite format 3\0` — the first sixteen bytes of every SQLite database. */
@@ -337,13 +339,21 @@ async function installWithRetry(runtime: Sqlite3Static): Promise<SAHPoolUtil> {
   throw last;
 }
 
+/** What a rung hands back: the connection, what it cost, and the pool file it reads. */
+interface Opened {
+  db: Database;
+  downloaded: number;
+  imported: boolean;
+  transfer: TransferTiming | null;
+  /** The pool file, for `evict`. Undefined on the in-memory rung. */
+  name?: string;
+}
+
 /** The OPFS rung. Returns `undefined` when the pool itself is unavailable. */
 async function openOnOpfs(
   manifest: DictManifest | null,
   url: string | null,
-): Promise<
-  { db: Database; downloaded: number; imported: boolean; transfer: TransferTiming | null } | undefined
-> {
+): Promise<Opened | undefined> {
   const runtime = await boot();
   try {
     pool = await installWithRetry(runtime);
@@ -373,12 +383,18 @@ async function openOnOpfs(
     return openPooled(pooled[0]);
   }
 
-  const name = `/${manifest.file}`;
+  // **Keyed on the content, not the filename.** The filename carries the schema
+  // and the CC-CEDICT snapshot and nothing else, so a rebuild that changes the
+  // bytes and keeps both — a new reading order, an upstream HSK or jieba move —
+  // keeps the name. Keyed on that, a browser holding the old file would open it
+  // for ever and never see the new one. `artifactPoolName` puts the manifest's
+  // sha256 in the pool name, so a changed artifact is simply not `present`.
+  const name = artifactPoolName(manifest);
   const present = pool.getFileNames().includes(name);
   let downloaded = 0;
   let transfer: TransferTiming | null = null;
   if (!present) {
-    // A version bump is a new filename, so the old one is dead weight holding a
+    // A new artifact is a new pool name, so the old one is dead weight holding a
     // pool slot and 43 MB of the origin's quota. Sweep before importing.
     for (const existing of pool.getFileNames()) {
       if (existing !== name && ARTIFACT_PATTERN.test(existing)) pool.unlink(existing);
@@ -415,7 +431,7 @@ async function openOnOpfs(
     releasePool();
     throw error;
   }
-  return { db: connection, downloaded, imported: !present, transfer };
+  return { db: connection, downloaded, imported: !present, transfer, name };
 }
 
 /**
@@ -428,9 +444,7 @@ async function openOnOpfs(
  * from until the network is back. Both say `corrupt`, which is the honest
  * answer either way.
  */
-async function openPooled(
-  name: string,
-): Promise<{ db: Database; downloaded: number; imported: boolean; transfer: TransferTiming | null }> {
+async function openPooled(name: string): Promise<Opened> {
   const held = pool as SAHPoolUtil;
   let connection: Database;
   try {
@@ -450,7 +464,7 @@ async function openPooled(
     releasePool();
     throw error;
   }
-  return { db: connection, downloaded: 0, imported: false, transfer: null };
+  return { db: connection, downloaded: 0, imported: false, transfer: null, name };
 }
 
 /**
@@ -462,10 +476,7 @@ async function openPooled(
  * file — so this re-fetches. D4 criterion 5 measures what that actually costs
  * over the network.
  */
-async function openInMemory(
-  manifest: DictManifest,
-  url: string,
-): Promise<{ db: Database; downloaded: number; imported: boolean; transfer: TransferTiming | null }> {
+async function openInMemory(manifest: DictManifest, url: string): Promise<Opened> {
   const runtime = await boot();
 
   /**
@@ -581,9 +592,7 @@ async function open(
   forceMemory: boolean,
 ): Promise<OpenReport> {
   const runtime = await boot();
-  let result:
-    | { db: Database; downloaded: number; imported: boolean; transfer: TransferTiming | null }
-    | undefined;
+  let result: Opened | undefined;
   let mode: 'opfs' | 'memory' = 'opfs';
 
   if (forceMemory) {
@@ -624,16 +633,7 @@ async function open(
   }
 
   db = result.db;
-  // With no manifest the file is its own description: the name it is stored
-  // under is `dict-<schema>-<cedict>.sqlite`, and the version is in `meta`.
-  const resolved: DictManifest = manifest ?? {
-    file: (pool as SAHPoolUtil).getFileNames().filter((f) => ARTIFACT_PATTERN.test(f))[0].slice(1),
-    bytes: 0,
-    sha256: '',
-    schemaVersion: SCHEMA_VERSION,
-    dictVersion: readDictVersion(result.db),
-  };
-  opened = { manifest: resolved, name: `/${resolved.file}` };
+  opened = { name: result.name };
   evicted = false;
   return {
     mode,

@@ -42,12 +42,59 @@ export function splitSchema(sql: string): [string, string] {
 
 /**
  * `dict-1-1.3.20251213.sqlite`. Two version numbers because the schema changes
- * independently of the CC-CEDICT snapshot, and **every cache key on every
- * platform is the whole filename** — the sha256 is a build-side integrity fact,
- * not a cache key.
+ * independently of the CC-CEDICT snapshot.
+ *
+ * **The filename is not the artifact's identity, and no cache may key on it
+ * alone.** `data.md` D1 said every cache key would be the whole filename; that
+ * holds only while the bytes change exactly when the schema or the snapshot
+ * does, and they do not. `pnpm data` pulls the HSK list and the jieba
+ * frequencies from `master`, and the reading order moved on its own (HANDOFF.md
+ * "The default reading") — both change the bytes and keep the name. So a browser
+ * keys on the manifest's sha256 as well: `artifactPoolName` for the copy in
+ * OPFS, `artifactFetchPath` for the HTTP cache. The native stores will need
+ * the same when D5a and D5b land.
  */
 export function artifactFile(dictVersion: string, schemaVersion: number = SCHEMA_VERSION): string {
   return `dict-${schemaVersion}-${dictVersion}.sqlite`;
+}
+
+/** Enough of the sha256 to tell two builds apart; the whole digest is in the manifest. */
+const POOL_DIGEST_CHARS = 16;
+
+/**
+ * The name a browser stores the artifact under in its OPFS pool:
+ * `/dict-1-1.3.20251213-cb893d8856faa18d.sqlite`.
+ *
+ * The manifest's sha256 is in it, so an artifact rebuilt under the same filename
+ * is a different pool file, the stored one is not `present`, and the worker
+ * sweeps it and imports the new one. Before this the pool name was
+ * `/${manifest.file}` and a changed artifact was never fetched again.
+ *
+ * It still matches the worker's `ARTIFACT_PATTERN` (`/dict-<n>-….sqlite`), so the
+ * sweep and the offline re-open find it. A manifest with no digest — nothing the
+ * build writes — falls back to the bare filename rather than inventing one.
+ */
+export function artifactPoolName(manifest: Pick<DictManifest, 'file' | 'sha256'>): string {
+  if (!manifest.sha256) return `/${manifest.file}`;
+  const stem = manifest.file.replace(/\.sqlite$/, '');
+  return `/${stem}-${manifest.sha256.slice(0, POOL_DIGEST_CHARS)}.sqlite`;
+}
+
+/**
+ * The path a browser fetches the artifact from, relative to the build output:
+ * `dict-1-1.3.20251213.sqlite?sha256=<digest>`.
+ *
+ * The host serves `dict-*.sqlite` with `immutable` and a one-year `max-age`
+ * (`web.md` W2 rule 4), which is only true of a URL whose bytes never change. The
+ * query makes it true: the path still names the one file every host rule and
+ * the service worker's deny rule match on, and the URL — which is what the HTTP
+ * cache keys on — changes whenever the bytes do. Without it a browser that
+ * already cached the old artifact would import it again under the new pool
+ * name, and the old readings would be back.
+ */
+export function artifactFetchPath(manifest: Pick<DictManifest, 'file' | 'sha256'>): string {
+  if (!manifest.sha256) return manifest.file;
+  return `${manifest.file}?sha256=${encodeURIComponent(manifest.sha256)}`;
 }
 
 /**

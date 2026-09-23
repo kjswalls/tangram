@@ -309,6 +309,26 @@ Semantic tokens to define, with the settled light values:
 | `--new` / `--new-soft` | `#8a6414` / `#f3ead3` | gold; "new" |
 | `--radius-sm/md/lg` | 12 / 16 / 24 px | product-decisions §11 gives the 12–24 range |
 
+> **Superseded on three values — 2026-09-23, by the first-run audit** (`HANDOFF.md`, "First-run
+> audit", defect fixed 1). Three of the pairs above measured **below WCAG AA**: `--muted` on `--paper`
+> at 4.23:1, `--lookup` on `--lookup-soft` at 4.45, and `--new` on `--new-soft` at 4.48. Each moved by
+> the smallest step that clears AA. The table above is left as written, because it is the record of
+> what was decided; **`apps/app/app/tokens.css` is the source of truth**, and
+> `tests/unit/ui/contrast.test.ts` holds every pair:
+>
+> | Token | Was | Now | Pair it fixes |
+> |---|---|---|---|
+> | `--t1-ink-500` (behind `--muted`) | `#7a7469` | `#756f64` | muted/paper 4.54 |
+> | `--t1-jade-050` (behind `--lookup-soft`) | `#d9ece6` | `#dcefe9` | jade/tint 4.58 |
+> | `--t1-gold-700` (behind `--new`) | `#8a6414` | `#886211` | gold/tint 4.61 |
+>
+> One token is new: `--muted-on-tint` (`#6b655a`), which `--muted` is re-pointed at inside any
+> `.bg-*-soft` element, because muted text on any soft tint also failed (3.77:1). These hexes were the
+> owner's call under C0 and C1. The audit's brief made AA a defect, so they moved; **the owner may
+> choose different values that also clear AA**, and the contrast test is what any choice must pass.
+> The tint had to get *lighter*, not darker: C0's proposed `#d2e8e1` measures 4.27, not the 4.63 once
+> recorded.
+
 **`--practice-soft` is the one settled-palette gap and it is the owner's call, not the builder's.**
 product-decisions §11 gives a soft tint for jade (`#d9ece6`) and gold (`#f3ead3`) and none for
 vermillion. C0 must land *a* value, because the token is referenced and the first acceptance criterion

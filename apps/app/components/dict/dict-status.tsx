@@ -85,7 +85,12 @@ const FAILURE: Record<
    * arrived. The frozen `DictStatus` union has no reason for the second (see
    * HANDOFF.md, "What `HttpDictStore` cannot do"), so this body says only what
    * is true of both and leaves the diagnosis to `dict-failure-detail`, which
-   * carries `run pnpm data` for one and the OPFS error for the other.
+   * carries `run pnpm data` for one and the OPFS error for the other — **in a
+   * development build**. A production build logs that detail to the console
+   * instead of drawing it (`showDetail`, below), so on a deployed build the two
+   * producers look the same on screen. The first-run audit traded that away
+   * because the line put raw errors in front of the learner; HANDOFF.md
+   * records the trade for the owner.
    */
   import: {
     title: 'The dictionary could not be opened',

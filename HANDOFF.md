@@ -13856,3 +13856,314 @@ All run on this branch, on the final tree after the review fixes:
   batch took 31.5 ms.
   - An earlier full run on the first commit, before the review fixes, also passed 345 in 12.0 min.
 - `pnpm smoke --no-api`: **41 ok**, with 6 API cases skipped and reported as skipped.
+
+---
+
+## The first-run audit — `claude/build-first-run-audit`, 2026-09-23
+
+**The owner has never used the app, so this section is his first look at it.** The audit drove the
+production build (`pnpm build:e2e` + `pnpm preview`, the container's Chromium) as a new learner.
+It ran at **390×844** (phone, touch), **1280×800** (wide, mouse) and **844×390** (phone on its
+side, touch). It walked every screen and state the brief listed:
+
+- **the dictionary:** absent, preparing, ready and failed;
+- **the deck:** empty, and seeded with `?seed=demo`;
+- **Look up:** hanzi, pinyin, English, a sentence, no results, a picked entry, the Ask panel;
+- **the reader:** a pasted paragraph, a tapped word, the word sheet, the character sheet, a
+  drag-selected span;
+- **Practice:** a new-word session to "all done", grading, free recall, the card back;
+- **Library:** lists, a list's page, a missing list, the importer (plain, Pleco, Anki), backup
+  download and restore, a refused file, the licences;
+- **both API-less builds:** `VITE_API_BASE` empty, and a base nothing listens on;
+- **keyboard only:** Tab through every screen.
+
+Every page was also scanned in-page for four things:
+
+- sideways overflow and clipped text;
+- targets under 44px;
+- controls covered by another element;
+- the WCAG contrast of **every rendered text node**, computed from the actual colours and not
+  eyeballed.
+
+**Screenshots:** `docs/audit/2026-09-23/`, named `<screen>-<state>-<viewport>.png` (`phone` = 390,
+`wide` = 1280, `land` = 844×390), 148 files, 4.6 MB. `before/` holds the pre-fix shots the defects
+below cite. Full-page phone shots draw the fixed tab bar and the pinned header where the viewport
+was, so a bar in the middle of a long shot is the camera, not the app. Long pages are cropped at
+3,200 px.
+
+**Nothing on screen broke the grounding contract.** Every hanzi and pinyin the learner sees in the
+Ask panel, the card back's sentences and the importer was rendered from a dictionary entry. The
+only model-authored text on screen is prose (the interpretation, the sentence's English) and the
+fake provider's own wording (below). The most serious thing found is not a grounding breach but it
+is close to one in effect, and it is **defect 1 of "found, not fixed"**: the reader shows the
+wrong pinyin over some of the commonest words in the language.
+
+### Defects fixed
+
+Each is fixed at its root and held by a test that was run against the old code and failed. The
+tests were `git checkout` of the product files with the tests kept: every new unit and e2e guard
+failed, plus a separate scroll-padding mutant. Before → after screenshots are paired where one
+shows it.
+
+1. **Text under WCAG AA on every screen.** Three of product-decisions §11's pairs failed:
+   - `--muted` on `--paper`, 4.23:1: every subtitle, every status line.
+   - `--lookup` on `--lookup-soft`, 4.45: the active tab, every HSK badge.
+   - `--new` on `--new-soft`, 4.48.
+   
+   Muted text on **any** soft tint failed too (3.77 on the picked search result and in the word
+   sheet's reading box), and the grade buttons' interval ("10m") at `opacity-80` measured 4.13 on
+   vermillion. Fixed in `app/tokens.css`, tier 1 only:
+
+   | token | was | now | the pair it fixes |
+   |---|---|---|---|
+   | `--t1-ink-500` | `#7a7469` | `#756f64` | muted/paper 4.54 |
+   | `--t1-jade-050` | `#d9ece6` | `#dcefe9` | jade/tint 4.58 |
+   | `--t1-gold-700` | `#8a6414` | `#886211` | gold/tint 4.61 |
+
+   There is also one new token, `--muted-on-tint` (`#6b655a`, 4.8–5.1 on every tint). `--muted`
+   is re-pointed at it inside any `.bg-*-soft` element by a zero-specificity `:where()` rule.
+   The grade button's interval and key number are now `opacity-90`.
+   
+   **These three hexes were recorded by C0 and C1 as the owner's call** (the C0 and C1 sections
+   above). The brief names AA as a defect, so they moved by the smallest step that clears it.
+   Reverting is three lines; `tests/unit/ui/contrast.test.ts` is what will fail. Three
+   consequences of the change:
+   - **C0's proposed `#d2e8e1` was wrong.** It measures 4.27, not 4.63. The tint had to get
+     lighter, not darker.
+   - **`--practice-soft` (`#ffe8e3`) was derived from the old jade tint's lightness**, so its
+     anchor has moved slightly.
+   - **`docs/plans/core.md` §C0's token table (lines 305–309 and 407–409) still lists the old
+     hexes.** It is the orchestrator's document and is left alone; read it as superseded on these
+     three.
+   
+   Tests: `tests/unit/ui/contrast.test.ts` holds every pair in `/gallery`'s `CONTRAST_PAIRS` in
+   both palettes, the tint rule, and the dimmed button text. `tokens.test.ts` and
+   `core/theme.spec.ts` assert the new hexes. No screenshot shows the change; it is one step.
+2. **Controls under 44×44 on a touch screen.** A `sm` button was 32px tall, `md` 40, text links,
+   `<summary>`s and checkbox labels about 20, and the sheets' Close 28. Fixed with one utility,
+   `.touch-target` (`app/globals.css`). Under `(pointer: coarse)` only, the element keeps its box
+   and gains an invisible `::after` at least 44px each way, centred on it, and a tap anywhere in
+   that square is a tap on it. Nothing moves, and a mouse keeps exact edges.
+   - It is applied in `Button` and at every other site the scan found.
+   - A `<select>` cannot carry a pseudo-element, so the importer's selects grow to `h-11` on
+     touch instead, a visible change on phones only.
+   - **The hazard:** the `::after` sits above non-positioned children, so it must never go on an
+     element that contains another control. None does; the importer's radio labels contain an
+     input, which is why they grow instead.
+   - Review 2 hit-tested every pixel of every neighbour at five widths. No `::after` takes a tap
+     from another control's own box.
+   
+   Exempt, as WCAG 2.5.5 exempts them, and listed for the owner below: links inside a sentence,
+   the reader's words, and the chart bars (their table is the equivalent).
+3. **Tab put focus behind the phone's tab bar** (WCAG 2.4.11). The page had scroll padding for
+   the wide header only. `:root:has([data-shell='phone'])` now pads the bottom by
+   `--tab-bar-height`. It was found on Library's HSK links and chart, and the old
+   `pinned-header.test.tsx` guard ("no other scroll padding anywhere") was widened to allow
+   exactly this rule. The e2e also walks Tab and Shift+Tab over a card back and asserts that
+   nothing lands under the grade dock; it does not.
+4. **"Look up" wrapped onto two lines in the wide header at 1280 and 844**, because the bar is
+   shrink-to-fit there. Fixed with `wide:whitespace-nowrap` on the tab item: wide only, since the
+   phone bar is full-width.
+   - Before: `before/lookup-ready-empty-wide.png`, `before/lookup-ready-empty-land.png`.
+   - After: `lookup-ready-empty-wide.png`, `lookup-ready-empty-land.png`.
+5. **"No matches" before anything was typed**, beside a panel saying "Nothing looked up yet", on
+   every first visit. The count is not drawn until there is a query (`search-results.tsx`).
+   - Before: `before/lookup-ready-empty-phone.png`. After: `lookup-ready-empty-phone.png`.
+6. **Developer text shown to the learner: "set ANTHROPIC_API_KEY".** A server with no key serves
+   the fake provider on purpose, and the ask badge, the card back's sentences and free recall's
+   suggestion each told the learner to set an environment variable.
+   - `withDevHint` (`lib/dev-hint.ts`) keeps the disclosure in every build and drops only the
+     operator's half from production. The ask badge now reads just "Offline dictionary mode".
+   - **This departs from PLAN.md §3.4's wording**, which quotes the whole badge; the disclosure
+     the section exists for is intact.
+   - Before: `before/lookup-pinyin-land.png`, `before/practice-back-card-land.png`. After: the
+     same names without `before/`.
+7. **A raw error on the failed-download screen**, "the dictionary could not be fetched:
+   TypeError: Failed to fetch", in monospace. `DictStatusView` draws `dict-failure-detail` only
+   in development now, and logs it to the console in production.
+   - **This reverses a choice C4a's second pass made on purpose:** that line was how an operator
+     told "the artifact was never built" (a 503) from "OPFS refused it". On a deployed build the
+     two now look the same on screen, and a phone has no console.
+   - The header comment says so. **Owner or orchestrator:** a plain-words reason code, or a
+     copyable detail behind a disclosure, would bring it back without the raw text.
+   - Before: `before/lookup-dict-failed-phone.png`. After: `lookup-dict-failed-phone.png`.
+8. **The reader's heading was cut to one character on the phone** ("我"). `flex-1 min-w-0` in a
+   wrapping row shrank it to a glyph instead of wrapping the toolbar. Fixed with `basis-48`.
+   - Before: `before/reader-text-phone.png`. After: `reader-text-phone.png`.
+9. **Two rows squeezed their text to nothing on the phone**, for the same reason:
+   - the importer's preview row beside a reading picker ("le line 2 (c…");
+   - a custom list's word row beside Remove and Add to queue ("to run; t…").
+   
+   Both got a basis, and the list row now wraps its buttons below. Review 1 called the list row
+   borderline, because the gloss had a deliberate `truncate`; at ~50px it was not legible.
+   - Before: `before/library-import-paste-preview-phone.png`,
+     `before/library-list-detail-phone.png`. After: the same names without `before/`.
+10. **An invisible Tab stop.** The backup's `sr-only` file input took focus right after "Restore
+    from a backup…". It is `tabIndex={-1}` now; the button is the control.
+11. **"All done for now — 10 words come back in 1 minute" when 2 did** (two "Forgot it" at 1 min,
+    eight "Got it" at 10). The sentence counted the whole one-hour horizon. `returningByNext`
+    (`lib/srs/session.ts`) counts the cards due by the minute the sentence prints, rounded the
+    same way. The progress bar's total still uses `returning`.
+    - Before: `before/practice-all-done-phone.png`. After: `practice-all-done-phone.png`.
+12. **Library scrolled sideways at 320px** (review 2): the licence URLs have no break
+    opportunity. The attribution block is `wrap-anywhere`.
+
+Tests: `tests/e2e/core/first-run-audit.spec.ts` is new and joins the census, now 59 / 51 / 52. Its
+cases:
+- tab labels on one line at all three viewports;
+- no raw error on a failed download;
+- on a touch phone, every control a 44px target on Library, a picked result, the importer and a
+  list page, and Tab never under the tab bar;
+- the reader heading and both rows at least 12rem;
+- focus never under the grade dock;
+- no sideways scroll at 320.
+
+`--repeat-each=8`: 64/64. New unit files: `ui/contrast.test.ts`, `ui/dev-hint.test.ts`,
+`lookup/result-count.test.tsx`. New cases went into `dict-status.test.tsx`,
+`data-safety.test.tsx` and `srs/session.test.ts`. `p4/ask.spec.ts` now asserts the production
+badge text.
+
+**One race, found by `--repeat-each` and not the product's:** the Library focus walk lost 3 of 56
+runs when it started Tabbing while the list cards were still filling in and growing the page. It
+now waits for three equal height readings, as `core/routing.spec.ts` does, and then passed 30/30.
+It is the scroll-anchoring race the wide-shell section describes.
+
+### Defects found, not fixed
+
+1. **The wrong pinyin over common words, everywhere a headword's first reading is shown.**
+   - **Where it shows:** the reader's ruby, the character sheet's default, "Add dá", and the order
+     of readings in every sheet and result.
+   - **What the learner sees:**
+     - 说 as **shuì**, 要 **yāo**, 看 **kān**, 吗 **má** (`reader-text-phone.png`: 你想跟我一起去吗 →
+       "má");
+     - 打 **dá** ("(loanword) dozen", `before/reader-char-sheet-land.png`);
+     - 着 **zhāo**, 行 **háng**, 重 **chóng**, 几 **jī**, 差 **chā**.
+   - **Cause:** `compareEntries` (`lib/dict/rank.ts:34`) sorts by frequency, then variant, then
+     proper noun, then **the id, alphabetically**. Every reading of a headword shares one jieba
+     frequency, so the id decides, and `吗[ma2]` < `吗[ma5]`.
+   - **Candidate fix, checked against the artifact:** an HSK-band tie-break (banded first, lower
+     band first) before the id. It fixes every example above. 得 stays dé and 觉 stays jiào, both
+     defensible.
+   - **Why not fixed here:** `scripts/build-data.ts` assigns `entries.rowid` in this order, so
+     the change rebuilds the artifact. It also moves the golden fixtures
+     (`tests/unit/dict/golden/search.json`, whose provenance is a sha256 over the entries). Their
+     generator was made unrunnable in D6 and they need a human re-bless. That is `data.md`'s
+     call, not an audit's.
+   - **This is the finding to schedule first.**
+2. **Reader punctuation can start a line** ("，我可以…", a lone "？": `reader-text-phone.png`).
+   - **Cause:** each word is an `inline-block` button, and Chromium allows a break before and
+     after any atomic inline, so the closing-punctuation rule that would glue "，" to the word
+     before it never applies.
+   - **Fix direction:** wrap a word and its trailing closing punctuation in one no-wrap span.
+   - **Why not fixed here:** that changes the token markup C3 and C5b's drag-select harness are
+     built on, and it needs the span-select specs rerun on a device.
+3. **At 320px with a 200% font scale, the phone tab bar overflows** (354px). "Practice" and
+   "Library" cannot break; it predates this branch. Review 2 attributed it to the new `nowrap`,
+   which is why that became wide-only, but measured with the phone's labels free to wrap it still
+   overflows. Smaller type in the bar, or icons, is a design call.
+4. **Picking a lower search result on the phone can leave its headword above the viewport**
+   (review 2, measured). Result 10 or 18 of `?q=the` ends 30–73px high. It is identical with this
+   branch's scroll padding forced to zero, so it is `lookup-view.tsx`'s `scrollIntoView` racing
+   scroll anchoring. It predates this branch.
+5. **Library briefly says "HSK 7–9: no words yet"** after the "Filling in…" line has gone and
+   before the counts land (a second or two on first visit). The counts arrive; for that moment
+   the two contradict each other.
+6. **The fake provider's own prose says "With a key set, this is where an answer…"**
+   (`lookup-hanzi-picked-*.png`). That text is in `packages/ai/**`, which is frozen.
+
+Frozen surfaces: none touched. That covers `packages/ai/**`, `repository.ts`, `schema.ts`,
+`types.ts`, `params.ts`, `DictStore`/`SqlRunner`/`DictStatus` and the ask contract; review 1
+checked.
+
+### What the two adversarial reviews found
+
+Both reviews read `d7134c3` cold and in parallel. **Review 1** asked, for each change, whether it
+was really a defect or a taste change or redesign. **Review 2** asked what each fix breaks at the
+other viewports, and **measured**:
+- widths 320, 390, 720, 844 and 1280;
+- touch and mouse at 390 and 1280;
+- the dark theme;
+- every `::after` hit-tested against its neighbours.
+
+- **Review 1:** every change is a defect under the brief, and nothing needs reverting. It
+  recomputed every ratio. It said to record:
+  - the owner-reserved hexes;
+  - the PLAN.md §3.4 wording;
+  - the `dict-failure-detail` reversal;
+  - the stale plan table.
+  
+  All four are recorded above. It also found two code issues, both fixed: a comment in
+  `dict-status.tsx` that became false, and a mis-indent in `review.ts`. Its test gap: the
+  production default of `showDetail` is guarded only by the e2e spec, and the touch-target and
+  flex fixes are guarded only by e2e.
+- **Review 2:** no blocking regressions. It found:
+  - the 320px licence overflow, fixed (item 12);
+  - the 320px/200% tab bar, where the `nowrap` is now wide-only and the rest is not fixed (3
+    above);
+  - the lookup scroll race (4 above, pre-existing);
+  - a cosmetic issue: `DictStatusView` warns once per mounted copy, so the gate plus a notice log
+    twice.
+
+### For the owner: taste and copy
+
+None of these is a defect, and nothing here was changed. Each has a screenshot under
+`docs/audit/2026-09-23/`. They are grouped by screen, so the whole list can be read in one sitting.
+
+**First visit and the dictionary**
+- The preparing card says "Getting the dictionary" and then "Getting the dictionary…" beneath the
+  bar (`lookup-dict-preparing-phone.png`).
+- The failed card says "it picks up from the start of the same file". The preparing card says "it
+  picks up where it left off" (`lookup-dict-failed-phone.png`).
+- On Practice with no dictionary, the empty state opens "All done — 10 new words are waiting…" to
+  a learner who has done nothing (`practice-dict-failed-phone.png`).
+
+**Look up**
+- A hanzi sentence ("我想去北京看看") gets "No matches". The reader is where sentences go, and the
+  status line says so; decide whether Look up should offer to open it in the reader
+  (`lookup-sentence-*.png`).
+- A pinyin query heads the panel with the raw query in the display serif: "dasuan"
+  (`lookup-pinyin-*.png`).
+- The fake provider's answer carries the "AI" chip under "Offline dictionary mode", so it is
+  called AI and not-AI at once (`lookup-hanzi-picked-wide.png`).
+- The unreachable-server line says "The dictionary result above is unaffected". On a wide screen
+  the result is to the left (`lookup-unreachable-wide.png`).
+- In a picked (tinted) result the jade "HSK 2" badge has the row's own background, so it reads as
+  bare text (`lookup-hanzi-picked-wide.png`).
+
+**Reader**
+- The reader's words are the tap targets and are about 20px wide per character at the current
+  size: exempt as text, but the reason 44px was not applied there (`reader-text-phone.png`).
+- The ruby can crowd on dense text ("shūguǎnkàn") (`reader-text-phone.png`).
+- The heading is the first line of the text, truncated (`reader-text-phone.png`).
+
+**Practice**
+- "Space to flip" and "1–4 to grade" are shown on a touch phone (`practice-start-phone.png`).
+- The finished session shows "10 of 20 done" beside "All done for now…"
+  (`practice-all-done-phone.png`).
+
+**Library**
+- Library at 390px is about 14,000px tall: lists, stats, settings, backup and licences on one
+  page (`library-empty-phone.png`).
+- The card heading says "LICENSES" and the text says "licences" (`library-licences-*.png`).
+- A backup carries every HSK band's membership as rows: 11,036 `list_members`, 3 MB for 10 cards.
+  They are entry ids only, so there is no licence problem; it is the file size a learner emails
+  themselves.
+- The HSK chart bars are keyboard-focusable 23px-tall targets. Their table is the touch
+  equivalent.
+
+**Tokens (item 1 above), in case they are vetoed**
+- The three moved hexes are one step each and visually indistinguishable. Revert them in
+  `app/tokens.css` tier 1 if §11's values matter more than AA; the contrast test will then fail
+  on purpose.
+
+### Files another session may collide with
+
+`app/tokens.css`, `app/globals.css`, `components/ui/button.tsx`, `components/ui/tab-bar.tsx`,
+`components/ui/sheet.tsx`, `components/lookup/{search-results,ask-panel,entry-detail}.tsx`,
+`components/review/{review-session,review-card,production-card,grade-bar,example-sentences,recall-input}.tsx`,
+`components/lists/{list-card,list-detail,import-list,production-list-toggle}.tsx`,
+`components/reader/reader-screen.tsx`, `components/dict/dict-status.tsx`,
+`components/pwa/data-safety.tsx`, `components/shell/site-header.tsx`,
+`components/stats/primitives.tsx`, `components/gallery/gallery.tsx`,
+`app/settings/attribution.tsx`, `lib/srs/session.ts`, `lib/stores/review.ts`, `lib/dev-hint.ts`
+(new).

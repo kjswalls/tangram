@@ -170,14 +170,15 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
        * production of the same word is not a test of the second memory: the
        * answer is sitting on the back of the card just graded.
        */
+      const nextDue = nextDueAt(all, now, deferred);
       const merged = interleaveNew(summary.queue.due, summary.queue.newCards, get().served);
       const queue = spaceDirections(sessionQueue(merged, deferred));
       set({
         queue,
         settings: summary.settings,
-        nextDue: nextDueAt(all, now, deferred),
+        nextDue,
         returning: returningWithin(all, now, SESSION_RETURN_HORIZON_MS, deferred),
-        returningByNext: returningByNext(all, now, nextDueAt(all, now, deferred), deferred),
+        returningByNext: returningByNext(all, now, nextDue, deferred),
         deferred: [...deferred],
         attempts: queue[0] ? (repeats[queue[0].id] ?? 0) : 0,
         /**
@@ -271,7 +272,7 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
       grading: false,
       nextDue: null,
       returning: 0,
-  returningByNext: 0,
+      returningByNext: 0,
       repeats: {},
       deferred: [],
       attempts: 0,

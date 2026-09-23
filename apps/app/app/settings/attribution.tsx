@@ -115,7 +115,11 @@ function inline(text: string, key: string): ReactNode[] {
 
 export function Attribution({ source }: { source: string }) {
   return (
-    <div className="flex flex-col gap-3 text-sm leading-relaxed text-muted">
+    <div
+      // `wrap-anywhere`: a bare licence URL has no break opportunity and ran
+      // Library 50px past a 320px screen (the first-run audit's second review).
+      className="flex flex-col gap-3 text-sm leading-relaxed text-muted wrap-anywhere"
+    >
       {parseMarkdown(source).map((block, i) => {
         const key = `b${i}`;
         switch (block.kind) {

@@ -25,7 +25,9 @@ const INKSTONE = {
   ink: 'rgb(28, 26, 23)',
   practice: 'rgb(185, 58, 38)',
   lookup: 'rgb(15, 118, 110)',
-  new: 'rgb(138, 100, 20)',
+  // #886211, one step from §11's #8a6414 so "new" on its tint clears AA
+  // (the first-run audit; app/tokens.css's header).
+  new: 'rgb(136, 98, 17)',
 };
 
 /** Resolve a custom property through the cascade, as a colour. */

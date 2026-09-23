@@ -59,13 +59,14 @@ export interface TabBarProps<T extends TabItem = TabItem> {
 }
 
 /** The part every tab shares, whatever its accent. */
-// `whitespace-nowrap`: in the wide header the bar is shrink-to-fit, and each
-// flex-1 item was sized below its label, so "Look up" broke onto two lines at
-// 844px and at 1280px (first-run audit). A label is two words at most, and the
-// narrowest phone still has ~100px per tab.
+// `wide:whitespace-nowrap`: in the wide header the bar is shrink-to-fit, and
+// each flex-1 item was sized below its label, so "Look up" broke onto two lines
+// at 844px and at 1280px (first-run audit). Wide only: the phone bar is the
+// full width, and at 320px under a large text setting the three labels only fit
+// because "Look up" may wrap there (the audit's second review measured it).
 export const TAB_ITEM_CLASS =
   'flex flex-1 flex-col items-center justify-center gap-0.5 rounded-[var(--r-sm)] ' +
-  'px-2 py-1.5 text-xs font-medium min-h-11 text-muted whitespace-nowrap';
+  'px-2 py-1.5 text-xs font-medium min-h-11 text-muted wide:whitespace-nowrap';
 
 const ACTIVE: Record<TabAccent, string> = {
   neutral: 'aria-[current=page]:text-ink aria-[current=page]:bg-border/60',

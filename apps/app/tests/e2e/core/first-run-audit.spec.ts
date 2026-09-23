@@ -133,6 +133,17 @@ test.describe('the tab labels do not wrap', () => {
   }
 });
 
+test.describe('the narrowest phone', () => {
+  test.use({ viewport: { width: 320, height: 640 } });
+
+  test('Library does not scroll sideways', async ({ page }) => {
+    await page.goto('/library');
+    await expect(page.getByTestId('list-card').first()).toBeVisible();
+    // The licence URLs had no break opportunity: 370px of page on a 320 screen.
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+  });
+});
+
 test.describe('the failed-download screen', () => {
   test('names the reason and offers a retry, and shows no raw error', async ({ page }) => {
     await page.route('**/*.sqlite*', (route) => route.abort('failed'));

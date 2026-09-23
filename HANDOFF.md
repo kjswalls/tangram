@@ -12775,5 +12775,16 @@ a flake and is unrelated to this section.
 
 ### Verification
 
-`pnpm lint` and `pnpm typecheck` are green on this branch. The ten-run and gate results follow below
-once they have been run.
+All on the final tree (`683ee98`, code; the docs commit touches no test input), Node 22.22.2:
+
+- **Ten consecutive root `pnpm test` runs**, each app 2,142/2,142 and server 103/103:
+  run 1 ✓ · run 2 ✓ · run 3 ✓ · run 4 ✓ · run 5 ✓ · run 6 ✓ · run 7 ✓ · run 8 ✓ · run 9 ✓ · run 10 ✓.
+  A first batch run on the first commit only (`addf33f`) went 5/5 green. I stopped it there because
+  the review fixes changed the tree, and the ten above had to be on the final code.
+- `pnpm lint` ✓ · `pnpm typecheck` ✓ · `pnpm build` ✓.
+- `pnpm smoke --no-api` ✓ against `pnpm preview`: 41 ok, 29 assets, 6 paths with host rules, and 6
+  API cases skipped by design. Without a server running it fails every fetch, as intended.
+- `pnpm e2e` ✓: **329 passed** (9.4 min).
+
+Not done here: `--sequence.concurrent` support, which no file uses, and restoring `data-safety`'s
+`window.location` override, which is latent. Both are described above.

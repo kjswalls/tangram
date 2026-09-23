@@ -554,6 +554,39 @@ survivors) would close the breach with **no ranking change at all**. It is unown
 obviously a win**: `glosses` is plausibly most of the payload, and if it is, pass 1 costs nearly what
 the single pass costs today. Measure it before believing it.
 
+**Measured, and closed — 2026-09-23** (`claude/build-dict-perf`, `HANDOFF.md` "The two-pass gloss
+projection, measured and closed"). The lever above **cannot pay**, and the paragraph above is now a
+record of what was believed, not an open item. Two things the belief missed, both measured in the
+browser against the real artifact:
+
+- **Marshalling is paid per cell, not per byte.** `glosses` is ~75% of the characters but costs about
+  what the 14-character `id` cell costs (~10–13 ms per text cell and ~7 ms per integer cell, per 5,000
+  rows).
+- **Nearly every candidate survives `glossTier`** — 97% for `to`, 88% for `the` — so any pass 2 that
+  returns rank columns re-reads almost the whole projection. The saving is capped at about 2 ms and 7
+  ms, inside the noise. Measured with only the true survivors fetched, the split was ~12 ms *slower*,
+  before its extra round trip, which on the Capacitor bridge is a whole extra crossing.
+
+**`glossTier` alone costs ~41–52 ms in JavaScript**, so no SQL-side change can bring `to` or `the`
+under 50 ms by itself. **The by-name pins stay, and this ruling now rests on measurement rather than
+argument.**
+
+Two levers remain. Both are named so they aren't rediscovered, and neither is scheduled for these two
+queries:
+
+1. **Rank in SQL and return only the page** — group, order and `LIMIT 50` in the second statement.
+   Under Node it reproduced `CandidateSet.ordered()`'s top 50 and `total` exactly, and cut the
+   statement from ~73 to ~25 ms. It is not measured in the browser, it moves ranking logic into SQL,
+   and it has a real correctness hazard: SQLite's `BINARY` collation compares UTF-8 bytes where
+   JavaScript compares UTF-16 code units, so tie-breaks differ for astral headwords. Not worth it for
+   two function words.
+2. **Extract cells with raw `capi` calls instead of oo1's `Stmt.get()`.** `Stmt.get()` reads every
+   integer through `sqlite3_column_int64`, which allocates a BigInt per cell. A raw extractor took
+   today's projection from 73 to 48 ms under Node. **This one is general** — it sits beneath
+   `SqlRunner`, changes no query and no ranking, and would speed up *every* dictionary query, not just
+   these two. It is scheduled on its own merit (the `dict-extract` session, 2026-09-23), not as a way
+   to retire the pins.
+
 ## 10f. The non-CJK headwords `DictStore.search` cannot match — SETTLED 2026-09-16
 
 `data.md` D6 recorded that `readingsOf()` reaches "every row under this simplified headword" through

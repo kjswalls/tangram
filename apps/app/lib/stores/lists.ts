@@ -25,8 +25,16 @@ import type { EntryId } from '@/lib/types';
 
 export interface ListView {
   list: ListRow;
-  /** Members known to the database. Zero until the list is materialised. */
-  count: number;
+  /**
+   * Members known to the database — or `null` when that number **is not known
+   * yet**: an HSK list whose membership has not been materialised from the
+   * dictionary. An HSK band is never empty, so zero members there means "not
+   * filled in", and reporting it as `0` is what put "HSK 7–9: no words yet"
+   * on screen for the seconds before its count arrived (first-run audit,
+   * HANDOFF.md). A custom or "Looked up" list has nothing to fill it from, so
+   * its zero is a real zero.
+   */
+  count: number | null;
   knownCount: number;
 }
 
@@ -93,7 +101,7 @@ async function readViews(repo: Repository): Promise<{ lists: ListRow[]; views: L
     const members = await repo.listMembers(list.id);
     views.push({
       list,
-      count: members.length,
+      count: members.length === 0 && list.kind === 'hsk' ? null : members.length,
       knownCount: members.filter(
         (row) =>
           wordState({
@@ -106,6 +114,29 @@ async function readViews(repo: Repository): Promise<{ lists: ListRow[]; views: L
     });
   }
   return { lists, views };
+}
+
+/**
+ * Reads of the views, numbered so that **the latest-started read wins**.
+ *
+ * `load()` (a toggle, an import, a mark) and the background fill each read the
+ * views and `set` them, and a read that started before a band was filled can
+ * finish after the fill has already published it. Applied, it put that band
+ * back to "not known yet" — and after the last band, with the fill over and
+ * nothing left to correct it, it stayed there. A read that finishes behind a
+ * later one is dropped instead.
+ */
+let viewReadsStarted = 0;
+let viewReadApplied = 0;
+
+async function readLatestViews(
+  repo: Repository,
+): Promise<{ lists: ListRow[]; views: ListView[] } | undefined> {
+  const ticket = ++viewReadsStarted;
+  const read = await readViews(repo);
+  if (ticket < viewReadApplied) return undefined;
+  viewReadApplied = ticket;
+  return read;
 }
 
 export const useListsStore = create<ListsState>((set, get) => ({
@@ -121,8 +152,8 @@ export const useListsStore = create<ListsState>((set, get) => ({
     set({ loading: true, error: undefined });
     try {
       const repo = await repository();
-      const [{ lists, views }, settings] = await Promise.all([readViews(repo), repo.getSettings()]);
-      set({ lists, views, settings, loading: false });
+      const [read, settings] = await Promise.all([readLatestViews(repo), repo.getSettings()]);
+      set({ ...read, settings, loading: false });
     } catch (error) {
       set({ loading: false, error: message(error) });
     }
@@ -196,8 +227,8 @@ export const useListsStore = create<ListsState>((set, get) => ({
       for (const list of get().lists.filter((row) => row.kind === 'hsk')) {
         if ((get().views.find((view) => view.list.id === list.id)?.count ?? 0) > 0) continue;
         await ensureMembers(repo, list, source);
-        const { lists, views } = await readViews(repo);
-        set({ lists, views });
+        const read = await readLatestViews(repo);
+        if (read) set(read);
       }
     } catch (error) {
       set({ error: message(error) });

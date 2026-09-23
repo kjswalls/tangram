@@ -185,7 +185,20 @@ export function LookupView({ askSlot }: { askSlot?: ReactNode }) {
             selected || query.trim() ? '' : 'hidden md:block',
           )}
         >
-          <div ref={panelRef} className="md:sticky md:top-[calc(var(--shell-header-height)+1rem)]">
+          {/*
+            Sticky below the pinned header, and **no taller than the room it
+            sticks in**: a sticky box taller than the viewport keeps its bottom
+            off screen until the column scrolls to its end, so a long answer
+            was cut off exactly where the learner was reading. Capped at the
+            viewport less the header and the 1rem gap above and below, it
+            scrolls inside itself instead. `--shell-header-height` is zero
+            whenever the header is not pinned, so the same expression holds.
+          */}
+          <div
+            ref={panelRef}
+            data-testid="lookup-panel-column"
+            className="md:sticky md:top-[calc(var(--shell-header-height)+1rem)] md:max-h-[calc(100dvh-var(--shell-header-height)-2rem)] md:overflow-y-auto"
+          >
             <LookupPanel
               query={selected ? selected.simp : query}
               // The ask stays keyed to what the learner typed. Picking 打算 out

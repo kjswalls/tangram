@@ -31,11 +31,13 @@ html {
  * keyboard user tabbing upwards would put focus under it. The extra half-rem
  * is room for the focus ring's 2px outline and 2px offset.
  *
- * Only in the wide arrangement: the phone header scrolls away with the page
- * and its behaviour is unchanged. The height is measured
- * (`--shell-header-height`, tokens.css).
+ * Only while the header is pinned — the wide arrangement on a viewport tall
+ * enough to spare it (`PIN_QUERY`, app-shell.tsx). The phone header, and the
+ * wide header on a short viewport such as a phone on its side, scroll away
+ * with the page, so nothing sits under the top edge to pad for. The height is
+ * measured (`--shell-header-height`, tokens.css).
  */
-:root:has([data-shell='wide']) {
+:root:has([data-header='pinned']) {
   scroll-padding-top: calc(var(--shell-header-height) + 0.5rem);
 }
 

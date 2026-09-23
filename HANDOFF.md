@@ -14427,3 +14427,178 @@ All run on the final tree (`3e19876`, the review-round commit):
   - `diagnose`'s HTTP rule disabled, which fails both 404 cases;
   - `readChunk` unwrapped, which reads `corrupt`;
   - the runners' old literals, which fail the source scan.
+## Reader punctuation keeps to its word — `claude/build-reader-punctuation`, 2026-09-23
+
+**Fixes the first-run audit's "Defects found, not fixed", item 2.** The reader could start a line
+with "，" or print a lone "？" (`docs/audit/2026-09-23/reader-text-phone.png`). Every word is a
+`<button>`, a button is an atomic inline, and CSS gives an atomic inline a break opportunity on
+both sides whatever the character beside it. So the rule that keeps closing punctuation off the
+start of a line, and opening punctuation off the end of one, never applied.
+
+**Layout only.** Segmentation, the tokens, the runs, the character map and every index are
+unchanged. The work lives in `components/hanzi/hanzi-text.tsx`, `components/hanzi/ruby.css`, the
+new `lib/hanzi/glue.ts`, and one change in `components/hanzi/use-span-select.ts` that review A
+forced (below). It only applies where the words are buttons, meaning the reader and the gallery.
+The thirty non-interactive call sites render inline `<span>` words, which the line breaker already
+sees through, so they keep exactly the DOM they had.
+
+### What it does
+
+- **The glue.** A word shares one `<span class="hanzi-glue">` with the closing marks after it
+  and the opening marks before it. The sets are in `lib/hanzi/glue.ts`:
+  - **Closing:** CLREQ's 行首禁则 list, plus "…" and "—", which may not be split, and their
+    ASCII stand-ins.
+  - **Opening:** CLREQ's 行尾禁则 list.
+  
+  `splitForGlue` only divides a plain run's text between the wrappers on either side, in order.
+  A plain run can therefore render as up to three `reader-text-run` spans where it rendered as
+  one. No spec counted them.
+- **`inline-block`, not `white-space: nowrap`.** `nowrap` is inherited into the button and stops
+  a long word wrapping inside itself. Even with that undone, the comma after a word as wide as
+  the column would stick out of it.
+- **A bridging run stays whole.** A run that is only a closing lead and an opening trail
+  ("：「", "」「", "》、《") joins the words on both sides in one wrapper. The run stays one text
+  node, so Chromium's `text-spacing-trim` can still compress the pair.
+- **The glue lets go when it cannot fit.** `useGlueFit` measures every wrapper after layout and
+  on each resize.
+  - **A single word's wrapper as wide as the column** gets `data-glue="off"`, which is
+    `display: contents`. That word is set exactly as before the fix.
+  - **A chain that wide is unbridged instead.** Each word gets its own wrapper back, and only
+    those pairs lose compression.
+  
+  The pass only writes attributes, so no text node moves.
+
+### What C3, C5a and C5b depend on — unchanged, and how that is known
+
+- **Character map, `data-span-index` stamps, hit-tests, tap handler, two-tap degrade.**
+  - The wrapper has no text and no `data-char-index` or `data-token-index`.
+  - `tests/unit/hanzi/glue.test.tsx` builds the map and the stamps with and without the wrapper
+    and compares them character for character.
+  - Review A measured on the real reader:
+    - the base text is byte-identical (639 characters) and the stamp count matches (472);
+    - a caret sweep at every character's centre has 0 misses in both builds;
+    - a sweep of the pinyin band finds no new miss.
+- **Line boxes, the ruby band, `<rt>` positions.** On a passage that breaks the same way in both
+  builds, the passage height, every button's box, every `<rt>`'s box and every glyph height are
+  identical (review A, measured).
+- **Focus order and tab stops.** `core/reader-punctuation.spec.ts` asserts the focusable elements
+  are exactly the words, in order, and walks twelve Tabs.
+- **Roles and accessible names** are unchanged. The aria snapshot has one `button` per word and
+  no group. **Not byte-identical, though:** Chromium keeps each inline-block wrapper as a
+  `generic` node in its accessibility tree (review A, over CDP). A generic node is not announced.
+  A `display: contents` wrapper has no box; its place in the accessibility tree was not measured.
+- **Drag-select across a glued boundary.** New cases, with a mouse and with synthetic touch
+  pointers, drag across, backwards across, onto and off a glued "，" at a line break.
+  - They were run against **both** builds, and at the same character indices on both: 17 and 457.
+  - They selected the same spans on both builds.
+- **Segmentation.** Untouched: the grouping reads the runs, never the text.
+
+### The two adversarial reviews, and what each found
+
+Both read the diff cold, in parallel. Each drove the served build with the fix (`:3000`) and the
+base build (`:3001`) and compared the two.
+
+**Review A — against what C3, C5a and C5b depend on.** Three findings, then a follow-up pass on
+the fixes:
+
+1. **Major, fixed: a drag past the end of a line dropped the rest of its last word.**
+   - "你周末一般做什么？" selected "你周末一般做什".
+   - Past a line's last atomic box, the caret API names the *element*, with an offset that counts
+     its children. `indexOfNode` dropped the offset and took the element's first character.
+   - It was latent for a line ending in a bare word button. The glue made it the ordinary case.
+   - The offset is now honoured. There are unit cases and an e2e case over six line ends.
+2. **Major, fixed: splitting "：「" between two wrappers lost the pair's compression.**
+   - 17 pairs over the corpus at 1280px were 10px wider each, which added a line.
+   - Fixed by the bridging above. An e2e case asserts every such pair sits in one text node and
+     is narrower than 1.75em.
+3. **Minor, fixed:** a word wider than the column left lone marks on their own lines. The same
+   defect as review B's finding 2, below.
+
+The follow-up pass found one more, **minor, fixed:** a list of titles bridged into one chain
+wider than the column, and the fit pass switched the whole chain off. That is why a chain is now
+unbridged instead. On `2864708`, before the unbridging, review A also confirmed by measurement that
+the fit pass does not loop. It wrote nothing while idle, and a drag never triggers it. The
+unbridging has only been checked by the spec and a mutation run, not reviewed.
+
+**Review B — other viewports, font scales and scripts.** Three findings:
+
+1. **Major, fixed:** the compression loss, found independently. 19 of 635 glyphs were half an em
+   wider, and the corpus gained a line at 320, 390, 1024 and 1280px.
+2. **Major, fixed: a word plus its marks wider than the column made things worse.**
+   - The spec's own 320px passage went from 6 lines to 9, three of them a lone "，", "「" or
+     "」".
+   - At a 200% font size it went from 6 lines to 8.
+   - Fixed by `useGlueFit`. The spec now asserts no punctuation-only line at 320px, and that
+     every wrapper still switched on holds its content on one line at 200%.
+3. **Minor, fixed:** in `'tap'` and `'never'` mode a button with no `<rt>` has no break
+   opportunity inside it, so the wrapper widened the column past the screen at 200%. It was 6px
+   at 390px where the base build had none. Same fix, asserted at 200% in `'always'` and `'tap'`.
+
+Review B also measured, and found fine:
+- **0 line-start or line-end violations** at 320, 360, 390, 414, 720, 844×390, 1024 and 1280px.
+  The base build had 3 to 13 at every width below 1024.
+- That covers traditional text, Latin, ASCII punctuation, "……", "——", "·", nested 「『』」,
+  𠮷, kana and Hangul, and pre-wrap blank lines.
+- **A passage with no punctuation is byte-identical** in its lines at every width, mode and
+  scale.
+
+**Not measured by either review:** the dark theme, the word-state backgrounds on a glued word,
+and browser zoom or device scale factor (only the root font size was scaled).
+
+### What is still true, and a builder should not read a green gate as having fixed
+
+- **A word that cannot share a line with its marks is set as it was before the glue**, with the
+  old break before "，" or after "「". That happens with a fifteen-character place name at 320px,
+  or a seven-character one at 390px with a 200% font. At 200% in `'tap'` mode the lines match
+  the base build exactly, including "「" alone and "」。" alone. Nothing short of breaking the
+  word would remove them.
+- **An unbridged chain loses its pairs' compression**, 10px each at text-xl. Only in a list too
+  long for one line.
+- **The fit pass runs after layout.** A width change is followed by a render and a second
+  measure. Measured, it causes no flicker in Chromium. Because an unbridge is a state change made
+  from a `ResizeObserver` callback, it could paint one frame bridged on a slow device. Not seen
+  here.
+
+### Owed, and not possible here
+
+**A physical-phone check of drag-select across glued punctuation.** C5b's drag was built for
+touch. The specs here run it under Chromium touch emulation, with a `hasTouch` context and
+synthetic touch pointers, which is all this container can do. On a real Android phone and a real
+iPhone, someone must check the following over a passage where "，" or "？" ends a line:
+- a thumb drag across the glued mark onto the next line;
+- a drag that starts or ends on the mark (it snaps inward);
+- a drag that overshoots the end of the line.
+
+`ios.md` I2's pre-TestFlight pass is the natural place. WebKit's line breaking, and whether
+Safari applies `text-spacing-trim`, are unmeasured too.
+
+### Files another session may collide with
+
+`apps/app/components/hanzi/hanzi-text.tsx`, `components/hanzi/ruby.css`,
+`components/hanzi/use-span-select.ts` (`indexOfNode` only), `lib/hanzi/glue.ts` (new),
+`tests/unit/hanzi/glue.test.tsx` (new), `tests/e2e/core/reader-punctuation.spec.ts` (new), and the
+census in `tests/unit/shell/tab-routes.test.ts`, which is now 60 files, 52 specs, 53 navigating.
+Frozen surfaces: none touched.
+
+### Gates
+
+Run on the final tree, `efaf954` plus this section:
+- **`pnpm lint`, `pnpm typecheck`, `pnpm build`:** clean.
+- **`pnpm test`:** **2,270** app tests and **103** server tests passed.
+- **`pnpm e2e`:** **374 passed** in 12.4 min. The audit recorded 360; this branch adds 14 cases.
+- **`pnpm smoke --no-api`:** **41 ok**, with 6 API cases skipped and reported as skipped.
+- **`--repeat-each=8`:** **536/536**, run on the final build over five files, 67 cases:
+  `p5/reader`, `core/reader-span`, `core/ruby`, `core/span-select-harness` and
+  `core/reader-punctuation`.
+  - The existing specs are **unmodified**. The only test files this branch changes are the new
+    spec, the new unit file and the census.
+  - A first run on `4547531`, before the review fixes, was 488/488.
+- **The same five files under Chromium touch emulation:** **67/67**. That is a scratch config
+  with `hasTouch: true` on every context. It is emulation, not a device: see "Owed" above.
+- **Mutation checks.** Each guard added after the reviews failed when its defect was put back:
+  - the fit pass disabled;
+  - `indexOfNode` dropping the offset again;
+  - bridging disabled;
+  - a chain switched off rather than unbridged.
+- **Against the base build.** The geometry cases fail there at all three widths, which is what
+  makes them evidence. The drag cases pass there unchanged.

@@ -223,12 +223,47 @@ function indexOfNode(map: CharMap, node: Node, offset: number): number | undefin
   for (const piece of map.pieces) {
     if (piece.node === node) return piece.start + offset;
   }
-  // An element was hit rather than a text node — `caretRangeFromPoint` does that
-  // at the very edge of a line. Take the first base text node inside it.
+  /**
+   * An element was hit rather than a text node. A caret API does that at the
+   * edge of a line, and `offset` then counts the element's CHILDREN: the
+   * boundary sits before child `offset`.
+   *
+   * **The offset is honoured, not dropped.** This used to answer "the first
+   * text node inside the element" whatever the offset said. That was the wrong
+   * end of it whenever the point was past the element's last child, which is
+   * what a drag that overshoots the end of a line produces. `caretPositionFromPoint`
+   * answers `{ <the last atomic box on the line>, childNodes.length }`, and
+   * the drag then ended on the FIRST character of the line's last word:
+   * "你周末一般做什么？" selected as "你周末一般做什" (measured). It was latent
+   * for a line ending in a bare word button. Since reader punctuation is glued
+   * to its word in an inline-block (`.hanzi-glue`), most lines that end a
+   * clause end in one, so it became the ordinary case.
+   *
+   * Past the last child, the answer is the element's last base character.
+   * `characterAt` then keeps it, since the point is not inside the box of the
+   * character before it.
+   */
   if (node.nodeType === Node.ELEMENT_NODE) {
-    for (const piece of map.pieces) {
-      if ((node as Element).contains(piece.node)) return piece.start;
+    const element = node as Element;
+    const after = element.childNodes[offset];
+    if (after) {
+      // The first base text at or after that child, in document order. With
+      // `offset` 0 that is the first text inside the element, as before.
+      for (const piece of map.pieces) {
+        if (
+          after === piece.node ||
+          after.contains(piece.node) ||
+          after.compareDocumentPosition(piece.node) & Node.DOCUMENT_POSITION_FOLLOWING
+        ) {
+          return piece.start;
+        }
+      }
     }
+    let last: Piece | undefined;
+    for (const piece of map.pieces) {
+      if (element.contains(piece.node)) last = piece;
+    }
+    if (last) return last.start + Math.max(0, (last.node.nodeValue?.length ?? 1) - 1);
   }
   return undefined;
 }
@@ -561,8 +596,9 @@ export function useSpanSelect(options: UseSpanSelectOptions = {}): SpanSelect {
       if (!container) return;
       const lo = Math.min(from, to);
       const hi = Math.max(from, to);
-      const HighlightCtor = (globalThis as unknown as { Highlight?: new (...r: Range[]) => unknown })
-        .Highlight;
+      const HighlightCtor = (
+        globalThis as unknown as { Highlight?: new (...r: Range[]) => unknown }
+      ).Highlight;
       if (highlightsSupported() && HighlightCtor) {
         const ranges = rangesFor(map.current, lo, hi);
         const registry = (CSS as unknown as { highlights: Map<string, unknown> }).highlights;

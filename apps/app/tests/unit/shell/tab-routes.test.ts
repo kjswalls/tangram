@@ -188,10 +188,18 @@ describe('the seven routes are gone', () => {
     // `core/audit-small-fixes.spec.ts` (a picked result's headword in view on
     // every frame, no "no words yet" for a band still being counted, and a
     // plain-words cause on the failed-download screen).
+    // The reader-punctuation fix adds one, a spec and navigating (its 200%
+    // font-size cases enter `/read` themselves, since `readText` waits for
+    // readings that `'tap'` mode never draws):
+    // `core/reader-punctuation.spec.ts` (no line starts with closing
+    // punctuation or ends with opening, at three widths, held by geometry; a
+    // long word and its comma inside the column at 320px; a drag across a
+    // glued boundary selecting what it did before; focus and the
+    // accessibility tree unchanged by the wrapper).
     expect({ files: files.length, specs: specs.length, navigating: navigating.length }).toEqual({
-      files: 60,
-      specs: 52,
-      navigating: 53,
+      files: 61,
+      specs: 53,
+      navigating: 54,
     });
   });
 

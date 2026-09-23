@@ -101,4 +101,45 @@
   .hanzi-band ruby {
     line-height: 2;
   }
+
+  /*
+   * A WORD AND ITS PUNCTUATION, ON ONE LINE (the first-run audit's "found, not
+   * fixed" item 2).
+   *
+   * The reader's words are `<button>`s. A button is an atomic inline, and an
+   * atomic inline has a break opportunity on both sides whatever the character
+   * beside it. So a line could start with "，", or end with "「", every time a
+   * word happened to end or start one. `<HanziText>` puts a word and the
+   * closing marks after it, or the opening marks before it, in one of these.
+   *
+   * **`inline-block`, not `white-space: nowrap`, and the difference matters.**
+   * As an atomic inline the wrapper moves as a unit: its content is never
+   * broken while it fits on a line, so the mark stays with its word. When a
+   * word is wider than the whole column (a fifteen-character place name at
+   * 320px), the wrapper would be as wide as the column, and the rule below
+   * switches it off. `nowrap` would be inherited into the button and stop the
+   * word itself from wrapping, and even with that undone, the mark would stick
+   * out of the column. That is the overflow `core/reader-punctuation.spec.ts`
+   * checks at 320px. Inside the wrapper `white-space` is inherited unchanged,
+   * so the passage's `pre-wrap` still holds.
+   *
+   * Nothing else is set. The wrapper holds only the word button and bare
+   * punctuation, and it sits on the baseline like the button always did. So
+   * the line box, the ruby band and every character's hit-test are unchanged.
+   */
+  .hanzi-glue {
+    display: inline-block;
+  }
+
+  /*
+   * …unless the word and its marks cannot fit on one line at all. Then the
+   * wrapper would be as wide as the column, leave lone marks on lines of their
+   * own, and, with no break opportunity inside a button that has no `<rt>`,
+   * widen the column past the screen. `<HanziText>`'s `useGlueFit` measures
+   * that after layout and sets `data-glue="off"`, and the wrapper stops
+   * existing for layout. The word is set exactly as it was before the glue.
+   */
+  .hanzi-glue[data-glue='off'] {
+    display: contents;
+  }
 }

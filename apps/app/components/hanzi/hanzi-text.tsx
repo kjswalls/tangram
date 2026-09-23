@@ -56,12 +56,22 @@
  * syllables are computed once, so revealing is a class toggle on an
  * already-rendered `<ruby>`, not a re-render.
  */
-import { memo, useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react';
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useState,
+  type MouseEvent,
+  type ReactNode,
+} from 'react';
 
 import { usePinyinDisplay } from '@/components/hanzi/pinyin-display';
 import { speakOneCharacter, useSpeakingOffset } from '@/components/hanzi/speak-control';
 import { spanIndexOfEvent, type SpanSelect } from '@/components/hanzi/use-span-select';
 import { alignReading, type Alignment } from '@/lib/hanzi/align';
+import { splitForGlue, type GlueSplit } from '@/lib/hanzi/glue';
 import { cn } from '@/lib/cn';
 import type { PinyinDisplay } from '@/lib/db/schema';
 import type { TTSProvider } from '@/lib/tts/provider';
@@ -341,6 +351,7 @@ const Runs = memo(function Runs({
   span,
   interactive,
   speakingOffset,
+  unbridged,
 }: {
   views: readonly RunView[];
   states: readonly (WordState | undefined)[] | undefined;
@@ -373,56 +384,58 @@ const Runs = memo(function Runs({
    * `null`. Published by `SpeakControl` while the hold-to-slow sequence runs.
    */
   speakingOffset: number | null;
+  /**
+   * Plain runs that must NOT bridge, because the chain they would join is
+   * wider than the column (`useGlueFit`). Indexes into `runs`.
+   */
+  unbridged: ReadonlySet<number>;
 }) {
-  return (
-    <>
-      {views.map((view, index) => {
-        const state = states?.[index];
-        const revealed = showAll || revealedRuns.has(index);
-        // A run the dictionary has no reading for renders plain: no ruby, no
-        // state, not a tap target. `data-testid="reader-text-run"` is the hook
-        // `tests/e2e/p5` already reads, and it survives verbatim.
-        if (!view.tappable) {
-          return (
-            <span key={index} {...(plainRunTestId ? { 'data-testid': plainRunTestId } : {})}>
-              {view.run.text}
-            </span>
-          );
-        }
-        const wordLevel = view.alignment.mode === 'fallback';
-        // Overlap, not containment: a dragged span can start or end inside a
-        // word, and the ring is the coarse answer to "what did I select".
-        const inSpan =
-          span !== null && span !== undefined && view.start <= span.to && view.end > span.from;
-        const Word = interactive ? 'button' : 'span';
-        return (
-          <Word
-            key={index}
-            {...(interactive ? ({ type: 'button' } as const) : {})}
-            data-testid={wordTestId}
-            data-token-index={index}
-            data-token={view.run.text}
-            data-state={state ?? 'unknown'}
-            data-align={view.alignment.mode}
-            {...(inSpan ? { 'data-in-span': 'true' } : {})}
-            className={cn(
-              'hanzi-token cursor-pointer align-baseline transition-colors',
-              // A `<button>` brings its own box; these are what `reader-text.tsx`
-              // used to keep a word sitting in the line like the text it is.
-              interactive && 'px-0 font-[inherit] leading-[inherit]',
-              state ? STATE_CLASS[state] : undefined,
-              // Vermillion, not jade: the reader already tints a word in
-              // *learning* jade, and a ring in the same colour would read as a
-              // word state the learner has earned rather than a selection they
-              // just made. It matches `::highlight(span-select)` next door.
-              inSpan && 'rounded-[var(--r-sm)] ring-2 ring-practice ring-offset-1 ring-offset-surface',
-            )}
-          >
-            {wordLevel ? (
-              // One annotation over the whole run, or none at all when the
-              // dictionary has no reading. Never a per-character guess.
-              <ruby data-testid="hanzi-char" data-run-index={index}>
-                {/*
+  // A run the dictionary has no reading for renders plain: no ruby, no state,
+  // not a tap target. `data-testid="reader-text-run"` is the hook `tests/e2e/p5`
+  // already reads, and it survives verbatim.
+  const plain = (text: string, key: string) => (
+    <span key={key} {...(plainRunTestId ? { 'data-testid': plainRunTestId } : {})}>
+      {text}
+    </span>
+  );
+
+  const word = (view: RunView, index: number) => {
+    const state = states?.[index];
+    const revealed = showAll || revealedRuns.has(index);
+    const wordLevel = view.alignment.mode === 'fallback';
+    // Overlap, not containment: a dragged span can start or end inside a
+    // word, and the ring is the coarse answer to "what did I select".
+    const inSpan =
+      span !== null && span !== undefined && view.start <= span.to && view.end > span.from;
+    const Word = interactive ? 'button' : 'span';
+    return (
+      <Word
+        key={index}
+        {...(interactive ? ({ type: 'button' } as const) : {})}
+        data-testid={wordTestId}
+        data-token-index={index}
+        data-token={view.run.text}
+        data-state={state ?? 'unknown'}
+        data-align={view.alignment.mode}
+        {...(inSpan ? { 'data-in-span': 'true' } : {})}
+        className={cn(
+          'hanzi-token cursor-pointer align-baseline transition-colors',
+          // A `<button>` brings its own box; these are what `reader-text.tsx`
+          // used to keep a word sitting in the line like the text it is.
+          interactive && 'px-0 font-[inherit] leading-[inherit]',
+          state ? STATE_CLASS[state] : undefined,
+          // Vermillion, not jade: the reader already tints a word in
+          // *learning* jade, and a ring in the same colour would read as a
+          // word state the learner has earned rather than a selection they
+          // just made. It matches `::highlight(span-select)` next door.
+          inSpan && 'rounded-[var(--r-sm)] ring-2 ring-practice ring-offset-1 ring-offset-surface',
+        )}
+      >
+        {wordLevel ? (
+          // One annotation over the whole run, or none at all when the
+          // dictionary has no reading. Never a per-character guess.
+          <ruby data-testid="hanzi-char" data-run-index={index}>
+            {/*
                   One annotation, but still one `data-char-index` PER
                   CHARACTER. The index used to be a hardcoded 0 on the whole
                   run, so a tap anywhere inside AA制 — or any `xx5` entry, or
@@ -432,46 +445,254 @@ const Runs = memo(function Runs({
                   What fallback means is that the READING cannot be split, not
                   that the characters cannot be counted.
                 */}
-                {offsetsOf(view).map(({ char, offset }, charIndex) => (
-                  <span
-                    key={charIndex}
-                    data-char-index={charIndex}
-                    {...(offset === speakingOffset ? { 'data-speaking': 'true' } : {})}
-                    className={offset === speakingOffset ? SPEAKING_CLASS : undefined}
-                  >
-                    {char}
-                  </span>
-                ))}
-                {revealed && view.alignment.reading ? (
-                  <>
-                    <rp>(</rp>
-                    <rt data-testid="hanzi-rt" className={rtClassName}>
-                      {view.alignment.reading}
-                    </rt>
-                    <rp>)</rp>
-                  </>
-                ) : null}
-              </ruby>
-            ) : (
-              view.alignment.chars.map((aligned, charIndex) => (
-                <Ruby
-                  key={charIndex}
-                  char={aligned.char}
-                  syllable={aligned.syllable}
-                  speaking={offsetsOf(view)[charIndex]?.offset === speakingOffset}
-                  revealed={revealed}
-                  runIndex={index}
-                  charIndex={charIndex}
-                  {...(rtClassName === undefined ? {} : { rtClassName })}
-                />
-              ))
-            )}
-          </Word>
-        );
-      })}
-    </>
+            {offsetsOf(view).map(({ char, offset }, charIndex) => (
+              <span
+                key={charIndex}
+                data-char-index={charIndex}
+                {...(offset === speakingOffset ? { 'data-speaking': 'true' } : {})}
+                className={offset === speakingOffset ? SPEAKING_CLASS : undefined}
+              >
+                {char}
+              </span>
+            ))}
+            {revealed && view.alignment.reading ? (
+              <>
+                <rp>(</rp>
+                <rt data-testid="hanzi-rt" className={rtClassName}>
+                  {view.alignment.reading}
+                </rt>
+                <rp>)</rp>
+              </>
+            ) : null}
+          </ruby>
+        ) : (
+          view.alignment.chars.map((aligned, charIndex) => (
+            <Ruby
+              key={charIndex}
+              char={aligned.char}
+              syllable={aligned.syllable}
+              speaking={offsetsOf(view)[charIndex]?.offset === speakingOffset}
+              revealed={revealed}
+              runIndex={index}
+              charIndex={charIndex}
+              {...(rtClassName === undefined ? {} : { rtClassName })}
+            />
+          ))
+        )}
+      </Word>
+    );
+  };
+
+  if (!interactive) {
+    return (
+      <>
+        {views.map((view, index) =>
+          view.tappable ? word(view, index) : plain(view.run.text, String(index)),
+        )}
+      </>
+    );
+  }
+
+  /**
+   * **Punctuation travels with its word.** This is the first-run audit's "found,
+   * not fixed" item 2, and it applies only here, where the words are buttons.
+   *
+   * A `<button>` is an atomic inline. CSS gives an atomic inline a break
+   * opportunity on both sides, whatever the character beside it, so the rule
+   * that keeps "，" off the start of a line never got a say. "，我可以…" and a
+   * lone "？" are what the reader printed on a phone. The non-interactive call
+   * sites render their words as inline `<span>`s, which the line breaker sees
+   * straight through, and they keep exactly the DOM they had.
+   *
+   * So a word shares one `.hanzi-glue` wrapper with the closing marks after it
+   * and the opening marks before it, and two words joined only by such marks
+   * ("说：「你好") share one wrapper between them (see `bridges` below).
+   * `ruby.css` says why the wrapper is an `inline-block` and not
+   * `white-space: nowrap`. The wrapper is layout and nothing else, which is
+   * what C3 and C5b depend on:
+   *
+   *   - **It has no text of its own and no data attributes.** The character
+   *     map (`buildCharMap` walks text nodes), the `data-span-index` stamp
+   *     (`closest('[data-char-index]')`), the tap handler and the degrade's
+   *     hit-test (`closest('[data-token-index]')`) all resolve exactly as they
+   *     did. The characters are the same text, in the same order.
+   *   - **It has no role, no tab stop and no label.** Focus order, every
+   *     role and every accessible name are unchanged. Chromium does keep each
+   *     inline-block as a `generic` node in its accessibility tree (review A,
+   *     measured over CDP). A generic node is not announced, but the tree is
+   *     not byte-identical, and this comment used to claim it was.
+   *   - **Segmentation does not change.** `splitForGlue` only divides a plain
+   *     run's text between the wrappers either side of it, in order. A plain
+   *     run can therefore render as up to three `reader-text-run` spans where
+   *     it rendered as one. Each is still plain, untappable and unstamped, as
+   *     punctuation always was.
+   */
+  const splits = views.map((view, index) =>
+    view.tappable
+      ? null
+      : splitForGlue(
+          view.run.text,
+          views[index - 1]?.tappable ?? false,
+          views[index + 1]?.tappable ?? false,
+        ),
   );
+  /**
+   * A run that is nothing but a closing lead and an opening trail — "：「",
+   * "」「", "。“" — **bridges** its two words into one wrapper and stays one
+   * span.
+   *
+   * Splitting it between two wrappers kept each mark with its word, and it cost
+   * the typography (review A, finding 2). Chromium compresses adjacent
+   * full-width marks (`text-spacing-trim`'s default), but only inside one
+   * inline formatting context, and two inline-blocks are two. Every "说：「"
+   * printed its colon and bracket at full width, 17 of them 10px wider each over
+   * the spec's corpus at 1280px, which added a line. Kept whole and together,
+   * the pair is exactly the text node it was before the glue existed.
+   */
+  const bridges = (split: GlueSplit | null | undefined, index: number): boolean =>
+    Boolean(split && split.lead && split.trail && !split.rest && !unbridged.has(index));
+
+  const out: ReactNode[] = [];
+  let group: ReactNode[] = [];
+  let groupKey = '';
+  // The bridging runs inside the open group, so `useGlueFit` can unbridge a
+  // chain that turns out wider than the column.
+  let groupBridges: number[] = [];
+  const flush = () => {
+    if (group.length === 1) out.push(group[0]);
+    else if (group.length > 1) {
+      out.push(
+        <span
+          key={groupKey}
+          className="hanzi-glue"
+          {...(groupBridges.length > 0 ? { 'data-glue-bridges': groupBridges.join(' ') } : {})}
+        >
+          {group}
+        </span>,
+      );
+    }
+    group = [];
+    groupBridges = [];
+  };
+  views.forEach((view, index) => {
+    const split = splits[index];
+    if (split) {
+      // A bridging run is already inside the wrapper, whole.
+      if (bridges(split, index)) return;
+      if (split.rest) out.push(plain(split.rest, String(index)));
+      return;
+    }
+    if (group.length === 0) {
+      groupKey = `glue-${index}`;
+      const before = splits[index - 1]?.trail;
+      if (before) group.push(plain(before, `trail-${index - 1}`));
+    }
+    group.push(word(view, index));
+    const next = splits[index + 1];
+    if (bridges(next, index + 1)) {
+      // The word after joins this wrapper; the group stays open for it.
+      group.push(plain(next!.lead + next!.trail, String(index + 1)));
+      groupBridges.push(index + 1);
+      return;
+    }
+    if (next?.lead) group.push(plain(next.lead, `lead-${index + 1}`));
+    flush();
+  });
+  flush();
+  return <>{out}</>;
 });
+
+/**
+ * Switch a glue wrapper off when it cannot fit on one line (reviews A and B).
+ *
+ * `.hanzi-glue` is an inline-block, so while a word and its marks fit on a line
+ * they move as a unit. That is the whole fix. When they do not fit, because a
+ * fifteen-character place name meets a 320px column, or any four-character
+ * word meets a phone at a 200% font size, the wrapper becomes as wide as the
+ * column. Nothing else can share its lines, and the marks break away from the
+ * word inside it anyway. Measured: the spec's own long-word passage went from
+ * 6 lines to 9, three of them a lone "，", "「" or "」". At a 200% font size in
+ * `'tap'` mode, where a button with no `<rt>` has no break opportunity, the
+ * wrapper's word-plus-marks minimum widened the column past the screen by up
+ * to 20px more than before.
+ *
+ * CSS cannot ask "would this fit". So after layout, and again whenever the
+ * passage is resized, every wrapper is measured, and one as wide as the column
+ * gets `data-glue="off"`. `ruby.css` turns that into `display: contents`, and
+ * the word lays out exactly as it did before the glue existed, marks and all.
+ * That is the old behaviour, with its break before the "，", only for a word
+ * that cannot share a line with its punctuation at all.
+ *
+ * All the attributes are cleared first and all the widths read before any is
+ * set again, so the pass costs two layouts, however long the passage. It only
+ * writes an attribute, and never adds or removes a node, so the character map
+ * and every stamp are untouched. The resize that its own writes cause settles
+ * on the second pass, because the same widths give the same answer.
+ */
+function useGlueFit(
+  root: HTMLElement | null,
+  enabled: boolean,
+  // What changes a width: the runs and their readings, and what is revealed.
+  // Separate values, not one array, so an unrelated render (a span being
+  // dragged) does not re-measure.
+  views: unknown,
+  showAll: boolean,
+  revealed: unknown,
+  unbridged: ReadonlySet<number>,
+  setUnbridged: (update: (previous: ReadonlySet<number>) => ReadonlySet<number>) => void,
+): void {
+  useLayoutEffect(() => {
+    if (!root || !enabled) return;
+    const fit = () => {
+      const glues = [...root.querySelectorAll<HTMLElement>('.hanzi-glue')];
+      if (glues.length === 0) return;
+      const style = getComputedStyle(root);
+      const column =
+        root.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      // No layout (jsdom, a hidden tab): leave the glue as it is.
+      if (!(column > 0)) return;
+      for (const glue of glues) delete glue.dataset.glue;
+      const tooWide = glues.filter((glue) => glue.getBoundingClientRect().width >= column - 0.5);
+      /**
+       * **A chain too wide is unbridged, not switched off** (review A's
+       * follow-up). A list of titles, "《红楼梦》、《西游记》、…", bridges
+       * into one wrapper wider than the column even at 1280px, and switching
+       * that off lost the glue for every title in it: "》" started lines again.
+       * Unbridged, each word gets its own wrapper back and the list loses only
+       * the compression of its "》、《" pairs. Those wrappers are measured on
+       * the next pass, which the state change causes.
+       */
+      const unbridge: number[] = [];
+      for (const glue of tooWide) {
+        const bridged = glue.dataset.glueBridges;
+        if (bridged) unbridge.push(...bridged.split(' ').map(Number));
+        else glue.dataset.glue = 'off';
+      }
+      if (unbridge.length > 0) {
+        setUnbridged((previous) => new Set([...previous, ...unbridge]));
+      }
+    };
+    fit();
+    if (typeof ResizeObserver === 'undefined') return;
+    // A different width can fit a chain that was unbridged, so a change of
+    // width starts again from every chain bridged. A change of height alone is
+    // usually this pass's own writes, and only re-measures.
+    let width = root.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (root.clientWidth !== width && unbridged.size > 0) {
+        width = root.clientWidth;
+        setUnbridged(() => new Set<number>());
+        return;
+      }
+      width = root.clientWidth;
+      fit();
+    });
+    observer.observe(root);
+    // A web font swapping in changes every width without resizing anything.
+    void document.fonts?.ready.then(fit);
+    return () => observer.disconnect();
+  }, [root, enabled, views, showAll, revealed, unbridged, setUnbridged]);
+}
 
 export function HanziText({
   runs,
@@ -639,6 +860,23 @@ export function HanziText({
    */
   const Root = spanSelect ? 'div' : 'span';
 
+  const interactive = Boolean(onWord || onCharacter);
+  const [root, setRoot] = useState<HTMLElement | null>(null);
+  const spanRef = spanSelect?.ref;
+  const rootRef = useCallback(
+    (node: HTMLElement | null) => {
+      setRoot(node);
+      spanRef?.(node);
+    },
+    [spanRef],
+  );
+  const [unbridged, setUnbridged] = useState<ReadonlySet<number>>(() => new Set<number>());
+  // A new passage starts with every chain bridged.
+  useEffect(() => {
+    setUnbridged((previous) => (previous.size === 0 ? previous : new Set<number>()));
+  }, [runs]);
+  useGlueFit(root, interactive, views, showAll, revealedRuns, unbridged, setUnbridged);
+
   return (
     <Root
       data-testid={testId}
@@ -653,7 +891,8 @@ export function HanziText({
       data-hanzi={runs.map((run) => run.text).join('')}
       data-band={bandReserved ? 'reserved' : 'none'}
       lang="zh-Hans"
-      {...(spanSelect ? { ref: spanSelect.ref, ...spanSelect.handlers } : {})}
+      ref={rootRef}
+      {...(spanSelect ? spanSelect.handlers : {})}
       /**
        * One delegated handler for the whole passage. See the header.
        *
@@ -687,8 +926,9 @@ export function HanziText({
         showAll={showAll}
         wordTestId={wordTestId}
         span={span}
-        interactive={Boolean(onWord || onCharacter)}
+        interactive={interactive}
         speakingOffset={speakingOffset}
+        unbridged={unbridged}
         {...(rtClassName === undefined ? {} : { rtClassName })}
         {...(plainRunTestId === undefined ? {} : { plainRunTestId })}
       />

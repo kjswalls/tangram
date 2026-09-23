@@ -351,6 +351,7 @@ const Runs = memo(function Runs({
   span,
   interactive,
   speakingOffset,
+  unbridged,
 }: {
   views: readonly RunView[];
   states: readonly (WordState | undefined)[] | undefined;
@@ -383,6 +384,11 @@ const Runs = memo(function Runs({
    * `null`. Published by `SpeakControl` while the hold-to-slow sequence runs.
    */
   speakingOffset: number | null;
+  /**
+   * Plain runs that must NOT bridge, because the chain they would join is
+   * wider than the column (`useGlueFit`). Indexes into `runs`.
+   */
+  unbridged: ReadonlySet<number>;
 }) {
   // A run the dictionary has no reading for renders plain: no ruby, no state,
   // not a tap target. `data-testid="reader-text-run"` is the hook `tests/e2e/p5`
@@ -543,28 +549,36 @@ const Runs = memo(function Runs({
    * the spec's corpus at 1280px, which added a line. Kept whole and together,
    * the pair is exactly the text node it was before the glue existed.
    */
-  const bridges = (split: GlueSplit | null | undefined): boolean =>
-    Boolean(split && split.lead && split.trail && !split.rest);
+  const bridges = (split: GlueSplit | null | undefined, index: number): boolean =>
+    Boolean(split && split.lead && split.trail && !split.rest && !unbridged.has(index));
 
   const out: ReactNode[] = [];
   let group: ReactNode[] = [];
   let groupKey = '';
+  // The bridging runs inside the open group, so `useGlueFit` can unbridge a
+  // chain that turns out wider than the column.
+  let groupBridges: number[] = [];
   const flush = () => {
     if (group.length === 1) out.push(group[0]);
     else if (group.length > 1) {
       out.push(
-        <span key={groupKey} className="hanzi-glue">
+        <span
+          key={groupKey}
+          className="hanzi-glue"
+          {...(groupBridges.length > 0 ? { 'data-glue-bridges': groupBridges.join(' ') } : {})}
+        >
           {group}
         </span>,
       );
     }
     group = [];
+    groupBridges = [];
   };
   views.forEach((view, index) => {
     const split = splits[index];
     if (split) {
       // A bridging run is already inside the wrapper, whole.
-      if (bridges(split)) return;
+      if (bridges(split, index)) return;
       if (split.rest) out.push(plain(split.rest, String(index)));
       return;
     }
@@ -575,9 +589,10 @@ const Runs = memo(function Runs({
     }
     group.push(word(view, index));
     const next = splits[index + 1];
-    if (bridges(next)) {
+    if (bridges(next, index + 1)) {
       // The word after joins this wrapper; the group stays open for it.
       group.push(plain(next!.lead + next!.trail, String(index + 1)));
+      groupBridges.push(index + 1);
       return;
     }
     if (next?.lead) group.push(plain(next.lead, `lead-${index + 1}`));
@@ -623,6 +638,8 @@ function useGlueFit(
   views: unknown,
   showAll: boolean,
   revealed: unknown,
+  unbridged: ReadonlySet<number>,
+  setUnbridged: (update: (previous: ReadonlySet<number>) => ReadonlySet<number>) => void,
 ): void {
   useLayoutEffect(() => {
     if (!root || !enabled) return;
@@ -636,16 +653,45 @@ function useGlueFit(
       if (!(column > 0)) return;
       for (const glue of glues) delete glue.dataset.glue;
       const tooWide = glues.filter((glue) => glue.getBoundingClientRect().width >= column - 0.5);
-      for (const glue of tooWide) glue.dataset.glue = 'off';
+      /**
+       * **A chain too wide is unbridged, not switched off** (review A's
+       * follow-up). A list of titles, "《红楼梦》、《西游记》、…", bridges
+       * into one wrapper wider than the column even at 1280px, and switching
+       * that off lost the glue for every title in it: "》" started lines again.
+       * Unbridged, each word gets its own wrapper back and the list loses only
+       * the compression of its "》、《" pairs. Those wrappers are measured on
+       * the next pass, which the state change causes.
+       */
+      const unbridge: number[] = [];
+      for (const glue of tooWide) {
+        const bridged = glue.dataset.glueBridges;
+        if (bridged) unbridge.push(...bridged.split(' ').map(Number));
+        else glue.dataset.glue = 'off';
+      }
+      if (unbridge.length > 0) {
+        setUnbridged((previous) => new Set([...previous, ...unbridge]));
+      }
     };
     fit();
     if (typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(fit);
+    // A different width can fit a chain that was unbridged, so a change of
+    // width starts again from every chain bridged. A change of height alone is
+    // usually this pass's own writes, and only re-measures.
+    let width = root.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (root.clientWidth !== width && unbridged.size > 0) {
+        width = root.clientWidth;
+        setUnbridged(() => new Set<number>());
+        return;
+      }
+      width = root.clientWidth;
+      fit();
+    });
     observer.observe(root);
     // A web font swapping in changes every width without resizing anything.
     void document.fonts?.ready.then(fit);
     return () => observer.disconnect();
-  }, [root, enabled, views, showAll, revealed]);
+  }, [root, enabled, views, showAll, revealed, unbridged, setUnbridged]);
 }
 
 export function HanziText({
@@ -824,7 +870,12 @@ export function HanziText({
     },
     [spanRef],
   );
-  useGlueFit(root, interactive, views, showAll, revealedRuns);
+  const [unbridged, setUnbridged] = useState<ReadonlySet<number>>(() => new Set<number>());
+  // A new passage starts with every chain bridged.
+  useEffect(() => {
+    setUnbridged((previous) => (previous.size === 0 ? previous : new Set<number>()));
+  }, [runs]);
+  useGlueFit(root, interactive, views, showAll, revealedRuns, unbridged, setUnbridged);
 
   return (
     <Root
@@ -877,6 +928,7 @@ export function HanziText({
         span={span}
         interactive={interactive}
         speakingOffset={speakingOffset}
+        unbridged={unbridged}
         {...(rtClassName === undefined ? {} : { rtClassName })}
         {...(plainRunTestId === undefined ? {} : { plainRunTestId })}
       />

@@ -579,6 +579,41 @@ for (const { name, touch, drag } of DRAGGERS) {
 }
 
 /**
+ * A list of titles is one long bridged chain (review A's follow-up).
+ *
+ * Every "》、《" is a closing lead plus an opening trail with nothing between,
+ * so the whole list bridged into one wrapper, wider than the column even at
+ * 1280px. Switching that wrapper off lost the glue for every title in it, and
+ * "》" started lines again. A chain that is too wide is unbridged instead:
+ * each title keeps its own wrapper, and only those pairs lose compression.
+ */
+for (const { width, scale } of [
+  { width: 1280, scale: '100%' },
+  { width: 390, scale: '200%' },
+] as const) {
+  test(`a long list of titles keeps every mark with its title, at ${width}px and ${scale}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await openReader(
+      page,
+      '我读过的书有：《论语》、《孟子》、《诗经》、《红楼梦》、《西游记》、《水浒传》、' +
+        '《三国演义》、《儒林外史》、《聊斋志异》、《资治通鉴》。',
+    );
+    await page.evaluate((size) => {
+      document.documentElement.style.fontSize = size;
+    }, scale);
+    await settled(page);
+    const found = await marks(page);
+    expect(found.length).toBeGreaterThan(20);
+    expect(
+      found.filter((mark) => !mark.sameLine).map((mark) => `${mark.char} (char ${mark.index})`),
+    ).toEqual([]);
+    expect(await overflowOf(page)).toEqual({ page: 0, passage: 0, text: 0 });
+  });
+}
+
+/**
  * A drag that overshoots the end of a line (review A, finding 1).
  *
  * A line that ends a clause now ends in a `.hanzi-glue` inline-block, and a

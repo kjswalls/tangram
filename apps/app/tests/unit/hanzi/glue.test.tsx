@@ -124,7 +124,13 @@ describe('the wrapper is layout and nothing else', () => {
     const { root } = renderPassage(true);
     for (const glue of root.querySelectorAll('.hanzi-glue')) {
       expect(glue.tagName).toBe('SPAN');
-      expect([...glue.attributes].map((attr) => attr.name)).toEqual(['class']);
+      // `data-glue-bridges` names the runs a chain bridged, for `useGlueFit`.
+      // Nothing selects on it but that pass, and it is only on a chain.
+      expect(
+        [...glue.attributes]
+          .map((attr) => attr.name)
+          .filter((name) => name !== 'data-glue-bridges'),
+      ).toEqual(['class']);
       // Words and punctuation only, and every run between two of its words is
       // punctuation the line may not break inside.
       expect(glue.querySelectorAll('[data-token-index]').length).toBeGreaterThan(0);

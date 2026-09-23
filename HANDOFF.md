@@ -14630,4 +14630,19 @@ surface. `MAX_GLOSS_CANDIDATES` is unchanged and no `ORDER BY e.rowid` was reint
 
 ### Gates
 
-GATES_PLACEHOLDER
+All run on the final tree, in this order:
+- `pnpm lint`, `pnpm typecheck`, `pnpm build`: clean.
+- `pnpm data --force` then `pnpm data:verify`: all checks pass, including "rowid order equals
+  compareEntries order". The artifact is `cb893d88…`; two consecutive builds are byte-identical.
+- `pnpm test`: **2,292** app tests and **103** server tests pass.
+  - The first run failed one test: `shell/tab-routes.test.ts`'s e2e census counts files, and
+    `d/stale-artifact.ts` is a new helper file (no spec, no navigation). The count went from 59 to 60
+    files, with a note. The rerun is green.
+- `pnpm e2e`: **362 passed** in 16.1 min.
+- `pnpm smoke --no-api` against `pnpm preview`: **41 ok**, with 6 API cases skipped and reported as
+  skipped.
+- Mutation checks:
+  - `reading-order.test.ts` against the old artifact: 16 of 21 fail.
+  - `dict-wasm` upgrade case with the old keying: fails, "the stale file was trusted".
+  - `dict-ask` upgrade case with the probe's check neutralised: fails, "the browser kept the older
+    build".

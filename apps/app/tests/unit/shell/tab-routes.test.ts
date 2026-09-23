@@ -184,8 +184,11 @@ describe('the seven routes are gone', () => {
     // a new learner at three viewports, held by geometry — tab labels on one
     // line, 44px touch targets, focus clear of the phone's tab bar, rows and a
     // heading that keep their text, no raw error on a failed download).
+    // The reading-order fix adds one file and no spec: `d/stale-artifact.ts`,
+    // the older-build stand-in that `d/dict-ask.spec.ts` and
+    // `d/dict-wasm.spec.ts` both seed a browser with. It does not navigate.
     expect({ files: files.length, specs: specs.length, navigating: navigating.length }).toEqual({
-      files: 59,
+      files: 60,
       specs: 51,
       navigating: 52,
     });

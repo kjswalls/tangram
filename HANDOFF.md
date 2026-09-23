@@ -12652,3 +12652,174 @@ explains the intermittency and why adding a file perturbed it.
 
 **Do not read four green runs as a fix.** Whoever touches the db test harness next should make
 teardown delete rather than close, and then re-run the suite several times rather than once.
+
+---
+
+## The wide shell — a pinned header, and each list named — `claude/build-web-wide-shell`, 2026-09-23
+
+Two items from W8a's **"Recorded, not fixed"** list, both `core.md` C7's files, changed on the
+orchestrator's authorisation. Branch cut from `claude/integration` at `898e7a9`.
+
+### 1. The wide header is pinned, and it is `fixed`, not `sticky`
+
+`components/shell/app-shell.tsx`. In the wide arrangement the header is `fixed inset-x-0 top-0 z-30`
+and the shell is padded by its height; the phone arrangement is untouched (in flow, tabs a `fixed
+bottom-0` bar, no scroll padding).
+
+- **The height is measured, not copied.** A layout effect with a `ResizeObserver` writes it to
+  `--shell-header-height` on `<html>` (declared `0px` in `tokens.css`, removed again when not wide).
+  The header wraps at the narrow end of the wide range, so a hand-computed height would be wrong
+  there — `--tab-bar-height`'s own comment records the pixel that approach once cost. A layout
+  effect, because the header leaves the flow on the render that makes it wide and the padding has to
+  be right before that render paints.
+- **`scroll-padding-top` on the root, wide only** (`globals.css`, under
+  `:root:has([data-shell='wide'])`): the header's height plus half a rem for the focus ring. It is the
+  one knob that focus-scrolling, Tab/Shift+Tab, anchors and `scrollIntoView()` all honour, so none of
+  their callers has to know the header exists. Library's "Change" → Study section is the one in-page
+  jump the app has, and it lands clear.
+- **The two `md:sticky md:top-4` side panels** (Look up's answer, the reader's) now stick at
+  `var(--shell-header-height) + 1rem`, below the header rather than under it. `lookup-view.tsx`'s
+  "is the panel off-screen?" check reads the root's scroll padding (0 on a phone) instead of `0`.
+- **The top safe-area inset and print** — both found by review, below.
+
+**Why not `sticky` — measured, and it is the one finding of this phase worth copying.** The first
+version was `sticky top-0`. With the scroll padding in place, a stuck header's own tab links sit
+*inside* the padded band, so the browser judges them out of view and "scrolls them into view" by
+moving the page — which leaves the header exactly where it was. `focus()` on a tab moved the page
+**364px**; `scrollIntoView({block:'nearest'})` moved it 69px. Playwright's scroll-before-click does
+the same thing, which is how it surfaced: the scroll-restoration spec saved 236 instead of 600. A
+`fixed` element is not scrolled by the root scroller, so none of the three paths moves anything.
+Without the scroll padding, `sticky` did not jump — but without it, focus lands under the header. You
+cannot have both with `sticky`.
+
+### 2. Each list is headed with its own name
+
+`components/lists/list-detail.tsx` renders the `PageHeader` now (the route used to, as "Library"),
+because it owns the list's data and knows when the name has arrived. `PageHeader` gained two props:
+`trail` (the "Library" breadcrumb, *outside* the `<h1>`, so the announced name is the list's alone)
+and `busy` (`aria-busy`, and a non-breaking space in place of the title so the line keeps its height).
+
+- **The name is its own read.** One `repo.lists()` call, separate from `readDetail`, which goes on to
+  fill an HSK band's membership from the dictionary, open the store and read every card.
+- **Busy means "not read for this id".** Moving straight from list A to list B keeps the component
+  mounted with A's state until B's reads land, so the heading is busy until the name read *for B* is
+  in, and the failure state is keyed by list id too.
+- **The announcer waits for a busy heading** (`src/shell/route-announcer.tsx`): after its usual 60 ms
+  tick, if the heading is `aria-busy` it watches `<main>` with a `MutationObserver` until it is not,
+  re-finds the heading and reads it then — capped at `HEADING_WAIT_MS` (2 s), after which it says the
+  route's generic name rather than nothing. **Focus does not wait**; it moves to the same element at
+  once, as before. The observer and the ceiling are torn down on the next route change, so an
+  abandoned wait cannot overwrite a newer announcement (unit-tested).
+
+### Decisions the brief did not settle
+
+- **`fixed` over `sticky`**, above.
+- **`followTab` is removed.** The scroll case in `routing.spec.ts` now clicks the tab for real at
+  600px down. Proven rather than asserted — three runtime mutants, each of which the case fails: the
+  header back in flow (Playwright scrolls to 0 first), the header `sticky` (it scrolls 364px up), and
+  the announcer's `focus()` without `preventScroll`.
+- **A pre-existing race in that same case, fixed.** With every change of this phase undone at
+  runtime, W8a's spec failed **5 of 30** runs: `scrollTo(0, 600)` read back 1768, because Library's
+  lists arrive after first paint, grow the page above the reader, and Chromium's scroll anchoring
+  follows them. It now waits for the list cards and for three equal height readings before scrolling.
+- **The card that used to carry the list's name is titled "Words"** — the name is the page heading
+  now, and saying it twice is the page naming itself twice.
+- **A missing list is headed "List not found"**, the breadcrumb is its way back, and the card's own
+  "Back to lists" link is gone (two links to one place).
+
+### New user-facing strings — the owner writes the app's voice
+
+| String | Where |
+|---|---|
+| **List not found** | the `<h1>` of `/library/lists/<id>` when there is no such list |
+| **Library** (a link) | the breadcrumb above every list's heading; the existing tab label, reused |
+| **Words** | the title of the card holding a list's words (was the list's name) |
+
+Removed: "← All lists" (replaced by the breadcrumb) and "Back to lists".
+
+### What the two adversarial reviews found
+
+Two reviewers read the diff cold and in parallel, one against the six criteria, one for "what breaks
+here that no test covers". Both were run while `pnpm e2e` was running, read-only.
+
+**Fixed:**
+
+- **Three existing e2e cases asserted the missing-list page was headed "Library"** — both reviewers.
+  `d/spa-fallback.spec.ts` and `d/origin-agnostic.spec.ts` (×2) now assert `level: 1, name: 'List not
+  found'`. They are 1280px specs; no 390px spec was touched.
+- **The heading waited for the whole page, not the name** (review 2). `busy` was tied to `readDetail`,
+  so on the first open of an HSK band the `<h1>` sat blank through the dictionary fill — seconds on a
+  cold device, for ever where the store is unproven (register #4) — and past 2 s the announcer said
+  "Library" and the real name was never spoken. The name is its own read now; unit test holds the
+  band's fill open and asserts the name arrives anyway.
+- **List A's error un-busied list B** (both reviewers). `error` was one unkeyed value, so after a
+  failed read on A, B's first commit was not busy, showed "Library" and was announced as such. Keyed
+  by list id; unit-tested, and the unit test fails with the key removed.
+- **No top safe-area inset on the pinned header** (review 2). `index.html` sets `viewport-fit=cover`,
+  so a tablet in the wide arrangement would keep the tabs under its status bar at every depth.
+  `pt-[env(safe-area-inset-top,0px)]`; the measured height includes it. *Not verified on a device* —
+  the container has none.
+- **Print** (review 2): a fixed element repeats on every printed page. `print:static`, `print:pt-0`.
+- **The Tab loop could stop at 250 presses and pass** (review 1). It now asserts it left `<main>`.
+- **A comment in `routing.spec.ts` said the header was sticky.** It is not.
+
+**Recorded, not fixed:**
+
+- **After Back, the focused heading can sit partly under the header** (review 1). The announcer
+  focuses with `preventScroll` on purpose — restoration wins, per W8a — so a restored offset between
+  about 1px and the header's height plus 24px leaves the heading partly covered. The heading draws no
+  focus ring (`outline-none`), so nothing visible is hidden, and the next Tab lands clear of the header
+  (`wide-shell.spec.ts` asserts that case). Scrolling it clear would break criterion 2.
+- **The e2e A→B case cannot, on its own, prove the announcer waits** (review 1): a small custom list's
+  name usually lands inside the 60 ms tick, so the heading is already right when it is read. The
+  deterministic guards are the unit tests (`route-announcer.test.tsx`'s `ListsFixture`,
+  `list-detail-heading.test.tsx`), each mutation-tested. The e2e records every string the live region
+  held, so a wrong name spoken and corrected still fails it.
+- **A phone in landscape is ≥ 45rem wide and gets the wide shell**, so the pinned header takes
+  ~65–110px of a ~390px viewport permanently; desktop zoom on a short screen likewise (review 2, WCAG
+  1.4.10). Keeping the tabs reachable is the point of the change; pinning only above a minimum height
+  is the fix if it is judged too much.
+- **A busy heading is focused while blank**, so a screen reader may read an empty level-1 heading
+  before the live region names the list (both reviewers). The window is one IndexedDB read now.
+- **Cosmetic, under a modal sheet's backdrop:** `sheet.tsx` puts `scrollbar-gutter` on `<body>`, and
+  the `inset-x-0` header may widen by a classic scrollbar's width while a modal sheet is open.
+- **The sticky side panels have `header + 1rem` less height**, so a tall answer is cut off at the
+  bottom until the column is scrolled to its end.
+- **Two lists with the same name announce the same name.** The clear-and-refill still makes the
+  second one audible.
+
+### Files another session may collide with
+
+`components/shell/app-shell.tsx`, `components/ui/page-header.tsx`, `components/lists/list-detail.tsx`,
+`src/routes/list-detail.tsx`, `src/shell/route-announcer.tsx`, `app/globals.css`, `app/tokens.css`
+(one token), `components/lookup/lookup-view.tsx`, `components/reader/reader-screen.tsx` (one class).
+Tests: `tests/e2e/core/routing.spec.ts`, `tests/e2e/d/spa-fallback.spec.ts`,
+`tests/e2e/d/origin-agnostic.spec.ts`, the new `tests/e2e/core/wide-shell.spec.ts`; the census in
+`tests/unit/shell/tab-routes.test.ts` moved to **57 files / 49 specs / 50 navigating**.
+`tests/unit/ui/gallery-tokens.test.ts` lists `--shell-header-height` as not a colour.
+
+No frozen surface was touched.
+
+### What this makes false in CLAUDE.md, and in W8a's section
+
+- W8a's "three traps" says the wide header is not sticky and every scroll-restoration test must
+  navigate without a click. Both are no longer true; `followTab` is gone.
+- W8a's "Recorded, not fixed" items one and four (the header, and every list announced as
+  "Library") are done.
+
+### Gates
+
+All green on the final commit: `pnpm lint`, `pnpm typecheck`, `pnpm build`, `pnpm test` (**2,154**
+app + **103** server), `pnpm e2e` (**338** passed in 10.6 min) and `pnpm smoke --no-api` (**41 ok** —
+29 assets, 6 paths, 6 API cases skipped and said so).
+
+The first full `pnpm e2e` (before the review fixes) was 334 passed, 3 failed — exactly the three
+missing-list heading assertions both reviews predicted. `tests/unit/pwa/data-safety.test.tsx`'s known
+intermittent did not show in any run here.
+
+**`--repeat-each=8`**, as the brief asks: `core/wide-shell.spec.ts`, `core/routing.spec.ts` and
+`d/spa-fallback.spec.ts` together, **152/152** on the final build. Every new e2e case was also run
+against runtime mutants and fails each one it exists for: no scroll padding (Tab/Shift+Tab and the
+section jump fail), header in flow (all tab-reach cases fail), header `sticky` (the real-click and
+tab-focus cases fail). The unit guards — announcer wait, per-id name, per-id error, name before
+members — were each mutation-tested the same way.

@@ -15266,3 +15266,23 @@ of the order is editorial, not mechanical, and that it changes no entry's text.
   and that no capped query or posting set moved.
 
 ### Gates
+
+All run on the final tree:
+
+- `pnpm lint`, `pnpm typecheck`, `pnpm build`: clean.
+- `pnpm data --force`, then `pnpm data:verify`: all checks pass, including "rowid order equals
+  compareEntries order". The artifact is `cbce9a0e…`.
+- `pnpm golden --check`: the fixtures already match.
+- `pnpm test`: **2,488** app tests and **103** server tests pass.
+  - An earlier run failed three tests that read the output of `pnpm build`, because this fresh
+    container had not built yet. They pass after a build.
+- `pnpm e2e`: **389 passed** in 18.0 min. The two upgrade cases pass, so a browser holding the
+  previous artifact picks up this one: `d/dict-ask.spec.ts` "whose stored copy is an older build…"
+  and `d/dict-wasm.spec.ts` "a browser holding an older artifact…".
+- `pnpm smoke --no-api` against `pnpm preview`: **41 ok**, with 6 API cases skipped and reported as
+  skipped.
+- Mutation checks:
+  - a `compareEntries` that breaks the last tie by id backwards: `pnpm golden --check` refuses it,
+    and the test rejects it (it was accepted before the fix);
+  - `compareEntries` without the cross-reference rule: two `golden-rebless.test.ts` tests fail, and
+    so does the 尽可能 pin in `reading-order.test.ts`.

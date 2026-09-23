@@ -184,9 +184,16 @@ describe('the seven routes are gone', () => {
     // a new learner at three viewports, held by geometry — tab labels on one
     // line, 44px touch targets, focus clear of the phone's tab bar, rows and a
     // heading that keep their text, no raw error on a failed download).
+    // The reader-punctuation fix adds one, a spec that does NOT navigate itself
+    // (it enters `/read` through `p5/helpers.ts`'s `readText`):
+    // `core/reader-punctuation.spec.ts` (no line starts with closing
+    // punctuation or ends with opening, at three widths, held by geometry; a
+    // long word and its comma inside the column at 320px; a drag across a
+    // glued boundary selecting what it did before; focus and the
+    // accessibility tree unchanged by the wrapper).
     expect({ files: files.length, specs: specs.length, navigating: navigating.length }).toEqual({
-      files: 59,
-      specs: 51,
+      files: 60,
+      specs: 52,
       navigating: 52,
     });
   });

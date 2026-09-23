@@ -62,6 +62,7 @@ import { usePinyinDisplay } from '@/components/hanzi/pinyin-display';
 import { speakOneCharacter, useSpeakingOffset } from '@/components/hanzi/speak-control';
 import { spanIndexOfEvent, type SpanSelect } from '@/components/hanzi/use-span-select';
 import { alignReading, type Alignment } from '@/lib/hanzi/align';
+import { splitForGlue } from '@/lib/hanzi/glue';
 import { cn } from '@/lib/cn';
 import type { PinyinDisplay } from '@/lib/db/schema';
 import type { TTSProvider } from '@/lib/tts/provider';
@@ -374,55 +375,52 @@ const Runs = memo(function Runs({
    */
   speakingOffset: number | null;
 }) {
-  return (
-    <>
-      {views.map((view, index) => {
-        const state = states?.[index];
-        const revealed = showAll || revealedRuns.has(index);
-        // A run the dictionary has no reading for renders plain: no ruby, no
-        // state, not a tap target. `data-testid="reader-text-run"` is the hook
-        // `tests/e2e/p5` already reads, and it survives verbatim.
-        if (!view.tappable) {
-          return (
-            <span key={index} {...(plainRunTestId ? { 'data-testid': plainRunTestId } : {})}>
-              {view.run.text}
-            </span>
-          );
-        }
-        const wordLevel = view.alignment.mode === 'fallback';
-        // Overlap, not containment: a dragged span can start or end inside a
-        // word, and the ring is the coarse answer to "what did I select".
-        const inSpan =
-          span !== null && span !== undefined && view.start <= span.to && view.end > span.from;
-        const Word = interactive ? 'button' : 'span';
-        return (
-          <Word
-            key={index}
-            {...(interactive ? ({ type: 'button' } as const) : {})}
-            data-testid={wordTestId}
-            data-token-index={index}
-            data-token={view.run.text}
-            data-state={state ?? 'unknown'}
-            data-align={view.alignment.mode}
-            {...(inSpan ? { 'data-in-span': 'true' } : {})}
-            className={cn(
-              'hanzi-token cursor-pointer align-baseline transition-colors',
-              // A `<button>` brings its own box; these are what `reader-text.tsx`
-              // used to keep a word sitting in the line like the text it is.
-              interactive && 'px-0 font-[inherit] leading-[inherit]',
-              state ? STATE_CLASS[state] : undefined,
-              // Vermillion, not jade: the reader already tints a word in
-              // *learning* jade, and a ring in the same colour would read as a
-              // word state the learner has earned rather than a selection they
-              // just made. It matches `::highlight(span-select)` next door.
-              inSpan && 'rounded-[var(--r-sm)] ring-2 ring-practice ring-offset-1 ring-offset-surface',
-            )}
-          >
-            {wordLevel ? (
-              // One annotation over the whole run, or none at all when the
-              // dictionary has no reading. Never a per-character guess.
-              <ruby data-testid="hanzi-char" data-run-index={index}>
-                {/*
+  // A run the dictionary has no reading for renders plain: no ruby, no state,
+  // not a tap target. `data-testid="reader-text-run"` is the hook `tests/e2e/p5`
+  // already reads, and it survives verbatim.
+  const plain = (text: string, key: string) => (
+    <span key={key} {...(plainRunTestId ? { 'data-testid': plainRunTestId } : {})}>
+      {text}
+    </span>
+  );
+
+  const word = (view: RunView, index: number) => {
+    const state = states?.[index];
+    const revealed = showAll || revealedRuns.has(index);
+    const wordLevel = view.alignment.mode === 'fallback';
+    // Overlap, not containment: a dragged span can start or end inside a
+    // word, and the ring is the coarse answer to "what did I select".
+    const inSpan =
+      span !== null && span !== undefined && view.start <= span.to && view.end > span.from;
+    const Word = interactive ? 'button' : 'span';
+    return (
+      <Word
+        key={index}
+        {...(interactive ? ({ type: 'button' } as const) : {})}
+        data-testid={wordTestId}
+        data-token-index={index}
+        data-token={view.run.text}
+        data-state={state ?? 'unknown'}
+        data-align={view.alignment.mode}
+        {...(inSpan ? { 'data-in-span': 'true' } : {})}
+        className={cn(
+          'hanzi-token cursor-pointer align-baseline transition-colors',
+          // A `<button>` brings its own box; these are what `reader-text.tsx`
+          // used to keep a word sitting in the line like the text it is.
+          interactive && 'px-0 font-[inherit] leading-[inherit]',
+          state ? STATE_CLASS[state] : undefined,
+          // Vermillion, not jade: the reader already tints a word in
+          // *learning* jade, and a ring in the same colour would read as a
+          // word state the learner has earned rather than a selection they
+          // just made. It matches `::highlight(span-select)` next door.
+          inSpan && 'rounded-[var(--r-sm)] ring-2 ring-practice ring-offset-1 ring-offset-surface',
+        )}
+      >
+        {wordLevel ? (
+          // One annotation over the whole run, or none at all when the
+          // dictionary has no reading. Never a per-character guess.
+          <ruby data-testid="hanzi-char" data-run-index={index}>
+            {/*
                   One annotation, but still one `data-char-index` PER
                   CHARACTER. The index used to be a hardcoded 0 on the whole
                   run, so a tap anywhere inside AA制 — or any `xx5` entry, or
@@ -432,41 +430,106 @@ const Runs = memo(function Runs({
                   What fallback means is that the READING cannot be split, not
                   that the characters cannot be counted.
                 */}
-                {offsetsOf(view).map(({ char, offset }, charIndex) => (
-                  <span
-                    key={charIndex}
-                    data-char-index={charIndex}
-                    {...(offset === speakingOffset ? { 'data-speaking': 'true' } : {})}
-                    className={offset === speakingOffset ? SPEAKING_CLASS : undefined}
-                  >
-                    {char}
-                  </span>
-                ))}
-                {revealed && view.alignment.reading ? (
-                  <>
-                    <rp>(</rp>
-                    <rt data-testid="hanzi-rt" className={rtClassName}>
-                      {view.alignment.reading}
-                    </rt>
-                    <rp>)</rp>
-                  </>
-                ) : null}
-              </ruby>
-            ) : (
-              view.alignment.chars.map((aligned, charIndex) => (
-                <Ruby
-                  key={charIndex}
-                  char={aligned.char}
-                  syllable={aligned.syllable}
-                  speaking={offsetsOf(view)[charIndex]?.offset === speakingOffset}
-                  revealed={revealed}
-                  runIndex={index}
-                  charIndex={charIndex}
-                  {...(rtClassName === undefined ? {} : { rtClassName })}
-                />
-              ))
-            )}
-          </Word>
+            {offsetsOf(view).map(({ char, offset }, charIndex) => (
+              <span
+                key={charIndex}
+                data-char-index={charIndex}
+                {...(offset === speakingOffset ? { 'data-speaking': 'true' } : {})}
+                className={offset === speakingOffset ? SPEAKING_CLASS : undefined}
+              >
+                {char}
+              </span>
+            ))}
+            {revealed && view.alignment.reading ? (
+              <>
+                <rp>(</rp>
+                <rt data-testid="hanzi-rt" className={rtClassName}>
+                  {view.alignment.reading}
+                </rt>
+                <rp>)</rp>
+              </>
+            ) : null}
+          </ruby>
+        ) : (
+          view.alignment.chars.map((aligned, charIndex) => (
+            <Ruby
+              key={charIndex}
+              char={aligned.char}
+              syllable={aligned.syllable}
+              speaking={offsetsOf(view)[charIndex]?.offset === speakingOffset}
+              revealed={revealed}
+              runIndex={index}
+              charIndex={charIndex}
+              {...(rtClassName === undefined ? {} : { rtClassName })}
+            />
+          ))
+        )}
+      </Word>
+    );
+  };
+
+  if (!interactive) {
+    return (
+      <>
+        {views.map((view, index) =>
+          view.tappable ? word(view, index) : plain(view.run.text, String(index)),
+        )}
+      </>
+    );
+  }
+
+  /**
+   * **Punctuation travels with its word.** This is the first-run audit's "found,
+   * not fixed" item 2, and it applies only here, where the words are buttons.
+   *
+   * A `<button>` is an atomic inline. CSS gives an atomic inline a break
+   * opportunity on both sides, whatever the character beside it, so the rule
+   * that keeps "，" off the start of a line never got a say. "，我可以…" and a
+   * lone "？" are what the reader printed on a phone. The non-interactive call
+   * sites render their words as inline `<span>`s, which the line breaker sees
+   * straight through, and they keep exactly the DOM they had.
+   *
+   * So a word shares one `.hanzi-glue` wrapper with the closing marks after it
+   * and the opening marks before it. `ruby.css` says why the wrapper is an
+   * `inline-block` and not `white-space: nowrap`. The wrapper is layout and
+   * nothing else, which is what C3 and C5b depend on:
+   *
+   *   - **It has no text of its own and no data attributes.** The character
+   *     map (`buildCharMap` walks text nodes), the `data-span-index` stamp
+   *     (`closest('[data-char-index]')`), the tap handler and the degrade's
+   *     hit-test (`closest('[data-token-index]')`) all resolve exactly as they
+   *     did. The characters are the same text, in the same order.
+   *   - **It has no role, no tab stop and no label.** Focus order, and what a
+   *     screen reader says, are the words' and the punctuation's, unchanged.
+   *   - **Segmentation does not change.** `splitForGlue` only divides a plain
+   *     run's text between the wrappers either side of it, in order. A plain
+   *     run can therefore render as up to three `reader-text-run` spans where
+   *     it rendered as one. Each is still plain, untappable and unstamped, as
+   *     punctuation always was.
+   */
+  const splits = views.map((view, index) =>
+    view.tappable
+      ? null
+      : splitForGlue(
+          view.run.text,
+          views[index - 1]?.tappable ?? false,
+          views[index + 1]?.tappable ?? false,
+        ),
+  );
+  return (
+    <>
+      {views.map((view, index) => {
+        const split = splits[index];
+        if (split) return split.rest ? plain(split.rest, String(index)) : null;
+        const before = splits[index - 1]?.trail ?? '';
+        const after = splits[index + 1]?.lead ?? '';
+        if (!before && !after) return word(view, index);
+        return (
+          <span key={`glue-${index}`} className="hanzi-glue">
+            {before ? plain(before, `trail-${index - 1}`) : null}
+            {word(view, index)}
+            {after ? plain(after, `lead-${index + 1}`) : null}
+          </span>
         );
       })}
     </>

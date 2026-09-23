@@ -90,6 +90,7 @@ import { getLearnerProfile } from '@/lib/srs/profile';
 import type { CardContext, Entry, EntryId } from '@/lib/types';
 
 import { API_CONFIGURED, ApiNotConfiguredError, apiFetch } from '@/src/access/client';
+import { responseProblem } from '@/lib/api/availability';
 
 /** The seam a test replaces. Production is `apiFetch`, which applies the API
  *  base and attaches `X-Tangram-Access` (`web.md` W4). */
@@ -228,9 +229,24 @@ interface ErrorBody {
   hint?: string;
 }
 
-async function errorMessage(res: Response): Promise<string> {
+/**
+ * A refusal, read once: either "that was not the API" (a static host's 404, a
+ * proxy's 5xx — `responseProblem`) or the API's own answer with its hint.
+ */
+async function refusal(res: Response): Promise<AskOutcome> {
   const body = (await res.json().catch(() => null)) as ErrorBody | null;
-  return body?.hint ?? `The ask service answered HTTP ${res.status}.`;
+  if (responseProblem(res.status, body) === 'unreachable') {
+    return {
+      state: 'unavailable',
+      reason: 'unreachable',
+      message: 'The AI server did not answer.',
+    };
+  }
+  return {
+    state: 'unavailable',
+    reason: statusReason(res.status),
+    message: body?.hint ?? `The ask service answered HTTP ${res.status}.`,
+  };
 }
 
 /**
@@ -324,13 +340,7 @@ export async function ask(input: AskInput, options: AskOptions = {}): Promise<As
         retrieved: retrieved.map(toRetrieved),
       }),
     });
-    if (!res.ok) {
-      return {
-        state: 'unavailable',
-        reason: statusReason(res.status),
-        message: await errorMessage(res),
-      };
-    }
+    if (!res.ok) return await refusal(res);
     const body = (await res.json()) as AskAnswerResponse;
 
     /**

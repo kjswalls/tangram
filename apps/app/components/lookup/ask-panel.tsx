@@ -539,20 +539,20 @@ export interface AskPanelProps {
   context?: CardContext;
   className?: string;
   /**
-   * Whether this build has an API (`API_CONFIGURED`). A prop only so the
-   * gallery and the unit tests can draw the not-configured state without a
-   * second build; the app never passes it.
+   * Whether this build has an API (`API_CONFIGURED`). A prop only so the unit
+   * tests can draw the not-configured state without a second build; the app
+   * never passes it.
    */
   configured?: boolean;
 }
 
 /**
- * The two reasons that mean "a base is set and nothing answered" — the pair
- * that gets a retry. Every other `unavailable` reason is a server that did
+ * The reasons that mean "a base is set and the API did not answer" — the ones
+ * that get a retry. Every other `unavailable` reason is a server that did
  * answer, and keeps the quiet line it always had.
  */
 export function isUnreachable(reason: AskUnavailableReason): boolean {
-  return reason === 'offline' || reason === 'timeout';
+  return reason === 'offline' || reason === 'timeout' || reason === 'unreachable';
 }
 
 export function AskPanel({ query, context, className, configured = API_CONFIGURED }: AskPanelProps) {
@@ -940,13 +940,23 @@ export function AskPanel({ query, context, className, configured = API_CONFIGURE
               {ASK_OFFLINE_CHIP}
             </Chip>
             <p data-testid="ask-status" className="text-sm text-muted">
-              {ASK_UNREACHABLE_BODY} The dictionary result above is unaffected.
+              {/* A server that accepted the connection and was too slow was
+                  reached; saying otherwise would be false. Same retry. */}
+              {state.status === 'error' && state.reason === 'timeout'
+                ? state.message
+                : ASK_UNREACHABLE_BODY}{' '}
+              The dictionary result above is unaffected.
             </p>
             <Button
               data-testid="ask-retry"
               variant="secondary"
               size="sm"
-              onClick={() => setAttempt((count) => count + 1)}
+              onClick={() => {
+                // "Thinking…" at once, not after the debounce: a button that
+                // looks inert for half a second gets pressed twice.
+                setState({ status: 'loading' });
+                setAttempt((count) => count + 1);
+              }}
             >
               {ASK_RETRY_LABEL}
             </Button>

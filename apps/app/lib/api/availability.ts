@@ -44,10 +44,35 @@ export function configuredProblem(configured: boolean = API_CONFIGURED): ApiProb
  *
  * An `AbortError` is deliberately **not** here: that is the learner moving on,
  * and no surface renders it.
+ *
+ * **Apply it to what the fetch call itself threw, and nothing wider.** A
+ * `TypeError` from app code after a response arrived — a malformed body
+ * reaching `.map` — is a server that answered, and reading it as unreachable
+ * puts a retry beside a failure no retry can fix.
  */
 export function apiProblemOf(error: unknown): ApiProblem | undefined {
   if (error instanceof ApiNotConfiguredError) return 'not-configured';
   if (error instanceof TypeError) return 'unreachable';
   if (error instanceof DOMException && error.name === 'TimeoutError') return 'unreachable';
   return undefined;
+}
+
+/**
+ * Statuses that mean "whatever answered is not the API" — **unless** the body
+ * is the API's own error shape (`{ error, hint }`, `ContractErrorBody`).
+ *
+ * A static host answering a wrong base with its 404 page, a platform proxy
+ * answering 502/503/504 while the service is down or restarting: no server of
+ * ours saw the request, so to the learner it is the same as a refused port,
+ * and a retry is the right control. The API's own 502 (a provider failure)
+ * carries `{ error: 'provider-failed', hint }` and stays a server error.
+ */
+const NOT_THE_API = new Set([404, 502, 503, 504]);
+
+/** The problem a non-OK response names, or `undefined` for a real server answer. */
+export function responseProblem(status: number, body: unknown): ApiProblem | undefined {
+  if (!NOT_THE_API.has(status)) return undefined;
+  const error =
+    typeof body === 'object' && body !== null ? (body as { error?: unknown }).error : undefined;
+  return typeof error === 'string' ? undefined : 'unreachable';
 }

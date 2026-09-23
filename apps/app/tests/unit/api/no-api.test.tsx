@@ -32,7 +32,8 @@ import {
 } from '@/components/review/example-sentences';
 import { RECALL_NOT_CONFIGURED, RecallInput } from '@/components/review/recall-input';
 import { ask, resetAskInfo, unavailableReason } from '@/lib/ai/ask-client';
-import { apiProblemOf, configuredProblem } from '@/lib/api/availability';
+import { apiProblemOf, configuredProblem, responseProblem } from '@/lib/api/availability';
+import { isUnreachable } from '@/components/lookup/ask-panel';
 import { closeDb, getDb, getRepository } from '@/lib/db/get-db';
 import { resetDictStores, setDictStore } from '@/lib/dict/browser-store';
 import {
@@ -103,6 +104,29 @@ describe('whether a build has an API', () => {
     expect(apiProblemOf(new DOMException('aborted', 'AbortError'))).toBeUndefined();
     expect(apiProblemOf(new Error('a 502 with a reason'))).toBeUndefined();
     expect(apiProblemOf(undefined)).toBeUndefined();
+  });
+
+  it('reads a 404 or a proxy 5xx as unreachable, unless the API itself said so', () => {
+    // A static host's page, a platform proxy's gateway error: not the API.
+    expect(responseProblem(404, null)).toBe('unreachable');
+    expect(responseProblem(502, '<html>Bad gateway</html>')).toBe('unreachable');
+    expect(responseProblem(503, {})).toBe('unreachable');
+    expect(responseProblem(504, null)).toBe('unreachable');
+    // The API's own refusals carry its error shape and are server answers.
+    expect(responseProblem(502, { error: 'provider-failed', hint: 'x' })).toBeUndefined();
+    expect(responseProblem(503, { error: 'dict-data-missing' })).toBeUndefined();
+    expect(responseProblem(500, null)).toBeUndefined();
+    expect(responseProblem(429, null)).toBeUndefined();
+    expect(responseProblem(401, null)).toBeUndefined();
+  });
+
+  it('gives a retry to the reasons that mean the API did not answer, and only those', () => {
+    expect(isUnreachable('offline')).toBe(true);
+    expect(isUnreachable('timeout')).toBe(true);
+    expect(isUnreachable('unreachable')).toBe(true);
+    for (const reason of ['server', 'rate-limited', 'no-key', 'not-configured'] as const) {
+      expect(isUnreachable(reason), reason).toBe(false);
+    }
   });
 
   it('refuses in `apiFetch` without touching the network when there is no base', async () => {
@@ -178,6 +202,23 @@ describe('the ask module with no API', () => {
     expect(cacheRead).not.toHaveBeenCalled();
   });
 
+  it('reads a gateway error from something that is not the API as unreachable', async () => {
+    const repository = getRepository();
+    const status = (code: number, body: unknown) =>
+      vi.fn(async () => ({ ok: false, status: code, json: async () => body }) as Response);
+    await expect(
+      ask({ query: '打算' }, { fetchImpl: status(503, null), repository }),
+    ).resolves.toMatchObject({ state: 'unavailable', reason: 'unreachable' });
+    resetAskInfo();
+    // The API's own 502 is a provider failure, with its hint, and no retry.
+    await expect(
+      ask(
+        { query: '打算' },
+        { fetchImpl: status(502, { error: 'provider-failed', hint: 'The model failed.' }), repository },
+      ),
+    ).resolves.toMatchObject({ state: 'unavailable', reason: 'server', message: 'The model failed.' });
+  });
+
   it('names apiFetch\'s refusal as not-configured, not as offline', () => {
     expect(unavailableReason(new ApiNotConfiguredError())).toBe('not-configured');
     expect(unavailableReason(new TypeError('Failed to fetch'))).toBe('offline');
@@ -231,6 +272,44 @@ describe('the example sentences on a card back', () => {
     expect(screen.queryByTestId('examples-retry')).toBeNull();
     await new Promise((done) => setTimeout(done, 100));
     expect(fetched).toEqual([]);
+  });
+
+  it('a malformed answer is the quiet line, not "could not reach" — a retry cannot fix it', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        fetched.push(String(input));
+        if (init?.method === 'POST') {
+          // A 200 that is not the contract: grounding it throws a TypeError.
+          return { ok: true, status: 200, json: async () => ({ provider: 'fake' }) } as Response;
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ provider: 'fake', promptVersion: 'v1' }),
+        } as Response;
+      }),
+    );
+    render(<ExampleSentences entryId={DASUAN.id} />);
+    const section = screen.getByTestId('example-sentences');
+    await waitFor(() => expect(section).toHaveAttribute('data-status', 'error'));
+    expect(section).toHaveAttribute('data-api', 'ok');
+    expect(screen.queryByTestId('examples-retry')).toBeNull();
+    expect(screen.getByTestId('examples-status')).not.toHaveTextContent(EXAMPLES_UNREACHABLE);
+  });
+
+  it('a proxy 503 is unreachable, with a retry', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        fetched.push(String(input));
+        return { ok: false, status: 503, json: async () => null } as unknown as Response;
+      }),
+    );
+    render(<ExampleSentences entryId={DASUAN.id} />);
+    const section = screen.getByTestId('example-sentences');
+    await waitFor(() => expect(section).toHaveAttribute('data-api', 'unreachable'));
+    expect(screen.getByTestId('examples-retry')).toBeInTheDocument();
   });
 
   it('unreachable: says the server did not answer, and retries on request', async () => {

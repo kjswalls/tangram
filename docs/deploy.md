@@ -191,18 +191,29 @@ The static build reads **one** variable, at build time:
 
 | Variable | Required | Effect when absent |
 |---|---|---|
-| `VITE_API_BASE` | **yes**, from `backend.md` B1 | empty, i.e. same-origin — which on this static host means **no API at all**, so ask, i+1 sentences and free recall are simply dead. Build-time, so changing it needs a redeploy. Set it to `https://api.<domain>` |
+| `VITE_API_BASE` | **yes**, from `backend.md` B1 | **no API at all**. The app says so rather than failing: ask, i+1 sentences and free recall each show a "not set up in this version" line, and nothing ever sends a request. Build-time, so changing it needs a redeploy. Set it to `https://api.<domain>` |
 | `TANGRAM_DATA_DIR` | no | the workspace root's `data/`, found by walking up for `pnpm-workspace.yaml` |
 | `TANGRAM_DICT_BROTLI_QUALITY` | no | 9 (§2) |
 
 **`VITE_API_BASE` is required now, not "once the server is deployed".**
 `backend.md` B1 moved `/api/ask`, `/api/examples` and `/api/recall` into
 `apps/server` and deleted the dev/preview adapter that used to mount them on the
-app's own origin. A build with this unset produces an app whose three
-model-backed features fail silently — the ask panel reports a network error, the
-card back shows no sentences, and free recall simply gives no suggestion,
-because it was written to treat every failure as "no suggestion". `pnpm e2e`
-bakes it in through `apps/app/.env.e2e`, which is also the working example.
+app's own origin. A production build with this unset has no AI, and says so:
+`API_CONFIGURED` is false, `apiFetch` refuses without touching the network, the
+ask panel shows "Dictionary only" with a line saying AI answers are not set up,
+the card back says the same of example sentences, and free recall says it after
+the flip. Nothing else in the app is affected. `pnpm e2e` bakes the variable in
+through `apps/app/.env.e2e`, which is also the working example, and
+`tests/e2e/d/no-api.spec.ts` builds without it to hold the no-API state.
+
+**A base that is set but does not answer is a different state, on purpose.**
+A refused connection, a timeout, or a 404/502/503/504 that is not the API's own
+error body reads as "could not reach the AI server", with a *Try again* button,
+on the ask panel and the card back. Free recall stays quiet for that one — a
+retry control in the middle of a review is an interruption. **A CORS refusal
+looks exactly like this** (the browser hides the difference), so if a deployed
+app says it cannot reach a server that `curl` reaches fine, check
+`TANGRAM_ALLOWED_ORIGINS` below first.
 
 Everything else — `ANTHROPIC_API_KEY`, `TANGRAM_ACCESS_SECRET`,
 `TANGRAM_ALLOWED_ORIGINS`, the four ask timeouts, `TANGRAM_LLM_PROVIDER`,
@@ -262,8 +273,11 @@ phone browser cannot set a request header, but page script can:
    the verdict: `?access=granted` means the server accepted it and the phone is
    set up; `?access=denied` means it was wrong, and any credential that device
    held is **revoked**, because arriving with a bad key is an attempt to change
-   the key; `?access=unverified` means the check could not be completed (no
-   network), and the key is kept rather than thrown away.
+   the key. Three more say the key was **not** checked, and all three keep it:
+   `?access=unreachable` — nothing that answered was the API (no network, a
+   refused connection, or a 404 from whatever is at the base);
+   `?access=no-api` — this build has no `VITE_API_BASE`, so nobody was asked;
+   `?access=unverified` — the API answered and could not say (a 5xx, a 429).
 3. The secret lives in `localStorage` under `tangram.access.secret`.
 
 **A change in posture, stated rather than buried.** The credential used to be an

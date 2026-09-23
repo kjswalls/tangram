@@ -284,6 +284,11 @@ test.describe('built with a base nothing listens on: unreachable', () => {
     const before = toDeadApi(urls);
     expect(before).toBeGreaterThan(0);
     await page.getByTestId('ask-retry').click();
+    // The retry really starts over — the panel leaves the unreachable state
+    // at once (the debounce holds "Thinking…" for half a second) — and really
+    // asks the dead origin again, and lands back where it was.
+    await expect(panel).toHaveAttribute('data-ask-state', 'thinking');
+    await expect(panel).not.toHaveAttribute('data-api', 'unreachable');
     await expect.poll(() => toDeadApi(urls)).toBeGreaterThan(before);
     await expect(panel).toHaveAttribute('data-api', 'unreachable', { timeout: 40_000 });
 
@@ -313,7 +318,7 @@ test.describe('built with a base nothing listens on: unreachable', () => {
     await expect.poll(() => toDeadApi(urls)).toBeGreaterThan(before);
     await expect(examples).toHaveAttribute('data-api', 'unreachable', { timeout: 40_000 });
 
-    // The retry did not steal the keyboard: grading still works.
+    // Grading still works after a retry.
     await page.keyboard.press('3');
     await expect(page.getByTestId('review-empty')).toBeVisible();
   });

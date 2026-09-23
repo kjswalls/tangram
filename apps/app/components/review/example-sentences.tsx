@@ -70,7 +70,7 @@ import type { Entry } from '@/lib/types';
 // deployment with `TANGRAM_ACCESS_SECRET` set, and goes to the wrong origin
 // once `backend.md` moves the route off this one.
 import { API_CONFIGURED, apiFetch } from '@/src/access/client';
-import { apiProblemOf } from '@/lib/api/availability';
+import { apiProblemOf, responseProblem } from '@/lib/api/availability';
 import { Button } from '@/components/ui/button';
 
 /**
@@ -321,26 +321,51 @@ export function ExampleSentences({
         );
         if (cancelled) return;
 
-        const res = await apiFetch(EXAMPLES_PATH, {
-          method: 'POST',
-          signal: controller.signal,
-          headers: { 'content-type': 'application/json', accept: 'application/json' },
-          body: JSON.stringify({
-            // `toRetrieved`, not the rows themselves: assignability is a
-            // compile-time fact and `JSON.stringify` is not, so without it every
-            // one of the fourteen `Entry` fields would go on the wire.
-            entry: toRetrieved(target),
-            ...(senseIndex === undefined ? {} : { senseIndex }),
-            profile,
-            support: offered.map(toRetrieved),
-          }),
-        });
+        // The one call whose failure means "nothing answered", caught on its
+        // own: a `TypeError` from grounding a malformed body further down is
+        // a server that answered, and must not be read as unreachable.
+        let res: Response;
+        try {
+          res = await apiFetch(EXAMPLES_PATH, {
+            method: 'POST',
+            signal: controller.signal,
+            headers: { 'content-type': 'application/json', accept: 'application/json' },
+            body: JSON.stringify({
+              // `toRetrieved`, not the rows themselves: assignability is a
+              // compile-time fact and `JSON.stringify` is not, so without it every
+              // one of the fourteen `Entry` fields would go on the wire.
+              entry: toRetrieved(target),
+              ...(senseIndex === undefined ? {} : { senseIndex }),
+              profile,
+              support: offered.map(toRetrieved),
+            }),
+          });
+        } catch (error) {
+          if (cancelled || isAbort(error)) return;
+          const unreachable = apiProblemOf(error) === 'unreachable';
+          setState({
+            status: 'error',
+            answered: requested,
+            message: unreachable
+              ? EXAMPLES_UNREACHABLE
+              : 'No example sentences for this one right now.',
+            ...(unreachable ? { unreachable: true } : {}),
+          });
+          return;
+        }
         if (!res.ok) {
+          // A static host's 404 or a proxy's 5xx is "nothing answered" too;
+          // the API's own refusal carries its error shape and is not.
+          const refused = await res.json().catch(() => null);
+          const unreachable = responseProblem(res.status, refused) === 'unreachable';
           if (!cancelled) {
             setState({
               status: 'error',
               answered: requested,
-              message: 'No example sentences for this one right now.',
+              message: unreachable
+                ? EXAMPLES_UNREACHABLE
+                : 'No example sentences for this one right now.',
+              ...(unreachable ? { unreachable: true } : {}),
             });
           }
           return;
@@ -390,17 +415,13 @@ export function ExampleSentences({
         });
       } catch (error) {
         if (cancelled || isAbort(error)) return;
-        // A refused connection, a dropped one, or our own deadline: the server
-        // did not answer, which is worth saying differently from "it answered
-        // with nothing", because this one can be retried.
-        const unreachable = apiProblemOf(error) === 'unreachable';
+        // Everything after the response arrived — a body that would not
+        // parse or ground, a dictionary read. The server answered, so this
+        // is the quiet line, never the unreachable one: see the fetch above.
         setState({
           status: 'error',
           answered: requested,
-          message: unreachable
-            ? EXAMPLES_UNREACHABLE
-            : 'No example sentences for this one right now.',
-          ...(unreachable ? { unreachable: true } : {}),
+          message: 'No example sentences for this one right now.',
         });
       }
     };

@@ -33,8 +33,9 @@
  * Why no model could be reached. The chip does not have to show it.
  *
  * `not-configured` is the one reason that is not about this request: the build
- * has no API at all (`API_CONFIGURED`, `lib/api/availability.ts`). `offline`
- * and `timeout` are the panel's "unreachable" pair, the two that earn a retry.
+ * has no API at all (`API_CONFIGURED`, `lib/api/availability.ts`). `offline`,
+ * `timeout` and `unreachable` (a 404 or a proxy's 5xx from something that is
+ * not the API — `responseProblem`) are the three that earn a retry.
  */
 export type AskUnavailableReason =
   | 'offline'
@@ -42,6 +43,7 @@ export type AskUnavailableReason =
   | 'server'
   | 'rate-limited'
   | 'timeout'
+  | 'unreachable'
   | 'not-configured';
 
 export type AskStateName = 'idle' | 'thinking' | 'answered' | 'unavailable' | 'ungrounded';

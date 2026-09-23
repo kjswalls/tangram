@@ -60,11 +60,14 @@ test still passes.** If you touch either file, check the invariant by running it
 (`backend.md` B1/B2); the point still stands and is now `apps/server`'s, written up in
 `docs/deploy.md` §5a.
 
-Node **>= 22.22** (React Router 8's floor); pnpm 10. Playwright uses the container's Chromium via
+Node **>= 22.22** (React Router 8's floor — `react-router` declares it itself); pnpm 10. The floor is
+enforced by `scripts/check-node.ts`, first in `pnpm build`, **not** by `engine-strict`: `cedict-json`
+pins a bare `node: "22"` on a package we never execute, and with `engine-strict` no Node a Vercel build
+can use satisfied both (`docs/deploy.md` §1). Vercel builds on Node 24. Playwright uses the container's Chromium via
 `executablePath: /opt/pw-browsers/chromium` — **never run `playwright install`**. `pnpm e2e` occupies
 `$PORT` (default 3000).
 
-> **Migration state, as of `web.md` W9.** Landed: `web.md` **W0–W6, W8a and W9** — the workspace and
+> **Migration state, as of 2026-09-23.** Landed: `web.md` **W0–W6, W8a and W9** — the workspace and
 > the Vite swap, the host config and the dictionary's web delivery, the service worker's real cache
 > name, the access gate, install/persist/backup, the self-hosted fonts, the `?q=` URL model and the
 > keyboard registry, and the desktop decision record. `data.md` **D1–D6** — the SQLite dictionary,
@@ -74,11 +77,19 @@ Node **>= 22.22** (React Router 8's floor); pnpm 10. Playwright uses the contain
 > gate is `packages/access` reading `X-Tangram-Access`, the worker's cache name is a hash of Vite's
 > output, and `pnpm smoke` asserts content rather than status.
 >
+> Landed since, outside any plan's phase list (each has a `HANDOFF.md` section): the **list importer**
+> (`wave-zero.md` §8a/§8b); **no API as a visible state** rather than dead controls; the **wide shell's
+> pinned header** and per-list headings; **test isolation** (every unit test starts from an empty
+> IndexedDB); the **recorded-not-fixed polish**; a **raw `capi` cell extractor** under the wasm runner
+> (row-heavy lookups about halve their SQL time); the **first-run audit** (WCAG AA contrast, which moved
+> three token hexes; 44px touch targets; no developer text on screen); **reader punctuation** that
+> never starts a line; and the **default-reading fix** below.
+>
 > Not landed, and deliberately so: **W7** (the marketing site — the owner deferred it on 2026-09-17)
 > and **W8b** (the command palette — `wave-zero.md` §10c ships it with the desktop application, and
 > W8's acceptance criteria are written in two sets for exactly this case).
 >
-> Seven things a builder must not read a green gate as having finished:
+> Eight things a builder must not read a green gate as having finished:
 >
 > - **`pnpm smoke` needs to be told where the API is.** Since B1 the app's own origin 404s every
 >   `/api/**` path, so the command refuses to run without `--api-base <origin>` or `--no-api` rather
@@ -109,9 +120,20 @@ Node **>= 22.22** (React Router 8's floor); pnpm 10. Playwright uses the contain
 >   `tests/unit/db/repository.test.ts` names all five, so a sixth cannot arrive unguarded and a stub
 >   returning a plausible empty value cannot pass for an implementation.
 > - **Two gloss searches exceed the 50 ms interactive budget** in wasm (`to` and `the`, at
->   89–100 ms) and are pinned by name at a 200 ms ceiling. `wave-zero.md` §10e is why the cap was
->   not lowered; any *other* interactive query over 50 ms fails the suite.
->
+>   84–96 ms since the cell extractor) and are pinned by name at a 200 ms ceiling. `wave-zero.md` §10e
+>   is why the cap was not lowered, and since 2026-09-23 it rests on measurement: the two-pass
+>   projection cannot pay, and `glossTier` alone is ~41–52 ms of JavaScript. Any *other* interactive
+>   query over 50 ms fails the suite.
+> - **The dictionary's row order is data, and it was teaching wrong readings until 2026-09-23.**
+>   Every place that shows "the" reading shows a headword's *first* entry, and `compareEntries`
+>   (`lib/dict/rank.ts`) broke frequency ties by id, alphabetically, so 说 was shuì, 要 yāo and 吗 má.
+>   It now breaks them by HSK band (`HANDOFF.md`, "The default reading"). Three consequences for
+>   anyone who touches that function: `scripts/build-data.ts` assigns `entries.rowid` in its order,
+>   so **the artifact must be rebuilt with `pnpm data --force`** — `pnpm build` only generates a
+>   *missing* artifact and will quietly test the old one; the goldens are re-blessed with
+>   `pnpm golden`, which **refuses** any difference `scripts/golden-rebless.ts` cannot explain; and
+>   browsers key the stored copy on the manifest's sha256 (`artifactPoolName`, `artifactFetchPath`),
+>   so a rebuilt file under the same name is fetched again rather than trusted.
 > - **The list importer is in this tree now** — `wave-zero.md` §8a's port of `main`'s `abe6793`,
 >   which the owner reinstated for v1 on 2026-09-18. Paste, Pleco and Anki exports resolve through
 >   `DictStore.resolve`, which is implemented; it is **not** one of the members that still throws.
@@ -229,6 +251,9 @@ conflict policy until `backend.md` B5 adds them through the frozen interface dif
 ## Conventions
 
 - `"type": "module"`; TypeScript strict; `@/*` maps to the app root in both the bundler and Vitest.
+- **Every unit test starts from an empty IndexedDB** (`tests/unit/setup.ts` deletes every database
+  before each test). Seed in `beforeEach`, never `beforeAll`. A flake that hid behind leaked state for
+  weeks turned out to be a test whose assertion checked nothing (`HANDOFF.md`, "Test isolation").
 - zod **3** (v4's API differs), vitest **4**, TypeScript **5.9**, ts-fsrs **5** — the pins in
   `docs/STACK.md` §6 and `docs/data-sources.md` are deliberate, not stale. Re-check a version row
   before you build on it; several were recorded from search summaries.

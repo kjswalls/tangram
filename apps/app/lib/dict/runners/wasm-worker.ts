@@ -641,6 +641,7 @@ async function open(
     imported: result.imported,
     transfer: result.transfer,
     sqliteVersion: runtime.version.libVersion,
+    ...(result.name === undefined ? {} : { stored: result.name }),
   };
 }
 

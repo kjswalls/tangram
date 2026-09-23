@@ -19,7 +19,7 @@
  *     everything outstanding; without that the page waits forever on a promise
  *     nobody will settle.
  */
-import { MANIFEST_FILE, artifactFetchPath, type DictManifest } from '../artifact';
+import { MANIFEST_FILE, artifactFetchPath, artifactPoolName, type DictManifest } from '../artifact';
 import { assetUrl } from '../asset-url';
 import { DictOpenError } from '../open-error';
 import type { SqlQuery, SqlRunner, SqlValue } from '../sql';
@@ -38,15 +38,26 @@ export interface WasmRunnerOptions {
   /** The pointer at the artifact's content-addressed filename. Never immutable. */
   manifestUrl?: string;
   /**
-   * Open only what this origin has already stored, and **fetch nothing**.
+   * Open only what this origin has already stored, and **never download it**.
    *
    * The same path a lost network takes (see `fetchManifest`), reached on
    * purpose: `components/dict/dict-status.tsx` says an `absent` dictionary is
    * "an explicit ask, with the size in it … a silent 14 MB download on a
    * metered connection is a hostile default", and `data.md` D6 is what made
    * `<DictGate>`'s mount-time `open()` mean *download* rather than *probe*.
-   * With this set, the mount attempt costs nothing and either finds a
-   * dictionary or leaves the learner the ask.
+   * With this set, a fresh origin fetches nothing at all and gets the ask.
+   *
+   * **An origin that has a dictionary also checks it is the current one.**
+   * Once the pool has answered, the two-hundred-byte manifest is fetched and
+   * the stored file's name compared with `artifactPoolName(manifest)`; a
+   * mismatch is a stale artifact — a rebuild under the same filename, or a new
+   * snapshot — and the open fails as `download`, so the caller's probe falls
+   * through to the full open that sweeps and re-imports it (`wasm-store.ts`).
+   * Without this the mount probe opened whatever was pooled and nothing in the
+   * session ever asked again: a learner who had visited once kept the old
+   * dictionary indefinitely. A manifest that cannot be had keeps the stored
+   * one — offline, and a broken deploy, are not reasons to lose a working
+   * dictionary.
    */
   storedOnly?: boolean;
   /** Overrides where the `.sqlite` itself is fetched from. Tests use it. */
@@ -299,6 +310,22 @@ export async function wasmRunner(options: WasmRunnerOptions = {}): Promise<WasmS
     await link.send({ type: 'close' }).catch(() => {});
     link.terminate();
     throw error;
+  }
+  if (options.storedOnly && report.stored !== undefined) {
+    // After the pool answered, never before: a fresh origin's mount stays a
+    // mount that fetches nothing (`tests/e2e/d/dict-ask.spec.ts`).
+    const current = await fetchManifest(options.manifestUrl ?? DEFAULT_MANIFEST_URL).catch(
+      () => null,
+    );
+    const wanted = current === null ? undefined : artifactPoolName(current);
+    if (wanted !== undefined && wanted !== report.stored) {
+      await link.send({ type: 'close' }).catch(() => {});
+      link.terminate();
+      throw new DictOpenError(
+        'download',
+        `the stored dictionary ${report.stored} is not the one this deploy serves (${wanted})`,
+      );
+    }
   }
   options.onOpen?.(report);
 

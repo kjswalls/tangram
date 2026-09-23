@@ -24,8 +24,10 @@
  * `components/dict/dict-status.tsx` says exists because "a silent 14 MB
  * download on a metered connection is a hostile default") unreachable. The
  * mount is `openStored()` now: it opens what this origin already has and
- * fetches nothing, so a returning learner sees no gate and a new one sees the
- * ask. `download()` is behind the button.
+ * downloads nothing, so a returning learner sees no gate and a new one sees the
+ * ask. `download()` is behind the button. (When something *is* stored, the
+ * probe also reads the two-hundred-byte manifest to check it is the current
+ * build; a stale one is re-imported by the full open — `lib/dict/runners/wasm.ts`.)
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 

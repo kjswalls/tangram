@@ -36,6 +36,7 @@ import type { DictEntry } from '../../../lib/dict/types';
 import { nodeRunner } from '../../../lib/dict/runners/node';
 import { SqliteDictStore } from '../../../lib/dict/sqlite-store';
 import { workspaceRoot } from '../../../lib/server/roots';
+import { MA2, MA5, MA_SENTENCE, makeStaleArtifact } from './stale-artifact';
 
 const RECORD = 'test-results/d4-record.json';
 const record: Record<string, unknown> = {};
@@ -770,28 +771,15 @@ test.describe('the OPFS dictionary', () => {
   test('a browser holding an older artifact under the same filename imports the new one', async ({
     page,
   }) => {
-    const MA5 = '嗎|吗[ma5]';
-    const MA2 = '嗎|吗[ma2]';
-    const stale = join(tmpdir(), `tangram-stale-${process.pid}.sqlite`);
-    writeFileSync(stale, readFileSync(ARTIFACT));
-    const db = new DatabaseSync(stale);
-    const rowid = (id: string) =>
-      Number((db.prepare('SELECT rowid AS r FROM entries WHERE id = ?').get(id) as { r: number }).r);
-    const [ma5, ma2] = [rowid(MA5), rowid(MA2)];
-    expect(ma5, 'this artifact does not already put ma before má').toBeLessThan(ma2);
-    db.exec(`UPDATE entries SET rowid = -1 WHERE rowid = ${ma5};
-             UPDATE entries SET rowid = ${ma5} WHERE rowid = ${ma2};
-             UPDATE entries SET rowid = ${ma2} WHERE rowid = -1;`);
-    db.close();
-    const staleBytes = readFileSync(stale).byteLength;
+    const { path: stale, bytes: staleBytes } = makeStaleArtifact(ARTIFACT, 'wasm');
 
     const firstOf吗 = () =>
-      page.evaluate(async () => {
-        const result = (await window.__dictWasm!.segment('你想跟我一起去吗')) as {
+      page.evaluate(async (sentence) => {
+        const result = (await window.__dictWasm!.segment(sentence)) as {
           tokens: { text: string; entryIds?: string[] }[];
         };
         return result.tokens.at(-1)?.entryIds?.[0];
-      });
+      }, MA_SENTENCE);
 
     // The old client's state: its manifest had no reason to key on a digest.
     await page.route(`**/${MANIFEST_FILE}`, (route) =>

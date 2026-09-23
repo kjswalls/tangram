@@ -231,6 +231,12 @@ test.describe('built with VITE_API_BASE empty: not configured', () => {
     // --- Library: lists, the importer and a backup.
     await page.goto('/library');
     await ready(page);
+    // The settings are there, and the two toggles for model-backed features
+    // are not: this build can never serve either.
+    await expect(page.getByTestId('settings-new-per-day')).toBeVisible();
+    await expect(page.getByTestId('settings-card-toggles')).toHaveCount(0);
+    await expect(page.getByTestId('settings-examples-on-back')).toHaveCount(0);
+    await expect(page.getByTestId('settings-free-recall')).toHaveCount(0);
     await page.getByTestId('import-open').click();
     await page.getByLabel('Words to import').fill('你好\n');
     await page.getByLabel('Imported list name').fill('No API');
@@ -321,6 +327,14 @@ test.describe('built with a base nothing listens on: unreachable', () => {
     // Grading still works after a retry.
     await page.keyboard.press('3');
     await expect(page.getByTestId('review-empty')).toBeVisible();
+  });
+
+  test('Library still offers the two AI toggles: a server that is down is transient', async ({
+    page,
+  }) => {
+    await page.goto('/library');
+    await expect(page.getByTestId('settings-examples-on-back')).toBeVisible();
+    await expect(page.getByTestId('settings-free-recall')).toBeVisible();
   });
 
   test('a key is kept and reported as `unreachable`, not as unverified', async ({ page }) => {

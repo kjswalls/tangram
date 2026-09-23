@@ -8,13 +8,14 @@
  * Dexie version bump, because `settings` indexes `id` and nothing else.
  */
 import { fireEvent, render, screen, waitFor } from '../render';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SettingsForm } from '@/app/settings/settings-form';
 import { closeDb, getDb, getRepository } from '@/lib/db/get-db';
 import { DB_VERSION, DEFAULT_SETTINGS, STORES, STORES_V1 } from '@/lib/db/schema';
 
 afterEach(async () => {
+  vi.unstubAllGlobals();
   await getDb().delete();
   await closeDb();
 });
@@ -67,5 +68,45 @@ describe('the card toggles', () => {
     expect(STORES_V1.settings).toBe('id');
     expect(STORES.settings).toBe(STORES_V1.settings);
     expect(DB_VERSION).toBeGreaterThanOrEqual(1);
+  });
+});
+
+/**
+ * Both toggles switch on a model-backed feature, so a build with no API
+ * (`API_CONFIGURED` false: production, `VITE_API_BASE` empty) does not offer
+ * them. A build whose API is merely down right now still does — that state is
+ * transient, and the form is not the place to discover it.
+ */
+describe('the card toggles and the API', () => {
+  it('are not offered on a build with no API, and the rest of the form is', async () => {
+    render(<SettingsForm apiConfigured={false} />);
+    // The form has loaded: a field that is not an AI toggle is there.
+    expect(await screen.findByTestId('settings-new-per-day')).toBeInTheDocument();
+    expect(screen.getByTestId('settings-short-term-steps')).toBeInTheDocument();
+    expect(screen.queryByTestId('settings-card-toggles')).toBeNull();
+    expect(screen.queryByTestId('settings-examples-on-back')).toBeNull();
+    expect(screen.queryByTestId('settings-free-recall')).toBeNull();
+    // The section's heading goes with them: a heading over nothing is not a section.
+    expect(screen.queryByText('On a card')).toBeNull();
+  });
+
+  it('are offered when an API is configured, even while it cannot be reached', async () => {
+    // Every request refuses, as a browser's fetch does for a dead origin. The
+    // form asks nobody, so it has no way to know — and must not need one.
+    const refused = vi.fn(async () => {
+      throw new TypeError('Failed to fetch');
+    });
+    vi.stubGlobal('fetch', refused);
+    render(<SettingsForm apiConfigured />);
+    expect(await screen.findByTestId('settings-examples-on-back')).toBeInTheDocument();
+    expect(screen.getByTestId('settings-free-recall')).toBeInTheDocument();
+    expect(refused).not.toHaveBeenCalled();
+  });
+
+  it('are offered by default outside a production build', async () => {
+    // Vitest is not a production build, so `API_CONFIGURED` is true here — the
+    // default the Library screen renders with.
+    render(<SettingsForm />);
+    expect(await screen.findByTestId('settings-free-recall')).toBeInTheDocument();
   });
 });

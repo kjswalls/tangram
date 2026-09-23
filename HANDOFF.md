@@ -13611,3 +13611,248 @@ above came after it and are covered by the repeat run); `pnpm smoke --no-api` **
 `--repeat-each=8` over `core/wide-shell.spec.ts`, `core/routing.spec.ts` and `core/keyboard.spec.ts`
 together: **280/280** on the final build. Each earlier run lost one case to one of the two races
 above.
+
+## The dictionary's cell extractor, measured and built — `claude/build-dict-extract`, 2026-09-23
+
+**Result: it wins in the browser, so it is built.** The worker (`lib/dict/runners/wasm-worker.ts`) no
+longer reads result rows through oo1's `Stmt.get(array)` + `narrow()`. It reads each cell through
+raw `capi` exports, in a new module, `lib/dict/runners/wasm-extract.ts`. This is `wave-zero.md`
+§10e's second remaining lever, and the "leaner worker-side extractor" (lever 1) in "The two-pass
+gloss projection, measured and closed" above.
+
+- No query, ranking, row shape or round trip changed. D2's budget table at the top of
+  `sqlite-store.ts` still holds, and is untouched.
+- No frozen surface was touched. `SqlRunner`, `DictStore` and `DictStatus` are as D1 left them.
+  `runners/node.ts` is untouched, and it is still the parity oracle.
+- **The `to`/`the` pins stay at 200 ms.** Both still measure 84–96 ms. The only change to the pin
+  is its comment.
+
+### How it was measured
+
+- **Setup:** the production `build:e2e` bundle, served by `pnpm preview`, in the container's
+  Chromium, against the real 43.2 MB artifact in OPFS. The store was opened with `cacheSize: 0`.
+- **A temporary worker held both paths** and was not committed. One extra branch in `runBatch`,
+  taken before any statement is prepared, switched between them at runtime:
+  - **oo1:** HEAD~1's `get(scratch)` + `narrow()` loop, verbatim;
+  - **raw:** the committed extractor.
+  
+  Both arms shared one statement cache and one worker, and every timed call was preceded by the
+  same untimed switch round trip.
+- **Sampling:** one warm-up per probe per mode, then 25 rounds, round-robin across 20 probes. The
+  two modes were interleaved within each probe, and their order flipped every round.
+- **Runs:** four consecutive browser launches against one build in one container. Treat them as
+  repeatability, not independence. Only the per-run median and p90 were kept, not per-sample data.
+- **Two more checks:** a 5-round pilot agreed. So did the final build's own `pnpm e2e` latency
+  record (below).
+- **Bias runs against raw.** Both arms ran in one worker, so allocation debt from oo1's BigInts can
+  be collected inside raw's samples. The large-call savings are therefore a lower bound.
+
+**Cells are the range of the four per-run medians, in ms.**
+
+| call | oo1 `get()` | raw `capi` | saved | raw ÷ oo1 |
+|---|---|---|---|---|
+| gloss statement, `"to"`, 5,000 × 9 | 72.9–77.5 | 32.4–35.0 | 40.5–43.0 | 0.43–0.46 |
+| gloss statement, `"the"` | 76.1–79.5 | 35.3–38.3 | 39.5–42.8 | 0.45–0.48 |
+| `open()`'s two statements (`meta` + 14,625 `chars` rows), replayed warm | 77.8–80.7 | 31.3–37.2 | 42.0–46.5 | 0.40–0.47 |
+| `char_words`, all 23,052 rows (BLOBs) | 203.6–212.7 | 102.1–105.9 | 100.7–106.8 | 0.50–0.51 |
+| **`search('to')`** | 129.5–136.1 | **84.4–93.0** | 41.0–48.8 | 0.63–0.69 |
+| **`search('the')`** | 129.1–135.8 | **84.5–96.0** | 39.8–47.2 | 0.65–0.71 |
+| `hskBand(1)`, the whole band | 14.1–14.8 | 7.2–8.1 | 6.7–7.6 | 0.49–0.55 |
+| `search('打')`, hanzi prefix | 15.8–19.8 | 9.7–11.7 | 4.5–8.6 | 0.57–0.72 |
+| `search('da')`, pinyin prefix | 19.8–22.2 | 13.3–15.7 | 5.6–6.7 | 0.67–0.73 |
+| `search('中')`, hanzi prefix | 19.1–22.5 | 15.5–17.8 | 1.3–5.9 | 0.72–0.93 |
+| `search('plan')` | 8.8–10.8 | 6.7–8.9 | 1.9–2.5 | 0.74–0.82 |
+| `search('to plan')` | 7.9–9.3 | 6.3–7.4 | 1.3–1.9 | 0.80–0.85 |
+| `segment(77 hanzi)` | 10.5–11.5 | 9.4–10.8 | 0.6–1.2 | 0.89–0.95 |
+| `entries(50)` | 2.9–3.3 | 2.3–2.7 | 0.2–0.8 | 0.74–0.93 |
+| `wordsContaining('算', 50)` | 3.6–4.5 | 3.0–4.0 | 0.3–0.6 | 0.83–0.92 |
+| `hskBand(7, 50, offset 100)` | 2.7–3.1 | 2.1–2.5 | 0.3–0.7 | 0.75–0.89 |
+| `search('打算')` | 5.7–6.6 | 5.0–6.5 | −0.2–0.7 | 0.88–1.03 |
+| `search('dasuan')` | 3.9–5.1 | 3.5–5.4 | −0.9–0.4 | 0.90–1.20 |
+| `search('da3suan4')` | 3.7–6.0 | 3.7–6.0 | 0.0–0.2 | 0.96–1.00 |
+| `readingCount('看')` | 1.0–1.4 | 1.0–1.5 | −0.1–0.1 | 0.92–1.07 |
+
+**How to read it:**
+
+- **Calls that move hundreds of rows or more roughly halve their SQL trip.** Their p90s improve in
+  all four runs. For `to`/`the`, raw's p90 was 100–134 ms against oo1's 150–181 ms.
+- **`打` and `da` save 4.5–8.6 ms.** `中` saves only 1.3–5.9 ms: positive in all four runs, but
+  by as little as 1.3 ms.
+- **Calls that move ~50 rows** (`entries(50)`, `wordsContaining(50)`, `hskBand(7,…)`, `segment`)
+  **are faster by 0.2–1.2 ms in all four runs.** That is consistent, and trivial.
+- **Single-headword calls are a wash.** The sign of the difference flips from run to run.
+- **Small calls' p90s are mixed.** `中`'s raw p90 was higher in three of four runs (36.6–40.5
+  against 24.1–30.8 ms). The likely cause is oo1's GC debt landing in raw's samples, but that was
+  not shown.
+- **`resolve()` (the list importer) was not probed.** It hands every fetched row back, so it should
+  gain like the other row-moving calls, but that is not measured.
+
+**Why it pays this much.** Under Node, the same statement goes from 57–59 ms to 14–16 ms. The
+review's earlier 73 → 48 came from an extractor that still went through `capi`'s `xWrap` wrappers.
+The costs this removes, per cell:
+
+- a BigInt from `sqlite3_column_int64`;
+- `Number()` on that BigInt, then `narrow()`;
+- oo1's open, row and index checks;
+- `xWrap`'s argument adapters on `sqlite3_column_type`.
+
+What is left is stepping and the text decode.
+
+**The absolute numbers are not comparable with the two-pass section's.** This bench's oo1 baseline
+is ~17% below that section's figures for the same statement: 73–80 against 89–96 ms, and
+`search('to')` at 130–136 against 155–170 ms. The container was in a faster state, so compare the
+two arms within a run, not against that table.
+
+**The final build's own `pnpm e2e` record agrees, with raw only.** These are means of 10 runs from
+`test-results/d4-record.json`:
+
+| call | ms |
+|---|---|
+| `search('to')` | 89.9 |
+| `search('the')` | 84.3 |
+| `open()`'s batch | 29.0 |
+| `hskBand(1)` | 5.7 |
+| gloss statement, `"to"` / `"the"` (two-pass probe medians) | 33.0 / 35.2 |
+
+**The two-pass table's per-cell costs have collapsed.** In the same e2e run:
+
+| probe | ms |
+|---|---|
+| rowid only | 7.8 |
+| + the four integers | 10.7 |
+| today's nine columns | 33.0 |
+| the packed one-cell `json_array` | 25.6 |
+
+The integers now cost ~3 ms per 5,000 rows, down from ~28 ms. **The packed-projection lever (lever 2
+in that section) is therefore worth ~7 ms now, not ~55.** That section's prediction that levers 1 and
+2 overlap was right.
+
+### What stays over 50 ms, and why the pins stay
+
+`search('to')`/`search('the')` are 84–96 ms. Trip 1 is now ~33–35 ms of that. Most of the rest is
+`glossTier` (~41–52 ms in JavaScript, per §10e), which no SQL-side or extraction change reaches.
+Headroom against the 200 ms pin is much better: oo1's p90 here was 150–181 ms, and the two-pass
+section reported p90s of 203–236. **The pins are not retired, because neither query is under 50 ms.**
+Of §10e's levers, only "make `glossTier` cheaper" (pre-lemmatised senses, a D1 schema decision) can
+close them now.
+
+### Why the values cannot differ
+
+Each branch copies oo1 3.53.4's own `Stmt.get(ndx)` + `narrow()`. The header of `wasm-extract.ts`
+says so branch by branch.
+
+- **INTEGER is read with `sqlite3_column_double`, never `sqlite3_column_int`.**
+  - SQLite's int64 → double cast is exact up to 2^53 and monotonic beyond it. So every safe
+    integer comes back as the same `number`.
+  - Every unsafe one still throws `narrow()`'s exact message, formatted from the exact int64.
+  - `_int` would have truncated `entries.hsk_sort`'s `HSK_SORT_SENTINEL` (2^53 − 1) and
+    `gloss_fts_data.id` (up to ~7.6 × 10^11) in silence.
+- **TEXT** follows oo1's call order: `column_text`, then `column_bytes`. It is decoded by oo1's own
+  `wasm.typedArrayToString`, so it uses the same default `TextDecoder` and the same shared-heap
+  handling. That costs ~1.5 ms per 5,000-row statement in Node against a private decoder, and it
+  was taken for fidelity.
+- **BLOB** follows the order `column_bytes`, then `column_blob`, then `slice()`. That gives a fresh
+  `Uint8Array` owning exactly its bytes, never a view on the heap. A zero-length BLOB's NULL
+  pointer maps to `new Uint8Array(0)`.
+- **NULL → `null`.** FLOAT is `column_double`, as in oo1. The artifact has no REAL column.
+- **The build must be wasm32.** It is checked once, when the reader is built (`wasm.ptr.size`
+  must be 4).
+- **One unreachable difference.** oo1 read the whole row before `narrow()`, so a `get()` error on a
+  later column would have beaten a range error on an earlier one. `get()`'s only such error is an
+  unknown type code, which `sqlite3_column_type` never returns.
+
+**Proof, in three layers:**
+
+1. **`tests/unit/dict/wasm-extract.test.ts`** (new, ~6 s) runs both paths on the same sqlite-wasm
+   under Node. It compares **every cell of every table in the artifact**, with FTS5's shadow tables
+   included:
+   - 23,870 BLOBs;
+   - 653,531 NULLs;
+   - 1,310 astral texts;
+   - 993,774 integers;
+   - 1,552,795 texts.
+   
+   It also compares the gloss statement for `to`/`the`, and edge values the artifact does not hold:
+   - ±(2^53 − 1), past int32, −0.0, 1e308;
+   - an empty and a zero-filled BLOB;
+   - an embedded NUL, a leading BOM, invalid and truncated UTF-8;
+   - a column that changes type from row to row.
+   
+   It checks that ±2^53 and the int64 extremes throw the identical error. "Identical" means
+   `Object.is`, plus the BLOB's prototype, offset and buffer length.
+   
+   **Mutation-tested**, each caught:
+   - `_int` for integers: 3 tests fail;
+   - a BOM-keeping decoder: 1 fails;
+   - a heap `subarray` instead of `slice`: 4 fail;
+   - NULL → `''`: 4 fail.
+2. **`tests/e2e/d/dict-wasm.spec.ts`, a new test: "returns raw rows byte-identical to
+   node:sqlite".** It checks, through the real worker against `node:sqlite`, for every value, its
+   type tag, BLOB bytes, prototype and buffer ownership:
+   - `char_words` BLOBs, including 𩽾's;
+   - the astral headwords 𩽾/𧿹 in full;
+   - 200 rows with NULLs in every nullable column, including the xx5 rows' NULL pinyin keys;
+   - all 51 `hsk_sort = 2^53 − 1` rows;
+   - the 5,000-row gloss statement;
+   - every `chars` row;
+   - 300 FTS5 data BLOBs.
+   
+   The existing "answers every query exactly as the Node runner does" still passes unchanged.
+3. **`tests/unit/dict/gloss.test.ts`** (the 200-query oracle) passes. It runs on the Node runner,
+   which this change does not touch, so it proves the oracle is intact rather than the new path.
+   Layer 2 is what proves the new path.
+
+### The two adversarial reviews
+
+**Values:** nothing blocking or should-fix. It checked:
+- the browser and Node builds share `get()`, the `sqlite3_column_text` wrapper and the heap code
+  verbatim;
+- heap growth mid-read (140 → 213 MB) returns correct values;
+- ±Infinity, −0.0, `x''` and `zeroblob(0)`;
+- the schema's nullable and BLOB columns.
+
+Its four nits are all fixed:
+- the e2e tag now records buffer ownership, since a heap view would pass a bytes-only check and
+  clone the whole heap per reply;
+- TEXT now goes through `typedArrayToString`, oo1's path;
+- the pointer check is now once, on `wasm.ptr.size`;
+- the first-error ordering difference is documented.
+
+**Measurement:** the headline holds, and nothing is claim-breaking. Fixed from it:
+- "independent runs" is now "consecutive launches";
+- the prefix claim is split out for `中`;
+- "a wash on tiny calls" is corrected, since the 50-row calls are consistently faster;
+- the p90 claim is narrowed to large calls;
+- the ~17% baseline offset against the two-pass section is stated;
+- "open()" is labelled as replayed warm;
+- `resolve()` is named as unmeasured;
+- the in-worker GC bias is stated.
+
+The commit message's "every lookup that moves rows gets faster" came before this review. Read it
+as "every measured browser call that moves ≥50 rows".
+
+### For the orchestrator: `wave-zero.md` §10e's second lever
+
+That document is yours, so it is untouched. The answer is one paragraph:
+
+> Lever 2 is built (`claude/build-dict-extract`). In the browser it took the gloss statement from
+> 73–80 ms to 32–38 ms, and `search('to')`/`search('the')` from ~130 ms to 84–96 ms on the same
+> container. It also halved every call that moves hundreds of rows (`open()`'s `chars` read,
+> `hskBand(1)`, `char_words`). The pins stay: `glossTier` is now most of what is left. Lever 1
+> (rank in SQL) now attacks a ~35 ms trip rather than a ~90 ms one. Lever "pack into one cell" is
+> worth ~7 ms, not ~55.
+
+The Node figure §10e quotes ("73 to 48") should also gain "and 73–80 → 32–38 in the browser". The
+two should not be combined: the browser ratio is 0.43–0.46, and Node's ratio for an extractor built
+this way is ~0.27.
+
+### Gates
+
+All run on this branch, on the final tree after the review fixes:
+- `pnpm lint`, `pnpm typecheck` and `pnpm build`: clean.
+- `pnpm test`: **2,184** app tests (the 6 new ones included) and **103** server tests passed.
+- `pnpm e2e`: **345 passed** in 11.7 min, including the new raw-parity test. The pinned searches
+  averaged **89.2 ms** (`to`) and **82.3 ms** (`the`) against the 200 ms ceiling, and `open()`'s
+  batch took 31.5 ms.
+  - An earlier full run on the first commit, before the review fixes, also passed 345 in 12.0 min.
+- `pnpm smoke --no-api`: **41 ok**, with 6 API cases skipped and reported as skipped.

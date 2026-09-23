@@ -50,6 +50,7 @@ import type {
 import { APPLICATION_ID, SCHEMA_VERSION, type DictManifest } from '../artifact';
 import type { DictFailureReason } from '../open-error';
 import type { SqlValue } from '../sql';
+import { rowReader, type RowReader } from './wasm-extract';
 import type {
   IntegrityReport,
   OpenReport,
@@ -107,6 +108,8 @@ let opened: { manifest: DictManifest; name: string } | undefined;
 /** Set by the test-only `evict` command; the next query reports it as a loss. */
 let evicted = false;
 const statements = new Map<string, Cached>();
+/** Built on the first query, from whichever runtime `boot()` produced. */
+let reader: RowReader | undefined;
 
 function post(message: WasmResponse): void {
   self.postMessage(message);
@@ -115,31 +118,6 @@ function post(message: WasmResponse): void {
 async function boot(): Promise<Sqlite3Static> {
   sqlite3 ??= await sqlite3InitModule();
   return sqlite3;
-}
-
-// ---------------------------------------------------------------------------
-// Values
-// ---------------------------------------------------------------------------
-
-/**
- * The library's `SqlValue` is wider than ours — it admits `bigint`, `Int8Array`
- * and `ArrayBuffer`. Narrow at the boundary rather than widening the frozen
- * type: the artifact's largest integer is `HSK_SORT_SENTINEL`, which is
- * `Number.MAX_SAFE_INTEGER` exactly, so a value that will not fit in a double
- * means the file is not this dictionary and throwing is the right answer.
- */
-function narrow(key: string, value: WasmSqlValue): SqlValue {
-  if (value === null || typeof value === 'string' || typeof value === 'number') return value;
-  if (typeof value === 'bigint') {
-    if (value > BigInt(Number.MAX_SAFE_INTEGER) || value < BigInt(Number.MIN_SAFE_INTEGER)) {
-      throw new TypeError(`column ${key} does not fit in a JS number: ${value}`);
-    }
-    return Number(value);
-  }
-  if (value instanceof Uint8Array) return value;
-  if (value instanceof Int8Array) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-  if (value instanceof ArrayBuffer) return new Uint8Array(value);
-  throw new TypeError(`column ${key} came back as ${typeof value}, which SqlValue does not cover`);
 }
 
 // ---------------------------------------------------------------------------
@@ -759,6 +737,16 @@ function markLost(error: unknown): void {
   post({ type: 'lost', message: `the dictionary became unreadable: ${detail}` });
 }
 
+function readRows(
+  statement: PreparedStatement,
+  columns: readonly string[],
+  rows: Record<string, SqlValue>[],
+): void {
+  if (!sqlite3) throw new Error('sqlite-wasm has not been initialised');
+  reader ??= rowReader(sqlite3);
+  reader(statement, columns, rows);
+}
+
 function runBatch(batch: WasmRequest & { type: 'query' }): QueryReply {
   if (evicted) {
     // What a revoked sync access handle produces, in the one shape a test can
@@ -779,22 +767,13 @@ function runBatch(batch: WasmRequest & { type: 'query' }): QueryReply {
       const params = query.params ?? [];
       if (params.length > 0) statement.bind(params as WasmSqlValue[]);
       const rows: Record<string, SqlValue>[] = [];
-      const width = columns.length;
-      const scratch: WasmSqlValue[] = new Array<WasmSqlValue>(width);
-      while (statement.step()) {
-      // `get(array)` into a reused scratch array, with the column names read
-      // once per *statement*, rather than `get({})` per row. oo1's object form
-      // re-derives the names on every row, and the gloss path pulls 5,000 of
-      // them per keystroke: measured at 71 ms for nine columns and 24 ms for
-      // this shape on the same query, in the container's Chromium. The
-      // difference is pure marshalling — it is the same rows either way.
-        statement.get(scratch);
-        const row: Record<string, SqlValue> = {};
-        for (let index = 0; index < width; index += 1) {
-          row[columns[index]] = narrow(columns[index], scratch[index]);
-        }
-        rows.push(row);
-      }
+      // The column names are read once per *statement* (`statementFor`), not
+      // per row: oo1's `get({})` re-derives them on every row, which D4
+      // measured at 71 ms against 24 ms for `get(array)` on the gloss query.
+      // Each cell then comes out through raw `capi` calls rather than
+      // `Stmt.get()` at all — `wasm-extract.ts` says what that saves and why
+      // the values cannot differ.
+      readRows(statement, columns, rows);
       out.push(rows);
     } finally {
       // Release the statement's page references and its bindings whatever

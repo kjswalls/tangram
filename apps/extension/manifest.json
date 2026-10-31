@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "Kànjù 看剧",
+  "short_name": "Kànjù",
+  "description": "Learn Mandarin from the shows you watch: sentence cards, correct words, pinyin and meanings in context.",
+  "version": "0.1.0",
+  "minimum_chrome_version": "111",
+  "icons": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" },
+  "action": { "default_title": "Kànjù 看剧" },
+  "background": { "service_worker": "background.js", "type": "module" },
+  "permissions": ["storage"],
+  "host_permissions": ["https://www.youtube.com/*"],
+  "content_scripts": [
+    {
+      "matches": ["https://www.youtube.com/*"],
+      "js": ["page-youtube.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://www.youtube.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    { "resources": ["ATTRIBUTION.md"], "matches": ["https://www.youtube.com/*"] }
+  ]
+}

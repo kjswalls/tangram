@@ -15357,3 +15357,25 @@ run `pnpm data --force`, or the gate tests the old artifact and passes. `CLAUDE.
 - **A real phone** for drag-select across glued punctuation, and everything in `ios.md`/`android.md`.
 - Unchanged from before: the app's name, the marketing site, accounts and sync (B3–B7), deploying
   `apps/server`.
+
+## Kànjù extension, milestone 1 (apps/extension)
+
+A Chrome MV3 extension for learning from streaming shows, living in this workspace so it shares
+Tangram's dictionary pipeline and segmenter. Design: the project doc "Kànjù 看剧: design".
+
+**Decisions this milestone made where nothing else had:**
+
+- **Bundled with esbuild, not Vite.** MV3 content scripts can't be ES modules, so each entry is its
+  own IIFE bundle (`scripts/build.ts`); the service worker is ESM. `@/…` resolves into `apps/app`,
+  so `lib/dict/segment.ts` (`planSegments`) and `lib/dict/pinyin.ts` are imported, not copied.
+- **The dictionary is a compact JSON cut from `data/dict.json`**, simplified headwords only,
+  ~10 MB (`scripts/build-dict.ts`). It goes through `scripts/dict-json.ts`'s index, so
+  `headwordFreq`, `headwordTotals` and the reading order are the app's numbers. Variant-only
+  headwords are dropped from the candidates, which is the one place its segmentation can differ
+  from the app's.
+- **Known gap, same as the app:** a CC-CEDICT word jieba has no frequency for scores `freq = 1`,
+  so the DP prefers splitting it (大一 → 大 + 一). The AI pass is the planned fix; a frequency floor
+  for such words was considered and not taken, because it would also promote spurious
+  cross-boundary headwords.
+- **Root scripts:** `pnpm extension` builds it end to end; root `lint`, `typecheck` and `test`
+  now include it.
